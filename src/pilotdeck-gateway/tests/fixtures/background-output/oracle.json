@@ -1,0 +1,748 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/task/protocol/types.ts": "8e6e5533b01237a3857e33d049866a8d6d26a3c38f4162e6f045178406062d44",
+    "src/task/storage/TaskOutputStore.ts": "eaff03430a2f31a09c0e2672479132c3c9e4459afae2c780e0a968a97da3cd66"
+  },
+  "cases": [
+    {
+      "name": "configured",
+      "spill": true,
+      "steps": [
+        {
+          "op": "append",
+          "text": "a",
+          "repeat": 999999
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 999999,
+            "sha256": "6c7aaf9baa56d59e3651f608e2fb587688382cbc78c8b39abbdb916a00a52098"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "result": {
+            "nextOffset": 999999,
+            "totalBytes": 999999,
+            "truncated": false,
+            "bytes": 999999,
+            "sha256": "6c7aaf9baa56d59e3651f608e2fb587688382cbc78c8b39abbdb916a00a52098"
+          }
+        },
+        {
+          "op": "append",
+          "text": "b",
+          "repeat": 1
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 1000000,
+            "sha256": "cf2a0883bc4887b06cc0968bc96fdea9fe9334c0bfad872ee89b3e9156ba6269"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "result": {
+            "nextOffset": 1000000,
+            "totalBytes": 1000000,
+            "truncated": false,
+            "bytes": 1000000,
+            "sha256": "cf2a0883bc4887b06cc0968bc96fdea9fe9334c0bfad872ee89b3e9156ba6269"
+          }
+        },
+        {
+          "op": "append",
+          "text": "c",
+          "repeat": 1
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000001,
+            "totalBytes": 1000001,
+            "truncated": false,
+            "bytes": 1000001,
+            "sha256": "ef0af8e6717ae1fd5895f87760da822721591060dc155efdda021adfbf6b4fad"
+          }
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 1000001,
+            "sha256": "ef0af8e6717ae1fd5895f87760da822721591060dc155efdda021adfbf6b4fad"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000001,
+            "totalBytes": 1000001,
+            "truncated": false,
+            "bytes": 1000001,
+            "sha256": "ef0af8e6717ae1fd5895f87760da822721591060dc155efdda021adfbf6b4fad"
+          }
+        },
+        {
+          "op": "append",
+          "text": "D",
+          "repeat": 800000
+        },
+        {
+          "op": "append",
+          "text": "中🙂",
+          "repeat": 60000
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 2220001,
+            "sha256": "63880fd19f371b18ff35f3747070a9db0ad42eecb55aed8728761235120362ef"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 999998,
+          "cap": 800020,
+          "result": {
+            "nextOffset": 1800018,
+            "totalBytes": 2220001,
+            "truncated": false,
+            "bytes": 800020,
+            "sha256": "1222bc13df5b6a2cb96b6f2c167e8afbc019a8d5af0413b415e0e897de9e0d9b"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 1800000,
+          "cap": 420001,
+          "result": {
+            "nextOffset": 2220001,
+            "totalBytes": 2220001,
+            "truncated": false,
+            "bytes": 420001,
+            "sha256": "960f0ffb564c1f80b46141905211e347809c2aa150936a82fd29a7efb75edc93"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 2200000,
+          "cap": 10,
+          "result": {
+            "nextOffset": 2200010,
+            "totalBytes": 2220001,
+            "truncated": false,
+            "bytes": 16,
+            "sha256": "824edfe806a15facc3f1d239324e2c28beae575779e03f20e05f0eadbd8e82e4"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 0,
+          "result": {
+            "nextOffset": 0,
+            "totalBytes": 2220001,
+            "truncated": false,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "op": "read",
+          "offset": -9,
+          "cap": 3,
+          "result": {
+            "nextOffset": 3,
+            "totalBytes": 2220001,
+            "truncated": false,
+            "bytes": 3,
+            "sha256": "9834876dcfb05cb167a5c24953eba58c4ac89b1adf57f28f2f9d09af107ee8f0"
+          }
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "append",
+          "text": "ignored",
+          "repeat": 1
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 2220001,
+            "sha256": "63880fd19f371b18ff35f3747070a9db0ad42eecb55aed8728761235120362ef"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 2000000,
+          "result": {
+            "nextOffset": 2000000,
+            "totalBytes": 2220001,
+            "truncated": false,
+            "bytes": 2000001,
+            "sha256": "45f8732021a3acdd1c672e2c3a260bb4054a32bc1b7b18ddba83dd25d6d09cce"
+          }
+        }
+      ]
+    },
+    {
+      "name": "memory-only",
+      "spill": false,
+      "steps": [
+        {
+          "op": "append",
+          "text": "a",
+          "repeat": 999999
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": null
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "result": {
+            "nextOffset": 999999,
+            "totalBytes": 999999,
+            "truncated": false,
+            "bytes": 999999,
+            "sha256": "6c7aaf9baa56d59e3651f608e2fb587688382cbc78c8b39abbdb916a00a52098"
+          }
+        },
+        {
+          "op": "append",
+          "text": "b",
+          "repeat": 1
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": null
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "result": {
+            "nextOffset": 1000000,
+            "totalBytes": 1000000,
+            "truncated": false,
+            "bytes": 1000000,
+            "sha256": "cf2a0883bc4887b06cc0968bc96fdea9fe9334c0bfad872ee89b3e9156ba6269"
+          }
+        },
+        {
+          "op": "append",
+          "text": "c",
+          "repeat": 1
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000001,
+            "totalBytes": 1000001,
+            "truncated": true,
+            "bytes": 1000000,
+            "sha256": "db7090d304eb8d45001b348ed46be587e13f096a520ed2f181d321c2198762db"
+          }
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": null
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000001,
+            "totalBytes": 1000001,
+            "truncated": true,
+            "bytes": 1000000,
+            "sha256": "db7090d304eb8d45001b348ed46be587e13f096a520ed2f181d321c2198762db"
+          }
+        },
+        {
+          "op": "append",
+          "text": "D",
+          "repeat": 800000
+        },
+        {
+          "op": "append",
+          "text": "中🙂",
+          "repeat": 60000
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": null
+        },
+        {
+          "op": "read",
+          "offset": 999998,
+          "cap": 800020,
+          "result": {
+            "nextOffset": 2020021,
+            "totalBytes": 2220001,
+            "truncated": true,
+            "bytes": 800020,
+            "sha256": "97b0682960909e331c30f21e98c887a5267811f2c51cf5a3440aba986b554ef8"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 1800000,
+          "cap": 420001,
+          "result": {
+            "nextOffset": 2220001,
+            "totalBytes": 2220001,
+            "truncated": false,
+            "bytes": 420001,
+            "sha256": "960f0ffb564c1f80b46141905211e347809c2aa150936a82fd29a7efb75edc93"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 2200000,
+          "cap": 10,
+          "result": {
+            "nextOffset": 2200010,
+            "totalBytes": 2220001,
+            "truncated": false,
+            "bytes": 16,
+            "sha256": "824edfe806a15facc3f1d239324e2c28beae575779e03f20e05f0eadbd8e82e4"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 0,
+          "result": {
+            "nextOffset": 0,
+            "totalBytes": 2220001,
+            "truncated": false,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "op": "read",
+          "offset": -9,
+          "cap": 3,
+          "result": {
+            "nextOffset": 1220004,
+            "totalBytes": 2220001,
+            "truncated": true,
+            "bytes": 3,
+            "sha256": "4c5f91d8424f9529acf7118d133a93d2a6cab19141c35c3064837e6dd57b99a3"
+          }
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "append",
+          "text": "ignored",
+          "repeat": 1
+        },
+        {
+          "op": "disk",
+          "result": null
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 2000000,
+          "result": {
+            "nextOffset": 1220001,
+            "totalBytes": 2220001,
+            "truncated": true,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unflushed-gap",
+      "spill": true,
+      "steps": [
+        {
+          "op": "append",
+          "text": "x",
+          "repeat": 1000001
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000001,
+            "totalBytes": 1000001,
+            "truncated": true,
+            "bytes": 1000000,
+            "sha256": "1b977e9f84f1b26b6ed7f68b0498faee2385ea4125bd29adce4a7d9106ba3134"
+          }
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000001,
+            "totalBytes": 1000001,
+            "truncated": false,
+            "bytes": 1000001,
+            "sha256": "85e4daf430380f612580d11ebf1ba489a0341266af0f6f5ed620852545a4655e"
+          }
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 1000001,
+            "sha256": "85e4daf430380f612580d11ebf1ba489a0341266af0f6f5ed620852545a4655e"
+          }
+        }
+      ]
+    },
+    {
+      "name": "blocked-directory-retry",
+      "spill": true,
+      "steps": [
+        {
+          "op": "block"
+        },
+        {
+          "op": "append",
+          "text": "A",
+          "repeat": 1000000
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": null
+        },
+        {
+          "op": "append",
+          "text": "B",
+          "repeat": 1
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000001,
+            "totalBytes": 1000001,
+            "truncated": true,
+            "bytes": 1000000,
+            "sha256": "3d49ef720ad50e4c5af2120b8195bde171ba4fa8e5550a1b2bd114b01fd85f30"
+          }
+        },
+        {
+          "op": "unblock"
+        },
+        {
+          "op": "append",
+          "text": "tail",
+          "repeat": 1
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 4,
+            "sha256": "0c62f876ef1dea830de9f32c2f4b46dd6d74d50d15896e09ef5a2fcd4ac7e1d7"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000005,
+            "totalBytes": 1000005,
+            "truncated": true,
+            "bytes": 1000004,
+            "sha256": "824d93a25e1355dc929ce84f339fdb45e6f1f25b362681eb944aeb1c800a7e88"
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-retry",
+      "spill": true,
+      "steps": [
+        {
+          "op": "deny"
+        },
+        {
+          "op": "append",
+          "text": "P",
+          "repeat": 1000001
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": null
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000001,
+            "totalBytes": 1000001,
+            "truncated": true,
+            "bytes": 1000000,
+            "sha256": "77f6a5202a97120e0c2f33bd3063fa5af3e061263f7dd18247dafebf64afeda6"
+          }
+        },
+        {
+          "op": "allow"
+        },
+        {
+          "op": "append",
+          "text": "ok",
+          "repeat": 1
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 2,
+            "sha256": "2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000003,
+            "totalBytes": 1000003,
+            "truncated": true,
+            "bytes": 1000002,
+            "sha256": "aec231b19d39f0a18a44770935d16965d7574347e3c526fdc8872024f0466a44"
+          }
+        }
+      ]
+    },
+    {
+      "name": "disk-full-retry",
+      "spill": true,
+      "steps": [
+        {
+          "op": "full"
+        },
+        {
+          "op": "append",
+          "text": "F",
+          "repeat": 1000001
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": null
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000001,
+            "totalBytes": 1000001,
+            "truncated": true,
+            "bytes": 1000000,
+            "sha256": "22e1c5e43c98ce1dc05f5652eb97452da02b8d1b596386c5a63ddd43d45f3326"
+          }
+        },
+        {
+          "op": "healthy"
+        },
+        {
+          "op": "append",
+          "text": "ok",
+          "repeat": 1
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 2,
+            "sha256": "2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000009,
+          "result": {
+            "nextOffset": 1000003,
+            "totalBytes": 1000003,
+            "truncated": true,
+            "bytes": 1000002,
+            "sha256": "fbbd9872770fb5cb3bc39cd2b27b2269be086812387bd5a63a97691c42db9500"
+          }
+        }
+      ]
+    },
+    {
+      "name": "partial-file-join",
+      "spill": true,
+      "steps": [
+        {
+          "op": "append",
+          "text": "ab中🙂",
+          "repeat": 150000
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "truncate",
+          "size": 350007
+        },
+        {
+          "op": "read",
+          "offset": 350000,
+          "cap": 40,
+          "result": {
+            "nextOffset": 350040,
+            "totalBytes": 1350000,
+            "truncated": false,
+            "bytes": 44,
+            "sha256": "e6e9a840ffccf122caebc543fd9d8661158ec0faad3f490c2cdd9c2d6e873527"
+          }
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 350007,
+            "sha256": "0b94803fcbf28f7c747886984499f96257cf3be1d5b772d9974dc9320a42b60e"
+          }
+        },
+        {
+          "op": "remove"
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 50,
+          "result": {
+            "nextOffset": 350050,
+            "totalBytes": 1350000,
+            "truncated": true,
+            "bytes": 53,
+            "sha256": "a223984fe3eebafc5eccfcca1e136dc81deb1ea9f0355708b514c81fefca90c3"
+          }
+        }
+      ]
+    },
+    {
+      "name": "preexisting-append",
+      "spill": true,
+      "steps": [
+        {
+          "op": "seed",
+          "text": "OLD"
+        },
+        {
+          "op": "append",
+          "text": "new",
+          "repeat": 333334
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "disk",
+          "result": {
+            "bytes": 1000005,
+            "sha256": "62337e0fa69acf60d47116f6a1200536d64a459e0f0354f98be320297201fc80"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000010,
+          "result": {
+            "nextOffset": 1000002,
+            "totalBytes": 1000002,
+            "truncated": false,
+            "bytes": 1000002,
+            "sha256": "16f67e1e9409fc19124a3b22d772fe45fd7875561c6bfa3d88006d63c78094c5"
+          }
+        },
+        {
+          "op": "remove"
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 1000010,
+          "result": {
+            "nextOffset": 1000002,
+            "totalBytes": 1000002,
+            "truncated": true,
+            "bytes": 1000000,
+            "sha256": "f73fce03642cc8c2e37a9c799af12c285fad514fe27c0e05e844159a318c7032"
+          }
+        }
+      ]
+    }
+  ]
+}
