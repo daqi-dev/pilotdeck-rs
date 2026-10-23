@@ -41,11 +41,16 @@ import path from 'node:path';
 // protocol headers and the exact body.
 // ---------------------------------------------------------------------------
 async function serveHttp(dir) {
-  const http = await import('node:http');
+  // `MOCK_TLS` names a JSON file with the shared throwaway fixture key/cert
+  // (`tests/fixtures/model-stream/tls.json`); plain HTTP otherwise.
+  const tls = process.env.MOCK_TLS
+    ? JSON.parse(fs.readFileSync(process.env.MOCK_TLS, 'utf8'))
+    : undefined;
+  const http = await import(tls ? 'node:https' : 'node:http');
   const script = JSON.parse(fs.readFileSync(path.join(dir, 'script.json'), 'utf8')).http;
   const counters = new Map();
   let channel = null;
-  const LOGGED = ['accept', 'content-type', 'last-event-id', 'mcp-protocol-version', 'mcp-session-id', 'x-api-key'];
+  const LOGGED = ['accept', 'authorization', 'content-type', 'last-event-id', 'mcp-protocol-version', 'mcp-session-id', 'x-api-key'];
   const take = (key) => {
     const list = script[key];
     if (!list) return undefined;
@@ -64,7 +69,7 @@ async function serveHttp(dir) {
     }
     return value;
   };
-  const server = http.createServer((req, res) => {
+  const handler = (req, res) => {
     let body = '';
     req.setEncoding('utf8');
     req.on('data', (chunk) => { body += chunk; });
@@ -107,7 +112,8 @@ async function serveHttp(dir) {
       if (response.json !== undefined) res.end(JSON.stringify(response.json));
       else res.end(response.text ?? '');
     });
-  });
+  };
+  const server = tls ? http.createServer(tls, handler) : http.createServer(handler);
   // Held streams must not keep the recorder waiting on close.
   server.listen(0, '127.0.0.1', () => {
     process.stdout.write(`PORT ${server.address().port}\n`);

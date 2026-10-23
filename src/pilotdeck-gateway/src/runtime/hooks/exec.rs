@@ -17,6 +17,7 @@ use crate::hooks::protocol::{
     PermissionDecision, PermissionHookDecision,
 };
 use crate::js_value::{self, MAX_ARRAY_DEPTH, StackOverflow};
+use crate::runtime::model::http::ConnectDeadline;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
     future::Future,
@@ -1092,60 +1093,10 @@ impl CommandHookExecutor {
 
 /// undici's `connectTimeout` default is 10 000 ms and spans socket
 /// establishment *including* the TLS handshake, while hyper's
-/// `HttpConnector::set_connect_timeout` only bounds the TCP phase. undici's
-/// `buildConnector` owns one timer around the whole connect
-/// (`node_modules/undici/lib/core/connect.js:69,126`: `timeout = timeout ==
-/// null ? 10e3 : timeout`; `types/client.d.ts`: "timeout for establishing a
-/// socket connection … Default: `10e3`"). The hook keeps the shared model
-/// connector untouched and wraps it with this single deadline.
+/// `HttpConnector::set_connect_timeout` only bounds the TCP phase. The hook
+/// keeps the shared model connector untouched and wraps it with the shared
+/// [`ConnectDeadline`](crate::runtime::model::http::ConnectDeadline).
 const HOOK_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// [`HOOK_CONNECT_TIMEOUT`] over a connector's whole connect future, DNS and
-/// TLS handshake included. hyper-util's `Connect` is blanket-implemented for
-/// `tower_service::Service<Uri>`, so this wrapper is the hook-local seam.
-#[derive(Clone)]
-struct ConnectDeadline<C> {
-    inner: C,
-    timeout: Duration,
-}
-impl<C> ConnectDeadline<C> {
-    fn new(inner: C, timeout: Duration) -> Self {
-        Self { inner, timeout }
-    }
-}
-impl<C> tower_service::Service<hyper::Uri> for ConnectDeadline<C>
-where
-    C: tower_service::Service<hyper::Uri> + Send + Sync + 'static,
-    C::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    C::Future: Send + 'static,
-{
-    type Response = C::Response;
-    type Error = Box<dyn std::error::Error + Send + Sync>;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-    fn poll_ready(
-        &mut self,
-        context: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(context).map_err(Into::into)
-    }
-    fn call(&mut self, destination: hyper::Uri) -> Self::Future {
-        let timeout = self.timeout;
-        let connect = self.inner.call(destination);
-        Box::pin(async move {
-            match tokio::time::timeout(timeout, connect).await {
-                Ok(result) => result.map_err(Into::into),
-                // TS reports this as `TypeError: fetch failed` (cause
-                // `UND_ERR_CONNECT_TIMEOUT`, probe measured 10 545 ms); the
-                // hook only surfaces that message, mapped by the caller.
-                Err(_) => Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "connect timeout",
-                ))
-                    as Box<dyn std::error::Error + Send + Sync>),
-            }
-        })
-    }
-}
 
 pub struct HttpHookOptions {
     pub url: JsString,

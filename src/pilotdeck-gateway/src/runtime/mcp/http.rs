@@ -1,5 +1,6 @@
-//! Plain-HTTP MCP transports, ported from `@modelcontextprotocol/sdk@1.29.0`
-//! as the fixed baseline drives them from `McpClient.buildTransport()`:
+//! HTTP and HTTPS MCP transports, ported from
+//! `@modelcontextprotocol/sdk@1.29.0` as the fixed baseline drives them from
+//! `McpClient.buildTransport()`:
 //!
 //! - `streamable_http` — `StreamableHTTPClientTransport` with the baseline's
 //!   `networkFetch` (`src/network/fetch.ts`): POST timeout `callTimeoutMs ??
@@ -8,10 +9,13 @@
 //! - `sse` — the legacy `SSEClientTransport` over the `eventsource@3`
 //!   `EventSource`, posting with the global `fetch` (no timeout or retry).
 //!
-//! Server-Sent Events are parsed as `eventsource-parser@3.0.8` does. Only
-//! `http:` URLs are served: TLS needs a dependency this crate does not have
-//! yet, so `https:` is refused up front with `mcp_unsupported_transport`.
-//! Ledger: gateway accepted-diffs A6.5-MCP-HTTPS-001 (unapproved).
+//! Server-Sent Events are parsed as `eventsource-parser@3.0.8` does.
+//! `http:` and `https:` URLs are served through the shared model transport's
+//! rustls connector (`runtime/model/http.rs`), wrapped in undici's 10 s
+//! `connectTimeout` so the deadline covers the TLS handshake as well as TCP;
+//! redirects (including scheme changes) follow `crate::fetch_redirect` like
+//! the baseline's `fetch`. Other schemes are refused up front with
+//! `mcp_unsupported_transport` (the baseline would fail later in `fetch`).
 //!
 //! Deliberate lifecycle differences (unapproved; network side effects remain):
 //! gateway accepted-diffs A6.5-MCP-HTTP-LIFETIME-001. A closed
@@ -25,7 +29,7 @@ use super::client::{McpClientError, McpErrorCode};
 use super::protocol::{Inbound, parse_inbound_value};
 use super::wire::{Wire, frame_text, lock};
 use crate::runtime::{
-    model::http::retry_after_header_ms,
+    model::http::{ConnectDeadline, https_connector, retry_after_header_ms},
     network::{Exchange, ExchangeFuture, delay, exchange_continuing, node_timer_duration},
     tools::ToolCancellation,
 };
@@ -33,6 +37,7 @@ use crate::{fetch_redirect, js_value};
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Method, Request, StatusCode, body::Incoming, header};
+use hyper_rustls::HttpsConnector;
 use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},
     rt::TokioExecutor,
@@ -45,7 +50,13 @@ use std::{
 use tokio::sync::oneshot;
 use url::Url;
 
-type HttpClient = Client<HttpConnector, Full<Bytes>>;
+type HttpClient = Client<ConnectDeadline<HttpsConnector<HttpConnector>>, Full<Bytes>>;
+
+/// undici's `connectTimeout` default (10 000 ms) spans socket establishment
+/// including the TLS handshake; hyper's `HttpConnector::set_connect_timeout`
+/// inside the shared connector only bounds the TCP phase. Wrapping the shared
+/// connector keeps `https_connector` itself unchanged.
+const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `DEFAULT_STREAMABLE_HTTP_RECONNECTION_OPTIONS`.
 const INITIAL_RECONNECTION_DELAY_MS: f64 = 1000.0;
@@ -100,7 +111,11 @@ fn http_error(status: f64, message: String) -> McpClientError {
 }
 
 /// The URL check `buildTransport()` runs synchronously: `new URL(url)` plus
-/// this port's `http:`-only restriction.
+/// this port's scheme restriction. The baseline accepts any URL `new URL`
+/// parses and only fails when its fetch runs; `http:`/`https:` are the
+/// schemes MCP transports can reach, so anything else keeps the existing
+/// fail-closed `mcp_unsupported_transport` (a deliberate, documented
+/// difference for non-HTTP(S) schemes).
 pub(super) fn parse_endpoint(raw: &str, server_id: &str) -> Result<Url, McpClientError> {
     let url = Url::parse(raw).map_err(|_| {
         McpClientError::with_code(
@@ -109,11 +124,11 @@ pub(super) fn parse_endpoint(raw: &str, server_id: &str) -> Result<Url, McpClien
             "Invalid URL".into(),
         )
     })?;
-    if url.scheme() != "http" {
+    if !matches!(url.scheme(), "http" | "https") {
         return Err(McpClientError::client(
             super::client::McpClientErrorCode::UnsupportedTransport,
             format!(
-                "Unsupported URL scheme {}: only plain http MCP servers are supported (TLS is not available in this build)",
+                "Unsupported URL scheme {}: only http and https MCP servers are supported",
                 url.scheme()
             ),
             server_id,
@@ -786,6 +801,10 @@ fn parse_message(text: &str) -> Result<Inbound, McpClientError> {
 }
 
 impl HttpLink {
+    /// Unit-test construction over the bundled webpki roots. Production goes
+    /// through [`Self::with_config`] so `McpClient` can supply its trust
+    /// configuration without changing the shared connector.
+    #[cfg(test)]
     pub(super) fn new(
         kind: HttpKind,
         url: Url,
@@ -793,13 +812,36 @@ impl HttpLink {
         post_timeout_ms: f64,
         get_timeout_ms: f64,
     ) -> Self {
+        Self::with_config(
+            kind,
+            url,
+            headers,
+            post_timeout_ms,
+            get_timeout_ms,
+            crate::runtime::model::http::webpki_client_config(),
+        )
+    }
+
+    /// Trust exactly `config` (the `McpClient` test seam passes the fixture
+    /// CA in through `rooted_client_config`). The shared connector keeps its
+    /// own TCP timeout; the MCP-local deadline adds undici's whole-connect
+    /// bound around it.
+    pub(super) fn with_config(
+        kind: HttpKind,
+        url: Url,
+        headers: Vec<(String, String)>,
+        post_timeout_ms: f64,
+        get_timeout_ms: f64,
+        config: rustls::ClientConfig,
+    ) -> Self {
+        let connector = ConnectDeadline::new(https_connector(config), MCP_CONNECT_TIMEOUT);
         Self {
             kind,
             url,
             headers,
             post_timeout_ms,
             get_timeout_ms,
-            client: Client::builder(TokioExecutor::new()).build_http(),
+            client: Client::builder(TokioExecutor::new()).build(connector),
             state: Mutex::new(LinkState::default()),
             aborted: ToolCancellation::default(),
         }
@@ -2416,11 +2458,12 @@ mod tests {
     }
 
     #[test]
-    fn only_plain_http_urls_are_served() {
+    fn http_and_https_urls_are_served() {
         assert!(parse_endpoint("http://127.0.0.1:1/mcp", "s").is_ok());
-        let tls = parse_endpoint("https://example.com/mcp", "s").unwrap_err();
+        assert!(parse_endpoint("https://example.com/mcp", "s").is_ok());
+        let other = parse_endpoint("ftp://example.com/mcp", "s").unwrap_err();
         assert_eq!(
-            tls.client_code().map(|c| c.as_str()),
+            other.client_code().map(|c| c.as_str()),
             Some("mcp_unsupported_transport")
         );
         assert_eq!(

@@ -4,7 +4,7 @@
 //! and transports live in `wire.rs` and `http.rs`).
 //!
 //! Behaviours (TS §6.1 numbering): M1 memoized `start`; M2 transports
-//! `stdio`, `streamable_http` and legacy `sse` (plain HTTP only); M3
+//! `stdio`, `streamable_http` and legacy `sse` (`http` and `https`); M3
 //! call/list timeouts; M5/M15 exactly one reconnect on a session-expired
 //! error; M5b a timed-out call recycles the transport so the next call
 //! spawns a fresh process; M6 a five-minute `tools/list` cache.
@@ -40,10 +40,12 @@
 //!
 //! ## Not covered
 //!
-//! - `https:` URLs (not wired to the shared TLS connector): `mcp_unsupported_transport`.
-//!   Ledger: gateway accepted-diffs A6.5-MCP-HTTPS-001 (unapproved).
 //! - OAuth (`authProvider` is never set by the baseline).
 //! - Remaining output-schema gaps are listed in `output_schema.rs`.
+//!
+//! `https:` MCP endpoints use the shared model transport's rustls connector
+//! (webpki roots, like Node's bundled CA store); `with_tls_roots` is the test
+//! seam that trusts a fixture CA instead.
 //!
 //! ## Intentional difference (gate2 P1-1, #361)
 //!
@@ -628,6 +630,8 @@ struct Inner {
 #[derive(Clone)]
 pub struct McpClient {
     inner: Arc<Inner>,
+    /// TLS trust for `https:` transports; `None` = the shared webpki roots.
+    tls_config: Option<Arc<rustls::ClientConfig>>,
 }
 
 impl fmt::Debug for McpClient {
@@ -756,7 +760,20 @@ impl McpClient {
                     cleanups: Vec::new(),
                 }),
             }),
+            tls_config: None,
         }
+    }
+
+    /// Trust exactly `roots` for `https:` MCP transports (tests use the
+    /// fixture's throwaway CA, like `HttpHookExecutor::with_roots`). The
+    /// default `new()` keeps the bundled Mozilla roots, so a fixture CA
+    /// never becomes a production trust source.
+    #[doc(hidden)]
+    pub fn with_tls_roots(mut self, roots: rustls::RootCertStore) -> Self {
+        self.tls_config = Some(Arc::new(crate::runtime::model::http::rooted_client_config(
+            roots,
+        )));
+        self
     }
 
     pub fn spec(&self) -> &McpServerSpec {
@@ -1008,7 +1025,10 @@ impl McpClient {
                 };
                 let url = parse_endpoint(url, &spec.id)?;
                 let options = &self.inner.options;
-                Ok(Ok(Wire::http(HttpLink::new(
+                let config = self.tls_config.clone().unwrap_or_else(|| {
+                    Arc::new(crate::runtime::model::http::webpki_client_config())
+                });
+                Ok(Ok(Wire::http(HttpLink::with_config(
                     kind,
                     url,
                     headers.clone().unwrap_or_default(),
@@ -1018,6 +1038,7 @@ impl McpClient {
                     options
                         .handshake_timeout_ms
                         .unwrap_or(DEFAULT_GET_TIMEOUT_MS),
+                    (*config).clone(),
                 ))))
             }
         }
