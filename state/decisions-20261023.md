@@ -29,3 +29,19 @@
 
 ## 状态文件精简提案
 - 人：「状态文件先不动，等我仔细读提案再找你。」——暂不执行，READY 保留 human 行。
+
+## #552 bash setsid 的 unsafe 例外扩展（人定，2026-10-23 15:23）
+- **决定**：选 A——把 #386 的局部 unsafe 例外扩到第二个函数 `install_child_detach_session`（`src/pilotdeck-child-signals/src/lib.rs`，pre_exec 里只调 `setsid`），条件与 #386 相同：只在 `pilotdeck-child-signals` crate，`tests/unsafe_boundary.rs` 按函数名精确放行这两个函数。
+- **原话**：「#552 按照建议选 A：把 #386 的例外扩到这第二个函数，条件和 #386 一样，合并前两家评审专看这个 unsafe 块。」
+- **执行**：合并前两家非作者评审专门审该 unsafe 块（async-signal-safety、错误路径、与 process_group / 信号重置 hook 的次序、unsafe_boundary 守卫是否精确）。
+- **原则**：unsafe 例外按函数逐个人批；守卫测试按函数名精确放行，新增任何 unsafe 函数都必须先过人批。
+
+## 放开并行限制（人授权，2026-10-23 17:05）
+- **原话**：「还有哪些限制了并行的，可以放开以高质高效提高重构速度的？包括但不限于rust编译，worktree，磁盘之类的都可以在硬件允许下放开，例如硬盘上限200G，以及部分放到macmini-01上，GLM-5.3 Claude codex并发之类的，都可以放开试试。Claude的模型也可以用 claude-fable-5-1， codex的模型也可以用 astra。」
+- **执行（协调者，实测后）**：磁盘上限 160 → 200 GiB；worktree 12 → 16；cargo 并发保持 4（本机 M5 10 核 / 32 GB，CPU 是硬约束），加 sccache 共享依赖编译（`_build/cargo-home/config.toml`，缓存 40 GiB）；新增 Claude 实现通道 `claude-fable-5-1`（`_tmp/20261021-loop/claude_impl.py`、`fix-launch2.sh`）；Codex `astra` 实测不可用（ChatGPT 账号不支持该模型）。macmini-01（M4 10 核 / 24 GB / 234 GiB 空闲，无 Rust、Node 为 v26）需装 Rust 工具链与 Node 22——涉及红线「不下载预编译二进制」，待人确认后再做。
+- **同步**：CLAUDE.md「资源上限」与 `scripts/wt-status.sh` 显示值随下一个 board PR 更新。
+
+## macmini-01 装 rustup 与 Node 22；账本拆文件（人定，2026-10-23 17:15）
+- **原话**：「1. macmini 装 rustup 和 Node 22  2. 账本拆文件，按提案做(但是提案本身需要先被fable结合当前项目的42plugin中的skill来审核优化)」
+- **执行**：① 在 macmini-01 安装 rustup（与本机同版本工具链）与 Node v22.22.0（与 TS 基线一致），作为第二台编译 / 测试 / 负控机；不碰 macmini 上已有的 PilotDeck-* 目录与 ~/.pilotdeck。此授权覆盖红线「不下载预编译二进制」对这两项工具链的限制，仅限这两项。② 账本拆文件提案 `_tmp/20261023-loop/proposal-ledger-split.md` 先交 claude-fable-5-1 按本项目 42plugin 中的相关 skill 审核优化，优化稿经协调者核对后再按冻结尺子变更程序实施（独立 issue、两家评审、真实数据等价复算）。
+- **更正（17:25）**：sccache 经 `_build/cargo-home/config.toml` 全局接入与 `tests/unsafe_boundary.rs` 守卫冲突——该守卫禁止 CARGO_HOME 下任何 `config*` 与 `RUSTC_WRAPPER` 等环境变量（防止替换编译器或改 lint 策略，属有意的安全护栏），致 17:05 后用共享 cargo-home 跑的 unsafe_boundary 全部失败（#573 核验命中）。已删除该配置恢复原状；不为提速绕开该护栏。sccache 实测 25 命中 / 758 未命中，收益本就有限，放弃。

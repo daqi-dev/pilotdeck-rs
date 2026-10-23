@@ -47,9 +47,9 @@
 
 ## 五、本项目特有的硬约束
 
-### 资源上限（2026-10-14 人定，10-17、10-18、10-22 放宽；依据 `state/decisions-20261017.md:107`、`state/decisions-20261022.md`「资源上限再放宽」）
-- worktree ≤ **12**（上限不是目标，READY 有互相独立的产品单才并行）；名额以 `scripts/wt-status.sh` 为准，不抄 board，退出 1（有已合入/已关且无改动的树）先归档 `_tmp/` 再回收，然后派单；同时编译/测试的 cargo 进程 ≤ **4**，开跑前 `scripts/cargo-slots.sh`，退出 1 即满、稍后再跑；全量对拍（53 场景）同一时刻只跑 **1** 个。
-- `_build/` + `_tmp/` ≤ **160 GiB**（`du -sk _build _tmp` 求和 ÷ 1,048,576），开新树前先看；超限停止新增写入。例外：冻结装置 `scripts/ui-server-parity/calibrate.py` 的 `CAP_BYTES` 仍 80 GiB（超 80 GiB 时 B2 定标自行拒跑），走冻结程序另改。
+### 资源上限（2026-10-14 人定，10-17、10-18、10-22、10-23 放宽；依据 `state/decisions-20261017.md:107`、`state/decisions-20261022.md`「资源上限再放宽」、`state/decisions-20261023.md`「放开并行限制」）
+- worktree ≤ **16**（上限不是目标，READY 有互相独立的产品单才并行）；名额以 `scripts/wt-status.sh` 为准，不抄 board，退出 1（有已合入/已关且无改动的树）先归档 `_tmp/` 再回收，然后派单；同时编译/测试的 cargo 进程 ≤ **4**，开跑前 `scripts/cargo-slots.sh`，退出 1 即满、稍后再跑；全量对拍（53 场景）同一时刻只跑 **1** 个。
+- `_build/` + `_tmp/` ≤ **200 GiB**（`du -sk _build _tmp` 求和 ÷ 1,048,576），开新树前先看；超限停止新增写入。例外：冻结装置 `scripts/ui-server-parity/calibrate.py` 的 `CAP_BYTES` 仍 80 GiB（超 80 GiB 时 B2 定标自行拒跑），走冻结程序另改。
 - 调度会话 ≤ **2 小时**：到点把现场、证据、持有人、资源与下一就绪任务写进 board 并落实接续，然后继续（交接点不是停工，2026-10-16 人定）。
 
 ### 红线
