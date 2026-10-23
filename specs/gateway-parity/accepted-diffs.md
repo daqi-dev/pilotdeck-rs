@@ -879,3 +879,11 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：`src/pilotdeck-gateway/src/host/tests.rs` 的 `cancellation_without_terminal_exits_within_post_cancel_deadline`（三种静默 peer，4.9 s 未返回、5 s + 1 ms 返回 `Timeout` 且 `disposed == 1`）、`late_terminal_after_cancel_wins_over_post_cancel_deadline`（3 s 终态胜出）、`post_cancel_exit_timeout_matches_ts_close_grace`（5 s 与真实 TS 金样 `defaultKillTimeoutMs` 相等）；负控：常量改 1 s 时后两者转红，去掉期限时静默用例转红。
 - **批准记录**：无人批。取值 5 s 为协调者判断（**自决·待复核，AI 代批待人复核**）：TS 取消后无限等待，Rust 必须有界；期限越短，越多 TS 能收到的迟到合法终态被丢，故取 TS 关闭子进程的宽限而非更短的 close_timeout。不新增豁免、不改判分语义。
 - **附带更正（追加，不改上文）**：本 PR 前一次追加的「A7-HOST-RESOURCE-001 · 当前状态」写的 `HostLimits::execution_timeout` 类型名不存在，仓内实际为 `host::Limits::execution_timeout`（`src/pilotdeck-gateway/src/host/mod.rs`）；该段其余内容不变。
+
+### A7-HOST-POST-CANCEL-EXIT-001-R1 · 修复轮 3–4 收敛说明与判据更正（首版原文保留在上方；#554 Codex 接手）
+
+- **更正**：首版机器判据写「5 s + 1 ms 返回 Timeout 且 disposed == 1」过强，且 r2 评审证实首版实现在「重连 await 期间取消」时期限永不武装（P0）。修复轮 3–4 起：首次观察取消时同步保存原因与唯一绝对期限 `now + POST_CANCEL_EXIT_TIMEOUT`（5 s），发送 cancel、重连与事件应用共用；到点无终态则 Timeout，已验证终态则停止未完成的协作式回调并保留终态结果；期限内应用完成的终态正常返回；执行循环退出后，关闭与 dispose 使用各自既有有界等待。
+- **范围**：仅宿主取消后的 execute / reconnect / event application 收敛；普通默认执行仍不限时。截止前已完成校验的终态拥有结果权威，不据此宣称其事件回调已成功应用；同步阻塞运行时线程的回调不在协作式取消保证内。
+- **机器判据**：`src/pilotdeck-gateway/src/host/tests/cancel_exit.rs` 的 `cancellation_before_and_during_reconnect_uses_original_absolute_deadline` 等：三种静默 peer、6 种重连交错、6 种终态应用 / drain 场景，在时钟仍暂停于 +5.001 s 时观察到循环退出标志与 stdin EOF 的 closing，随后才放行关闭；+3 s 放行的两例按 Terminal 返回。负控：武装额外 +1 s、重连丢期限 / 丢观察 / 重算期限、终态后禁用期限、丢已知终态、伪造 applied cursor。协调者沙箱外并行压测重连用例 4×4 16/16。
+- **批准记录**：无人批；5 s 仍为协调者判断（AI 代批，待人复核），状态同首版。不新增豁免、不改判分语义。
+
