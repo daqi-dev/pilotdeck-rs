@@ -111,9 +111,13 @@ pub enum MetadataField {
     SupportsPromptCache,
 }
 
-/// Metadata lookup port. Values stay boundary values because the fixed TS
-/// dispatcher accepts only safe positive integers/protocol identifiers and
-/// reports invalid shapes as host errors (`dispatcher:461-470`).
+/// Metadata lookup port. The route arrives raw — `dispatcher:88` passes
+/// `prepared.provider` / `prepared.model` into `serializeModelMetadata`
+/// (`:445-450`) which hands them to every defined lookup unchanged, so an
+/// implementation converts at its own config index exactly like its TS
+/// counterpart. Values stay boundary values because the fixed TS dispatcher
+/// accepts only safe positive integers/protocol identifiers and reports
+/// invalid shapes as host errors (`dispatcher:451-470`).
 pub trait ModelMetadata: Send + Sync {
     /// Whether this host port defines the lookup. Defaults to `true`, which is
     /// safe because absent values are represented by `Ok(None)`.
@@ -122,32 +126,32 @@ pub trait ModelMetadata: Send + Sync {
     }
     fn get_model_max_context_tokens(
         &self,
-        _provider: &JsString,
-        _model: &JsString,
+        _provider: &JsValue,
+        _model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
         Ok(None)
     }
     fn get_model_max_output_tokens(
         &self,
-        _provider: &JsString,
-        _model: &JsString,
+        _provider: &JsValue,
+        _model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
         Ok(None)
     }
     fn get_model_token_limits(
         &self,
-        _provider: &JsString,
-        _model: &JsString,
+        _provider: &JsValue,
+        _model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
         Ok(None)
     }
-    fn get_model_protocol(&self, _provider: &JsString) -> Result<Option<JsValue>, ModuleError> {
+    fn get_model_protocol(&self, _provider: &JsValue) -> Result<Option<JsValue>, ModuleError> {
         Ok(None)
     }
     fn get_model_supports_prompt_cache(
         &self,
-        _provider: &JsString,
-        _model: &JsString,
+        _provider: &JsValue,
+        _model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
         Ok(None)
     }
@@ -885,53 +889,39 @@ fn serialize_metadata(
     model: &JsValue,
 ) -> Result<JsObject, ModuleError> {
     // `dispatcher:88` passes `prepared.provider` / `prepared.model` through
-    // as-is, so an override route can be `undefined` here. The lookups still
-    // run: a TS metadata port resolves them against its config by property
-    // key (`config.providers[providerId]`), so the raw route coerces to its
-    // `String()` form and every lookup misses exactly like the baseline's
-    // throw-and-catch wrappers (`ProjectSessionRuntimeBundle.ts:469-497`) —
-    // including a route whose key conversion throws, which the wrappers
-    // catch and answer `undefined`.
-    let key_provider = crate::js_value::property_key(provider);
-    let key_model = crate::js_value::property_key(model);
-    let keys = key_provider.as_ref().ok().zip(key_model.as_ref().ok());
+    // as-is, so an override route can be `undefined` — or any raw value —
+    // here. `serializeModelMetadata` (`:445-450`) hands that raw route to
+    // every defined lookup and only then validates the answers (`:451-470`);
+    // there is no pre-conversion and no lookup is skipped when the route's
+    // key conversion would throw. A route that cannot convert reaches the
+    // lookups, and each implementation answers (or throws) exactly like its
+    // TS counterpart: the baseline's catch-wrapped lookups
+    // (`ProjectSessionRuntimeBundle.ts:476-497`) answer `undefined`, while
+    // `getModelProtocol` (`:490`, no catch) lets the config index's coercion
+    // `TypeError` reject the call.
     // TS calls every lookup before validating any result (:446-453).
     let max_context = if metadata.provides(MetadataField::MaxContextTokens) {
-        defined(keys.map_or(Ok(None), |(provider, model)| {
-            metadata.get_model_max_context_tokens(provider, model)
-        })?)
+        defined(metadata.get_model_max_context_tokens(provider, model)?)
     } else {
         None
     };
     let max_output = if metadata.provides(MetadataField::MaxOutputTokens) {
-        defined(keys.map_or(Ok(None), |(provider, model)| {
-            metadata.get_model_max_output_tokens(provider, model)
-        })?)
+        defined(metadata.get_model_max_output_tokens(provider, model)?)
     } else {
         None
     };
     let token_limits = if metadata.provides(MetadataField::TokenLimits) {
-        defined(keys.map_or(Ok(None), |(provider, model)| {
-            metadata.get_model_token_limits(provider, model)
-        })?)
-        .filter(js_truthy)
+        defined(metadata.get_model_token_limits(provider, model)?).filter(js_truthy)
     } else {
         None
     };
     let protocol = if metadata.provides(MetadataField::Protocol) {
-        defined(
-            key_provider
-                .as_ref()
-                .ok()
-                .map_or(Ok(None), |provider| metadata.get_model_protocol(provider))?,
-        )
+        defined(metadata.get_model_protocol(provider)?)
     } else {
         None
     };
     let prompt_cache = if metadata.provides(MetadataField::SupportsPromptCache) {
-        defined(keys.map_or(Ok(None), |(provider, model)| {
-            metadata.get_model_supports_prompt_cache(provider, model)
-        })?)
+        defined(metadata.get_model_supports_prompt_cache(provider, model)?)
     } else {
         None
     };

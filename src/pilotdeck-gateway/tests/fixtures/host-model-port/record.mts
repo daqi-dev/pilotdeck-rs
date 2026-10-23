@@ -375,6 +375,20 @@ export async function record(baselineDir: string, scratchDir: string) {
       context: { modelOverride: ['b', 'm'] },
       scripts: [{ events: ok }],
     },
+    // Fix round 6: the dispatcher hands the raw prepared route to the
+    // metadata lookups (`sidecarDefaultModuleDispatcher.ts:88,445-450`). The
+    // composition's real metadata port wraps its capability reads in
+    // try/catch (`ProjectSessionRuntimeBundle.ts:475-497`), so those answer
+    // undefined for a route whose key conversion throws — but
+    // `getModelProtocol` (:490) has no catch: `config.providers[providerId]`
+    // (`ModelRuntime.ts:49`) throws the raw coercion TypeError and prepare
+    // rejects, while the preparation itself stays stored (dispatcher:84).
+    {
+      name: 'wire-raw-route-metadata-protocol-throw',
+      wire: true,
+      rawPreparedRoute: true,
+      scripts: [],
+    },
   ];
 
   const cases = [];
@@ -569,7 +583,13 @@ export async function record(baselineDir: string, scratchDir: string) {
               ...composition,
               model: {
                 execution: {
-                  prepare: async (input: any) => { contexts.push(input.context); return bound.execution.prepare(input); },
+                  prepare: async (input: any) => {
+                    contexts.push(input.context);
+                    const prepared = await bound.execution.prepare(input);
+                    return spec.rawPreparedRoute
+                      ? { ...prepared, provider: { toString: null } }
+                      : prepared;
+                  },
                   stream: bound.execution.stream.bind(bound.execution),
                 },
                 metadata: bound.metadata,
@@ -583,9 +603,21 @@ export async function record(baselineDir: string, scratchDir: string) {
           });
           const payload: any = { operation: 'prepare', preparationId: 'p1', request: structuredClone(baseRequest) };
           if (spec.context) payload.context = structuredClone(spec.context);
-          const response = await dispatcher.handlers.model({ payload, runId: turnId, operationId: turnId } as any);
+          // Fix round 6: a raw-route prepare can reject inside the
+          // dispatcher's metadata pass; the wire trace then carries the same
+          // `{message, code?}` face as every other error entry (errorOf).
+          let prepared: any;
+          try {
+            prepared = { response: await dispatcher.handlers.model({ payload, runId: turnId, operationId: turnId } as any) };
+          } catch (error: any) {
+            prepared = { error: errorOf(error) };
+          }
           trace.push({ kind: 'wire-context', value: contexts[0] });
-          trace.push({ kind: 'wire-prepared', value: response });
+          if (prepared.error !== undefined) {
+            trace.push({ kind: 'error', value: prepared.error });
+          } else {
+            trace.push({ kind: 'wire-prepared', value: prepared.response });
+          }
           await dispatcher.dispose();
           continue;
         }

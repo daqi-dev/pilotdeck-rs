@@ -310,50 +310,68 @@ impl RequestMaterializer for RouterModelPort {
 }
 
 impl ModelMetadata for RouterModelPort {
-    /// `ProjectSessionRuntimeBundle.ts:469-497`: every lookup catches a
-    /// failed capability read and answers `undefined`.
+    /// `ProjectSessionRuntimeBundle.ts:468-497`: the route arrives raw (the
+    /// dispatcher passes it through, `sidecarDefaultModuleDispatcher.ts:88`),
+    /// and every capability lookup wraps its read in
+    /// `try { ... } catch { return undefined }` — so a route whose config-key
+    /// conversion throws answers `None` here.
     fn get_model_max_context_tokens(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
-        // `modelContextWindow.ts:12-28`: the agent-level override wins when the
-        // route is the configured agent model.
+        // `modelContextWindow.ts:15-21`: the agent-level override wins when the
+        // raw route strictly equals the configured agent model route. The
+        // configured side is a string, so `===` is a string-value comparison.
         if let (Some(override_value), Some((agent_provider, agent_model))) = (
             self.options.agent_max_context_tokens.clone(),
             self.options.agent_model.clone(),
-        ) && &agent_provider == provider
-            && &agent_model == model
+        ) && provider
+            .as_string()
+            .is_some_and(|route| route == &agent_provider)
+            && model.as_string().is_some_and(|route| route == &agent_model)
         {
             return Ok(Some(override_value));
         }
+        let (Some(provider), Some(model)) = (caught_route_key(provider), caught_route_key(model))
+        else {
+            return Ok(None);
+        };
         Ok(capability(
             &self.model_config,
-            provider,
-            model,
+            &provider,
+            &model,
             "maxContextTokens",
         ))
     }
     fn get_model_max_output_tokens(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
+        let (Some(provider), Some(model)) = (caught_route_key(provider), caught_route_key(model))
+        else {
+            return Ok(None);
+        };
         Ok(capability(
             &self.model_config,
-            provider,
-            model,
+            &provider,
+            &model,
             "maxOutputTokens",
         ))
     }
     fn get_model_token_limits(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
+        let (Some(provider), Some(model)) = (caught_route_key(provider), caught_route_key(model))
+        else {
+            return Ok(None);
+        };
         // `getModelTokenLimits` always builds the object once capabilities
         // resolve; absent fields stay undefined like the TS record.
-        let Some(capabilities) = model_capabilities(&self.model_config, provider, model) else {
+        let Some(capabilities) = model_capabilities(&self.model_config, &provider, &model) else {
             return Ok(None);
         };
         let mut limits = JsObject::new();
@@ -368,27 +386,36 @@ impl ModelMetadata for RouterModelPort {
         }
         Ok(Some(JsValue::Object(limits)))
     }
-    fn get_model_protocol(&self, provider: &JsString) -> Result<Option<JsValue>, ModuleError> {
-        // `runtime.model.getProviderProtocol(provider)`:
-        // `config.providers[providerId]?.protocol`, `undefined` when absent.
+    fn get_model_protocol(&self, provider: &JsValue) -> Result<Option<JsValue>, ModuleError> {
+        // `runtime.model.getProviderProtocol(provider)`
+        // (`ProjectSessionRuntimeBundle.ts:490`, no try/catch):
+        // `config.providers[providerId]?.protocol` (`ModelRuntime.ts:49`) —
+        // the property-key coercion itself throws for a route whose
+        // `String()` fails, and that raw error rejects the call.
+        let provider = crate::js_value::property_key(provider)
+            .map_err(|error| ModuleError::new(error.message()))?;
         Ok(self
             .model_config
             .get("providers")
             .and_then(JsValue::as_object)
-            .and_then(|providers| providers.get_key(provider))
+            .and_then(|providers| providers.get_key(&provider))
             .and_then(|provider| provider.get("protocol"))
             .and_then(JsValue::as_string)
             .map(|protocol| JsValue::String(protocol.clone())))
     }
     fn get_model_supports_prompt_cache(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
+        let (Some(provider), Some(model)) = (caught_route_key(provider), caught_route_key(model))
+        else {
+            return Ok(None);
+        };
         Ok(capability(
             &self.model_config,
-            provider,
-            model,
+            &provider,
+            &model,
             "supportsPromptCache",
         ))
     }
@@ -876,6 +903,13 @@ fn context_string(context: &JsObject, key: &str) -> Option<JsString> {
 
 fn field_string(object: &JsObject, key: &str) -> Option<JsString> {
     object.get(key).and_then(JsValue::as_string).cloned()
+}
+
+/// The raw route's config-index key, or `None` when its `String()` conversion
+/// throws — the `try { ... } catch { return undefined }` wrappers of
+/// `ProjectSessionRuntimeBundle.ts:475-497` answer `undefined` for it.
+fn caught_route_key(value: &JsValue) -> Option<JsString> {
+    crate::js_value::property_key(value).ok()
 }
 
 /// `config.providers[provider].models[model].capabilities`, or `None` when

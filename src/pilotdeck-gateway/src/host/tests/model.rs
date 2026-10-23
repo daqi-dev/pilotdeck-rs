@@ -155,60 +155,39 @@ impl ModelMetadata for FakeMetadata {
             .and_then(JsValue::as_object)
             .is_some_and(|metadata| metadata.contains_key(key))
     }
+    // The dispatcher hands the raw prepared route to every lookup
+    // (`sidecarDefaultModuleDispatcher.ts:88,445-450`), so the logged args are
+    // the raw route values, exactly like the TS fixture's fake.
     fn get_model_max_context_tokens(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
-        self.field(
-            "maxContextTokens",
-            vec![
-                JsValue::String(provider.clone()),
-                JsValue::String(model.clone()),
-            ],
-        )
+        self.field("maxContextTokens", vec![provider.clone(), model.clone()])
     }
     fn get_model_max_output_tokens(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
-        self.field(
-            "maxOutputTokens",
-            vec![
-                JsValue::String(provider.clone()),
-                JsValue::String(model.clone()),
-            ],
-        )
+        self.field("maxOutputTokens", vec![provider.clone(), model.clone()])
     }
     fn get_model_token_limits(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
-        self.field(
-            "tokenLimits",
-            vec![
-                JsValue::String(provider.clone()),
-                JsValue::String(model.clone()),
-            ],
-        )
+        self.field("tokenLimits", vec![provider.clone(), model.clone()])
     }
-    fn get_model_protocol(&self, provider: &JsString) -> Result<Option<JsValue>, ModuleError> {
-        self.field("protocol", vec![JsValue::String(provider.clone())])
+    fn get_model_protocol(&self, provider: &JsValue) -> Result<Option<JsValue>, ModuleError> {
+        self.field("protocol", vec![provider.clone()])
     }
     fn get_model_supports_prompt_cache(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
-        self.field(
-            "supportsPromptCache",
-            vec![
-                JsValue::String(provider.clone()),
-                JsValue::String(model.clone()),
-            ],
-        )
+        self.field("supportsPromptCache", vec![provider.clone(), model.clone()])
     }
 }
 impl ModelExecution for FakeExecution {
@@ -358,7 +337,7 @@ async fn execution_context_preserves_js_values_like_real_ts() {
 async fn replay_scenarios(filter: Option<&str>) {
     let oracle = oracle();
     let scenarios = array(&oracle, "scenarios");
-    assert_eq!(scenarios.len(), 41);
+    assert_eq!(scenarios.len(), 43);
     let mut call_count = 0;
     for scenario in scenarios {
         let name = text(scenario, "name");
@@ -495,10 +474,16 @@ async fn replay_scenarios(filter: Option<&str>) {
         }
     }
     if filter.is_none() {
-        assert_eq!(call_count, 131);
+        assert_eq!(call_count, 134);
     } else {
         assert!(call_count > 0, "scenario filter must match");
     }
+}
+
+#[tokio::test]
+async fn raw_route_metadata_lookups_match_real_ts() {
+    replay_scenarios(Some("prepare_metadata_raw_route_invalid")).await;
+    replay_scenarios(Some("prepare_metadata_raw_route_valid")).await;
 }
 
 #[tokio::test]

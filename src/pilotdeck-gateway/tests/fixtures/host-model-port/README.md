@@ -12,7 +12,7 @@ transcript 逐字节可比）。HTTP 场景把 providers 指向本进程独占�
 与 `sourceClosureSha256` 固定 651 项相对 import 闭包，并断言 en-US locale。生成目录由
 调用者独占提供；生成器用 `wx` 拒绝覆盖，没有删除动作。
 
-## 覆盖（41 个场景）
+## 覆盖（42 个场景）
 
 文本流、工具调用 delta、`modelOverride` 显式路由（含 subagent 位）、provider error 事件
 后的 fallback、抛出网络错误的 fallback 与终态、`managedModelPolicy` 拒绝（execute 内
@@ -44,6 +44,14 @@ yield 之后），`return()` 丢弃其余。
 真值（`'x'`，读 `.provider` / `.model` 得 `undefined`，键序列化时省略）、`null`（假值，照常
 走 `router.decide`）、空对象 `{}`（真值，两键均 `undefined`）。半路由（缺 provider 或缺
 model）跳过 capabilities 钳制（`getCapabilities` 抛错被捕获，`maxOutputTokens` 保持 100）。
+
+修复轮 6 追加一个线侧场景 `wire-raw-route-metadata-protocol-throw`：注入的 execution 返回
+raw prepared 路由（`{toString:null}` provider），dispatcher 把它原样交给 metadata 分发
+（`sidecarDefaultModuleDispatcher.ts:88,445-450`）。组合的真实 metadata 端口里四个能力查询
+被 `try/catch` 包裹（`ProjectSessionRuntimeBundle.ts:475-497`，答 `undefined`），而
+`getModelProtocol`（`:490`，无 catch）在 `config.providers[providerId]`（`ModelRuntime.ts:49`）
+的属性键转换处抛出 raw `TypeError: Cannot convert object to primitive value`，prepare 以该错误
+拒绝；preparation 本身已存（dispatcher:84），router 决策照常入 trace，0 次 provider 调用。
 
 修复轮 5 追加十个场景，两层各半：进程内（`routerModelInvokerAdapter`）与宿主模块线
 （真实 `createSidecarDefaultModuleDispatcher` 驱动 `Handler::call` 的 payload/call，捕获
@@ -83,7 +91,7 @@ cmp /tmp/<owned-run-1>/oracle.json src/pilotdeck-gateway/tests/fixtures/host-mod
 ```
 
 本次入库的两次运行哈希（SHA256）：
-`46233d1758e5a6d526ab8de0bd27785ef790526c578a65c3330de4284e06677d`。
+`70696bbf653db32e5e40f177f5d5bb1e2786e7a8d3be79e116c1e09cec462d55`。
 
 常规回放复用 `tests/common/baseline.rs` 的 `oracle()`；未设 `PDRS_BASELINE` 时仅检查固定
 commit 与哈希结构，不调用 Git。Rust 回放见 `tests/host_model_port.rs`（HTTP 场景在测试内

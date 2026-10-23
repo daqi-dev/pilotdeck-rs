@@ -6945,6 +6945,49 @@
       ],
       "calls": [],
       "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n"
+    },
+    {
+      "spec": {
+        "name": "wire-raw-route-metadata-protocol-throw",
+        "wire": true,
+        "rawPreparedRoute": true,
+        "scripts": []
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "wire-context",
+          "value": {
+            "sessionId": "s1",
+            "turnId": "t1",
+            "runId": "t1",
+            "operationId": "t1"
+          }
+        },
+        {
+          "kind": "error",
+          "value": {
+            "message": "Cannot convert object to primitive value"
+          }
+        }
+      ],
+      "calls": [],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n"
     }
   ]
 }

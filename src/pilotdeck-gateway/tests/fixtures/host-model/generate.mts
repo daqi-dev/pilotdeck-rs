@@ -280,6 +280,39 @@ scenario('prepare_metadata_error_keeps_preparation', {
   { payload: { operation: 'materialize_prepared_request', preparationId: 'kept', request: req('provider-b', 'model-b') } },
 ]);
 
+// Fix round 6: the dispatcher hands the raw prepared route to every defined
+// metadata lookup (`sidecarDefaultModuleDispatcher.ts:88,445-450`) and only
+// then validates the answers (`:451-470`) — no pre-conversion, no lookup
+// skipped for a route whose `String()` conversion would throw. The fake
+// lookups here are parameter-independent, like an injected port that ignores
+// its arguments, so the logged args are the raw route values.
+scenario('prepare_metadata_raw_route_invalid', {
+  metadata: {
+    maxContextTokens: 0, maxOutputTokens: 8192,
+    tokenLimits: { maxContextTokens: 200000, maxOutputTokens: 8192 },
+    protocol: 'anthropic', supportsPromptCache: true,
+  },
+  prepares: [{ ok: prepared(req(), { toString: null }, 'model-a') }], streams: [],
+}, [
+  // All five lookups run before the invalid answer rejects the call
+  // (dispatcher:446-451); the preparation itself was already stored (:84),
+  // so the fallback materialize still answers — and its canonical-request
+  // check rejects the non-string route (dispatcher:443).
+  { payload: { operation: 'prepare', preparationId: 'raw-invalid', request: req() } },
+  { payload: { operation: 'materialize_prepared_request', preparationId: 'raw-invalid', request: req('provider-b', 'model-b') } },
+]);
+
+scenario('prepare_metadata_raw_route_valid', {
+  metadata: {
+    maxContextTokens: 200000, maxOutputTokens: 8192,
+    tokenLimits: { maxContextTokens: 200000, maxOutputTokens: 8192 },
+    protocol: 'anthropic', supportsPromptCache: true,
+  },
+  prepares: [{ ok: prepared(req(), { toString: null }, 42) }], streams: [],
+}, [
+  { payload: { operation: 'prepare', preparationId: 'raw-ok', request: req() } },
+]);
+
 scenario('stream_operation', {
   metadata: null,
   prepares: [{ ok: prepared(req()) }],

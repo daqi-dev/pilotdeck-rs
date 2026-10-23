@@ -270,17 +270,31 @@ fn error_entry(error: &ModuleError) -> JsValue {
 /// Wraps the composed execution for wire specs, capturing the context each
 /// `prepare` receives — the context `Handler::call` rebuilt via
 /// `execution_context`, the port of `sidecarDefaultModuleDispatcher.ts:441`.
+/// `raw_route` answers the prepared invocation with a provider whose
+/// `String()` conversion throws, like the TS generator's `rawPreparedRoute`
+/// wrapper, so the dispatcher's metadata pass receives the raw route.
 struct CapturingExecution {
     inner: Arc<dyn ModelExecution>,
     contexts: Trace,
+    raw_route: bool,
 }
 impl ModelExecution for CapturingExecution {
     fn prepare(&self, input: PrepareInput) -> ModelFuture<PreparedInvocation> {
+        let raw_route = self.raw_route;
         self.contexts
             .lock()
             .unwrap()
             .push(JsValue::Object(input.context.clone()));
-        self.inner.prepare(input)
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            let mut prepared = inner.prepare(input).await?;
+            if raw_route {
+                let mut provider = JsObject::new();
+                provider.insert("toString".into(), JsValue::Null);
+                prepared.provider = JsValue::Object(provider);
+            }
+            Ok(prepared)
+        })
     }
     fn stream(&self, input: StreamInput) -> ModelFuture<Box<dyn ModelStream>> {
         self.inner.stream(input)
@@ -501,6 +515,7 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                     Arc::new(CapturingExecution {
                         inner: execution.clone(),
                         contexts: captured.clone(),
+                        raw_route: get(&spec, "rawPreparedRoute") == &JsValue::Bool(true),
                     }),
                     metadata.clone(),
                     TurnContext {
@@ -520,16 +535,7 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                 call.insert("payload".into(), JsValue::Object(payload));
                 call.insert("runId".into(), JsValue::String(turn_id.clone()));
                 call.insert("operationId".into(), JsValue::String(turn_id.clone()));
-                let response = match handler.call(JsValue::Object(call)).await {
-                    Ok(response) => response,
-                    Err(error) => {
-                        trace
-                            .lock()
-                            .unwrap()
-                            .push(error_entry(&ModuleError::new(error.message.clone())));
-                        continue;
-                    }
-                };
+                let result = handler.call(JsValue::Object(call)).await;
                 let context = captured
                     .lock()
                     .unwrap()
@@ -541,10 +547,23 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                     .lock()
                     .unwrap()
                     .push(obj(&[("kind", "wire-context".into()), ("value", context)]));
-                trace.lock().unwrap().push(obj(&[
-                    ("kind", "wire-prepared".into()),
-                    ("value", JsValue::Object(response)),
-                ]));
+                match result {
+                    Ok(response) => {
+                        trace.lock().unwrap().push(obj(&[
+                            ("kind", "wire-prepared".into()),
+                            ("value", JsValue::Object(response)),
+                        ]));
+                    }
+                    // Fix round 6: a raw-route prepare can reject in the
+                    // dispatcher's metadata pass; the TS generator traces the
+                    // same `{message, code?}` face (`errorOf`).
+                    Err(error) => {
+                        trace
+                            .lock()
+                            .unwrap()
+                            .push(error_entry(&ModuleError::new(error.message.clone())));
+                    }
+                }
                 continue;
             }
             let context = turn_context(&spec, &turn_id);
@@ -581,6 +600,12 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                 for (provider, model) in [("a", "m"), ("b", "m"), ("x", "m")] {
                     let provider: JsString = provider.into();
                     let model: JsString = model.into();
+                    // The lookups take the raw route; the TS driver passes its
+                    // own string routes here.
+                    let (provider, model) = (
+                        JsValue::String(provider.clone()),
+                        JsValue::String(model.clone()),
+                    );
                     let lookups = [
                         (
                             "maxContextTokens",
@@ -622,8 +647,8 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                         trace.lock().unwrap().push(obj(&[
                             ("kind", "metadata".into()),
                             ("field", field.into()),
-                            ("provider", JsValue::String(provider.clone())),
-                            ("model", JsValue::String(model.clone())),
+                            ("provider", provider.clone()),
+                            ("model", model.clone()),
                             ("value", value),
                         ]));
                     }
@@ -796,7 +821,7 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
 async fn port_sequences_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let cases = items(get(&oracle, "cases"));
-    assert_eq!(cases.len(), 41);
+    assert_eq!(cases.len(), 42);
     for case in cases {
         replay_case(case, &oracle).await.unwrap();
     }
