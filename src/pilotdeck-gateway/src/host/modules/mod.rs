@@ -6,6 +6,7 @@ pub mod capability;
 pub mod context;
 pub mod event;
 pub mod lifecycle;
+pub mod manifest;
 pub mod model;
 pub mod permission;
 pub mod tool_context;
