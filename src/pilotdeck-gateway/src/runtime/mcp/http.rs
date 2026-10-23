@@ -204,9 +204,12 @@ async fn fetch_once(
 }
 
 /// The scheme's default port (undici's `port = port || 443` / `|| 80`) and the
-/// peer address in Node's `host:port` form. `http::Uri::host()` keeps IPv6
-/// brackets (`[::1]`); the guard also brackets an unbracketed `::1` so the
-/// composed string cannot become the ambiguous `::1:443`.
+/// peer address in the form Node prints. `http::Uri::host()` keeps IPv6
+/// brackets (`[::1]`), but Node v22 renders the bare address in both
+/// `connect ECONNREFUSED ::1:443` (net) and
+/// `Connect Timeout Error (attempted address: ::1:443, …)` (undici), so the
+/// brackets are stripped. Both forms were measured against the fixed TS
+/// baseline; `https-sse-refused-ipv6` pins the refused one.
 fn target_address(target: &hyper::Uri) -> String {
     let default_port = match target.scheme_str() {
         Some("https") => 443,
@@ -214,11 +217,11 @@ fn target_address(target: &hyper::Uri) -> String {
     };
     let port = target.port_u16().unwrap_or(default_port);
     let host = target.host().unwrap_or_default();
-    if host.contains(':') && !host.starts_with('[') {
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    }
+    let host = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(host);
+    format!("{host}:{port}")
 }
 
 /// Every error reachable from `root`, following both `source()` and the
@@ -2549,7 +2552,7 @@ mod tests {
     }
 
     #[test]
-    fn failure_addresses_use_the_scheme_default_and_bracket_ipv6() {
+    fn failure_addresses_use_the_scheme_default_and_node_form_for_ipv6() {
         let uri = |raw: &str| -> hyper::Uri { raw.parse().unwrap() };
         assert_eq!(
             target_address(&uri("https://127.0.0.1/sse")),
@@ -2560,8 +2563,10 @@ mod tests {
             target_address(&uri("https://example.com:8443/sse")),
             "example.com:8443"
         );
-        assert_eq!(target_address(&uri("https://[::1]/sse")), "[::1]:443");
-        assert_eq!(target_address(&uri("http://[::1]:8080/sse")), "[::1]:8080");
+        // Node prints the bare address (no IPv6 brackets) in both the
+        // ECONNREFUSED and the connect-timeout texts.
+        assert_eq!(target_address(&uri("https://[::1]/sse")), "::1:443");
+        assert_eq!(target_address(&uri("http://[::1]:8080/sse")), "::1:8080");
     }
 
     #[test]

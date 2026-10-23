@@ -15,9 +15,10 @@
 //! (initialize, tools/list, tools/call), `http:`→`https:` and `https:`→`http:`
 //! 307/308 redirects (method/body preserved, cross-origin `authorization`
 //! dropped), a 307 SSE redirect, TLS handshakes that stall (10 s connect
-//! deadline shared with the hooks transport), refused TLS ports (explicit and
-//! https's default 443), and the legacy SSE first-connect error causes
-//! (self-signed certificate, connect timeout, refused) the SDK's
+//! deadline shared with the hooks transport), refused TLS ports (explicit,
+//! https's default 443, and an IPv6 `[::1]` peer whose message must use
+//! Node's bare `::1:<port>` form), and the legacy SSE first-connect error
+//! causes (self-signed certificate, connect timeout, refused) the SDK's
 //! `EventSource` flattens into `SSE error: TypeError: fetch failed: …`.
 
 #[path = "common/baseline.rs"]
@@ -105,15 +106,34 @@ struct Host {
     other: String,
     authority: String,
     placeholder: &'static str,
+    /// A bracketed IPv6 authority in a message (the wrong Rust form) keeps its
+    /// brackets but loses the port, so the diff still shows them.
+    authority_scrub: String,
+    /// Node prints an IPv6 peer without brackets; scrub only its port so the
+    /// oracle keeps pinning the bare `::1` form.
+    message_address: Option<String>,
+    message_replacement: Option<String>,
 }
-fn add_host(hosts: &mut Vec<Host>, scheme: &str, port: u16, placeholder: &'static str) {
-    let authority = format!("127.0.0.1:{port}");
+fn add_host(hosts: &mut Vec<Host>, scheme: &str, host: &str, port: u16, placeholder: &'static str) {
+    let bracketed = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    };
+    let authority = format!("{bracketed}:{port}");
     let other = if scheme == "https" { "http" } else { "https" };
     hosts.push(Host {
         origin: format!("{scheme}://{authority}"),
         other: format!("{other}://{authority}"),
         authority,
         placeholder,
+        authority_scrub: if host.contains(':') {
+            format!("{bracketed}:{placeholder}")
+        } else {
+            placeholder.to_owned()
+        },
+        message_address: host.contains(':').then(|| format!("{host}:{port}")),
+        message_replacement: host.contains(':').then(|| format!("{host}:{placeholder}")),
     });
 }
 /// The oracle's URL templates carry the scheme; only the authority is filled.
@@ -133,7 +153,12 @@ fn scrub(value: &JsValue, hosts: &[Host]) -> JsValue {
             out = out
                 .replace(&host.origin, host.placeholder)
                 .replace(&host.other, host.placeholder)
-                .replace(&host.authority, host.placeholder);
+                .replace(&host.authority, &host.authority_scrub);
+            if let (Some(address), Some(replacement)) =
+                (&host.message_address, &host.message_replacement)
+            {
+                out = out.replace(address, replacement);
+            }
         }
         out
     })
@@ -393,6 +418,14 @@ fn closed_origin() -> String {
     format!("https://{address}")
 }
 
+/// A `::1` port that is closed again before use; the IPv6 refused case needs
+/// loopback IPv6 on the host.
+fn closed_port6() -> u16 {
+    let listener = TcpListener::bind(("::1", 0))
+        .expect("the https-sse-refused-ipv6 oracle needs a loopback ::1");
+    listener.local_addr().unwrap().port()
+}
+
 // ------------------------------------------------------------------- ops
 
 type Fields = Vec<(&'static str, JsValue)>;
@@ -470,7 +503,7 @@ async fn replays_ts_mcp_https_over_local_tls() {
     );
     let oracle = oracle();
     let cases = array(field(&oracle, "cases"), "cases");
-    assert_eq!(cases.len(), 12);
+    assert_eq!(cases.len(), 13);
     let (roots, server_config) = tls_material();
     let untrusted_tls = fixture_path("tests/fixtures/mcp-https/untrusted-tls.json");
     let trusted_tls = fixture_path("tests/fixtures/model-stream/tls.json");
@@ -513,6 +546,7 @@ async fn replays_ts_mcp_https_over_local_tls() {
             add_host(
                 &mut hosts,
                 if mock_tls { "https" } else { "http" },
+                "127.0.0.1",
                 mock.port,
                 "<mock>",
             );
@@ -536,20 +570,41 @@ async fn replays_ts_mcp_https_over_local_tls() {
                 ),
                 (scheme == "https").then(|| server_config.clone()),
             );
-            add_host(&mut hosts, scheme, port_of(&server.origin), "<redirect>");
+            add_host(
+                &mut hosts,
+                scheme,
+                "127.0.0.1",
+                port_of(&server.origin),
+                "<redirect>",
+            );
             _redirect = Some(server);
         }
         let mut _stall = None;
         if stall {
             let server = start_stall();
-            add_host(&mut hosts, "https", port_of(&server.origin), "<stall>");
+            add_host(
+                &mut hosts,
+                "https",
+                "127.0.0.1",
+                port_of(&server.origin),
+                "<stall>",
+            );
             _stall = Some(server);
         }
         let mut _closed = None;
         if closed {
             let origin = closed_origin();
-            add_host(&mut hosts, "https", port_of(&origin), "<closed>");
+            add_host(
+                &mut hosts,
+                "https",
+                "127.0.0.1",
+                port_of(&origin),
+                "<closed>",
+            );
             _closed = Some(origin);
+        }
+        if field(case, "closed6").as_bool().unwrap_or(false) {
+            add_host(&mut hosts, "https", "::1", closed_port6(), "<closed6>");
         }
 
         let url = string(
@@ -606,7 +661,7 @@ async fn replays_ts_mcp_https_over_local_tls() {
         requests_seen += actual.len();
         drop(mock);
     }
-    assert_eq!(steps_seen, 42);
+    assert_eq!(steps_seen, 45);
     assert_eq!(requests_seen, 30);
 }
 

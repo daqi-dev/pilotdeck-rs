@@ -30,16 +30,16 @@ LANG=en_US.UTF-8 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs"
 HEAD==`cc7c4e6`、已跟踪文件干净）与 `sourceClosureSha256`（本夹具依赖 6 个 TS 文件），并断言
 en-US locale、SDK 版本与 Node 版本。legacy SSE 用全局 `fetch`，其信任库只在进程启动时读取
 `NODE_EXTRA_CA_CERTS`，因此生成器先以该变量指向临时 PEM 复执行一次自己；临时目录在子进程
-退出后删除。端口与源替换成 `<mock>`/`<redirect>`/`<stall>`/`<closed>`，两次独立运行逐字节一致
-（2026-10-23 修复轮 1 实测两次均为
-sha256 `92e1759a3b60501d8a20cc0d82ce2f59c0ce2398e3812c9da07ceebc2a77272b`）。
+退出后删除。端口与源替换成 `<mock>`/`<redirect>`/`<stall>`/`<closed>`/`<closed6>`，两次独立运行逐字节一致
+（2026-10-23 修复轮 2 实测两次均为
+sha256 `f30e5d63c1ca0f52db8812db3e52c142f4434279a03d10287c86b38764af4155`）。
 
 证书材料：受信场景复用 `../model-stream/tls.json` 的一次性测试 CA/叶子（`127.0.0.1` SAN，
 非凭据）；证书错误场景用本目录 `untrusted-tls.json` 的一次性自签叶子（无 CA 签、不被任何
 信任库接受，非凭据）。Rust 回放通过 `McpClient::with_tls_roots` 只信任该夹具 CA；生产
 `McpClient::new()` 仍用 `webpki-roots`（Mozilla 捆绑根），夹具 CA 不会进入生产信任源。
 
-## 用例（12）
+## 用例（13）
 
 回放服务器是 `../mcp-client/mock_server.mjs` 的 `--http` + `MOCK_TLS` 模式（同一份脚本 TS / Rust
 两侧共用），重定向、TLS 握手卡住与拒绝端口由回放测试自带的回环服务器复现。
@@ -68,6 +68,9 @@ sha256 `92e1759a3b60501d8a20cc0d82ce2f59c0ce2398e3812c9da07ceebc2a77272b`）。
   `… fetch failed: Connect Timeout Error (attempted address: <stall>, timeout: 10000ms)`；0 个请求。
 - `https-sse-refused`：SSE GET 到已关闭的显式端口 → `… fetch failed: connect ECONNREFUSED <closed>`；
   0 个请求。
+- `https-sse-refused-ipv6`：SSE GET 到 `https://[::1]:<端口>/sse`（`::1` 上先绑定再关闭的端口）→
+  `… fetch failed: connect ECONNREFUSED ::1:<closed6>`。Node 的报错地址不带方括号；金样保留裸
+  `::1`，只把端口替换成 `<closed6>`，因此 Rust 一旦拼成 `[::1]:…` 就会转红；0 个请求。
 - `https-sse-default-port`：`https://127.0.0.1/sse`（无显式端口）→
   `… fetch failed: connect ECONNREFUSED 127.0.0.1:443`，钉住 https 的默认端口。生成器先断言本机
   443 未监听，回放同样要求 443 空闲；0 个请求。
@@ -75,17 +78,18 @@ sha256 `92e1759a3b60501d8a20cc0d82ce2f59c0ce2398e3812c9da07ceebc2a77272b`）。
 ## 回放与负控
 
 回放：`tests/mcp_https.rs` 的 `replays_ts_mcp_https_over_local_tls`（逐步骤按
-`JSON.stringify` 比较，再逐条比较服务端请求日志；12 场景 / 42 步 / 30 个请求），
+`JSON.stringify` 比较，再逐条比较服务端请求日志；13 场景 / 45 步 / 30 个请求），
 `production_roots_do_not_trust_the_fixture_ca`（生产根拒绝夹具 CA），以及 `#[ignore]` 的
 `mcp_https_fixtures_regenerate_identically_from_ts`（设 `PDRS_BASELINE` 后重跑真实 TS 一次并与
-入库逐字节比较；两次独立运行逐字节一致的记录见 RESULT「修复轮 1」）。回放需要 PATH 上有
+入库逐字节比较；两次独立运行逐字节一致的记录见 RESULT「修复轮 2」）。回放需要 PATH 上有
 `node`（>= 18）。
 
-负控（修复轮 1 实测，详见 RESULT）：把 `target_address` 的默认端口改回固定 80 时
+负控（修复轮 1/2 实测，详见 RESULT）：把 `target_address` 的默认端口改回固定 80 时
 `https-sse-default-port` 转红；把 SSE 的 connect-timeout / 自签证书 / 拒连 cause 文本分别去掉时
 `https-sse-handshake-stall`、`https-sse-certificate`、`https-sse-refused` 分别在 start 转红；
-把 IPv6 主机去掉方括号时单元测试
-`failure_addresses_use_the_scheme_default_and_bracket_ipv6` 转红。
+把 IPv6 主机改回带方括号（`[::1]:<port>`）时单元测试
+`failure_addresses_use_the_scheme_default_and_node_form_for_ipv6` 与
+`https-sse-refused-ipv6` 都会转红。
 
 ## 已知未对齐（未批准，见 RESULT 修复轮 1）
 

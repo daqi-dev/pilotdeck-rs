@@ -290,6 +290,16 @@ const scenarios = [
     ops: [{ op: 'start' }, { op: 'status' }, { op: 'close' }],
   },
   {
+    // IPv6 peer: Node prints `connect ECONNREFUSED ::1:<port>` — no brackets
+    // around the address even though the URL spells it `https://[::1]:…`.
+    id: 'https-sse-refused-ipv6',
+    transport: 'sse',
+    url: 'https://<closed6>/sse',
+    closed6: true,
+    script: {},
+    ops: [{ op: 'start' }, { op: 'status' }, { op: 'close' }],
+  },
+  {
     // No explicit port: the failure text must name https's default 443.
     id: 'https-sse-default-port',
     transport: 'sse',
@@ -394,6 +404,18 @@ async function closedPort() {
   return port;
 }
 
+/** The same on IPv6 loopback; the case needs `::1` to be available. */
+async function closedPort6() {
+  const server = createNetServer();
+  await new Promise((ready, fail) => {
+    server.once('error', fail);
+    server.listen(0, '::1', ready);
+  });
+  const port = server.address().port;
+  await new Promise((done) => server.close(() => done()));
+  return port;
+}
+
 /** Placeholders for this run's loopback endpoints. */
 let hosts = [];
 /** Every real origin this run used, to prove none leaked into the oracle. */
@@ -404,7 +426,12 @@ function scrub(value) {
     for (const host of hosts) {
       out = out.split(host.origin).join(host.placeholder)
         .split(host.other).join(host.placeholder)
-        .split(host.authority).join(host.placeholder);
+        .split(host.authority).join(host.authorityScrub);
+      // Node's error text spells an IPv6 peer without brackets; scrub only
+      // the port so the oracle still pins the bare `::1` form.
+      if (host.messageAddress) {
+        out = out.split(host.messageAddress).join(host.messageReplacement);
+      }
     }
     return out;
   }
@@ -476,12 +503,26 @@ try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'script.json'), JSON.stringify({ http: scenario.script }));
     hosts = [];
-    const addHost = (scheme, port, placeholder) => {
-      const authority = `127.0.0.1:${port}`;
+    const addHost = (scheme, port, placeholder, host = '127.0.0.1') => {
+      const bracketed = host.includes(':') ? `[${host}]` : host;
+      const authority = `${bracketed}:${port}`;
       const origin = `${scheme}://${authority}`;
       const other = `${scheme === 'https' ? 'http' : 'https'}://${authority}`;
-      hosts.push({ origin, other, authority, placeholder });
+      const bareAuthority = `${host}:${port}`;
+      hosts.push({
+        origin,
+        other,
+        authority,
+        placeholder,
+        // A bracketed IPv6 authority in a message (the wrong Rust form) keeps
+        // its brackets but loses the port, so the diff still shows them.
+        authorityScrub: host.includes(':') ? `${bracketed}:${placeholder}` : placeholder,
+        ...(host.includes(':')
+          ? { messageAddress: bareAuthority, messageReplacement: `${host}:${placeholder}` }
+          : {}),
+      });
       origins.push(origin, other, authority);
+      if (host.includes(':')) origins.push(bareAuthority);
     };
     const mock = scenario.mockTls || scenario.redirect
       ? await startMock(dir, scenario.mockTls ? (scenario.untrustedTls ? UNTRUSTED_TLS : TLS) : undefined)
@@ -508,6 +549,9 @@ try {
     if (scenario.closed) {
       closed = await closedPort();
       addHost('https', closed, '<closed>');
+    }
+    if (scenario.closed6) {
+      addHost('https', await closedPort6(), '<closed6>', '::1');
     }
     let steps = [];
     try {
@@ -549,6 +593,7 @@ try {
       redirect: scenario.redirect ?? null,
       stall: !!scenario.stall,
       closed: !!scenario.closed,
+      closed6: !!scenario.closed6,
       script: scenario.script,
       ops: scenario.ops,
       steps: scrub(steps),

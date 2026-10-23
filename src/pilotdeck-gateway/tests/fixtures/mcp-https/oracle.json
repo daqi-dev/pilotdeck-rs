@@ -24,6 +24,7 @@
       "redirect": null,
       "stall": false,
       "closed": false,
+      "closed6": false,
       "script": {
         "initialize": [
           {
@@ -235,6 +236,7 @@
       "redirect": null,
       "stall": false,
       "closed": false,
+      "closed6": false,
       "script": {
         "GET /sse": [
           {
@@ -413,6 +415,7 @@
       },
       "stall": false,
       "closed": false,
+      "closed6": false,
       "script": {
         "initialize": [
           {
@@ -617,6 +620,7 @@
       },
       "stall": false,
       "closed": false,
+      "closed6": false,
       "script": {
         "initialize": [
           {
@@ -817,6 +821,7 @@
       "redirect": null,
       "stall": true,
       "closed": false,
+      "closed6": false,
       "script": {},
       "ops": [
         {
@@ -870,6 +875,7 @@
       "redirect": null,
       "stall": false,
       "closed": true,
+      "closed6": false,
       "script": {},
       "ops": [
         {
@@ -929,6 +935,7 @@
       },
       "stall": false,
       "closed": false,
+      "closed6": false,
       "script": {
         "initialize": [
           {
@@ -1132,6 +1139,7 @@
       },
       "stall": false,
       "closed": false,
+      "closed6": false,
       "script": {
         "GET /sse": [
           {
@@ -1304,6 +1312,7 @@
       "redirect": null,
       "stall": false,
       "closed": false,
+      "closed6": false,
       "script": {},
       "ops": [
         {
@@ -1359,6 +1368,7 @@
       "redirect": null,
       "stall": true,
       "closed": false,
+      "closed6": false,
       "script": {},
       "ops": [
         {
@@ -1412,6 +1422,7 @@
       "redirect": null,
       "stall": false,
       "closed": true,
+      "closed6": false,
       "script": {},
       "ops": [
         {
@@ -1455,6 +1466,60 @@
       "requests": []
     },
     {
+      "id": "https-sse-refused-ipv6",
+      "transport": "sse",
+      "url": "https://<closed6>/sse",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "untrustedTls": false,
+      "redirect": null,
+      "stall": false,
+      "closed": false,
+      "closed6": true,
+      "script": {},
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "status"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: TypeError: fetch failed: connect ECONNREFUSED ::1:<closed6>"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": []
+    },
+    {
       "id": "https-sse-default-port",
       "transport": "sse",
       "url": "https://127.0.0.1/sse",
@@ -1465,6 +1530,7 @@
       "redirect": null,
       "stall": false,
       "closed": false,
+      "closed6": false,
       "script": {},
       "ops": [
         {
