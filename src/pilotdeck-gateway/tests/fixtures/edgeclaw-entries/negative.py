@@ -2,7 +2,9 @@
 """Mutate one production behavior at a time, require a runtime assertion, restore bytes.
 Run from repository root after normal entries tests pass. Logs stay in --out.
 """
-import argparse, hashlib, json, os, pathlib, subprocess
+import argparse, hashlib, json, os, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
 p=argparse.ArgumentParser();p.add_argument('--out',required=True);args=p.parse_args()
 root=pathlib.Path(__file__).resolve().parents[5];os.chdir(root)
 out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=True)
@@ -11,7 +13,7 @@ e=base/'storage/entries.rs';a=base/'storage/accessors.rs';f=base/'file_memory.rs
 mutations=[
  ('exposed-prefix',e,'"global/".encode_utf16().collect()','"broken/".encode_utf16().collect()','entry-lifecycle'),
  ('global-classification',e,'&& matches!(id.units()[6], 47 | 92)','&& false','entry-lifecycle'),
- ('records-global-map',e,'.map(map_record)','.map(|record| record)','entry-lifecycle'),
+ ('records-global-map',e,'.map(map_record)','.map(Ok)','entry-lifecycle'),
  ('io-message',f,'Some((_, message)) => write!(f, "{message}"),','Some((_, _message)) => write!(f, "{e}"),','edit-entry-write-fail'),
  ('count-cap',e,'input.insert("limit".into(), JsValue::Number(5000.0));','input.insert("limit".into(), JsValue::Number(1.0));','entry-lifecycle'),
  ('record-duplicates',e,'ids.iter().filter_map(|id| by_id.get(id).cloned()).collect()','ids.iter().filter_map(|id| by_id.get(id).cloned()).take(1).collect()','entry-lifecycle'),
@@ -19,7 +21,7 @@ mutations=[
  ('edit-meta',e,'self.snapshot_operation(|| self.workspace_memory.edit_project_meta(input))','self.snapshot_operation(|| self.workspace_memory.ensure_project_meta(input))','entry-lifecycle'),
  ('ensure-meta',e,'self.snapshot_operation(|| self.workspace_memory.ensure_project_meta(input))','self.get_project_meta().map(|_| {let _ = input;JsValue::Null})','empty-meta'),
  ('read-meta',e,'self.workspace_memory.get_project_meta(&JsObject::new())','Ok(JsValue::Null)','entry-lifecycle'),
- ('edit-global-map',e,'map_record(record)','record','entry-lifecycle'),
+ ('edit-global-map',e,'map_record(record)','Ok(record)','entry-lifecycle'),
  ('delete',e,'self.mutate_entries(ids, "deleteEntries")','self.mutate_entries(ids, "restoreEntries")','entry-lifecycle'),
  ('deprecate',e,'self.mutate_entries(ids, "markEntriesDeprecated")','self.mutate_entries(ids, "restoreEntries")','entry-lifecycle'),
  ('restore',e,'self.mutate_entries(ids, "restoreEntries")','self.mutate_entries(ids, "markEntriesDeprecated")','entry-lifecycle'),
@@ -38,11 +40,11 @@ try:
  for name,path,old,new,case in mutations:
   text=originals[path].decode();assert text.count(old)==1,(name,text.count(old));path.write_text(text.replace(old,new))
   env=os.environ.copy();env['PDRS_ENTRIES_CASE']=case
-  slot=subprocess.run([str(root/'scripts/cargo-slots.sh')],capture_output=True,text=True)
+  slot=wait_for_slot(root/'scripts/cargo-slots.sh')
   if slot.returncode:raise RuntimeError('cargo slots full')
   cmd=['cargo','test','--manifest-path','src/Cargo.toml','--locked','--offline','-p','pilotdeck-gateway','--test','edgeclaw_entries','--','--exact','ts_entries_and_failure_residue_replay','--nocapture']
   try:
-   run=subprocess.run(cmd,env=env,capture_output=True,text=True,timeout=100)
+   run=run_owned(cmd,env=env,timeout=100)
   finally:path.write_bytes(originals[path])
   log=run.stdout+run.stderr;(out/(name+'.log')).write_text(log)
   assert run.returncode!=0 and 'scenario ' in log and 'observation ' in log and 'could not compile' not in log,(name,log[-1500:])

@@ -18,6 +18,14 @@ use std::{
 };
 pub(crate) mod helpers;
 use helpers::*;
+// Share the existing Node IO adapters with sibling repository modules without
+// widening the private helpers module's API.
+pub(super) fn io_mkdir(path: impl AsRef<Path>) -> std::io::Result<()> {
+    helpers::io_mkdir(path)
+}
+pub(super) fn io_write(path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> std::io::Result<()> {
+    helpers::io_write(path, content)
+}
 
 pub const CURRENT_PROJECT_ID: &str = "current_project";
 pub const TMP_PROJECT_ID: &str = "_tmp";
@@ -509,9 +517,12 @@ impl Core {
         for entry in
             fs::read_dir(&path).map_err(|e| crate::node_io::path_error(e, "scandir", &path))?
         {
-            let entry = entry?;
+            let entry = entry.map_err(|e| crate::node_io::path_error(e, "scandir", &path))?;
             let file = entry.file_name().to_string_lossy().into_owned();
-            if entry.file_type()?.is_file()
+            if entry
+                .file_type()
+                .map_err(|e| crate::node_io::path_error(e, "scandir", &path))?
+                .is_file()
                 && file.ends_with(".md")
                 && file != "MEMORY.md"
                 && file != "project.meta.md"
@@ -1853,5 +1864,22 @@ mod entry_write_security_tests {
             }
         }
         fs::remove_dir_all(scratch).unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+#[path = "../../../../tests/fixtures/edgeclaw-entries/io_replay.rs"]
+pub(super) mod round6_io;
+#[cfg(all(test, unix))]
+mod round6_tests {
+    use super::*;
+    #[test]
+    fn file_scandir_matches_real_ts() {
+        round6_io::check("file-scandir", |repo, root| {
+            round6_io::deny(&root.join("current/memory/Project"), true);
+            repo.workspace_memory
+                .list_memory_entries(&JsObject::new())
+                .unwrap_err()
+        });
     }
 }

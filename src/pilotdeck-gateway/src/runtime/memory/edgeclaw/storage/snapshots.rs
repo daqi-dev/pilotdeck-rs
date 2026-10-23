@@ -5,7 +5,7 @@
 //! snapshot installed before live roots or pipeline state have changed.
 use super::super::file_memory::{
     EdgeClawFileStores, FileMemoryError, FileMemoryStoreOptions, OperationGuard, absolute,
-    operation_lock, repository_global_options, repository_workspace_options,
+    io_mkdir, io_write, operation_lock, repository_global_options, repository_workspace_options,
 };
 use crate::{
     metadata::object,
@@ -164,13 +164,14 @@ fn pretty(v: &JsValue) -> Result<String> {
     Ok(out)
 }
 fn mkdir(h: &SnapshotIoHook, p: &Path) -> Result<()> {
-    h(SnapshotIoOperation::Mkdir, p, None)?;
-    fs::create_dir_all(p)?;
+    h(SnapshotIoOperation::Mkdir, p, None)
+        .map_err(|e| crate::node_io::path_error(e, "mkdir", p))?;
+    io_mkdir(p)?;
     Ok(())
 }
 fn write(h: &SnapshotIoHook, p: &Path, content: &str) -> Result<()> {
-    h(SnapshotIoOperation::Write, p, None)?;
-    fs::write(p, content)?;
+    h(SnapshotIoOperation::Write, p, None).map_err(|e| crate::node_io::path_error(e, "open", p))?;
+    io_write(p, content)?;
     Ok(())
 }
 fn remove(h: &SnapshotIoHook, p: &Path) -> Result<()> {
@@ -194,7 +195,7 @@ fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
                 .map_err(io::Error::other)?
         };
         if fs::symlink_metadata(dst).is_ok_and(|m| m.file_type().is_symlink()) {
-            fs::remove_file(dst)?;
+            fs::remove_file(dst).map_err(|e| crate::node_io::path_error(e, "unlink", dst))?;
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(&target, dst)?;
@@ -205,9 +206,9 @@ fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
             std::os::windows::fs::symlink_file(&target, dst)?;
         }
     } else if metadata.is_dir() {
-        fs::create_dir_all(dst)?;
-        for e in fs::read_dir(src)? {
-            let e = e?;
+        io_mkdir(dst)?;
+        for e in fs::read_dir(src).map_err(|e| crate::node_io::path_error(e, "scandir", src))? {
+            let e = e.map_err(|e| crate::node_io::path_error(e, "scandir", src))?;
             copy_tree(&e.path(), &dst.join(e.file_name()))?;
         }
         fs::set_permissions(dst, metadata.permissions())?;
@@ -260,7 +261,10 @@ fn write_files(h: &SnapshotIoHook, root: &Path, files: &JsValue) -> Result<()> {
 }
 fn read_files(root: &Path) -> Result<JsValue> {
     fn walk(root: &Path, p: &Path, files: &mut Vec<JsValue>) -> Result<()> {
-        let mut entries = fs::read_dir(p)?.collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut entries = fs::read_dir(p)
+            .map_err(|e| crate::node_io::path_error(e, "scandir", p))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| crate::node_io::path_error(e, "scandir", p))?;
         if entries.len() > 1 {
             let col = node_collator(&node_locale(|k| std::env::var(k).ok()))
                 .map_err(|e| FileMemoryError::Collation(format!("{e:?}")))?;
@@ -274,7 +278,9 @@ fn read_files(root: &Path) -> Result<JsValue> {
         }
         for e in entries {
             let p = e.path();
-            let ty = e.file_type()?;
+            let ty = e.file_type().map_err(|e| {
+                crate::node_io::path_error(e, "scandir", p.parent().unwrap_or(root))
+            })?;
             if ty.is_dir() {
                 walk(root, &p, files)?
             } else if ty.is_file() {
@@ -286,7 +292,12 @@ fn read_files(root: &Path) -> Result<JsValue> {
                             .to_string_lossy()
                             .replace('\\', "/")),
                     ),
-                    ("content", s(String::from_utf8_lossy(&fs::read(p)?))),
+                    (
+                        "content",
+                        s(String::from_utf8_lossy(
+                            &fs::read(&p).map_err(|e| crate::node_io::path_error(e, "open", &p))?,
+                        )),
+                    ),
                 ]));
             }
         }
@@ -485,8 +496,10 @@ impl EdgeClawFileStores {
         if !path.exists() {
             return Ok(None);
         }
-        let metadata =
-            parse_json(&String::from_utf8_lossy(&fs::read(path)?)).unwrap_or(JsValue::Null);
+        let metadata = parse_json(&String::from_utf8_lossy(
+            &fs::read(&path).map_err(|e| crate::node_io::path_error(e, "open", &path))?,
+        ))
+        .unwrap_or(JsValue::Null);
         if field(&metadata, "version") != &JsValue::Number(1.0)
             || !root.join("workspace").exists()
             || !root.join("global").exists()
@@ -732,4 +745,118 @@ fn boundary(v: &JsValue) -> JsValue {
         ("counts", field(v, "counts").clone()),
         ("runtimeState", field(v, "runtimeState").clone()),
     ])
+}
+
+#[cfg(all(test, unix))]
+use super::super::file_memory::round6_io;
+#[cfg(all(test, unix))]
+mod round6_tests {
+    use super::*;
+    fn last(root: &Path) -> PathBuf {
+        let last = root.join("last_dream");
+        fs::create_dir_all(last.join("workspace")).unwrap();
+        fs::create_dir_all(last.join("global")).unwrap();
+        fs::write(last.join("metadata.json"), "{\"version\":1}").unwrap();
+        last
+    }
+    #[test]
+    fn copy_tree_unlink_matches_real_ts_delete_boundary() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        round6_io::check("copy-unlink", |_repo, root| {
+            let target = root.join("unlink-target");
+            fs::write(&target, "target").unwrap();
+            let source = root.join("source-link");
+            symlink(&target, &source).unwrap();
+            let parent = root.join("current/memory/Project");
+            let destination = parent.join("copied.md");
+            symlink(&target, &destination).unwrap();
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o500)).unwrap();
+            copy_tree(&source, &destination).unwrap_err().into()
+        });
+    }
+    #[test]
+    fn copy_tree_scandir_matches_node_boundary() {
+        round6_io::check("snapshot-scandir", |_repo, root| {
+            let path = last(root).join("workspace");
+            round6_io::deny(&path, true);
+            copy_tree(&path, &root.join("copy")).unwrap_err().into()
+        });
+    }
+    #[test]
+    fn copy_tree_mkdir_matches_node_boundary() {
+        round6_io::check("snapshot-mkdir", |_repo, root| {
+            let source = root.join("source");
+            fs::create_dir(&source).unwrap();
+            let path = root.join("blocked");
+            fs::create_dir(&path).unwrap();
+            round6_io::deny(&path, true);
+            copy_tree(&source, &path.join("new")).unwrap_err().into()
+        });
+    }
+    #[test]
+    fn mkdir_hook_matches_real_node_error() {
+        round6_io::check("snapshot-mkdir", |_repo, root| {
+            let hook: SnapshotIoHook = Arc::new(|_, _, _| Err(io::Error::from_raw_os_error(13)));
+            mkdir(&hook, &root.join("blocked/new")).unwrap_err()
+        });
+    }
+    #[test]
+    fn write_hook_matches_real_node_error() {
+        round6_io::check("snapshot-write", |_repo, root| {
+            let hook: SnapshotIoHook = Arc::new(|_, _, _| Err(io::Error::from_raw_os_error(13)));
+            write(&hook, &root.join("write/locked.md"), "new").unwrap_err()
+        });
+    }
+    #[test]
+    fn snapshot_scandir_matches_real_ts() {
+        round6_io::check("snapshot-scandir", |repo, root| {
+            let last = last(root);
+            round6_io::deny(&last.join("workspace"), true);
+            repo.get_last_dream_snapshot_overview().unwrap_err()
+        });
+    }
+    #[test]
+    fn snapshot_read_matches_real_ts() {
+        round6_io::check("snapshot-read", |repo, root| {
+            let path = last(root).join("workspace/locked.md");
+            fs::write(&path, "saved").unwrap();
+            round6_io::deny(&path, false);
+            repo.get_last_dream_snapshot_overview().unwrap_err()
+        });
+    }
+    #[test]
+    fn metadata_read_matches_real_ts() {
+        round6_io::check("metadata-read", |repo, root| {
+            round6_io::deny(&last(root).join("metadata.json"), false);
+            repo.get_last_dream_snapshot_overview().unwrap_err()
+        });
+    }
+    #[test]
+    fn snapshot_mkdir_matches_real_ts() {
+        round6_io::check("snapshot-mkdir", |repo, root| {
+            let path = root.join("blocked");
+            fs::create_dir(&path).unwrap();
+            round6_io::deny(&path, true);
+            write_files(
+                &repo.repository.snapshot_io,
+                &path.join("new"),
+                &JsValue::Array(vec![]),
+            )
+            .unwrap_err()
+        });
+    }
+    #[test]
+    fn snapshot_write_matches_real_ts() {
+        round6_io::check("snapshot-write", |repo, root| {
+            let path = root.join("write");
+            fs::create_dir(&path).unwrap();
+            fs::write(path.join("locked.md"), "old").unwrap();
+            round6_io::deny(&path.join("locked.md"), false);
+            let files = JsValue::Array(vec![object([
+                ("relativePath", s("locked.md")),
+                ("content", s("new")),
+            ])]);
+            write_files(&repo.repository.snapshot_io, &path, &files).unwrap_err()
+        });
+    }
 }
