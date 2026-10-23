@@ -21,7 +21,11 @@ OUTPUT.mkdir(parents=True, exist_ok=True)
 assert Path(os.environ['CARGO_TARGET_DIR']).resolve() == ROOT / 'src/target'
 BASE = SOURCE.read_bytes()
 TEXT = BASE.decode()
-OLD = subprocess.check_output(['git', 'show', 'HEAD:src/pilotdeck-gateway/src/runtime/plugins.rs'], cwd=ROOT).decode()
+# Fixed pre-#543 implementation: HEAD already contains the fix after commit or
+# merge, so it cannot be used as the source of this regression mutation.
+OLD_COMMIT = 'dbaa207c549eb42dd3dd01a78828085c8ee48f98'
+OLD = subprocess.check_output(['git', 'show', f'{OLD_COMMIT}:src/pilotdeck-gateway/src/runtime/plugins.rs'],
+                              cwd=ROOT, timeout=10).decode()
 
 def replace(old, new):
     assert TEXT.count(old) == 1, f'unique mutation anchor required: {old!r}'
@@ -64,6 +68,11 @@ CASES = [
     ('omit-group-error', replace('                        errors.push(group);', '                        let _ = group;'),
      'runtime_dispose_errors_aggregate', '"dispose-errors-aggregate" step 2'),
 ]
+# Validate every mutation before starting cargo or writing implementation bytes.
+# In particular, a stale historical source must fail here, not masquerade as a
+# surviving behavioral mutation and prevent the remaining controls from running.
+for name, mutation, _, _ in CASES:
+    assert mutation.encode() != BASE, f'{name}: mutation must change source bytes'
 selected = set(sys.argv[2:])
 assert not selected - {case[0] for case in CASES}
 summary = []
@@ -84,7 +93,8 @@ try:
             (OUTPUT / f'{name}.log').write_text(log)
             killed = (result.returncode == 101 and f'test {test} ... FAILED' in log and marker in log
                       and 'could not compile' not in log)
-            summary.append({'mutation': name, 'test': test, 'exit': result.returncode, 'killed': killed,
+            summary.append({'mutation': name, 'mutationSha256': hashlib.sha256(mutation.encode()).hexdigest(),
+                            'test': test, 'exit': result.returncode, 'killed': killed,
                             'marker': marker})
             print(json.dumps(summary[-1]), flush=True)
             assert killed, f'{name}: require selected behavioral assertion failure, see log'

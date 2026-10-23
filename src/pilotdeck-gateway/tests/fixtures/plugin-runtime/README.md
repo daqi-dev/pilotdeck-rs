@@ -31,3 +31,5 @@ python3 src/pilotdeck-gateway/tests/fixtures/plugin-runtime/negative-controls.py
 ```
 
 脚本依次临时修改产品实现，要求指定测试出现对应行为断言失败，并在 `finally` 恢复原始字节；编译错误不算负控成功。总期限少于 10 分钟，每次只跑一个测试进程、`--test-threads=1`，复用启动器的本树 `src/target`。已有 `runtime-replay-generation` 负控仍位于 plugin-loader 的负控脚本。
+
+`restore-old-order` 固定读取修复前提交 `dbaa207c549eb42dd3dd01a78828085c8ee48f98` 的实现，不依赖当前 HEAD 或远端分支；需本地 Git 对象库保留该提交。启动测试前逐条断言变异字节与当前源码不同，结果记录各变异 SHA-256，避免提交或合入后出现空变异。
