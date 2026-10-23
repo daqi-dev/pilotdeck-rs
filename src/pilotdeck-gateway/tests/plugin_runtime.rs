@@ -5,7 +5,7 @@
 #[path = "common/baseline.rs"]
 mod baseline;
 use pilotdeck_gateway::{hooks::protocol::HooksSettings, runtime::plugins::*};
-use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -63,8 +63,61 @@ fn hooks(h: &HooksSettings) -> Value {
             .collect(),
     )
 }
+fn instruction_json<'a>(
+    entries: impl Iterator<
+        Item = (
+            &'a pilotdeck_protocol::JsString,
+            &'a pilotdeck_protocol::JsString,
+        ),
+    >,
+) -> Value {
+    let entries = entries
+        .map(|(name, instructions)| {
+            let mut object = JsObject::new();
+            object.insert("serverName".into(), JsValue::String(name.clone()));
+            object.insert("instructions".into(), JsValue::String(instructions.clone()));
+            JsValue::Object(object)
+        })
+        .collect();
+    Value::String(stringify_json(&JsValue::Array(entries)).unwrap().unwrap())
+}
 fn instructions(c: &[PluginMcpInstructionEntry]) -> Value {
-    json!(c.iter().map(|e|json!({"serverName":e.server_name,"instructions":e.instructions.to_utf8().unwrap()})).collect::<Vec<_>>())
+    instruction_json(c.iter().map(|e| (&e.server_name, &e.instructions)))
+}
+fn encode_expected_instructions(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                if key == "mcpInstructions" {
+                    let entries: Vec<_> = value
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|entry| {
+                            assert_eq!(
+                                entry.as_object().unwrap().len(),
+                                2,
+                                "MCP instruction replay fields"
+                            );
+                            (
+                                pilotdeck_protocol::JsString::from(
+                                    entry["serverName"].as_str().unwrap(),
+                                ),
+                                pilotdeck_protocol::JsString::from(
+                                    entry["instructions"].as_str().unwrap(),
+                                ),
+                            )
+                        })
+                        .collect();
+                    *value = instruction_json(entries.iter().map(|(name, text)| (name, text)));
+                } else {
+                    encode_expected_instructions(value);
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(encode_expected_instructions),
+        _ => {}
+    }
 }
 fn ids(plugins: &[Arc<LoadedPlugin>]) -> Value {
     json!(
@@ -183,7 +236,7 @@ async fn start_eager(
 struct Scratch(PathBuf);
 impl Drop for Scratch {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).unwrap();
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 async fn replay(s: &Value) {
@@ -289,7 +342,7 @@ async fn replay(s: &Value) {
                     }),
                     "legacy"=>runtime.acquire_contribution_snapshot().await.map(|l|{
                         let c=&l.contributions;
-                        let v=json!({"generation":l.generation,"contributions":{"generation":c.generation,"plugins":ids(&c.plugins),"tools":c.tools.len(),"routers":c.routers.len(),"commands":commands(&c.commands),"skills":skills(&c.skills),"hooks":hooks(&c.hooks),"mcpServers":js(&JsValue::Object(c.mcp_servers.clone())),"lspServers":js(&JsValue::Object(c.lsp_servers.clone())),"mcpInstructions":c.mcp_instructions.iter().map(|e|json!({"serverName":e.server_name,"instructions":e.instructions.as_ref().unwrap().to_utf8().unwrap()})).collect::<Vec<_>>()}});
+                        let v=json!({"generation":l.generation,"contributions":{"generation":c.generation,"plugins":ids(&c.plugins),"tools":c.tools.len(),"routers":c.routers.len(),"commands":commands(&c.commands),"skills":skills(&c.skills),"hooks":hooks(&c.hooks),"mcpServers":js(&JsValue::Object(c.mcp_servers.clone())),"lspServers":js(&JsValue::Object(c.lsp_servers.clone())),"mcpInstructions":instruction_json(c.mcp_instructions.iter().map(|e|(&e.server_name,e.instructions.as_ref().unwrap())))}});
                         leases.insert(id,Lease::Legacy(Arc::new(AsyncMutex::new(l))));v
                     }),_=>panic!("unknown lease")
                 })
@@ -421,6 +474,7 @@ async fn replay(s: &Value) {
                 "legacy outputStyles has no Rust snapshot counterpart; nonempty values need their own implementation"
             );
         }
+        encode_expected_instructions(&mut expected);
         assert_eq!(
             normalize(actual, root.to_str().unwrap()),
             normalize(expected, root.to_str().unwrap()),

@@ -28,10 +28,40 @@ fn oracle() -> Value {
 fn json_value(value: &JsValue) -> Value {
     serde_json::from_str(&stringify_json(value).unwrap().unwrap()).unwrap()
 }
+// #484 repair 1: retain the original TS corpus verbatim. These two explicit
+// contributions escape their plugin root and are excluded by the human-approved
+// security policy; every other field remains subject to the original oracle.
+fn root_boundary_expected(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .filter(|entry| {
+                    !(((entry["path"] == "<root>/home/plugins/folder/custom/link.md"
+                        || entry["namespace"] == "manifest-id")
+                        && entry["content"] == "markdown linked file"
+                        && entry["name"] == "folder:link")
+                        || ((entry["path"] == "<root>/home/plugins/shared/b.md"
+                            || entry["namespace"] == "ext")
+                            && entry["content"] == "outside plugin"
+                            && entry["name"] == "external:b"))
+                })
+                .map(root_boundary_expected)
+                .collect(),
+        ),
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), root_boundary_expected(value)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
 fn assert_json(actual: &Value, expected: &Value, context: &str) {
     assert_eq!(
         parse_json(&actual.to_string()).unwrap(),
-        parse_json(&expected.to_string()).unwrap(),
+        parse_json(&root_boundary_expected(expected).to_string()).unwrap(),
         "{context}"
     );
 }

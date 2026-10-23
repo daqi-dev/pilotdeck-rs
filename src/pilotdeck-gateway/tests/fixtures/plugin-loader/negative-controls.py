@@ -60,7 +60,7 @@ CASES += [
     ('configured-trailing-slash', CONFIG, 'out.push("");', 'let _ = path;', 'plugin_loader_contributions'),
     ('server-depth', 'src/pilotdeck-gateway/src/runtime/plugins/loader/server_value.rs', 'Ok(raw.clone())', 'Ok(JsValue::Null)', 'plugin_loader_server_values_oracle'),
     ('configured-directory-read-error', MARKDOWN,
-     'output.push(load_markdown(\n                &path,\n                get_plugin_command_name(plugin_name, &path, base),\n            )?);',
+     'output.push(load_markdown_source(\n                &canonical,\n                &path,\n                get_plugin_command_name(plugin_name, &path, base),\n            )?);',
      'if let Ok(command) = load_markdown(&path, get_plugin_command_name(plugin_name, &path, base)) { output.push(command); }',
      'plugin_loader_hooks_paths'),
 ]
@@ -77,8 +77,6 @@ CASES += [
     ('lease-release-error', CONTRIBUTIONS, '        let result = release_lease_plugins(&plugins, &state, &waiters).await;', '        let _ = release_lease_plugins(&plugins, &state, &waiters).await; let result = Ok(());', 'lib:retired_disposal_is_shared_with_shutdown_and_all_lease_flavors'),
     ('skill-insertion-order', CONTRIBUTIONS, 'selected.into_iter().map(|(c, _)| c).collect()', 'selected.into_iter().rev().map(|(c, _)| c).collect()', 'lib:skill_contributions_keep_ts_map_order'),
     ('skill-equal-priority', CONTRIBUTIONS, 'priority >= selected[index].1', 'priority > selected[index].1', 'lib:skill_contributions_keep_ts_map_order'),
-    ('markdown-cycle', MARKDOWN, 'if !ancestors.insert(canonical.clone()) {', 'if !ancestors.insert(canonical.clone()) && false {', 'regressions:plugin_markdown_cycle_is_bounded'),
-    ('markdown-alias', MARKDOWN, 'ancestors.remove(&path);', 'let _ = &path;', 'regressions:plugin_markdown_acyclic_aliases_are_preserved'),
     ('utf16-byte-slice', CONTRIBUTIONS,
      '    let mut units = trimmed[..trimmed.len().min(MAX_LEN)].to_vec();',
      '    let decoded = String::from_utf16_lossy(trimmed); let cut = if decoded.len() > MAX_LEN { &decoded[..MAX_LEN] } else { &decoded }; let mut units: Vec<u16> = cut.encode_utf16().collect();',
@@ -87,6 +85,192 @@ CASES += [
     ('utf16-trim', CONTRIBUTIONS, 'char::from_u32(u32::from(unit)).is_some_and(crate::metadata::js_space)', 'char::from_u32(u32::from(unit)).is_some_and(char::is_whitespace)', 'regressions:plugin_mcp_utf16_oracle'),
     ('runtime-replay-generation', PLUGINS, 'self.generation += 1;', 'self.generation += 2;', 'runtime:runtime_empty_directories'),
 ]
+# Negative control: restore ancestry-only DFS (including its lack of a total
+# budget), so the k=10 parent must actually time out and reap its child.
+markdown_source = (ROOT/MARKDOWN).read_text()
+start = markdown_source.index('pub(super) fn load_plugin_commands_with_root(')
+end = markdown_source.index('pub fn load_standalone_skill(', start)
+GLOBAL_TRAVERSAL = markdown_source[start:end]
+ANCESTOR_TRAVERSAL = r'''pub(super) fn load_plugin_commands_with_root(
+    plugin_name: &str, base: &Path, _plugin_root: &Path,
+) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
+    let mut ancestors = HashSet::new();
+    if let Ok(path) = base.canonicalize() { ancestors.insert(path); }
+    let mut remaining = usize::MAX;
+    let mut pending: Vec<_> = markdown_entries(base, &mut remaining)?.into_iter().rev().map(|p| (p, false)).collect();
+    let mut output = Vec::new();
+    while let Some((path, leaving)) = pending.pop() {
+        if leaving { ancestors.remove(&path); continue; }
+        let Ok(metadata) = std::fs::metadata(&path) else { continue; };
+        if metadata.is_dir() {
+            let Ok(canonical) = path.canonicalize() else { continue; };
+            if !ancestors.insert(canonical.clone()) { continue; }
+            pending.push((canonical, true));
+            pending.extend(markdown_entries(&path, &mut remaining)?.into_iter().rev().map(|p| (p, false)));
+        } else if path.file_name().is_some_and(|s| s.to_string_lossy().to_ascii_lowercase().ends_with(".md")) {
+            output.push(load_markdown(&path, get_plugin_command_name(plugin_name, &path, base))?);
+        }
+    }
+    Ok(output)
+}
+
+'''
+ENTRY_GUARD = '        if !canonical.starts_with(&root) {\n            continue;\n        }'
+CASES += [
+    ('markdown-cycle', MARKDOWN, GLOBAL_TRAVERSAL, ANCESTOR_TRAVERSAL, 'traversal:plugin_markdown_clique_10'),
+    ('markdown-alias', MARKDOWN, 'path: path.into(),', 'path: source.into(),', 'traversal:plugin_markdown_alias_first_path'),
+    ('markdown-entry-budget', MARKDOWN, 'MAX_MARKDOWN_ENTRIES: usize = 4096', 'MAX_MARKDOWN_ENTRIES: usize = 8192', 'traversal:plugin_markdown_entry_budget'),
+    ('markdown-depth-budget', MARKDOWN, 'MAX_MARKDOWN_DEPTH: usize = 64', 'MAX_MARKDOWN_DEPTH: usize = 128', 'traversal:plugin_markdown_depth_budget'),
+    ('markdown-directory-boundary', MARKDOWN, ENTRY_GUARD, '        if !canonical.starts_with(&root) && !path.components().any(|c| c.as_os_str() == "directory") { continue; }', 'traversal:plugin_markdown_root_boundary'),
+    ('markdown-file-boundary', MARKDOWN, ENTRY_GUARD, '        if !canonical.starts_with(&root) && path.file_name().is_none_or(|n| n != "file.md") { continue; }', 'traversal:plugin_markdown_root_boundary'),
+    ('markdown-chain-boundary', MARKDOWN, ENTRY_GUARD, '        if !canonical.starts_with(&root) && !path.components().any(|c| c.as_os_str() == "chain") { continue; }', 'traversal:plugin_markdown_root_boundary'),
+    ('markdown-configured-root', MARKDOWN, '    if !canonical.starts_with(&root) {\n        return Ok(Vec::new());\n    }', '    let root = canonical.clone();', 'traversal:plugin_markdown_root_boundary'),
+    ('mcp-server-name-lossy', CONTRIBUTIONS, '        for (server_name, raw) in obj.own_entries() {', '        for (server_name, raw) in obj.own_entries() {\n            let server_name = &JsString::from(String::from_utf16_lossy(server_name.units()));', 'traversal:plugin_mcp_server_names_utf16'),
+]
+# Every kill needs its own expected panic text AND the selected test's failed
+# outcome. Generic failures, compiler errors, and external timeouts do not count.
+EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: builtin-loading-and-disable: refresh'],
+ 'builtin-disk-reload': ['assertion `left == right` failed: builtin-loading-and-disable: refresh'],
+ 'builtin-fallback': ['negative-control: no builtin fallback'],
+ 'builtin-skills': ['assertion `left == right` failed: skills-root-only: refresh'],
+ 'configured-directory-read-error': ['assertion `left == right` failed: '
+                                     'hook-files-and-configured-paths: load attempt 2'],
+ 'configured-markdown': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'configured-trailing-slash': ['assertion `left == right` failed: valid-contributions: load '
+                               'attempt 0'],
+ 'directory-namespace': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'discovery-order': ['assertion `left == right` failed: discovery-unicode-order: discovered '
+                     'plugins'],
+ 'disk-loading': ['assertion `left == right` failed: "valid-contributions": staged plugins'],
+ 'duplicates-retained': ['assertion `left == right` failed: "duplicates-and-priority": staged '
+                         'plugins'],
+ 'file-hooks': ['assertion `left == right` failed: hook-files-and-configured-paths: load attempt '
+                '1'],
+ 'follow-symlinks': ['assertion `left == right` failed: "symlinks-and-unreadable": staged plugins'],
+ 'frontmatter-fence': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'frontmatter-scalar': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'inline-hooks': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'lease-release-error': ['called `Result::unwrap_err()` on an `Ok` value: ()'],
+ 'lsp-servers': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'manifest-marketplace-source': ['assertion `left == right` failed: manifest Object {"agents": '
+                                 'String("agent"), "commands": Array [String("a"), String("b")], '
+                                 '"description": String("d"), "extra": Number(9), "hooks": Object '
+                                 '{}, "lspServers": Object {}, "marketplace": Object {"extra": '
+                                 'Number(1), "name": String("m"), "plugin": String("p"), "source": '
+                                 'String("git"), "url": String("u"), "version": String("1")}, '
+                                 '"mcpServers": Object {}, "mcpb": String("x.mcpb"), "name": '
+                                 'String("all"), "outputStyles": String("out"), "settings": Object '
+                                 '{"enabled": Bool(false)}, "skills": Array [], "version": '
+                                 'String("")}'],
+ 'manifest-name-diagnostic': ['assertion `left == right` failed: manifest Object {}'],
+ 'manifest-object-diagnostic': ['assertion `left == right` failed: manifest Null'],
+ 'manifest-optional-types': ['assertion `left == right` failed: manifest Object {"agents": Array '
+                             '[Number(1)], "commands": Number(5), "description": Bool(false), '
+                             '"hooks": Array [], "lspServers": Number(3), "marketplace": Object '
+                             '{"name": String("m")}, "mcpServers": Array [], "mcpb": '
+                             'String("x.MCPB"), "name": String(" kept "), "outputStyles": Array '
+                             '[Number(1)], "settings": Array [], "skills": Null, "version": '
+                             'Number(3)}'],
+ 'manifest-trim-name': ['assertion `left == right` failed: manifest Object {"name": String(" '
+                        '\\t\\u{feff}")}'],
+ 'markdown-alias': ['first alias retains TS name and path'],
+ 'markdown-cycle': ['markdown clique exceeded 1s; child killed and reaped'],
+ 'marketplace-deferred': ['assertion `left == right` failed: marketplace reference'],
+ 'marketplace-name': ['assertion `left == right` failed: {"error":"Marketplace name impersonates '
+                      'an official PilotDeck marketplace.","name":"official-pilot"}'],
+ 'mcp-servers': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'node-join-absolute': ['assertion `left == right` failed: hook-files-and-configured-paths: load '
+                        'attempt 1'],
+ 'node-json-diagnostic': ['assertion `left == right` failed: invalid-and-loose-option-types: '
+                          'style-only loader'],
+ 'output-styles': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'publication-state': ['called `Option::unwrap()` on a `None` value'],
+ 'release-error': ['called `Result::unwrap_err()` on an `Ok` value: ()'],
+ 'retired-cleanup': ['assertion failed: '
+                     'runtime.state.lock().await.registry.retired_plugins.is_empty()'],
+ 'runtime-replay-generation': ['assertion `left == right` failed: "empty-directories" step 1: '
+                               '{"op":"refresh"}'],
+ 'server-depth': ['assertion `left == right` failed',
+                  '  left: "null"',
+                  ' right: "{\\"server\\":{\\"leaf\\":true}}"'],
+ 'shared-disposal': ['assertion `left == right` failed', '  left: 2', ' right: 1'],
+ 'shutdown-before-refresh': ['assertion `left == right` failed',
+                             '  left: "draining"',
+                             ' right: "active"'],
+ 'skill-equal-priority': ['assertion `left == right` failed',
+                          '  left: Array [Object {"content": String("higher"), "description": '
+                          'String("higher"), "name": String("z"), "namespace": String("same")}, '
+                          'Object {"content": String("a"), "description": String("a"), "name": '
+                          'String("a"), "namespace": String("same")}, Object {"content": '
+                          'String("m"), "description": String("m"), "name": String("m"), '
+                          '"namespace": String("same")}, Object {"content": String("global-q"), '
+                          '"description": String("global-q"), "name": String("q"), "namespace": '
+                          'String("same")}, Object {"content": String("b"), "description": '
+                          'String("b"), "name": String("b"), "namespace": String("same")}, Object '
+                          '{"content": String("y"), "description": String("y"), "name": '
+                          'String("y"), "namespace": String("same")}]',
+                          ' right: Array [Object {"content": String("higher"), "description": '
+                          'String("higher"), "name": String("z"), "namespace": String("same")}, '
+                          'Object {"content": String("equal-a"), "description": String("equal-a"), '
+                          '"name": String("a"), "namespace": String("same")}, Object {"content": '
+                          'String("m"), "description": String("m"), "name": String("m"), '
+                          '"namespace": String("same")}, Object {"content": String("global-q"), '
+                          '"description": String("global-q"), "name": String("q"), "namespace": '
+                          'String("same")}, Object {"content": String("b"), "description": '
+                          'String("b"), "name": String("b"), "namespace": String("same")}, Object '
+                          '{"content": String("y"), "description": String("y"), "name": '
+                          'String("y"), "namespace": String("same")}]'],
+ 'skill-filter': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'skill-insertion-order': ['assertion `left == right` failed',
+                           '  left: Array [Object {"content": String("y"), "description": '
+                           'String("y"), "name": String("y"), "namespace": String("same")}, Object '
+                           '{"content": String("b"), "description": String("b"), "name": '
+                           'String("b"), "namespace": String("same")}, Object {"content": '
+                           'String("global-q"), "description": String("global-q"), "name": '
+                           'String("q"), "namespace": String("same")}, Object {"content": '
+                           'String("m"), "description": String("m"), "name": String("m"), '
+                           '"namespace": String("same")}, Object {"content": String("equal-a"), '
+                           '"description": String("equal-a"), "name": String("a"), "namespace": '
+                           'String("same")}, Object {"content": String("higher"), "description": '
+                           'String("higher"), "name": String("z"), "namespace": String("same")}]',
+                           ' right: Array [Object {"content": String("higher"), "description": '
+                           'String("higher"), "name": String("z"), "namespace": String("same")}, '
+                           'Object {"content": String("equal-a"), "description": '
+                           'String("equal-a"), "name": String("a"), "namespace": String("same")}, '
+                           'Object {"content": String("m"), "description": String("m"), "name": '
+                           'String("m"), "namespace": String("same")}, Object {"content": '
+                           'String("global-q"), "description": String("global-q"), "name": '
+                           'String("q"), "namespace": String("same")}, Object {"content": '
+                           'String("b"), "description": String("b"), "name": String("b"), '
+                           '"namespace": String("same")}, Object {"content": String("y"), '
+                           '"description": String("y"), "name": String("y"), "namespace": '
+                           'String("same")}]'],
+ 'skill-unicode-case': ['assertion `left == right` failed: valid-contributions: load attempt 0'],
+ 'source-identity': ['assertion `left == right` failed: "duplicates-and-priority": staged plugins'],
+ 'source-path-boundary': ['assertion `left == right` failed: '
+                          '{"allowedRoot":"<root>/safe","path":"<root>/safe-other","value":false}'],
+ 'staged-failures': ['assertion `left == right` failed: "invalid-and-loose-option-types": staged '
+                     'failures'],
+ 'standalone-root-only': ['assertion `left == right` failed: skills-root-only: load attempt 0'],
+ 'style-only-config': ['assertion `left == right` failed: valid-contributions: style-only loader'],
+ 'unreadable-directory': ['negative-control: unreadable directory'],
+ 'utf16-byte-slice': ["end byte index 2048 is not a char boundary; it is inside '中' (bytes "
+                      '2046..2049 of string)'],
+ 'utf16-lossy-surrogate': ['assertion `left == right` failed: Some("lone-high")'],
+ 'utf16-trim': ['assertion `left == right` failed: Some("trim-ecmascript")'],
+ 'markdown-entry-budget': ['budget error'],
+ 'markdown-depth-budget': ['budget error'],
+ 'markdown-directory-boundary': ['root boundary skips directory/file/chain leaks: commands',
+                                 'String("p:directory:leak")'],
+ 'markdown-file-boundary': ['root boundary skips directory/file/chain leaks: commands',
+                            'String("p:file")'],
+ 'markdown-chain-boundary': ['root boundary skips directory/file/chain leaks: commands',
+                             'String("p:chain:leak")'],
+ 'markdown-configured-root': ['configured base cannot escape root'],
+ 'mcp-server-name-lossy': ['server names retain UTF-16 identity and sort order']}
+
+assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
+assert set(EXPECTED_FAILURES) == {c[0] for c in CASES}, "every case needs failure markers"
 selected = set(sys.argv[2:])
 if selected:
     assert selected <= {c[0] for c in CASES}, selected
@@ -118,8 +302,11 @@ try:
             result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact'],cwd=ROOT,env=env,timeout=180)
             (OUTPUT/(name+'.log')).write_text(result.stdout + result.stderr)
             output = (OUTPUT/(name+'.log')).read_text()
-            killed = result.returncode != 0 and 'test result: FAILED.' in output and 'error[E' not in output
-            row = {'mutation':name,'test':test,'exit':result.returncode,'killed':killed,'failure':next((line for line in output.splitlines() if 'failed:' in line or "panicked at" in line),''),'summary':next((line for line in output.splitlines() if line.startswith('test result:')), '')}
+            markers = EXPECTED_FAILURES[name]
+            matched_markers = all(marker in output for marker in markers)
+            target_failed = f'test {test_name} ... FAILED' in output
+            killed = result.returncode != 0 and 'test result: FAILED.' in output and 'error[E' not in output and matched_markers and target_failed
+            row = {'mutation':name,'test':test,'exit':result.returncode,'killed':killed,'expectedMarkers':markers,'matchedMarkers':matched_markers,'targetFailed':target_failed,'failure':next((line for line in output.splitlines() if 'failed:' in line or "panicked at" in line),''),'summary':next((line for line in output.splitlines() if line.startswith('test result:')), '')}
             summary.append(row)
             print(json.dumps(row), flush=True)
             assert killed, f'{name}: negative control did not cause an assertion/test failure; inspect log'

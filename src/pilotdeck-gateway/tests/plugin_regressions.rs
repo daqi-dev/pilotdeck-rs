@@ -2,12 +2,7 @@
 mod baseline;
 use pilotdeck_gateway::runtime::plugins::{PluginRuntime, PluginRuntimeOptions};
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
-use std::{
-    fs,
-    path::PathBuf,
-    process::{Command, Stdio},
-    time::{Duration, Instant},
-};
+use std::{fs, path::PathBuf};
 
 struct Scratch(PathBuf);
 impl Scratch {
@@ -28,7 +23,7 @@ impl Scratch {
 }
 impl Drop for Scratch {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).unwrap();
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -65,7 +60,7 @@ async fn plugin_mcp_utf16_oracle() {
                 .into_iter()
                 .map(|e| {
                     let mut o = JsObject::new();
-                    o.insert("serverName".into(), JsValue::String(e.server_name.into()));
+                    o.insert("serverName".into(), JsValue::String(e.server_name));
                     o.insert("instructions".into(), JsValue::String(e.instructions));
                     JsValue::Object(o)
                 })
@@ -123,89 +118,4 @@ async fn plugin_mcp_utf16_oracle() {
         legacy.release().await.unwrap();
         runtime.dispose().await.unwrap();
     }
-}
-
-// A process boundary is essential: tokio::timeout cannot cancel spawn_blocking
-// traversal, and dropping its runtime would otherwise hang the test harness.
-#[test]
-#[cfg(unix)]
-fn plugin_markdown_cycle_is_bounded() {
-    let scratch = Scratch::new();
-    let path = scratch.0.join("home/plugins/cycle");
-    fs::create_dir_all(path.join("commands")).unwrap();
-    fs::write(path.join("plugin.json"), r#"{"name":"cycle"}"#).unwrap();
-    fs::write(path.join("commands/a.md"), "a").unwrap();
-    for name in ["link0", "link1"] {
-        std::os::unix::fs::symlink("..", path.join("commands").join(name)).unwrap();
-    }
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "plugin_markdown_cycle_child",
-            "--ignored",
-            "--nocapture",
-        ])
-        .env("PDRS_PLUGIN_CYCLE_ROOT", &scratch.0)
-        .stdin(Stdio::null())
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "cycle child failed: {status}");
-            break;
-        }
-        if Instant::now() >= deadline {
-            child.kill().unwrap();
-            child.wait().unwrap();
-            panic!("markdown cycle exceeded 3s; child killed and reaped");
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
-#[test]
-#[ignore = "subprocess helper for bounded cycle test"]
-fn plugin_markdown_cycle_child() {
-    let root = std::env::var_os("PDRS_PLUGIN_CYCLE_ROOT").expect("only invoked by cycle parent");
-    let runtime = PluginRuntime::new(PluginRuntimeOptions {
-        project_root: PathBuf::from(&root).join("project"),
-        pilot_home: PathBuf::from(root).join("home"),
-        builtin_skills_root: None,
-        builtin_plugins: Vec::new(),
-        builtin_plugins_enabled: Default::default(),
-    });
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let report = runtime.refresh_with_report().await.unwrap();
-        assert!(report.staged_failures.is_empty());
-        assert_eq!(report.next.len(), 1);
-        assert_eq!(
-            report.next[0].commands.len(),
-            1,
-            "cyclic subtree must be skipped"
-        );
-        assert_eq!(report.next[0].commands[0].name, "cycle:a");
-        runtime.dispose().await.unwrap();
-    });
-}
-
-#[test]
-#[cfg(unix)]
-fn plugin_markdown_acyclic_aliases_are_preserved() {
-    let scratch = Scratch::new();
-    let commands = scratch.0.join("commands");
-    fs::create_dir(&commands).unwrap();
-    fs::create_dir(scratch.0.join("shared")).unwrap();
-    fs::write(scratch.0.join("shared/a.md"), "a").unwrap();
-    for name in ["left", "right"] {
-        std::os::unix::fs::symlink("../shared", commands.join(name)).unwrap();
-    }
-    let result =
-        pilotdeck_gateway::runtime::plugins::loader::load_plugin_commands("alias", &commands)
-            .unwrap();
-    let fixture: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/plugin-loader/regressions.json")).unwrap();
-    assert_eq!(
-        serde_json::json!(result.iter().map(|c| c.name.as_str()).collect::<Vec<_>>()),
-        fixture["aliases"]
-    );
 }

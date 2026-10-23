@@ -2,7 +2,10 @@
 use super::{LoadedPluginCommand, read_text, sorted_entries};
 use crate::{js_value::string_to_number, metadata::js_trim, runtime::plugins::PluginRuntimeError};
 use serde_json::Value;
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+};
 
 pub(super) fn is_skill(path: &Path) -> bool {
     path.file_name().is_some_and(|n| {
@@ -57,65 +60,122 @@ fn relative(base: &Path, target: &Path) -> String {
     parts.join("/")
 }
 
-fn markdown_entries(directory: &Path) -> Vec<std::path::PathBuf> {
-    sorted_entries(directory)
-        .unwrap_or_default()
+// Bound both directory enumeration allocation and traversal work. Limits apply
+// to one configured contribution directory; exceeding either discards that
+// directory through PluginLoader's existing error-to-empty boundary.
+const MAX_MARKDOWN_ENTRIES: usize = 4096;
+const MAX_MARKDOWN_DEPTH: usize = 64;
+
+fn traversal_limit() -> PluginRuntimeError {
+    PluginRuntimeError::new("Plugin markdown traversal limit exceeded.")
+}
+
+fn markdown_entries(
+    directory: &Path,
+    remaining: &mut usize,
+) -> Result<Vec<PathBuf>, PluginRuntimeError> {
+    // Like TS collectMarkdownFiles: unreadable directories contribute nothing.
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Ok(Vec::new());
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return Ok(Vec::new());
+        };
+        if *remaining == 0 {
+            return Err(traversal_limit());
+        }
+        *remaining -= 1;
+        names.push(entry.file_name());
+    }
+    names.sort();
+    Ok(names
         .into_iter()
-        .map(|path| {
-            // collectMarkdownFiles uses `${directory}/${entry}`, preserving a
-            // configured trailing slash in the returned contribution path.
-            std::path::PathBuf::from(format!(
+        .map(|name| {
+            // Preserve TS's lexical contribution path, including a trailing slash.
+            PathBuf::from(format!(
                 "{}/{}",
                 directory.display(),
-                path.file_name().unwrap().to_string_lossy()
+                name.to_string_lossy()
             ))
         })
-        .collect()
+        .collect())
+}
+
+#[cfg(unix)]
+fn directory_identity(metadata: &std::fs::Metadata, _canonical: &Path) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    (metadata.dev(), metadata.ino())
+}
+
+#[cfg(not(unix))]
+fn directory_identity(_metadata: &std::fs::Metadata, canonical: &Path) -> PathBuf {
+    canonical.to_path_buf()
 }
 
 pub fn load_plugin_commands(
     plugin_name: &str,
     base: &Path,
 ) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
-    // Keep only the current DFS ancestry, so acyclic aliases still load in
-    // their original positions. A global visited set would drop valid aliases.
-    let mut ancestors = std::collections::HashSet::new();
-    if let Ok(canonical) = base.canonicalize() {
-        ancestors.insert(canonical);
+    load_plugin_commands_with_root(plugin_name, base, base)
+}
+
+pub(super) fn load_plugin_commands_with_root(
+    plugin_name: &str,
+    base: &Path,
+    plugin_root: &Path,
+) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
+    let (Ok(root), Ok(canonical)) = (plugin_root.canonicalize(), base.canonicalize()) else {
+        return Ok(Vec::new());
+    };
+    if !canonical.starts_with(&root) {
+        return Ok(Vec::new());
     }
-    let mut pending: Vec<_> = markdown_entries(base)
+    let Ok(metadata) = std::fs::metadata(&canonical) else {
+        return Ok(Vec::new());
+    };
+    let mut visited = HashSet::new();
+    visited.insert(directory_identity(&metadata, &canonical));
+    let mut remaining = MAX_MARKDOWN_ENTRIES;
+    let mut pending: Vec<_> = markdown_entries(base, &mut remaining)?
         .into_iter()
-        .map(|p| (p, false))
+        .rev()
+        .map(|p| (p, 1))
         .collect();
-    pending.reverse();
     let mut output = Vec::new();
-    while let Some((path, leaving)) = pending.pop() {
-        if leaving {
-            ancestors.remove(&path);
+    while let Some((path, depth)) = pending.pop() {
+        let Ok(canonical) = path.canonicalize() else {
+            continue;
+        };
+        // Check files as well as directories, including multi-hop symlinks.
+        if !canonical.starts_with(&root) {
             continue;
         }
-        let Ok(metadata) = std::fs::metadata(&path) else {
+        let Ok(metadata) = std::fs::metadata(&canonical) else {
             continue;
         };
         if metadata.is_dir() {
-            let Ok(canonical) = path.canonicalize() else {
-                continue;
-            };
-            if !ancestors.insert(canonical.clone()) {
+            // Global per traversal, not just the DFS ancestry: expanding each
+            // inode once prevents factorial cliques and exponential alias DAGs.
+            if !visited.insert(directory_identity(&metadata, &canonical)) {
                 continue;
             }
-            pending.push((canonical, true));
-            let mut entries: Vec<_> = markdown_entries(&path)
-                .into_iter()
-                .map(|p| (p, false))
-                .collect();
-            entries.reverse();
-            pending.extend(entries);
+            if depth > MAX_MARKDOWN_DEPTH {
+                return Err(traversal_limit());
+            }
+            pending.extend(
+                markdown_entries(&path, &mut remaining)?
+                    .into_iter()
+                    .rev()
+                    .map(|p| (p, depth + 1)),
+            );
         } else if path
             .file_name()
             .is_some_and(|s| s.to_string_lossy().to_ascii_lowercase().ends_with(".md"))
         {
-            output.push(load_markdown(
+            output.push(load_markdown_source(
+                &canonical,
                 &path,
                 get_plugin_command_name(plugin_name, &path, base),
             )?);
@@ -139,7 +199,15 @@ pub fn load_standalone_skill(
 }
 
 fn load_markdown(path: &Path, name: String) -> Result<LoadedPluginCommand, PluginRuntimeError> {
-    let raw = read_text(path)?;
+    load_markdown_source(path, path, name)
+}
+
+fn load_markdown_source(
+    source: &Path,
+    path: &Path,
+    name: String,
+) -> Result<LoadedPluginCommand, PluginRuntimeError> {
+    let raw = read_text(source)?;
     let mut frontmatter = HashMap::new();
     let mut content = raw.as_str();
     if raw.starts_with("---\n")
