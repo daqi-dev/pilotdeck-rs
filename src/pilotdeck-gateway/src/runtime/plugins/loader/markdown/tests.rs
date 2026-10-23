@@ -338,3 +338,246 @@ fn ancestor_file_rejects_only_its_configured_directory() {
         "ordinary-file ancestor rejects exactly its configured directory like TS"
     );
 }
+
+// #594: the standalone skill loader reads its single SKILL.md through the same
+// checked handle. Expected values come from `standalone-toctou.json` (real TS
+// `loadStandaloneSkill`); a standalone skill is one file, so a refused read
+// fails the whole skill rather than being skipped past.
+fn standalone_fixture() -> Value {
+    let text = include_str!("../../../../../tests/fixtures/plugin-loader/standalone-toctou.json");
+    crate::test_baseline::oracle(text);
+    serde_json::from_str(text).unwrap()
+}
+
+fn standalone_case(id: &str) -> Value {
+    fixture_case(
+        include_str!("../../../../../tests/fixtures/plugin-loader/standalone-toctou.json"),
+        id,
+    )
+}
+
+/// Same files as `generate-standalone-toctou.mts` `layout(id)`; returns the
+/// standalone skill directory (its basename is the model-facing name).
+fn standalone_layout(id: &str) -> (Scratch, PathBuf) {
+    // Short prefix: the socket case binds directly under the scratch root.
+    let scratch = Scratch::new("594");
+    let skill_dir = scratch.path().join(id).join("skill");
+    fs::create_dir_all(skill_dir.join("references")).unwrap();
+    fs::create_dir_all(skill_dir.parent().unwrap().join("outside")).unwrap();
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: docx\ndescription: edit docs\n---\n\n# DOCX skill\n",
+    )
+    .unwrap();
+    fs::write(skill_dir.join("references/workflows.md"), "# Workflows\n").unwrap();
+    fs::write(
+        skill_dir.join("real.md"),
+        "---\nname: real\n---\n\n# In-root target\n",
+    )
+    .unwrap();
+    fs::write(
+        skill_dir.parent().unwrap().join("outside/secret.md"),
+        "SECRET",
+    )
+    .unwrap();
+    (scratch, skill_dir)
+}
+
+/// Loads the standalone skill with `swap(skill_dir)` at the selected window;
+/// panics unless the hook fired on SKILL.md itself.
+fn raced_standalone(
+    skill_dir: &Path,
+    swap: impl FnOnce(&Path) + 'static,
+    before_lstat: bool,
+) -> Result<LoadedPluginCommand, PluginRuntimeError> {
+    let target = skill_dir.join("SKILL.md").canonicalize().unwrap();
+    let fired = Rc::new(RefCell::new(None::<PathBuf>));
+    let seen = Rc::clone(&fired);
+    let swap_dir = skill_dir.to_path_buf();
+    let hook: Box<dyn FnOnce(&Path)> = Box::new(move |canonical: &Path| {
+        *seen.borrow_mut() = Some(canonical.to_path_buf());
+        swap(&swap_dir);
+    });
+    let window = if before_lstat {
+        &BEFORE_LSTAT
+    } else {
+        &BEFORE_OPEN
+    };
+    window.with(|h| *h.borrow_mut() = Some((target.clone(), hook)));
+    let result = load_standalone_skill("skill", skill_dir);
+    window.with(|h| h.borrow_mut().take());
+    assert_eq!(
+        fired.borrow().as_deref(),
+        Some(target.as_path()),
+        "race must fire on SKILL.md itself"
+    );
+    result
+}
+
+/// A statically out-of-root symlink leaf: its realpath escapes the skill root,
+/// so the checked open refuses it. TS follows the link and reads the out-of-root
+/// secret (`standalone-toctou.json` leaf-symlink).
+#[test]
+fn standalone_static_leaf_symlink_outside_is_refused() {
+    let case = standalone_case("leaf-symlink");
+    assert_eq!(
+        case["observed"]["skill"]["content"], "SECRET",
+        "TS reads out-of-root content"
+    );
+    let (_scratch, skill_dir) = standalone_layout("leaf-symlink");
+    let leaf = skill_dir.join("SKILL.md");
+    fs::remove_file(&leaf).unwrap();
+    symlink("../outside/secret.md", &leaf).unwrap();
+    assert!(
+        load_standalone_skill("skill", &skill_dir).is_err(),
+        "out-of-root leaf symlink must be refused, not read"
+    );
+}
+
+/// An in-root symlink leaf: its realpath stays inside the skill root, so the
+/// hardened read follows it exactly like TS (`standalone-toctou.json`
+/// in-root-symlink). Guards against the fix over-refusing ordinary in-root links.
+#[test]
+fn standalone_static_in_root_symlink_is_read() {
+    let case = standalone_case("in-root-symlink");
+    let expected = case["observed"]["skill"]["content"].as_str().unwrap();
+    let (_scratch, skill_dir) = standalone_layout("in-root-symlink");
+    let leaf = skill_dir.join("SKILL.md");
+    fs::remove_file(&leaf).unwrap();
+    symlink("./real.md", &leaf).unwrap();
+    let loaded = load_standalone_skill("skill", &skill_dir).expect("in-root link reads like TS");
+    assert_eq!(
+        loaded.content, expected,
+        "in-root symlink content matches TS"
+    );
+}
+
+/// A FIFO SKILL.md is not a regular file and is refused before any open; the
+/// whole skill fails without blocking. TS `readFile` blocks instead
+/// (`standalone-toctou.json` static-fifo).
+#[test]
+fn standalone_static_fifo_is_refused_without_blocking() {
+    let case = standalone_case("static-fifo");
+    assert_eq!(
+        case["observed"]["timedOut"], true,
+        "TS readFile blocks on a FIFO"
+    );
+    let (_scratch, skill_dir) = standalone_layout("static-fifo");
+    let leaf = skill_dir.join("SKILL.md");
+    fs::remove_file(&leaf).unwrap();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&leaf)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(fs::symlink_metadata(&leaf).unwrap().file_type().is_fifo());
+    assert!(
+        load_standalone_skill("skill", &skill_dir).is_err(),
+        "FIFO skill must be refused without blocking"
+    );
+}
+
+/// A socket SKILL.md is refused before any open. TS `readFile`'s open fails and
+/// rejects the load too (`standalone-toctou.json` static-socket).
+#[test]
+fn standalone_static_socket_is_refused() {
+    let case = standalone_case("static-socket");
+    assert_eq!(
+        case["observed"]["rejected"], true,
+        "TS readFile rejects a socket"
+    );
+    let (scratch, skill_dir) = standalone_layout("static-socket");
+    let leaf = skill_dir.join("SKILL.md");
+    fs::remove_file(&leaf).unwrap();
+    // Bind on a short path (sun_path limit), then move the socket into place.
+    let bound = scratch.path().join("s");
+    let _listener = std::os::unix::net::UnixListener::bind(&bound).unwrap();
+    fs::rename(&bound, &leaf).unwrap();
+    assert!(fs::symlink_metadata(&leaf).unwrap().file_type().is_socket());
+    assert!(
+        load_standalone_skill("skill", &skill_dir).is_err(),
+        "socket skill must be refused"
+    );
+}
+
+/// A leaf swapped to an out-of-root symlink after the boundary check: only the
+/// leaf's NOFOLLOW keeps the read inside the skill root. The unraced load first
+/// replays the genuine SKILL.md content.
+#[test]
+fn standalone_leaf_symlink_raced_after_check_is_refused() {
+    let case = standalone_case("leaf-symlink");
+    assert_eq!(
+        case["observed"]["skill"]["content"], "SECRET",
+        "TS via link"
+    );
+    let checked = standalone_fixture()["checked"]["content"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (_scratch, skill_dir) = standalone_layout("leaf-symlink");
+    assert_eq!(
+        load_standalone_skill("skill", &skill_dir).unwrap().content,
+        checked,
+        "unraced load replays TS checked content"
+    );
+    let result = raced_standalone(
+        &skill_dir,
+        |dir| {
+            let leaf = dir.join("SKILL.md");
+            fs::remove_file(&leaf).unwrap();
+            symlink("../outside/secret.md", &leaf).unwrap();
+        },
+        false,
+    );
+    assert!(
+        result.is_err(),
+        "leaf symlink raced after check must be refused"
+    );
+}
+
+/// A leaf swapped to a different inode (hardlink to an out-of-root file) after
+/// the check: only the post-open (dev, ino) recheck rejects it.
+#[test]
+fn standalone_leaf_hardlink_raced_after_check_is_refused() {
+    let (_scratch, skill_dir) = standalone_layout("leaf-hardlink");
+    let result = raced_standalone(
+        &skill_dir,
+        |dir| {
+            let leaf = dir.join("SKILL.md");
+            let outside = dir.parent().unwrap().join("outside/secret.md");
+            fs::remove_file(&leaf).unwrap();
+            fs::hard_link(&outside, &leaf).unwrap();
+        },
+        false,
+    );
+    assert!(
+        result.is_err(),
+        "hardlinked different inode must be refused by identity recheck"
+    );
+}
+
+/// Deleting SKILL.md after the check surfaces the real ENOENT, matching TS
+/// `readFile` rejecting the whole skill (`standalone-toctou.json`
+/// deleted-after-check), rather than a generic refusal.
+#[test]
+fn standalone_deleted_after_check_rejects_like_ts() {
+    let case = standalone_case("deleted-after-check");
+    assert_eq!(
+        case["observed"]["rejected"], true,
+        "TS readFile rejects after deletion"
+    );
+    let code = case["observed"]["code"].as_str().unwrap();
+    let (_scratch, skill_dir) = standalone_layout("deleted-after-check");
+    let result = raced_standalone(
+        &skill_dir,
+        |dir| {
+            fs::remove_file(dir.join("SKILL.md")).unwrap();
+        },
+        true,
+    );
+    assert!(result.is_err(), "deletion after check must reject");
+    let err = result.err().unwrap().to_string();
+    assert!(err.contains(code), "error matches TS code {code}: {err}");
+}
