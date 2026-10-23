@@ -320,10 +320,7 @@ fn load_configured_markdown(
     dirs.into_iter()
         .flat_map(|dir| {
             let base = config::join_path(path, &dir);
-            markdown::load_plugin_commands_with_root(name, &base, path).unwrap_or_else(|error| {
-                markdown::warn_if_traversal_limit(&base, &error);
-                Vec::new()
-            })
+            markdown::load_plugin_commands_with_root(name, &base, path).unwrap_or_default()
         })
         .filter(|c| fallback != "skills" || c.is_skill)
         .collect()
