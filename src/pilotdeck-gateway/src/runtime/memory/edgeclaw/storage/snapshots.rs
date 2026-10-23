@@ -180,30 +180,49 @@ fn remove(h: &SnapshotIoHook, p: &Path) -> Result<()> {
     Ok(())
 }
 
+// Stage accepts one display path; two-path libuv errors render the same quoted
+// suffix. This value is diagnostic text only and is never passed to the OS.
+fn pair_error(error: io::Error, syscall: &'static str, src: &Path, dst: &Path) -> io::Error {
+    let pair = PathBuf::from(format!("{}' -> '{}", src.display(), dst.display()));
+    crate::node_io::path_error(error, syscall, &pair)
+}
+fn copy_read_link(src: &Path) -> io::Result<PathBuf> {
+    fs::read_link(src).map_err(|e| crate::node_io::path_error(e, "readlink", src))
+}
+fn copy_realpath(parent: &Path) -> io::Result<PathBuf> {
+    fs::canonicalize(parent).map_err(|e| crate::node_io::path_error(e, "realpath", parent))
+}
+fn copy_permissions(dst: &Path, permissions: fs::Permissions) -> io::Result<()> {
+    fs::set_permissions(dst, permissions).map_err(|e| crate::node_io::path_error(e, "chmod", dst))
+}
 fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(src)?;
+    let metadata =
+        fs::symlink_metadata(src).map_err(|e| crate::node_io::path_error(e, "lstat", src))?;
     if metadata.file_type().is_symlink() {
         // Node 22 cpSync(directory, {recursive:true}) uses its C++ fast path:
         // it resolves the source parent before resolving relative link targets.
         // The JS onLink lexical path applies to copying a link alone or with a
         // filter, neither of which robustRenameSync uses (real-TS probe).
-        let target = fs::read_link(src)?;
+        let target = copy_read_link(src)?;
         let target = if target.is_absolute() {
             target
         } else {
-            absolute(&fs::canonicalize(src.parent().unwrap())?.join(target))
+            absolute(&copy_realpath(src.parent().unwrap())?.join(target))
                 .map_err(io::Error::other)?
         };
         if fs::symlink_metadata(dst).is_ok_and(|m| m.file_type().is_symlink()) {
             fs::remove_file(dst).map_err(|e| crate::node_io::path_error(e, "unlink", dst))?;
         }
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&target, dst)?;
+        std::os::unix::fs::symlink(&target, dst)
+            .map_err(|e| pair_error(e, "symlink", &target, dst))?;
         #[cfg(windows)]
         if src.is_dir() {
-            std::os::windows::fs::symlink_dir(&target, dst)?;
+            std::os::windows::fs::symlink_dir(&target, dst)
+                .map_err(|e| pair_error(e, "symlink", &target, dst))?;
         } else {
-            std::os::windows::fs::symlink_file(&target, dst)?;
+            std::os::windows::fs::symlink_file(&target, dst)
+                .map_err(|e| pair_error(e, "symlink", &target, dst))?;
         }
     } else if metadata.is_dir() {
         io_mkdir(dst)?;
@@ -211,9 +230,9 @@ fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
             let e = e.map_err(|e| crate::node_io::path_error(e, "scandir", src))?;
             copy_tree(&e.path(), &dst.join(e.file_name()))?;
         }
-        fs::set_permissions(dst, metadata.permissions())?;
+        copy_permissions(dst, metadata.permissions())?;
     } else {
-        fs::copy(src, dst)?;
+        fs::copy(src, dst).map_err(|e| pair_error(e, "copyfile", src, dst))?;
     }
     Ok(())
 }
@@ -227,7 +246,7 @@ fn rename(h: &SnapshotIoHook, src: &Path, dst: &Path) -> Result<()> {
             copy_tree(src, dst)?;
             remove(h, src)
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(pair_error(e, "rename", src, dst).into()),
     }
 }
 fn temp(p: &Path, label: &str) -> PathBuf {
@@ -860,3 +879,7 @@ mod round6_tests {
         });
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "../../../../../tests/fixtures/edgeclaw-entries/copy_io_replay.rs"]
+mod round7_tests;
