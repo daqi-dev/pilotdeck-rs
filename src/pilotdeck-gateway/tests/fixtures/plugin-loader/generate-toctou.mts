@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {realpathSync} from 'node:fs';
+import {createServer} from 'node:net';
 import {link, mkdir, mkdtemp, rename, rm, symlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
@@ -52,6 +53,9 @@ if (process.argv[2] === '--child') {
     'leaf-symlink': async (_dir, _base, leaf) => { await rm(leaf); await symlink('../../../outside/secret.md', leaf); },
     'leaf-hardlink': async (dir, _base, leaf) => { await rm(leaf); await link(join(dir, 'outside/secret.md'), leaf); },
     'ancestor-symlink': async (dir, base) => { await rename(join(base, 'sub'), join(dir, 'saved-sub')); await symlink('../../outside/sub', join(base, 'sub')); },
+    // The checked inode itself moved outside the root behind a link (same dev+ino).
+    'leaf-moved-symlink': async (dir, _base, leaf) => { await rename(leaf, join(dir, 'outside/moved.md')); await symlink('../../../outside/moved.md', leaf); },
+    'ancestor-moved-symlink': async (dir, base) => { await rename(join(base, 'sub'), join(dir, 'saved-sub')); await symlink('../../saved-sub', join(base, 'sub')); },
   };
   try {
     for (const [id, race] of Object.entries(races)) {
@@ -74,10 +78,23 @@ if (process.argv[2] === '--child') {
     const fifo = timedOut ? {timeoutMs: 1000, timedOut} : {timedOut, result: JSON.parse(child.stdout)};
     await rm(leaf);
     cases.push({id: 'static-fifo', fifo, control: await load(base)});
+    // A socket .md: TS readFile's open fails and rejects the whole load. Bind on a
+    // short path inside scratch (sun_path limit), then move it into place.
+    const sock = await layout('static-socket');
+    await rm(sock.leaf);
+    const server = createServer();
+    await new Promise<void>((ok, fail) => { server.once('error', fail); server.listen(join(scratch, 's'), ok); });
+    await rename(join(scratch, 's'), sock.leaf);
+    const socket = await load(sock.base).then(
+      (result: any) => ({rejected: false, result}),
+      (e: NodeJS.ErrnoException) => ({rejected: true, code: e.code, syscall: e.syscall}));
+    await new Promise(ok => server.close(ok));
+    await rm(sock.leaf, {force: true});
+    cases.push({id: 'static-socket', socket, control: await load(sock.base)});
   } finally {
     await rm(scratch, {recursive: true, force: true});
   }
   await mkdir(output, {recursive: true});
   await writeFile(join(output, 'toctou.json'), JSON.stringify({sourceCommit, node: process.version, sourceSha256, cases}, null, 2) + '\n');
-  console.log(JSON.stringify(cases.map(c => ({id: c.id, checked: c.checked?.length, replaced: c.replaced?.map((x: any) => x.content), control: c.control.length, fifo: c.fifo}))));
+  console.log(JSON.stringify(cases.map(c => ({id: c.id, checked: c.checked?.length, replaced: c.replaced?.map((x: any) => x.content), control: c.control.length, fifo: c.fifo, socket: c.socket}))));
 }
