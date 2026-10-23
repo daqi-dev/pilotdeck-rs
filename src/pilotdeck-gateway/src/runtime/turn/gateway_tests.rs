@@ -1,0 +1,814 @@
+use super::super::{
+    projector::GatewayAgentEventProjector,
+    publish::{FileRegistry, RegistryFuture, TurnRunRegistry},
+    replay::ActiveTurnSnapshotInput,
+    submit::{
+        PreparedTurn, SubmitError, SubmitFuture, SubmitHost, SubmitWorkspace, WorkspaceAdmissions,
+    },
+};
+use super::*;
+use crate::{
+    metadata::object,
+    runtime::{
+        project::{DisposeFuture, RuntimeError, RuntimeResult},
+        refresh::BoxFuture,
+        session::{
+            LiveSession, LiveSessionHandle, LiveTurn, SessionContext, SessionFactory, SessionNext,
+            SessionOwner, SessionOwnerOptions, TurnCompletionHandle,
+        },
+    },
+    storage::{FileRunRegistry, RunAcceptInput, RunRef, RunRegistryError},
+};
+use pilotdeck_protocol::{GATEWAY_PROTOCOL_VERSION, parse_json, stringify_json};
+use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use tokio::sync::watch;
+const ORACLE: &str = include_str!("../../../tests/fixtures/turn-gateway/oracle.json");
+fn js(value: &Value) -> JsValue {
+    parse_json(&value.to_string()).unwrap()
+}
+fn value(value: &JsValue) -> Value {
+    serde_json::from_str(&stringify_json(value).unwrap().unwrap()).unwrap()
+}
+struct Gate(watch::Sender<bool>);
+impl Gate {
+    fn new() -> Self {
+        Self(watch::channel(false).0)
+    }
+    fn open(&self) {
+        self.0.send_replace(true);
+    }
+    async fn wait(&self) {
+        let mut rx = self.0.subscribe();
+        rx.wait_for(|v| *v).await.unwrap();
+    }
+}
+struct Session {
+    thread: std::thread::ThreadId,
+    native: Vec<JsValue>,
+    coordinator: Arc<TurnEventCoordinator>,
+    accepted: Gate,
+    terminal: Gate,
+    end: Gate,
+    aborts: AtomicUsize,
+}
+impl LiveSession for Arc<Session> {
+    fn snapshot(&self) -> JsValue {
+        object([
+            ("messages", JsValue::Array(vec![])),
+            ("cwd", "/unused".into()),
+        ])
+    }
+    fn abort(&self, _: &JsString) -> RuntimeResult {
+        assert_eq!(
+            std::thread::current().id(),
+            self.thread,
+            "gateway host thread"
+        );
+        self.aborts.fetch_add(1, Ordering::SeqCst);
+        self.accepted.open();
+        self.terminal.open();
+        self.end.open();
+        Ok(())
+    }
+    fn dispose(&self) -> DisposeFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
+    fn submit(&self, _: JsValue, _: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        assert_eq!(
+            std::thread::current().id(),
+            self.thread,
+            "gateway host thread"
+        );
+        Ok(Box::new(Stream {
+            session: self.clone(),
+            index: 0,
+        }))
+    }
+}
+struct Stream {
+    session: Arc<Session>,
+    index: usize,
+}
+impl LiveTurn for Stream {
+    fn next(&mut self) -> SessionNext<'_> {
+        Box::pin(async move {
+            if self.index == 1 {
+                self.session.accepted.wait().await;
+            }
+            if self.index >= 2 {
+                self.session.terminal.wait().await;
+            }
+            if let Some(event) = self.session.native.get(self.index) {
+                self.index += 1;
+                return Ok(Some(event.clone()));
+            }
+            self.session.end.wait().await;
+            self.session.coordinator.emit(
+                &"s".into(),
+                &object([
+                    ("type", "agent_status".into()),
+                    ("event", "SessionEnd".into()),
+                ]),
+            );
+            Ok(None)
+        })
+    }
+}
+struct Factory(Arc<Session>);
+impl SessionFactory for Factory {
+    fn create(
+        &self,
+        _: SessionContext,
+        _: Option<LiveSessionHandle>,
+    ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+        let session = self.0.clone();
+        Box::pin(async move { Ok(LiveSessionHandle::new(Arc::new(session), None)) })
+    }
+}
+struct Host {
+    interactions: Arc<GatewayInteractionCoordinator>,
+    finally_failure: bool,
+}
+impl SubmitHost for Host {
+    fn workspace(&self, _: &JsValue) -> Result<SubmitWorkspace, SubmitError> {
+        Ok(SubmitWorkspace {
+            id: None,
+            snapshots_required: false,
+            recorder: None,
+        })
+    }
+    fn failure_guard_enabled(&self) -> bool {
+        false
+    }
+    fn set_session_cwd(&self, _: &JsString, _: &JsString) -> Result<(), SubmitError> {
+        Ok(())
+    }
+    fn now_ms(&self) -> f64 {
+        0.0
+    }
+    fn abort_turn_timeout_ms(&self) -> u64 {
+        20
+    }
+    fn normalize<'a>(
+        &'a self,
+        input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+        Box::pin(async move {
+            let binding =
+                InteractionBinding::from_value(input.get("interactionBinding").unwrap()).unwrap();
+            self.interactions
+                .reconnect_for_turn(
+                    input
+                        .get("sessionKey")
+                        .and_then(JsValue::as_string)
+                        .unwrap(),
+                    binding,
+                )
+                .unwrap();
+            Ok(vec![])
+        })
+    }
+    fn route_input<'a>(
+        &'a self,
+        _: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+    fn preflight<'a>(
+        &'a self,
+        _: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+    fn admitted_preflight<'a>(
+        &'a self,
+        _: &'a JsValue,
+        _: &'a TurnCompletionHandle,
+    ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+    fn observe_event<'a>(
+        &'a self,
+        _: &'a JsValue,
+        _: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn has_sdk_config(&self) -> bool {
+        false
+    }
+    fn validate_sdk_config(&self, _: &JsValue) -> Result<(), SubmitError> {
+        Ok(())
+    }
+    fn set_sdk_config<'a>(
+        &'a self,
+        _: &'a JsValue,
+        _: &'a TurnCompletionHandle,
+    ) -> SubmitFuture<'a, Result<bool, SubmitError>> {
+        Box::pin(async { Ok(false) })
+    }
+    fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn prepare<'a>(
+        &'a self,
+        input: &'a JsValue,
+        run: &'a RunRef,
+    ) -> SubmitFuture<'a, Result<PreparedTurn, SubmitError>> {
+        Box::pin(async move {
+            Ok(PreparedTurn {
+                model_selection: object([("source", "default".into())]),
+                input: object([
+                    ("type", "text".into()),
+                    ("text", input.get("message").cloned().unwrap()),
+                ]),
+                options: object([("turnId", JsValue::String(run.run_id.clone()))]),
+            })
+        })
+    }
+    fn commit_accepted_input<'a>(
+        &'a self,
+        _: &'a RunRef,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn record_failure<'a>(
+        &'a self,
+        _: &'a RunRef,
+        _: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn finish_pump<'a>(&'a self, _: &'a RunRef) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn reject_pending(&self, session: &JsString, reason: &str) -> Result<(), SubmitError> {
+        self.interactions
+            .reject_pending_turn(session, &reason.into());
+        Ok(())
+    }
+    fn release_claim(&self, _: &JsString, _: &JsString) {}
+    fn after_turn(&self, _: &RunRef) -> Result<(), SubmitError> {
+        if self.finally_failure {
+            Err(SubmitError::new(
+                "gateway_request_failed",
+                "injected finally failure",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+struct Requests;
+impl GatewayRequests for Requests {
+    fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
+        Box::pin(async {
+            Ok(object([
+                ("name", "fixture".into()),
+                ("capabilities", JsValue::Array(vec![])),
+            ]))
+        })
+    }
+    fn request(&self, method: JsString, _: JsValue) -> Call<'_, Result<JsValue, RequestError>> {
+        Box::pin(async move { Err(RequestError::new(format!("unexpected method: {method:?}"))) })
+    }
+}
+struct Registry {
+    file: FileRegistry,
+    fail: bool,
+    pending: Arc<AtomicUsize>,
+    path: std::path::PathBuf,
+}
+impl Registry {
+    fn track<T: Send + 'static>(&self, future: RegistryFuture<T>) -> RegistryFuture<T> {
+        let pending = self.pending.clone();
+        pending.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            let result = future.await;
+            pending.fetch_sub(1, Ordering::SeqCst);
+            result
+        })
+    }
+}
+impl TurnRunRegistry for Registry {
+    fn accept(&self, input: &RunAcceptInput) -> RegistryFuture<bool> {
+        self.track(self.file.accept(input))
+    }
+    fn events(&self, run: &RunRef) -> RegistryFuture<Vec<JsValue>> {
+        self.track(self.file.events(run))
+    }
+    fn append(&self, run: &RunRef, event: &JsValue) -> RegistryFuture<()> {
+        if self.fail {
+            Box::pin(async {
+                Err(RunRegistryError::Invalid(
+                    "injected registry append failure".into(),
+                ))
+            })
+        } else {
+            self.track(self.file.append(run, event))
+        }
+    }
+}
+#[derive(Default)]
+struct Text(Mutex<Vec<String>>);
+impl GatewayTextConnection for Text {
+    fn send_text(&self, text: String) {
+        if serde_json::from_str::<Value>(&text).unwrap()["type"] != "hello_ok" {
+            self.0.lock().unwrap().push(text);
+        }
+    }
+    fn close(&self, code: u16, reason: &str) {
+        panic!("unexpected close {code}:{reason}");
+    }
+}
+async fn settle(host: &TurnGateway, registry: &Registry) {
+    for _ in 0..4 {
+        host.call(async {
+            for _ in 0..64 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        while registry.pending.load(Ordering::SeqCst) != 0 {
+            tokio::task::yield_now().await;
+        }
+    }
+}
+fn request(id: &str, input: &Value) -> String {
+    json!({"type":"request", "id":id, "method":"submit_turn", "params":input}).to_string()
+}
+async fn replay_case(case: &Value) {
+    let root = std::env::temp_dir().join(format!("pdrs-turn-gateway-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("registry.json");
+    let registry = Arc::new(Registry {
+        file: FileRegistry::new(FileRunRegistry::open(&path).unwrap()).unwrap(),
+        fail: case["setup"]["registryAppendFailure"] == true,
+        pending: Arc::default(),
+        path,
+    });
+    let native = case["native"].as_array().unwrap().iter().map(js).collect();
+    let port = registry.clone();
+    let finally_failure = case["setup"]["finallyFailure"] == true;
+    let (send, ready) = std::sync::mpsc::sync_channel(1);
+    let host = TurnGateway::start(TurnReplayOptions::new(), move |coordinator| {
+        let session = Arc::new(Session {
+            thread: std::thread::current().id(),
+            native,
+            coordinator: coordinator.clone(),
+            accepted: Gate::new(),
+            terminal: Gate::new(),
+            end: Gate::new(),
+            aborts: AtomicUsize::new(0),
+        });
+        let mut options = SessionOwnerOptions::new(Arc::new(Factory(session.clone())));
+        options.idle_sweep_interval_ms = 0;
+        let owner = SessionOwner::new(options);
+        let interactions = Arc::new(GatewayInteractionCoordinator::default());
+        let submitter = Arc::new(TurnSubmitter {
+            owner,
+            coordinator,
+            registry: Some(port),
+            projector: Arc::new(GatewayAgentEventProjector::default()),
+            host: Arc::new(Host {
+                interactions: interactions.clone(),
+                finally_failure,
+            }),
+            workspace_admissions: WorkspaceAdmissions::default(),
+        });
+        send.send(session).unwrap();
+        Ok(GatewayServices {
+            submitter,
+            interactions,
+            requests: Arc::new(Requests),
+        })
+    })
+    .unwrap();
+    let session = ready.recv().unwrap();
+    let text = Arc::new(Text::default());
+    let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+    connection.receive(json!({"type":"hello", "protocolVersion":GATEWAY_PROTOCOL_VERSION, "token":"token", "clientName":"web", "clientVersion":"fixture"}).to_string()).await.unwrap();
+    let running = connection.clone();
+    let first = request("a", &case["input"]);
+    let ended = Arc::new(AtomicBool::new(false));
+    let done = ended.clone();
+    let consumer = tokio::spawn(async move {
+        running.receive(first).await.unwrap();
+        done.store(true, Ordering::SeqCst);
+    });
+    let mut closing = None;
+    let mut actual_run = "r".to_string();
+    for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
+        match step.as_str().unwrap() {
+            "observe" => {}, "accept" => session.accepted.open(), "terminal" => session.terminal.open(), "end" => session.end.open(),
+            "external_error" => { host.emit("s".into(), parse_json(r#"{"type":"error","code":"injected","message":"external error","recoverable":true}"#).unwrap()).await.unwrap(); }
+            "permission" => { host.emit("s".into(), parse_json(r#"{"type":"permission_request","requestId":"q","toolName":"bash","input":{"command":"pwd"},"sequence":41}"#).unwrap()).await.unwrap(); },
+            "pending" => {
+                let gateway = host.gateway.clone();
+                host.call(async move {
+                    gateway.0.interactions.permission_bus().register(&"s".into(), crate::runtime::interaction::PendingEntry {
+                        request_id: "q".into(), tool_call_id: "tc".into(), tool_name: "bash".into(),
+                        resolve: Arc::new(|_| {}), reject: Arc::new(|_| {}),
+                    }, None).unwrap()
+                }).await.unwrap();
+            }
+            "describe" => connection.receive(json!({"type":"request", "id":"info", "method":"describe_server", "params":{}}).to_string()).await.unwrap(),
+            "second" => { let mut input = case["input"].clone(); input["runId"] = "r2".into(); connection.receive(request("b", &input)).await.unwrap(); },
+            "replay" => connection.receive(request("b", &case["input"])).await.unwrap(),
+            "conflict" => { let mut input = case["input"].clone(); input["message"] = "different".into(); connection.receive(request("b", &input)).await.unwrap(); },
+            "close" => { let c = connection.clone(); closing = Some(tokio::spawn(async move { c.closed().await.unwrap(); })); },
+            "abort" => connection.receive(json!({"type":"request","id":"stop","method":"abort_turn","params":{"sessionKey":"s","runId":actual_run}}).to_string()).await.unwrap(),
+            other => panic!("unknown step {other}"),
+        }
+        settle(&host, &registry).await;
+        let gateway = host.gateway.clone();
+        let active = host
+            .call(async move { gateway.0.submitter.owner.has_active_turn(&"s".into()) })
+            .await
+            .unwrap();
+        if case["setup"]["generatedRunId"] == true && index == 0 {
+            let gateway = host.gateway.clone();
+            actual_run = host
+                .call(async move {
+                    gateway
+                        .0
+                        .submitter
+                        .owner
+                        .active_turn_run_id(&"s".into())
+                        .unwrap()
+                        .to_utf8()
+                        .unwrap()
+                })
+                .await
+                .unwrap();
+        }
+        let frames: Vec<_> = text
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|frame| frame.replace(&actual_run, "r"))
+            .collect();
+        let actual =
+            json!({"frames":frames, "active":active, "ended":ended.load(Ordering::SeqCst)});
+        assert_eq!(
+            actual, case["results"][index],
+            "{}: step {step}",
+            case["name"]
+        );
+    }
+    consumer.await.unwrap();
+    if let Some(close) = closing {
+        close.await.unwrap();
+    }
+    let run = RunRef {
+        session_key: "s".into(),
+        project_key: Some("p".into()),
+        run_id: actual_run.as_str().into(),
+    };
+    let registry_path = registry.path.clone();
+    let actual = tokio::task::spawn_blocking(move || {
+        FileRunRegistry::open(registry_path)
+            .unwrap()
+            .events(&run, None, None)
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        actual
+            .iter()
+            .map(|entry| serde_json::from_str::<Value>(
+                &stringify_json(entry)
+                    .unwrap()
+                    .unwrap()
+                    .replace(&actual_run, "r")
+            )
+            .unwrap())
+            .collect::<Vec<_>>(),
+        case["registryEvents"].as_array().unwrap().clone(),
+        "{}: registry seq",
+        case["name"]
+    );
+    let gateway = host.gateway.clone();
+    let snapshot = host
+        .call(async move {
+            gateway
+                .0
+                .submitter
+                .coordinator
+                .snapshot(&ActiveTurnSnapshotInput::new("s".into()))
+                .to_json()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            &stringify_json(&snapshot)
+                .unwrap()
+                .unwrap()
+                .replace(&actual_run, "r")
+        )
+        .unwrap(),
+        case["replay"],
+        "{}: replay",
+        case["name"]
+    );
+    if case["name"].as_str().unwrap().starts_with("close-")
+        && case["name"] != "close-after-end"
+        && case["name"] != "close-preserves-pending"
+        && case["name"] != "close-after-busy"
+    {
+        assert_eq!(session.aborts.load(Ordering::SeqCst), 1);
+    }
+    drop(connection);
+    drop(host);
+    drop(session);
+    drop(registry);
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[tokio::test]
+async fn real_ts_gateway_frames_registry_replay_and_concurrency() {
+    crate::test_baseline::oracle(ORACLE);
+    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    for case in oracle["cases"].as_array().unwrap() {
+        if std::env::var("PDRS_GATEWAY_CASE")
+            .is_ok_and(|name| name != case["name"].as_str().unwrap())
+        {
+            continue;
+        }
+        tokio::time::timeout(Duration::from_secs(15), replay_case(case))
+            .await
+            .expect("gateway case deadlock");
+    }
+}
+#[test]
+#[ignore = "requires the fixed TS baseline and tsx"]
+fn real_ts_turn_gateway_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("turn-gateway");
+}
+
+#[derive(Default)]
+struct ClockState {
+    now: u64,
+    deadlines: HashMap<JsString, (u64, Callback)>,
+}
+#[derive(Default)]
+struct Clock(Mutex<ClockState>);
+impl Clock {
+    fn advance(&self, ms: u64) {
+        let callbacks = {
+            let mut clock = self.0.lock().unwrap();
+            clock.now += ms;
+            let now = clock.now;
+            let due: Vec<_> = clock
+                .deadlines
+                .iter()
+                .filter(|(_, (due, _))| *due <= now)
+                .map(|(key, _)| key.clone())
+                .collect();
+            due.into_iter()
+                .map(|key| clock.deadlines.remove(&key).unwrap().1)
+                .collect::<Vec<_>>()
+        };
+        for callback in callbacks {
+            callback();
+        }
+    }
+}
+impl ReplayTimer for Clock {
+    fn set(&self, key: &JsString, delay: Duration, callback: Callback) {
+        let mut clock = self.0.lock().unwrap();
+        let due = clock.now + pilotdeck_protocol::timer_delay_ms(delay.as_millis() as f64);
+        clock.deadlines.insert(key.clone(), (due, callback));
+    }
+    fn cancel(&self, key: &JsString) {
+        self.0.lock().unwrap().deadlines.remove(key);
+    }
+    fn cancel_all(&self) {
+        self.0.lock().unwrap().deadlines.clear();
+    }
+}
+fn empty_gateway_with_clock(retention: u64, clock: Arc<Clock>) -> TurnGateway {
+    TurnGateway::start_with_clock(
+        TurnReplayOptions::new().with_terminal_retention_ms(retention),
+        Some(clock),
+        |coordinator| {
+            let session = Arc::new(Session {
+                thread: std::thread::current().id(),
+                native: vec![],
+                coordinator: coordinator.clone(),
+                accepted: Gate::new(),
+                terminal: Gate::new(),
+                end: Gate::new(),
+                aborts: AtomicUsize::new(0),
+            });
+            let mut options = SessionOwnerOptions::new(Arc::new(Factory(session)));
+            options.idle_sweep_interval_ms = 0;
+            let interactions = Arc::new(GatewayInteractionCoordinator::default());
+            Ok(GatewayServices {
+                submitter: Arc::new(TurnSubmitter {
+                    owner: SessionOwner::new(options),
+                    coordinator,
+                    registry: None,
+                    projector: Arc::new(GatewayAgentEventProjector::default()),
+                    host: Arc::new(Host {
+                        interactions: interactions.clone(),
+                        finally_failure: false,
+                    }),
+                    workspace_admissions: WorkspaceAdmissions::default(),
+                }),
+                interactions,
+                requests: Arc::new(Requests),
+            })
+        },
+    )
+    .unwrap()
+}
+#[tokio::test]
+async fn serial_retention_matches_real_ts_host_steps_and_dispose() {
+    crate::test_baseline::oracle(ORACLE);
+    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    for case in oracle["timerCases"].as_array().unwrap() {
+        let clock = Arc::new(Clock::default());
+        let retention = case["retention"].as_u64().unwrap();
+        let ordering = case["ordering"].as_str().unwrap().to_owned();
+        let host = empty_gateway_with_clock(retention, clock.clone());
+        let coordinator = host.gateway.0.submitter.coordinator.clone();
+        if ordering == "after-step" {
+            let coordinator = coordinator.clone();
+            let initial = host
+                .call(async move {
+                    let key = "s".into();
+                    let run = "r".into();
+                    let _registration = coordinator.start(&key, &run, |_| {});
+                    coordinator.record(
+                        &key,
+                        &parse_json(r#"{"type":"text","text":"retained","runId":"r"}"#).unwrap(),
+                    );
+                    coordinator.retain_terminal(&key, &run);
+                    value(
+                        &coordinator
+                            .snapshot(&ActiveTurnSnapshotInput::new(key))
+                            .to_json(),
+                    )
+                })
+                .await
+                .unwrap();
+            // The scheduling step has returned; expiry occurs between steps.
+            clock.advance(retention.max(1));
+            let coordinator = host.gateway.0.submitter.coordinator.clone();
+            let after = host
+                .call(async move {
+                    for _ in 0..8 {
+                        tokio::task::yield_now().await;
+                    }
+                    value(
+                        &coordinator
+                            .snapshot(&ActiveTurnSnapshotInput::new("s".into()))
+                            .to_json(),
+                    )
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                json!([initial, after, after, after]),
+                case["snapshots"],
+                "serial timer: {retention} after-step"
+            );
+            continue;
+        }
+        let mut snapshots = host
+            .call(async move {
+                let key = "s".into();
+                let run = "r".into();
+                let _registration = coordinator.start(&key, &run, |_| {});
+                coordinator.record(
+                    &key,
+                    &parse_json(r#"{"type":"text","text":"retained","runId":"r"}"#).unwrap(),
+                );
+                coordinator.retain_terminal(&key, &run);
+                let snap = || {
+                    value(
+                        &coordinator
+                            .snapshot(&ActiveTurnSnapshotInput::new(key.clone()))
+                            .to_json(),
+                    )
+                };
+                let initial = snap();
+                if ordering == "dispose-before-due" {
+                    coordinator.dispose();
+                }
+                clock.advance(retention.max(1)); // Due during the actual production host step.
+                if ordering == "dispose-after-due" {
+                    coordinator.dispose();
+                }
+                let _replacement = (ordering == "replace-after-due")
+                    .then(|| coordinator.start(&key, &"new".into(), |_| {}));
+                let synchronous = snap();
+                std::future::ready(()).await; // Ready continuation in the same step.
+                vec![initial, synchronous, snap()]
+            })
+            .await
+            .unwrap();
+        let coordinator = host.gateway.0.submitter.coordinator.clone();
+        snapshots.push(
+            host.call(async move {
+                for _ in 0..8 {
+                    tokio::task::yield_now().await;
+                }
+                value(
+                    &coordinator
+                        .snapshot(&ActiveTurnSnapshotInput::new("s".into()))
+                        .to_json(),
+                )
+            })
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            json!(snapshots),
+            case["snapshots"],
+            "serial timer: {retention} {}",
+            case["ordering"]
+        );
+    }
+}
+
+#[tokio::test]
+async fn serial_timer_cancels_queued_callbacks_and_replacements() {
+    let clock = Arc::new(Clock::default());
+    let timer = HostSerialTimer::with_clock(clock.clone());
+    let fired = Arc::new(AtomicUsize::new(0));
+    let key = "s".into();
+    let callback: Callback = {
+        let fired = fired.clone();
+        Arc::new(move || {
+            fired.fetch_add(1, Ordering::SeqCst);
+        })
+    };
+    timer.set(&key, Duration::from_millis(5), callback.clone());
+    clock.advance(4);
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        fired.load(Ordering::SeqCst),
+        0,
+        "serial timer must respect deadline"
+    );
+    clock.advance(1);
+    timer.cancel(&key); // Cancel a callback already detached from the clock.
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        fired.load(Ordering::SeqCst),
+        0,
+        "cancel queued serial timer"
+    );
+    timer.set(&key, Duration::from_millis(5), callback.clone());
+    clock.advance(5);
+    timer.set(&key, Duration::from_millis(5), callback.clone());
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        fired.load(Ordering::SeqCst),
+        0,
+        "replacement invalidates detached serial timer"
+    );
+    clock.advance(5);
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        fired.load(Ordering::SeqCst),
+        1,
+        "replacement timer fires once"
+    );
+    timer.set(&key, Duration::from_millis(5), callback.clone());
+    clock.advance(5);
+    timer.cancel_all();
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        fired.load(Ordering::SeqCst),
+        1,
+        "dispose cancels queued serial timers"
+    );
+    timer.set(&key, Duration::from_millis(5), callback);
+    clock.advance(5);
+    drop(timer);
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        fired.load(Ordering::SeqCst),
+        1,
+        "drop cancels queued serial timers"
+    );
+}

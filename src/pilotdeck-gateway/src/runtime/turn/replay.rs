@@ -11,8 +11,7 @@
 //! waits on `Instant` (monotonic), so an NTP jump cannot shorten or extend a
 //! terminal window.
 //!
-//! One TS boundary is an open, decision-pending divergence on the
-//! production path: Node runs a `setTimeout` callback only on a later timer
+//! The standalone default has a different scheduling boundary: Node runs a `setTimeout` callback only on a later timer
 //! turn — after the scheduling stack returns to the event loop and the
 //! pending microtasks drain — while this store's timer thread fires a due
 //! deadline without waiting for the caller's current synchronous segment or
@@ -25,15 +24,14 @@
 //! A zero delay is still deferred by Node's own 1 ms floor, so a `snapshot`
 //! immediately after `retain_terminal` sees the terminal replay in the
 //! common case; tests that need the exact boundary inject `ManualTimer`,
-//! whose `advance` plays that host turn deterministically. The divergence
-//! is an implementation choice pending a decision (accept it, or align by
-//! injecting a host-serial timer once A7.2-pr5 provides the host scheduling
-//! loop), not a proven impossibility: a host that needs the exact JS
-//! boundary can already inject its own [`ReplayTimer`] through
-//! [`TurnReplayOptions::with_timer`] — for example one that defers expiry
-//! callbacks to its own scheduler turn. It is registered as
-//! A7.2-REPLAY-RETENTION-TIMER-001 in
-//! `specs/gateway-parity/accepted-diffs.md`.
+//! whose `advance` plays that host turn deterministically. The production
+//! connection host (`gateway::TurnGateway`) wraps the deadline clock in a
+//! serial queue: a due callback only enqueues, and replay is reclaimed on a
+//! later host step. That path addresses A7.2-REPLAY-RETENTION-TIMER-001;
+//! standalone users of this default timer still need to inject their own host
+//! boundary through [`TurnReplayOptions::with_timer`]. The historical ledger
+//! entry is kept in `specs/gateway-parity/accepted-diffs.md`.
+
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json, timer_delay_ms};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -61,7 +59,7 @@ pub trait ReplayTimer: Send + Sync {
 /// the TS `setTimeout(0)` next-macrotask boundary observable for adjacent
 /// calls in the common case (see the module note for the exact scope of that
 /// promise).
-struct ThreadTimer {
+pub(super) struct ThreadTimer {
     shared: Arc<(Mutex<TimerWorker>, Condvar)>,
     handle: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// Flipped by the worker immediately before it returns, so an observer
@@ -86,7 +84,7 @@ struct TimerWorker {
 }
 
 impl ThreadTimer {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let shared = Arc::new((Mutex::new(TimerWorker::default()), Condvar::new()));
         let exited = Arc::new(AtomicBool::new(false));
         let worker = Arc::clone(&shared);
@@ -237,7 +235,7 @@ impl TurnReplayOptions {
         self
     }
     /// Replace the deadline timer. Tests use a manually advanced timer so the
-    /// golden data stays wall-clock free; hosts normally keep the default.
+    /// golden data stays wall-clock free; the production connection host wraps the default in its serial queue.
     /// The default timer keeps Node's 1 ms floor for a zero delay but cannot
     /// promise the JS timer-turn boundary for any retention duration (see the
     /// module note); a host that needs that boundary in production injects its
