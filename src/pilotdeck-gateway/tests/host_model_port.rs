@@ -486,8 +486,8 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                     "value",
                     obj(&[
                         ("request", prepared.request.clone()),
-                        ("provider", JsValue::String(prepared.provider.clone())),
-                        ("model", JsValue::String(prepared.model.clone())),
+                        ("provider", prepared.provider.clone()),
+                        ("model", prepared.model.clone()),
                         (
                             "opaque",
                             prepared.opaque.clone().unwrap_or(JsValue::Undefined),
@@ -713,7 +713,7 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
 async fn port_sequences_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let cases = items(get(&oracle, "cases"));
-    assert_eq!(cases.len(), 25);
+    assert_eq!(cases.len(), 31);
     for case in cases {
         replay_case(case, &oracle).await.unwrap();
     }

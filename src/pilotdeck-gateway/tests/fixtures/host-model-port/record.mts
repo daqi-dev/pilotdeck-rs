@@ -164,6 +164,47 @@ export async function record(baselineDir: string, scratchDir: string) {
       context: { modelOverride: { provider: 'b', model: 'm' } },
       scripts: [{ events: ok }],
     },
+    // Fix round 4: `modelOverride` truthiness (`routerModelInvokerAdapter.ts:28`).
+    // A truthy value routes explicitly and the raw `.provider` / `.model` reads
+    // pass through as-is: a missing field, a non-string value, or a truthy
+    // non-object all stay `undefined` (or the raw value) on the decision, the
+    // materialized request and the prepared invocation — never a silent fall
+    // back to scenario routing.
+    {
+      name: 'override-missing-model',
+      context: { modelOverride: { provider: 'b' } },
+      scripts: [{ events: ok }],
+      materialize: true,
+    },
+    {
+      name: 'override-missing-provider',
+      context: { modelOverride: { model: 'm' } },
+      scripts: [{ events: ok }],
+    },
+    {
+      name: 'override-non-string-provider',
+      context: { modelOverride: { provider: 42, model: 'm' } },
+      scripts: [{ events: ok }],
+      materialize: true,
+    },
+    {
+      name: 'override-non-object-truthy',
+      context: { modelOverride: 'x' },
+      scripts: [{ events: ok }],
+    },
+    {
+      // Falsy: the adapter consults the router like any unoverridden turn.
+      name: 'override-null',
+      context: { modelOverride: null },
+      scripts: [{ events: ok }],
+    },
+    {
+      // Truthy: both route fields read as `undefined`, still explicit.
+      name: 'override-empty-object',
+      context: { modelOverride: {} },
+      scripts: [{ events: ok }],
+      materialize: true,
+    },
     {
       name: 'http-text-stream',
       http: true,

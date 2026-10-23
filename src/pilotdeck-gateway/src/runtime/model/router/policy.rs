@@ -300,23 +300,23 @@ pub fn materialize_request(
         messages = JsValue::Array(super::scenario::strip_subagent_tag_from_messages(items));
     }
 
-    let provider = field(decision, "provider")
-        .as_string()
-        .cloned()
-        .unwrap_or_default();
-    let model = field(decision, "model")
-        .as_string()
-        .cloned()
-        .unwrap_or_default();
+    // `RouterRequestMaterializer.ts:30-31`: `provider`/`model` are the
+    // decision's raw route values — an explicit override can leave either
+    // `undefined` or pass a non-string through, and the materialized request
+    // carries it as-is (serialization drops `undefined`).
+    let provider = field(decision, "provider").clone();
+    let model = field(decision, "model").clone();
     let cache_plan = request.get("cachePlan").cloned();
     let routed_cache_plan = cache_plan.as_ref().and_then(|plan| {
         let plan = plan.as_object()?;
-        let provider_matches = plan.get("provider").is_none_or(|value| {
-            value.is_undefined() || value.as_string().is_some_and(|value| *value == provider)
-        });
-        let model_matches = plan.get("model").is_none_or(|value| {
-            value.is_undefined() || value.as_string().is_some_and(|value| *value == model)
-        });
+        // `RouterRequestMaterializer.ts:22-25`: strict equality against the
+        // decision's route values, raw types included.
+        let provider_matches = plan
+            .get("provider")
+            .is_none_or(|value| value.is_undefined() || value == &provider);
+        let model_matches = plan
+            .get("model")
+            .is_none_or(|value| value.is_undefined() || value == &model);
         (provider_matches && model_matches).then(|| plan.clone())
     });
     let has_cache_plan = cache_plan.as_ref().is_some_and(|plan| !plan.is_undefined());
@@ -337,8 +337,8 @@ pub fn materialize_request(
     for (key, value) in patch.entries() {
         result.insert(key.clone(), value.clone());
     }
-    result.insert("provider".into(), JsValue::String(provider.clone()));
-    result.insert("model".into(), JsValue::String(model.clone()));
+    result.insert("provider".into(), provider.clone());
+    result.insert("model".into(), model.clone());
     result.insert("messages".into(), messages);
     result.insert("cacheBreakpoints".into(), cache_breakpoints);
     result.insert(
@@ -352,7 +352,13 @@ pub fn materialize_request(
     let Some(requested) = requested else {
         return JsValue::Object(result);
     };
-    if let Ok(capabilities) = invoker.get_capabilities(&provider, &model) {
+    // `clampMaxOutputTokensToModelCap` (`RouterRequestMaterializer.ts:51-59`):
+    // the capability read indexes the config by the raw route's property-key
+    // form and an unknown route is caught here, leaving the request alone.
+    if let Ok(capabilities) = invoker.get_capabilities(
+        &crate::js_value::property_key(&provider),
+        &crate::js_value::property_key(&model),
+    ) {
         let cap = capabilities
             .get("maxOutputTokens")
             .and_then(JsValue::as_number);

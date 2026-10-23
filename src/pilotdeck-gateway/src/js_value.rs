@@ -14,7 +14,7 @@
 //! real limit throw here but convert in TS.
 //! Ledger: specs/gateway-parity/accepted-diffs.md A6-JSVALUE-DEPTH-001 (unapproved).
 use crate::metadata::js_trim;
-use pilotdeck_protocol::{JsValue, stringify_json};
+use pilotdeck_protocol::{JsString, JsValue, stringify_json};
 
 /// Deepest array nesting that converts; conservative against V8's 2515.
 pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;
@@ -174,6 +174,17 @@ fn scalar_units(value: &JsValue, out: &mut Vec<u16>) {
 /// `String(value)` with lone surrogates as U+FFFD (for Rust-side messages).
 pub(crate) fn display(value: &JsValue) -> Result<String, StackOverflow> {
     Ok(String::from_utf16_lossy(&to_string_units(value)?))
+}
+
+/// A route value as a JS property key. Routes cross module wires as-is
+/// (`routerModelInvokerAdapter.ts:30-31`), so a lookup face that indexes its
+/// config — `config.providers[providerId]` — coerces exactly like
+/// `String(value)`: `undefined` reads as `"undefined"`, numbers as their
+/// decimal form. A stack-overflowing container coerces as the empty key.
+pub(crate) fn property_key(value: &JsValue) -> JsString {
+    to_string_units(value)
+        .map(JsString::from_utf16)
+        .unwrap_or_default()
 }
 
 /// `JSON.stringify` with the same conservative container-depth bound as

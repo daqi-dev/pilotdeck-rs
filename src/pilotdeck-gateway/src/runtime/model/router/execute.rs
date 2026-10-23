@@ -75,6 +75,20 @@ fn aborted(ctx: &RouterExecuteContext) -> bool {
         .as_ref()
         .is_some_and(AbortFlag::is_aborted)
 }
+/// One candidate attempt. `reference` is the property-key form the
+/// policy/health/media faces index their configs by (`` `${provider}/*` ``
+/// selectors, `config.providers[providerId]`); `provider`/`model` are the raw
+/// route values TS keeps on the attempt object (`RouterRuntime.ts:581-585`)
+/// — the requested attempt carries the decision's values as-is (an explicit
+/// override may leave either `undefined` or pass a non-string through),
+/// fallback attempts their configured strings.
+#[derive(Clone)]
+struct AttemptRoute {
+    reference: RouterModelRef,
+    provider: JsValue,
+    model: JsValue,
+}
+
 fn content_event(event: &JsValue) -> bool {
     [
         "text_delta",
@@ -106,25 +120,27 @@ impl RouterRuntime {
         ctx: &RouterExecuteContext,
         sink: &mut (dyn FnMut(JsValue) + Send),
     ) -> Result<(), RouterExecuteError> {
-        let requested = RouterModelRef::new(
-            field(decision, "provider")
-                .as_string()
-                .cloned()
-                .unwrap_or_default(),
-            field(decision, "model")
-                .as_string()
-                .cloned()
-                .unwrap_or_default(),
-        );
-        self.assert_model_allowed(&requested)?;
+        let requested = AttemptRoute {
+            reference: RouterModelRef::new(
+                crate::js_value::property_key(field(decision, "provider")),
+                crate::js_value::property_key(field(decision, "model")),
+            ),
+            provider: field(decision, "provider").clone(),
+            model: field(decision, "model").clone(),
+        };
+        self.assert_model_allowed(&requested.reference)?;
         if ctx
             .managed_model_policy
             .as_ref()
-            .is_some_and(|policy| !managed_model_allowed(policy, &requested))
+            .is_some_and(|policy| !managed_model_allowed(policy, &requested.reference))
         {
             return Err(RouterRuntimeError::new(
                 "SDK_MANAGED_MODEL_DENIED",
-                join_message("SDK managedSettings.models denies model ", &requested, "."),
+                join_message(
+                    "SDK managedSettings.models denies model ",
+                    &requested.reference,
+                    ".",
+                ),
             )
             .into());
         }
@@ -145,8 +161,8 @@ impl RouterRuntime {
             // Disabled routing ignores requestPatch/subagent mutations while
             // retaining cache scoping, capability cap, and media downgrade.
             let simple = object(&[
-                ("provider", JsValue::String(requested.provider.clone())),
-                ("model", JsValue::String(requested.model.clone())),
+                ("provider", requested.provider.clone()),
+                ("model", requested.model.clone()),
             ]);
             let request = fallback::downgrade_request(
                 &self.materialize_request(&simple, request),
@@ -175,15 +191,28 @@ impl RouterRuntime {
         let base = self.materialize_request(decision, request);
         let required = scenario::collect_required_input_modalities(&request_messages(&base));
         let mut candidates = vec![requested.clone()];
-        candidates.extend(fallback);
-        let mut unique = Vec::<RouterModelRef>::new();
+        candidates.extend(fallback.into_iter().map(|reference| AttemptRoute {
+            provider: JsValue::String(reference.provider.clone()),
+            model: JsValue::String(reference.model.clone()),
+            reference,
+        }));
+        let mut unique = Vec::<AttemptRoute>::new();
         for candidate in candidates {
-            if allowed(&candidate) && !unique.iter().any(|prior| prior.key() == candidate.key()) {
+            // `RouterRuntime.ts:642-645`: dedup by strict route equality.
+            if allowed(&candidate.reference)
+                && !unique.iter().any(|prior| {
+                    prior.provider == candidate.provider && prior.model == candidate.model
+                })
+            {
                 unique.push(candidate);
             }
         }
         let (native, downgraded): (Vec<_>, Vec<_>) = unique.into_iter().partition(|candidate| {
-            scenario::supports_media_requirements(self.invoker.as_ref(), candidate, &required)
+            scenario::supports_media_requirements(
+                self.invoker.as_ref(),
+                &candidate.reference,
+                &required,
+            )
         });
         let plans: Vec<_> = native
             .into_iter()
@@ -191,8 +220,11 @@ impl RouterRuntime {
             .chain(downgraded.into_iter().map(|model| (model, true)))
             .collect();
         if plans.is_empty() {
-            let missing =
-                scenario::missing_input_modalities(self.invoker.as_ref(), &requested, &required);
+            let missing = scenario::missing_input_modalities(
+                self.invoker.as_ref(),
+                &requested.reference,
+                &required,
+            );
             let joined = |items: &[JsString]| {
                 let mut parts = Vec::new();
                 for (index, item) in items.iter().enumerate() {
@@ -205,9 +237,9 @@ impl RouterRuntime {
             };
             let message = fallback::template(&[
                 "Router could not find a configured fallback model for ".into(),
-                JsValue::String(requested.provider.clone()),
+                requested.provider.clone(),
                 "/".into(),
-                JsValue::String(requested.model.clone()),
+                requested.model.clone(),
                 " that supports required input modalities: ".into(),
                 joined(&required)?,
                 ". Missing: ".into(),
@@ -219,10 +251,13 @@ impl RouterRuntime {
                 ".".into(),
             ])?;
             let error = object(&[
-                ("provider", JsValue::String(requested.provider.clone())),
+                ("provider", requested.provider.clone()),
                 (
                     "protocol",
-                    JsValue::String(self.invoker.get_provider_protocol(&requested.provider)),
+                    JsValue::String(
+                        self.invoker
+                            .get_provider_protocol(&requested.reference.provider),
+                    ),
                 ),
                 ("code", "unsupported_modality".into()),
                 ("message", message),
@@ -233,8 +268,8 @@ impl RouterRuntime {
                 "pilotdeck_router_execute_failed",
                 &[
                     ("scenarioType", field(decision, "scenarioType").clone()),
-                    ("provider", JsValue::String(requested.provider)),
-                    ("model", JsValue::String(requested.model)),
+                    ("provider", requested.provider.clone()),
+                    ("model", requested.model.clone()),
                     ("error", error.clone()),
                 ],
             );
@@ -252,15 +287,17 @@ impl RouterRuntime {
             }
             let health = ProviderHealthInput {
                 session_id: ctx.session_id.clone(),
-                provider_id: attempt.provider.clone(),
-                provider_generation: self.invoker.get_provider_generation(&attempt.provider),
+                provider_id: attempt.reference.provider.clone(),
+                provider_generation: self
+                    .invoker
+                    .get_provider_generation(&attempt.reference.provider),
             };
             if index > 0 && self.health.should_skip(&health) && index < plans.len() - 1 {
                 continue;
             }
             let mut routed = decision.as_object().cloned().unwrap_or_default();
-            routed.insert("provider".into(), JsValue::String(attempt.provider.clone()));
-            routed.insert("model".into(), JsValue::String(attempt.model.clone()));
+            routed.insert("provider".into(), attempt.provider.clone());
+            routed.insert("model".into(), attempt.model.clone());
             if index > 0 {
                 routed.insert("resolvedFrom".into(), "fallback".into());
             }
@@ -282,7 +319,7 @@ impl RouterRuntime {
                 let messages = request_messages(&attempt_request);
                 let estimated = estimate_input(messages).await?;
                 if estimated > budget {
-                    sink(error_event(object(&[("provider", JsValue::String(attempt.provider.clone())), ("protocol", JsValue::String(self.invoker.get_provider_protocol(&attempt.provider))), ("code", "subagent_budget_exceeded".into()), ("message", JsValue::String(format!("Sub-agent budget exceeded ({} estimated tokens > {} limit).", crate::js_value::number_string(estimated), crate::js_value::number_string(budget)).into())), ("retryable", JsValue::Bool(false)), ("userHint", "Reduce the subagent prompt/context, increase the subagent token budget, or split the task into smaller steps.".into())])));
+                    sink(error_event(object(&[("provider", attempt.provider.clone()), ("protocol", JsValue::String(self.invoker.get_provider_protocol(&attempt.reference.provider))), ("code", "subagent_budget_exceeded".into()), ("message", JsValue::String(format!("Sub-agent budget exceeded ({} estimated tokens > {} limit).", crate::js_value::number_string(estimated), crate::js_value::number_string(budget)).into())), ("retryable", JsValue::Bool(false)), ("userHint", "Reduce the subagent prompt/context, increase the subagent token budget, or split the task into smaller steps.".into())])));
                     return Ok(());
                 }
             }
@@ -305,10 +342,10 @@ impl RouterRuntime {
                             &[
                                 ("scenarioType", field(decision, "scenarioType").clone()),
                                 ("attempt", JsValue::Number((index + 1) as f64)),
-                                ("fromProvider", JsValue::String(attempt.provider.clone())),
-                                ("fromModel", JsValue::String(attempt.model.clone())),
-                                ("toProvider", JsValue::String(next.provider.clone())),
-                                ("toModel", JsValue::String(next.model.clone())),
+                                ("fromProvider", attempt.provider.clone()),
+                                ("fromModel", attempt.model.clone()),
+                                ("toProvider", next.provider.clone()),
+                                ("toModel", next.model.clone()),
                                 ("error", error),
                             ],
                         );
@@ -339,8 +376,8 @@ impl RouterRuntime {
                                 &[
                                     ("attempt", JsValue::Number(transient + 1.0)),
                                     ("delayMs", JsValue::Number(delay)),
-                                    ("provider", JsValue::String(attempt.provider.clone())),
-                                    ("model", JsValue::String(attempt.model.clone())),
+                                    ("provider", attempt.provider.clone()),
+                                    ("model", attempt.model.clone()),
                                     ("errorCode", field(&error, "code").clone()),
                                 ],
                             );
@@ -389,8 +426,8 @@ impl RouterRuntime {
                         "pilotdeck_router_zero_usage_retry",
                         &[
                             ("attempt", JsValue::Number(zero_attempt)),
-                            ("provider", JsValue::String(attempt.provider.clone())),
-                            ("model", JsValue::String(attempt.model.clone())),
+                            ("provider", attempt.provider.clone()),
+                            ("model", attempt.model.clone()),
                         ],
                     );
                     self.retry_progress(
@@ -432,8 +469,8 @@ impl RouterRuntime {
                 "pilotdeck_router_execute_failed",
                 &[
                     ("scenarioType", field(decision, "scenarioType").clone()),
-                    ("provider", JsValue::String(attempt.provider.clone())),
-                    ("model", JsValue::String(attempt.model.clone())),
+                    ("provider", attempt.provider.clone()),
+                    ("model", attempt.model.clone()),
                     ("error", error.clone()),
                 ],
             );
@@ -464,8 +501,8 @@ impl RouterRuntime {
                 ctx.stream_options.terminal_yield_boundary().await;
             }
             let mut error = error.as_object().cloned().unwrap_or_default();
-            error.insert("provider".into(), JsValue::String(attempt.provider));
-            error.insert("model".into(), JsValue::String(attempt.model));
+            error.insert("provider".into(), attempt.provider.clone());
+            error.insert("model".into(), attempt.model.clone());
             sink(error_event(JsValue::Object(error)));
         }
         Ok(())
@@ -479,7 +516,7 @@ impl RouterRuntime {
         ctx: &RouterExecuteContext,
         decision: &JsValue,
         routed: Option<&JsObject>,
-        attempt: &RouterModelRef,
+        attempt: &AttemptRoute,
         usage: &JsValue,
         timestamps: (&str, &str),
     ) {
@@ -499,8 +536,8 @@ impl RouterRuntime {
         if let Some(resolved_from) = routed.and_then(|routed| routed.get("resolvedFrom")) {
             record.insert("resolvedFrom".into(), resolved_from.clone());
         }
-        record.insert("provider".into(), JsValue::String(attempt.provider.clone()));
-        record.insert("model".into(), JsValue::String(attempt.model.clone()));
+        record.insert("provider".into(), attempt.provider.clone());
+        record.insert("model".into(), attempt.model.clone());
         if let Some(tier) = field(decision, "tokenSaverTier")
             .as_string()
             .filter(|value| !value.is_empty())
@@ -632,7 +669,7 @@ impl RouterRuntime {
     fn retry_progress(
         &self,
         ctx: &RouterExecuteContext,
-        attempt: &RouterModelRef,
+        attempt: &AttemptRoute,
         count: f64,
         max: f64,
         delay: f64,
@@ -646,8 +683,8 @@ impl RouterRuntime {
                 ("maxAttempts", JsValue::Number(max)),
                 ("delayMs", JsValue::Number(delay)),
                 ("reason", reason.into()),
-                ("provider", JsValue::String(attempt.provider.clone())),
-                ("model", JsValue::String(attempt.model.clone())),
+                ("provider", attempt.provider.clone()),
+                ("model", attempt.model.clone()),
             ],
         );
     }
