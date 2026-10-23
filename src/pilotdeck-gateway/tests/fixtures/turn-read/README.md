@@ -21,7 +21,7 @@ cmp /tmp/turn-read-first/oracle.json /tmp/turn-read-second/oracle.json
 shasum -a 256 /tmp/turn-read-first/oracle.json /tmp/turn-read-second/oracle.json
 ```
 
-当前 SHA-256：`1cea0e94772b2e1311c50bb4b4a4d0680e8857310db5a2af44a90cd632378c65`。
+当前 SHA-256：`9757b0428923e550d0a3d81faa23442db4ba9d80b55f822013ec86be017aafb5`。
 
 ## 对拍与负控
 
