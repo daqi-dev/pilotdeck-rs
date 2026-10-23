@@ -25,8 +25,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 const ORACLE: &str = include_str!("fixtures/context-prepare/oracle.json");
-const CASES: usize = 68;
-const STEPS: usize = 124;
+const CASES: usize = 72;
+const STEPS: usize = 138;
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -64,6 +64,23 @@ fn decode_fixture(value: &JsValue, root: &str) -> JsValue {
             Ok("-Infinity") => return JsValue::Number(f64::NEG_INFINITY),
             Ok("-0") => return JsValue::Number(-0.0),
             _ => {}
+        }
+    }
+    // It also cannot carry `undefined` array elements or thousand-level
+    // container nesting at a readable oracle size; the generator marks both
+    // and the replay rebuilds the exact values here.
+    if let JsValue::Object(object) = value
+        && object.len() == 1
+    {
+        if matches!(object.get("$undefined"), Some(JsValue::Bool(true))) {
+            return JsValue::Undefined;
+        }
+        if let Some(JsValue::Number(depth)) = object.get("$deepArray") {
+            let mut built = JsValue::Number(0.0);
+            for _ in 0..*depth as u64 {
+                built = JsValue::Array(vec![built]);
+            }
+            return built;
         }
     }
     match value {

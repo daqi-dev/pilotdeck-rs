@@ -124,6 +124,11 @@ compact('without-budget-port-valid',{}, {budget:'no-port'});
 compact('without-budget-port-invalid-request',{budgetRequest:{provider:1,model:'m',messages:[]}}, {budget:'no-port'});
 // The no-port branch skips maxContextTokens/reservedOutputTokens validation.
 compact('without-budget-port-lax',{maxContextTokens:null,reservedOutputTokens:null}, {budget:'no-port'});
+// #495 fix round 1: JS sort moves `undefined` tool elements to the end
+// without comparing them (all succeed; a `null` element still fails at the
+// `name` read once the comparator runs), and the comparator's JS evaluation
+// order reads `right.name` before the `localeCompare` call check.
+for (const tools of [[U,{name:'a'}],[{name:'a'},U],[U,U],[U,null],[null,U],[{name:'z'},U,{name:'a'}],[U,null,{name:42}],[null,{name:42}],[{name:42},null],[{name:null},{name:42}],[{name:42},{name:null}],[{name:'a'},{name:42},{name:null}]]) compact(`cache-r1-${specs.length}`,{}, {preview:{cachePlan:{generation:0},tools}});
 const cases=[];
 for(const raw of specs) {
   const spec=decode(raw), calls:any[]=[];

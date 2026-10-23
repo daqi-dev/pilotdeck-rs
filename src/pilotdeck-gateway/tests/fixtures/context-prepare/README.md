@@ -40,7 +40,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
 录用前生成两次并逐字节比较两份 `oracle.json`，再覆盖仓库金样；生成器每次用
 `mkdtemp` 独占目录，不删除。
 
-覆盖 68 个用例 / 124 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
+覆盖 72 个用例 / 138 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
 （不排序键、无容差）：
 
 - 默认 prompt 三种文档策略（web_search / 仅 web_fetch / 无网络工具）、权限/运行
@@ -84,10 +84,14 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
   可以大于消息数）；`-0` 等价于 0；`2.5` 在 `messages[4.5]` 读到 undefined，整体
   抛 `TypeError: Cannot read properties of undefined (reading 'content')`；
   `NaN` / `Infinity` 不截断；`-Infinity` 丢弃全部消息，warning 含 Infinity，`droppedCount` 在 JSON 输出为 null。JSON 不能表示这些数，生成器在 oracle 输入里用
-  `{"$number": "NaN" | "Infinity" | "-Infinity" | "-0"}` 标记，Rust 回放重建。
-  消息指纹的 `stableSerialize` 与 TS 逐字节同序，但用显式栈：超过 2000 层容器
-  按 V8 同文 `RangeError: Maximum call stack size exceeded` 拒绝（同一卡片的
-  确定性成功区取保守上界；Node 实测该路径 2500 层嵌套仍成功、2540 层首次抛错）。
+  `{"$number": "NaN" | "Infinity" | "-Infinity" | "-0"}` 标记，Rust 回放重建；
+  `{"$undefined": true}` 标记 undefined 元素，`{"$deepArray": N}` 标记 N 层嵌套
+  数组（深 `inputSchema` 只以标记进 oracle，避免在记录侧重新走一遍深结构）。
+  消息指纹的 `stableSerialize` 与 TS 逐字节同序，但用显式栈：超过 2400 层容器
+  按 V8 同文 `RangeError: Maximum call stack size exceeded` 拒绝（确定性成功区
+  取保守上界；Node v22.22.0 经真实 `buildCachePlan` 入口实测 1998/2001 层
+  `inputSchema` 连指纹都成功、2525 层是最深成功、2526 层首次 RangeError，
+  预热 JIT 后可超 4000；上界按容器总数取 2400，2000 会误拒 TS 接受的输入）。
 
 负控至少八处：`previewOnly` 后的真实调用必须仍产生同一 date-update（若预览提交了
 状态就会消失）；带 checkpoint 的 `maxMessages` 不截断（若忽略 checkpoint 会丢消息）；
@@ -124,7 +128,12 @@ provider 后的检查，会返回 `LATE` 而不是中止。
   无 memory resolver 时该函数根本不会被调用，同样输入照常出 context；
 - cache 工具排序的 `left.name.localeCompare` 失败模式：单工具不进比较器；
   只有比较器左操作数的 `name` 需要是字符串（index 0 的坏名只作右操作数被
-  `String()` 强转，不抛错）；nullish 工具元素在 `name` 读取处抛错。金样含
+  `String()` 强转，不抛错）；`null` 工具元素进比较器后在 `name` 读取处抛错，
+  `undefined` 元素则被 JS `Array.prototype.sort` 挪到末尾、根本不进比较器。
+  运行路径上 nullish 元素更早在 PromptAssembler 的
+  `tools.some((tool) => tool.name === "web_search")` 处抛同文 TypeError
+  （`cache-tool-undefined-element` 的 7 步全为该错误，见修复轮 1 的更正），
+  排序语义本身由 host-context 夹具的 `cache-r1-*` 观测。金样含
   良构非 ASCII 名（emoji 在 ICU 中排字母前）与孤代理项 / 星面键（两侧都按
   `\ud800` 转义 / 原星面字符进入指纹的 stableSerialize 文本）。孤代理项
   **名**不进用例：Node ICU 给未配对代理项独立权重（实测 `\ud800` 排在字母后、
@@ -132,3 +141,18 @@ provider 后的检查，会返回 `LATE` 而不是中止。
   为已知未对齐而不是钉进金样；
 - 指纹算法收敛为单一 `cache_plan_identity`（coordinator 与 host 侧 finalize 共用），
   旧 58 case / 108 步逐字节不变即证两处行为未变。
+
+本轮（#495 修复轮 1，评审 P1）新增：
+
+- `cache-tool-undefined-element`（7 步）与 `cache-tool-eval-order`（5 步）：nullish
+  工具元素在运行路径的失败点是 PromptAssembler 的 `name` 读取（`some` 按元素序
+  扫描、命中即短路，故 `[{name:'web_search'},{name:'web_fetch'},null]` 类输入两轮
+  扫描都短路成功后才轮到比较器——比较器对 `null` 仍报 `name` 读取错误）；
+  比较器求值序按 JS：`left.name` 读取 → `localeCompare` 属性读取（nullish 名在此
+  抛错）→ `right.name` 参数（nullish 元素在此抛错）→ 非字符串左名的调用检查；
+- `cache-tool-schema-depth-1998` / `cache-tool-schema-depth-2001`：`inputSchema`
+  嵌套 1998 / 2001 层数组经真实 `buildCachePlan` 出全指纹（fingerprint 逐字节
+  比对），`$deepArray` 标记进 oracle，证明 2400 容器上界不误拒 TS 接受的输入；
+  host 侧同深度的指纹由 `cache.rs` 单测 `deep_input_schema_fingerprints_match_real_ts`
+  以两次 TS 探针指纹钉住（host-context 的 oracle 记录 indent-2 JSON 会膨胀到
+  ~16MB，深 schema 不进那套夹具）。
