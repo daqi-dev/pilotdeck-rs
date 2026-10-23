@@ -246,6 +246,13 @@ async fn replay(s: &Value) {
     fs::create_dir_all(root.join("home")).unwrap();
     fs::create_dir_all(root.join("project")).unwrap();
     let calls: Calls = Default::default();
+    let gates: HashMap<String, tokio::sync::watch::Sender<bool>> = s["builtins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|b| b["gate"].as_str())
+        .map(|gate| (gate.to_owned(), tokio::sync::watch::channel(false).0))
+        .collect();
     let builtins = s["builtins"]
         .as_array()
         .unwrap()
@@ -254,12 +261,22 @@ async fn replay(s: &Value) {
             let name = b["name"].as_str().unwrap().to_owned();
             let path = root.join(b["dir"].as_str().unwrap());
             fs::create_dir_all(&path).unwrap();
+            let gate = b["gate"].as_str().map(|gate| gates[gate].subscribe());
             let dispose = b["dispose"].as_str().map(|mode| {
                 let (calls, name, mode) = (calls.clone(), name.clone(), mode.to_owned());
                 Box::new(move || {
-                    event(&calls, json!({"event":"dispose","plugin":name}));
-                    let mode = mode.clone();
-                    Box::pin(async move { if mode == "ok" { Ok(()) } else { Err(mode) } })
+                    let (calls, name, mode, gate) =
+                        (calls.clone(), name.clone(), mode.clone(), gate.clone());
+                    Box::pin(async move {
+                        event(&calls, json!({"event":"dispose","plugin":name}));
+                        if let Some(mut gate) = gate {
+                            while !*gate.borrow_and_update() {
+                                gate.changed().await.unwrap();
+                            }
+                            event(&calls, json!({"event":"disposeFinished","plugin":name}));
+                        }
+                        if mode == "ok" { Ok(()) } else { Err(mode) }
+                    })
                         as std::pin::Pin<
                             Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
                         >
@@ -381,6 +398,15 @@ async fn replay(s: &Value) {
             "pending" => Some(Ok(json!(
                 !slots[step["slot"].as_str().unwrap()].is_finished()
             ))),
+            "calls" => {
+                let mut trace = observed_calls.clone();
+                trace.extend(calls.lock().unwrap().iter().cloned());
+                Some(Ok(json!(trace)))
+            }
+            "open" => {
+                gates[step["gate"].as_str().unwrap()].send_replace(true);
+                None
+            }
             "flush" => {
                 for _ in 0..5 {
                     tokio::task::yield_now().await;
@@ -571,10 +597,14 @@ scenarios! {
     (runtime_concurrent_refresh_is_single_flight, "concurrent-refresh-is-single-flight"),
     (runtime_dispose_drains_leases, "dispose-drains-leases"),
     (runtime_dispose_waits_for_pending_refresh, "dispose-waits-for-pending-refresh"),
-    (runtime_dispose_retired_and_active_together, "dispose-retired-and-active-together", "pre-existing dispose callback order differs from TS; see issue-484 RESULT scope-out; run explicitly to reproduce"),
+    (runtime_dispose_retired_and_active_together, "dispose-retired-and-active-together"),
     (runtime_dispose_errors_aggregate, "dispose-errors-aggregate"),
     (runtime_dispose_single_error, "dispose-single-error"),
     (runtime_dispose_before_any_refresh, "dispose-before-any-refresh"),
+    (runtime_dispose_active_order_and_parallel, "dispose-active-order-and-parallel"),
+    (runtime_dispose_retired_generations, "dispose-retired-generations"),
+    (runtime_dispose_mixed_errors_and_pending_callback, "dispose-mixed-errors-and-pending-callback"),
+    (runtime_dispose_reactivated_retiree, "dispose-reactivated-retiree"),
     (runtime_catalog_lists_one_generation, "catalog-lists-one-generation"),
     (runtime_catalog_list_failure_still_releases, "catalog-list-failure-still-releases"),
     (runtime_catalog_release_failure_only_warns, "catalog-release-failure-only-warns"),
