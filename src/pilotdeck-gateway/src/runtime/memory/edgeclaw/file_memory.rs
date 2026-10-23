@@ -896,7 +896,18 @@ impl Core {
                 Err(e) => return Err(e),
             };
             match crate::project_files::regular_files_at(&root, &target) {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+                // Absent, inaccessible ancestor, or non-directory component:
+                // mirror the existsSync probe that TS uses for directory reads.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::NotFound
+                            | std::io::ErrorKind::PermissionDenied
+                            | std::io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    Ok(vec![])
+                }
                 Err(e) => Err(self.mutation_error(dir, "scandir", e)),
                 Ok(files) => Ok(files),
             }
