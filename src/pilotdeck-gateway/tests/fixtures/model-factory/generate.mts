@@ -175,8 +175,57 @@ try {
   await registration.dispose(); // Must not remove the replacement.
   replacements.push(`still-current:${providers.getProviderGeneration('a')}`);
   await providers.dispose();
-  const api: any[] = [];
   const errorOf = (error: any) => ({ code: error.code, message: error.message });
+  // unregister(id) deliberately targets the current route, whereas an old
+  // registration's dispose() targets only the generation that it owns.
+  const unregisterAfterReplace: string[] = [];
+  const unregistering = new model.ModelInvocationProviderRegistry();
+  const route = (label: string) => ({ ...make(label), dispose() { unregisterAfterReplace.push(`dispose:${label}`); } });
+  const original = unregistering.register(route('old'));
+  const replaced = unregistering.replace(route('new'));
+  await replaced.retired;
+  await original.dispose();
+  unregisterAfterReplace.push(`old-dispose-keeps-current:${unregistering.getProviderGeneration('a')}`);
+  const heldCurrent = unregistering.acquire('a');
+  const removing = unregistering.unregister('a');
+  await settle();
+  unregisterAfterReplace.push(`unregister-removed-current:${unregistering.getProviderGeneration('a') === undefined}`);
+  unregisterAfterReplace.push(`new-disposed-before-drain:${unregisterAfterReplace.includes('dispose:new')}`);
+  unregistering.register(route('later'));
+  heldCurrent.release();
+  unregisterAfterReplace.push(`unregister:${await removing}`);
+  unregisterAfterReplace.push(`later-still-current:${unregistering.getProviderGeneration('a')}`);
+  unregisterAfterReplace.push(`unregister:${await unregistering.unregister('a')}`);
+  unregisterAfterReplace.push(`unregister:${await unregistering.unregister('a')}`);
+  await unregistering.dispose();
+
+  // Cross the typed boundary: Map keys retain their types; only the error
+  // message uses String(provider). Matching string routes must stay unused.
+  const providerValues = new model.ModelInvocationProviderRegistry();
+  const providerValueCases: any[] = [];
+  for (const [name, value] of [
+    ['missing', undefined], ['undefined', undefined], ['null', null],
+    ['integer', 123], ['fraction', -7.5], ['true', true], ['false', false],
+    ['negative-zero', -0], ['large-number', 1e21], ['small-number', 1e-7],
+  ] as const) {
+    const stringId = String(value);
+    if (providerValues.getProviderGeneration(stringId) === undefined) {
+      providerValues.register({ ...make('judge-b'), providerId: stringId, dispose() {} });
+    }
+    const input: any = { ...request };
+    if (name === 'missing') delete input.provider;
+    else input.provider = value;
+    const result: any = { name, stringId, request: input };
+    try { for await (const _event of providerValues.stream(input)) {} }
+    catch (error) { result.streamError = errorOf(error); }
+    try { await providerValues.complete(input); }
+    catch (error) { result.completeError = errorOf(error); }
+    // Positive control: the equivalent string key really is registered.
+    result.stringCompletion = await providerValues.complete({ ...request, provider: stringId });
+    providerValueCases.push(result);
+  }
+  await providerValues.dispose();
+  const api: any[] = [];
   const errors = new model.ModelInvocationProviderRegistry();
   for (const id of ['', ' \t', '\uFEFF']) {
     try { errors.register({ ...make('invalid'), providerId: id }); } catch (error) { api.push(errorOf(error)); }
@@ -306,6 +355,6 @@ try {
     await routerBundle.dispose(); await modelBundle.dispose();
   }
   const output = resolve(process.argv[2]); await mkdir(output, { recursive: true });
-  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, frames, request, trace, replacements, api, disposal: { order: disposalOrder, failedOld, aggregate }, completeTrace, completeError, nativeTrace, routerConfigs, registryRouterCases }, null, 2) + '\n', { flag: 'wx' });
+  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, frames, request, trace, replacements, unregisterAfterReplace, providerValueCases, api, disposal: { order: disposalOrder, failedOld, aggregate }, completeTrace, completeError, nativeTrace, routerConfigs, registryRouterCases }, null, 2) + '\n', { flag: 'wx' });
   console.log(`MODEL_FACTORY_ORACLE_PASS trace=${trace.length} replacements=${replacements.length}`);
 } finally { await rm(scratch, { recursive: true, force: true }); }
