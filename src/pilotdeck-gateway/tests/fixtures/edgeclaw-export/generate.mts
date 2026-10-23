@@ -129,11 +129,6 @@ const ops:any[]=[
   // `$NAN` markers are expanded to real NaNs by the harnesses on both sides.
   {method:'uiSnapshot',input:{limit:'$NAN'}},
   ...[{}, {scope:'project'}, {scope:'global'}, {kinds:['project']}, {kinds:[]}, {kinds:['user']}, {kinds:['project','user']}, {limit:1,offset:1}, {limit:0}, {offset:5}, {includeDeprecated:true}, {limit:1,offset:'$NAN'}, {limit:'$NAN'}].map(input=>({method:'list',input})),
-  // NOTE: {projectId} options are deliberately absent — the Rust port of
-  // listGlobalMemoryEntries forwards projectId to the global store while TS
-  // does not; that passthrough belongs to #517's rework of accessors.rs
-  // (PR #525). The combinations below stay behind PDRS_EXPORT_PROJECT_ID=1
-  // until that lands; regenerate the oracle with the flag set after rebasing.
   ...[{}, {scope:'project'}, {scope:'global'}, {kinds:['user']}, {kinds:[]}].map(input=>({method:'count',input})),
   // Import a TS-produced bundle, then observe the swapped state.
   {repo:'target',method:'import',input:{bundle:'@b1'},saveAs:'r1'},
@@ -191,12 +186,19 @@ const ops:any[]=[
   {repo:'beta',method:'reopen',input:{workspace:'/fixture/Beta'}},
   {repo:'beta',method:'overview'},
 ];
-// {projectId} list/count combinations for the post-#525 rebase (see the NOTE
-// above): disabled by default so the committed oracle stays green until the
-// Rust listGlobalMemoryEntries passthrough is fixed in #525.
-if(process.env.PDRS_EXPORT_PROJECT_ID==='1') ops.push(
+// {projectId} list/count combinations, un-gated after PR #525 / #517 removed
+// the Rust listGlobalMemoryEntries projectId passthrough. The repository
+// methods forward the id only to the workspace store (sqlite.ts:1733-1737 /
+// 1762-1766 spread it; the global path's whitelist at sqlite.ts:894-901 drops
+// it). On the project repos a foreign id empties the workspace side early
+// (file-memory.ts:1018-1019); on the general repo the id positively selects
+// one project's entries and metas among g1/g2/g3. Appended after the import
+// sequence so every earlier observation keeps its index.
+ops.push(
   ...[{projectId:'current_project'},{projectId:'g1'},{scope:'project',projectId:'g1'},{scope:'global',projectId:'g1'},{kinds:['user'],projectId:'g1'}].map(input=>({method:'list',input})),
   ...[{projectId:'current_project'},{projectId:'g1'},{scope:'global',projectId:'g1'}].map(input=>({method:'count',input})),
+  ...[{projectId:'g1'},{projectId:'g2'},{projectId:'g3'},{projectId:'missing'},{projectId:'current_project'},{kinds:['project'],projectId:'g2'},{scope:'project',projectId:'g3'}].map(input=>({repo:'general',method:'list',input})),
+  ...[{projectId:'g1'},{projectId:'missing'}].map(input=>({repo:'general',method:'count',input})),
 );
 // The observed phase runs on a stepping clock so timestamps expose the number
 // and order of nowIso() reads (exportedAt, manifest "Updated" lines,
