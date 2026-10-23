@@ -111,6 +111,10 @@ impl SkillManager {
 
     /// SkillManager.ts:429–478.
     pub fn scan(&self, input: &JsValue) -> Result<JsValue> {
+        self.scan_capped(input, TREE_FILES_CAP)
+    }
+
+    fn scan_capped(&self, input: &JsValue, cap: usize) -> Result<JsValue> {
         let parent = required_path(input, "parentPath")?;
         let root = resolve(&self.expand_home(&parent))?;
         let not_found = || SkillError::manager("not_found", format!("Directory not found: {root}"));
@@ -137,7 +141,7 @@ impl SkillManager {
         // This holds only for scandir; fs.cp walks with opendir, which is
         // unsorted (see copy_entry).
         entries.sort_by_key(|e| e.file_name());
-        let current = scan_folder(&root, basename(&root))?;
+        let current = scan_folder(&root, basename(&root), cap)?;
         let collator = node_collator(&self.locale)
             .map_err(|(code, message)| SkillError::host_failure(code, message))?;
         let mut children = vec![];
@@ -150,7 +154,7 @@ impl SkillManager {
                 _ => false,
             };
             if is_dir {
-                children.push(scan_folder(&path, &name)?);
+                children.push(scan_folder(&path, &name, cap)?);
             }
         }
         // Folders with a SKILL.md first, then localeCompare (Array#sort is stable).
@@ -190,7 +194,7 @@ struct ScanFolder {
 }
 
 /// SkillManager.ts:663 buildSkillScanFolder.
-fn scan_folder(dir: &str, folder_name: &str) -> Result<ScanFolder> {
+fn scan_folder(dir: &str, folder_name: &str, cap: usize) -> Result<ScanFolder> {
     let has_skill_md = fs::metadata(join(dir, "SKILL.md")).is_ok();
     let meta = if has_skill_md {
         read_skill_meta(dir, &"user".into())
@@ -198,7 +202,7 @@ fn scan_folder(dir: &str, folder_name: &str) -> Result<ScanFolder> {
         JsValue::Null
     };
     let (file_count, total_size) = if has_skill_md {
-        tree_files_capped(dir, TREE_FILES_CAP)?
+        tree_files_capped(dir, cap)?
     } else {
         (0.0, 0.0)
     };
@@ -219,8 +223,8 @@ fn scan_folder(dir: &str, folder_name: &str) -> Result<ScanFolder> {
 }
 
 // Test-only observability for the #595 cap tests: the thread-local counter
-// records every entry tree_files_capped listed, proving the walk stops at
-// the cap instead of collecting the whole tree first (fix round).
+// records ReadDir iterator consumption (including errors), independently of
+// listed.push, so per-directory eager collection cannot hide over-reading.
 #[cfg(test)]
 thread_local! {
     static LISTED_BY_TREE_FILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -243,6 +247,10 @@ fn tree_files_capped(dir: &str, cap: usize) -> Result<(f64, f64)> {
         let Ok(entries) = fs::read_dir(&next) else {
             return Ok((0.0, 0.0));
         };
+        let entries = entries.inspect(|_| {
+            #[cfg(test)]
+            LISTED_BY_TREE_FILES.with(|count| count.set(count.get() + 1));
+        });
         for entry in entries {
             let Ok(entry) = entry else {
                 // TS readdir rejects on any child error; preserve that semantics.
@@ -253,8 +261,6 @@ fn tree_files_capped(dir: &str, cap: usize) -> Result<(f64, f64)> {
                 queue.push(path.clone());
             }
             listed.push(path);
-            #[cfg(test)]
-            LISTED_BY_TREE_FILES.with(|count| count.set(count.get() + 1));
             if listed.len() > cap {
                 return Err(SkillError::manager(
                     "tree_files_limit_exceeded",
@@ -583,7 +589,7 @@ mod tests {
     fn tree_files_wide_dir_stops_listing_at_cap() {
         // A wide directory far beyond the cap must stop reading at the limit
         // instead of collecting first: LISTED_BY_TREE_FILES counts every
-        // entry tree_files_capped pushed (#595 fix round).
+        // item consumed from ReadDir, before any optional collection.
         let scratch = Scratch::new();
         let dir = scratch.0.join("skill");
         fs::create_dir(&dir).unwrap();
@@ -597,7 +603,7 @@ mod tests {
             result.expect_err("5001 entries exceed cap 100").code,
             "tree_files_limit_exceeded"
         );
-        // The check runs after each push, so exactly cap+1 entries get listed.
+        // The check runs after each push, so ReadDir yields exactly cap+1 items.
         assert_eq!(listed_count(), 101, "listing must stop at cap+1 entries");
     }
 
@@ -626,6 +632,100 @@ mod tests {
             listed_count(),
             101,
             "the cap must accumulate across directories"
+        );
+    }
+
+    #[test]
+    fn scan_propagates_tree_files_limit_without_partial_folders() {
+        let scratch = Scratch::new();
+        let root = scratch.0.to_str().unwrap();
+        let mut options = super::super::SkillManagerOptions::new(root);
+        options.env = Some(Default::default());
+        let manager = SkillManager::new(options).unwrap();
+        // First scan a successful child, then encounter an over-cap child.
+        // An error must discard the already accumulated folder results.
+        let small = scratch.0.join("a-small");
+        fs::create_dir(&small).unwrap();
+        fs::write(small.join("SKILL.md"), SKILL_MD).unwrap();
+        let big = scratch.0.join("z-big");
+        fs::create_dir(&big).unwrap();
+        fs::write(big.join("SKILL.md"), SKILL_MD).unwrap();
+        for i in 0..100 {
+            fs::write(big.join(format!("f{i}")), "x").unwrap();
+        }
+        let input = object([("parentPath", root.into())]);
+        let error = manager
+            .scan_capped(&input, 100)
+            .expect_err("child limit must reject scan");
+        assert_eq!(error.code, "tree_files_limit_exceeded");
+        // Also exercise the root scan_folder propagation, before children.
+        fs::write(scratch.0.join("SKILL.md"), SKILL_MD).unwrap();
+        let error = manager
+            .scan_capped(&input, 100)
+            .expect_err("root limit must reject scan");
+        assert_eq!(error.code, "tree_files_limit_exceeded");
+    }
+
+    #[test]
+    fn tree_files_low_fd_child() {
+        let Some(root) = std::env::var_os("PDRS_TREE_FILES_LOW_FD_ROOT") else {
+            return; // Subprocess entry point; parent owns setup and cleanup.
+        };
+        assert_eq!(
+            rustix::process::getrlimit(rustix::process::Resource::Nofile).current,
+            Some(16)
+        );
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../tests/fixtures/skills-tree-files/oracle.json"
+        ))
+        .unwrap();
+        let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+            panic!("cases");
+        };
+        let case = cases
+            .iter()
+            .find(|case| is_str(case.get("name").unwrap(), "deep-300"))
+            .unwrap();
+        let actual = tree_files_capped(root.to_str().unwrap(), TREE_FILES_CAP).unwrap();
+        assert_eq!(
+            actual,
+            (
+                number(case, "fileCount", "deep-300"),
+                number(case, "totalSize", "deep-300")
+            ),
+            "deep-300 must retain the real TS counts under RLIMIT_NOFILE=16"
+        );
+    }
+
+    #[test]
+    fn tree_files_deep_tree_with_low_fd_limit() {
+        let scratch = Scratch::new();
+        let root = setup_tree_for_case(&scratch.0, "deep-300");
+        let log_path = scratch.0.join("child.log");
+        let log = fs::File::create(&log_path).unwrap();
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "ulimit -n 16 || exit 90; exec \"$1\" --exact skills::import::tests::tree_files_low_fd_child --nocapture --test-threads=1", "tree-files-low-fd"])
+            .arg(std::env::current_exe().unwrap())
+            .env("PDRS_TREE_FILES_LOW_FD_ROOT", &root)
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
+            .spawn().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("low-fd child exceeded 20 seconds");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        let output = fs::read_to_string(log_path).unwrap();
+        assert!(
+            status.success() && output.contains("1 passed"),
+            "low-fd child: {status}\n{output}"
         );
     }
 

@@ -42,11 +42,19 @@ Rust replay tests (`cargo test -p pilotdeck-gateway --lib skills::import::tests`
   the parameter passed to `tree_files_capped` (no environment variable).
 - `tree_files_wide_dir_stops_listing_at_cap` — 5001-entry flat directory at
   cap 100: asserts the `tree_files_limit_exceeded` error and, via a test-only
-  thread-local counter in `import.rs`, that listing stopped at exactly cap+1
-  entries instead of collecting first.
+  thread-local `ReadDir::inspect` counter in `import.rs`, that the iterator
+  yielded exactly cap+1 items; eager per-directory collection is observable.
 - `tree_files_accumulates_cap_across_directories` — five subdirectories of 30
   files (156 entries total) at cap 100: the cap accumulates across directories,
   error at exactly entry 101.
+- `scan_propagates_tree_files_limit_without_partial_folders` — exercises the scan
+  implementation with an explicit small cap: a child overrun discards earlier
+  folders; a root overrun also propagates through `scan_folder`. Public `scan`
+  supplies `TREE_FILES_CAP` to this same implementation, without global overrides.
+- `tree_files_deep_tree_with_low_fd_limit` — rebuilds deep-300, launches this test
+  binary through a shell with `ulimit -n 16`, verifies the actual soft limit and
+  compares with the real TS oracle. Parent enforces a 20-second deadline and
+  kills/reaps the child; `tree_files_low_fd_child` is its subprocess entry point.
 - `tree_files_fixture_regenerates_identically_from_ts` — `#[ignore]`, needs
   `PDRS_BASELINE`; regenerates both oracle files byte-identically.
 
@@ -72,10 +80,27 @@ design: via `/private/tmp`, mutual returns 67/289, self-1 66/2079 and dag-16
 produce and what negative control NC-5 detects.
 
 Negative controls (`python3 src/pilotdeck-gateway/tests/fixtures/skills-tree-files/negative.py`,
-mutates `src/pilotdeck-gateway/src/skills/import.rs` and always restores; NC-5 needs macOS):
+mutates a disposable copy of the tracked source (including pending repairs),
+uses the existing worktree `src/target`, and runs baseline → red → restored-green
+for each control. SIGINT/SIGTERM unwind the owned child wait, kill/reap its session,
+and remove the copy. The working source is never mutated. NC-5/NC-7 need macOS):
 
 - NC-1 `no-cap` — remove the `listed.len() > cap` check → `tree_files_exceeds_cap_132` turns red.
 - NC-2 `boundary` — change `>` to `>=` → `tree_files_respects_cap_133` turns red.
-- NC-3 `collect-first` — check the cap only after listing the whole tree → `tree_files_wide_dir_stops_listing_at_cap` turns red (counter 5001 ≠ 101).
+- NC-3 `collect-first` — eagerly `collect::<Vec<_>>()` each directory before the unchanged per-entry cap check → `tree_files_wide_dir_stops_listing_at_cap` turns red (counter 5001 ≠ 101).
 - NC-4 `per-dir-count` — count per directory instead of accumulating → `tree_files_accumulates_cap_across_directories` turns red (no error).
 - NC-5 `canonicalize-root` — canonicalize the root before walking → `tree_files_matches_ts_baseline_macos` turns red (dag-16 65537 ≠ 1).
+
+- NC-6 `inode-dedup` — skip directories already seen by `(dev, ino)` → portable
+  DAG oracle undercounts.
+- NC-7 `inode-subtree-cache` — cache completed subtree counts by `(dev, ino)` →
+  macOS mutual-cycle oracle disagrees as lookup contexts have different budgets.
+- NC-8 `retain-parent-handles` — retain open `ReadDir`s while visiting the deep
+  chain → low-fd test fails on fd exhaustion.
+- NC-9 `swallow-scan-limit` — turn a `tree_files_capped` error into `(0, 0)` in
+  `scan_folder` → scan propagation test fails.
+
+Design-v3 acceptance reconciliation and original/new NC numbering are recorded
+once in `specs/gateway-parity/diffs/A6.8-SKILLS-TREEFILES-002-R1.md`, under
+“设计 v3 验收对账”. This suite does **not** claim every original planned test was
+implemented; the explicit reductions and substitute evidence are listed there.
