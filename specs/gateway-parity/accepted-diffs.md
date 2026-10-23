@@ -783,3 +783,12 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：插件 commands / skills / output-styles 与 style-only；Unix dev+ino，非 Unix 原路径身份回退未验证，不同配置目录不共享访问集。CYCLE-001 的可观察差异只剩：① 别名（含无环指数 DAG）TS 按路径重复，Rust 每物理目录一次；② 成环/互链 TS 不一定在期限内返回，Rust 通过去重有界返回；简单环 TS 可返回重复贡献，其首次词法路径与 Rust 的首次物理访问路径可能不同。R2 ②关于 >4096 个 .md 或 >64 层时 Rust 丢弃整目录并额外诊断的差异整条消除。
 - **机器判据**：`plugin_traversal.rs` 的宽/深成功回放、真实依赖树与 README/JS 全字段回放、深 node_modules 四入口全字段回放、互链团子进程截止、DAG 首次路径及独立压力、简单环去重；恢复候选预算/深度上限以及移除全局去重的负控与原始输出见本节。
 - **批准记录**：无人批。删除条目预算与深度上限、保留全局物理目录去重与 ROOT-001，依据的是协调者修复任务书（Grok r3 P1 后的协调者判断，**AI 代批，待人复核**），不是人类授权；不改判分语义、不新增豁免。
+
+### A6.3-PLUGIN-MARKDOWN-ROOT-001-R1 · 补根外不可读 Markdown 的错误路径范围与判据（首版原文保留在上方；PR #544 修复轮 4）
+
+- 类别：既有根包含策略的错误路径补证，无新增产品行为、无新豁免。
+- TS 依据：PluginCommandLoader.ts:92 的 stat 失败仅跳过该条目；但叶文件 chmod 000 不阻止 stat，`:68` readFile 返回 EACCES，PluginLoader.ts:93 会把该配置目录整体变成 []。本轮原生权限探针与真实 TS 记录区分了这两条路径，不能统称“TS stat 失败”。
+- Rust 行为：规范化条目越界即跳过，不读取外部文件；因此该外部 Markdown 虽不可读，根内安全贡献仍保留。预期保留对象来自同输入去掉外部链接后的真实 TS control。
+- 范围：commands / skills / output-styles / style-only 的每配置目录；适用于规范化根外叶文件/目录及配置 base symlink。插件根自身为 symlink 时仍保留合法词法贡献；绝对配置遵守 TS Node join，不扩大插件根。并发替换链接的 TOCTOU 不由这些静态测试证明。
+- 机器判据：四个新边界回归全字段回放、真实 TS 双跑和上述专属负控；ROOT-001 未扩大为整个 loader 的安全沙箱承诺。
+- 批准/登记状态：无人批。实现行为沿用 ROOT-001 既有状态（AI 代批，待人复核）；本条只补错误路径的范围与判据，依据协调者修复任务书（不是人类授权），不新增豁免、不改判分语义。
