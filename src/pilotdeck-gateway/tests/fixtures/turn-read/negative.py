@@ -25,7 +25,9 @@ originals = {source: source.read_bytes(), registry_source: registry_source.read_
 lock = repo / '_tmp/turn-read-mutation.lock'
 lock.mkdir(parents=True)
 env = dict(os.environ, CARGO_NET_OFFLINE='true')
-env['CARGO_TARGET_DIR'] = str(repo / 'target')
+# Reuse the tree's own build directory (CARGO_TARGET_DIR from the caller, else src/target);
+# a separate repo/target is a second full ~30 GiB build of the gateway.
+env.setdefault('CARGO_TARGET_DIR', str(rust / 'target'))
 prefix = 'runtime::turn::read::tests::'
 mutants = [
     ('attempts-3-to-2', source,
