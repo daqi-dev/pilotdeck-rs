@@ -22,8 +22,14 @@
 //! transport also drops its open event streams (undici keeps a body open
 //! after `networkFetch` detached the abort signal); a legacy `EventSource`
 //! whose first connection fails stops instead of retrying every 3 s in the
-//! background; the proxy dispatcher of
-//! `src/cli/proxy.ts` is not consulted.
+//! background.
+//!
+//! Proxy: [`HttpLink::with_config`] builds the connector from
+//! `ProxyConfig::from_settings`, the same `src/cli/proxy.ts` sources (see
+//! `runtime/model/http.rs`). Like undici's `ProxyAgent.dispatch`
+//! (`proxy-agent.js:241-243,323-341`), a request that routes through the proxy
+//! is refused when it carries any `Proxy-Authorization` header, so credentials
+//! only ever appear on the `CONNECT` line sent to the proxy.
 
 use super::client::{McpClientError, McpErrorCode};
 use super::protocol::{Inbound, parse_inbound_value};
@@ -93,6 +99,9 @@ pub(super) struct HttpLink {
     post_timeout_ms: f64,
     get_timeout_ms: f64,
     client: HttpClient,
+    /// The active proxy, if any; the connector is already built from it. Used
+    /// to reproduce undici's per-dispatch `Proxy-Authorization` refusal.
+    proxy: Option<ProxyConfig>,
     state: Mutex<LinkState>,
     aborted: ToolCancellation,
 }
@@ -175,15 +184,46 @@ impl HeaderList {
     }
 }
 
+/// `undici/lib/dispatcher/proxy-agent.js:323-341`: any header named
+/// `Proxy-Authorization` (case-insensitively) is refused when the request is
+/// dispatched through the proxy, so configured credentials can never leak into
+/// the tunnel. The direct agent (`NO_PROXY`) performs no such check, and the
+/// message is the undici `InvalidArgumentError` text.
+const PROXY_AUTHORIZATION_HEADER: &str = "proxy-authorization";
+const PROXY_AUTHORIZATION_REJECTED: &str =
+    "Proxy-Authorization should be sent in ProxyAgent constructor";
+
+fn reject_proxy_authorization(
+    proxy: Option<&ProxyConfig>,
+    request: &Request<Full<Bytes>>,
+) -> Result<(), McpClientError> {
+    let Some(proxy) = proxy else {
+        return Ok(());
+    };
+    if !proxy.should_proxy(request.uri())
+        || !request.headers().contains_key(PROXY_AUTHORIZATION_HEADER)
+    {
+        return Ok(());
+    }
+    Err(network_error(
+        "network_fetch_failed",
+        format!("fetch failed\u{0}{PROXY_AUTHORIZATION_REJECTED}"),
+    ))
+}
+
 /// One `fetch` attempt; the response headers are awaited, not the body.
 async fn fetch_once(
     client: &HttpClient,
+    proxy: Option<&ProxyConfig>,
     method: Method,
     url: &Url,
     headers: &HeaderList,
     body: Option<String>,
 ) -> Result<hyper::Response<Incoming>, McpClientError> {
     fetch_with(method, url, headers, body, |request| async move {
+        // Checked per redirect hop: every hop is a new dispatch, and a hop
+        // that routes through the proxy must not carry caller credentials.
+        reject_proxy_authorization(proxy, &request)?;
         let target = request.uri().clone();
         client
             .request(request)
@@ -462,6 +502,7 @@ enum Fetch {
 #[allow(clippy::too_many_arguments)] // Request fields plus the incoming timer continuation.
 async fn network_fetch(
     client: &HttpClient,
+    proxy: Option<&ProxyConfig>,
     method: Method,
     url: &Url,
     headers: &HeaderList,
@@ -483,8 +524,9 @@ async fn network_fetch(
                 headers.clone(),
                 body.clone(),
             );
+            let proxy = proxy.cloned();
             ExchangeFuture::io(async move {
-                fetch_once(&client, method, &url, &headers, body)
+                fetch_once(&client, proxy.as_ref(), method, &url, &headers, body)
                     .await
                     .map_err(|error| {
                         // fetch_once carries socket classification metadata in an
@@ -941,8 +983,10 @@ impl HttpLink {
         proxy: Option<&ProxySettings>,
     ) -> Self {
         let proxy = ProxyConfig::from_settings(proxy);
-        let connector =
-            ConnectDeadline::new(proxy_https_connector(config, proxy), MCP_CONNECT_TIMEOUT);
+        let connector = ConnectDeadline::new(
+            proxy_https_connector(config, proxy.clone()),
+            MCP_CONNECT_TIMEOUT,
+        );
         Self {
             kind,
             url,
@@ -950,6 +994,7 @@ impl HttpLink {
             post_timeout_ms,
             get_timeout_ms,
             client: Client::builder(TokioExecutor::new()).build(connector),
+            proxy,
             state: Mutex::new(LinkState::default()),
             aborted: ToolCancellation::default(),
         }
@@ -1032,6 +1077,7 @@ impl HttpLink {
         let body = frame_text(&message)?;
         let response = network_fetch(
             &self.client,
+            self.proxy.as_ref(),
             Method::POST,
             &self.url,
             &headers,
@@ -1123,6 +1169,7 @@ impl HttpLink {
         // Global `fetch`: no timeout, no retry; aborted with the transport.
         let response = network_fetch(
             &self.client,
+            self.proxy.as_ref(),
             Method::POST,
             &endpoint,
             &headers,
@@ -1174,6 +1221,7 @@ async fn start_sse(
     }
     let response = network_fetch(
         &link.client,
+        link.proxy.as_ref(),
         Method::GET,
         &link.url,
         &headers,
@@ -1325,6 +1373,7 @@ async fn event_source(wire: Weak<Wire>, ready: oneshot::Sender<Result<(), McpCli
         headers.set("Accept", "text/event-stream");
         let fetched = network_fetch(
             &link.client,
+            link.proxy.as_ref(),
             Method::GET,
             &link.url,
             &headers,
@@ -2562,6 +2611,65 @@ mod tests {
                 ("mcp-session-id".to_owned(), "user".to_owned()),
                 ("x-a".to_owned(), "1, 2".to_owned()),
             ]
+        );
+    }
+
+    #[test]
+    fn proxy_authorization_is_refused_only_on_a_proxied_dispatch() {
+        let config = |no_proxy: &str| {
+            crate::runtime::model::http::ProxyConfig::from_lookup(|key| match key {
+                "HTTP_PROXY" => Some("http://proxy:3128".to_owned()),
+                "no_proxy" => (!no_proxy.is_empty()).then(|| no_proxy.to_owned()),
+                _ => None,
+            })
+            .expect("proxy config")
+        };
+        let request = |uri: &str, header: Option<&str>| {
+            let mut builder = Request::builder().uri(uri);
+            if let Some(header) = header {
+                builder = builder.header(header, "Basic abc");
+            }
+            builder.body(Full::new(Bytes::new())).unwrap()
+        };
+        let proxy = config("");
+        // Case-insensitive, like `isProxyAuthorizationHeader`.
+        for header in ["proxy-authorization", "Proxy-Authorization"] {
+            let error = reject_proxy_authorization(
+                Some(&proxy),
+                &request("http://example.com/mcp", Some(header)),
+            )
+            .expect_err("proxied request must be refused");
+            assert_eq!(
+                error.message(),
+                "fetch failed\u{0}Proxy-Authorization should be sent in ProxyAgent constructor"
+            );
+        }
+        assert!(
+            reject_proxy_authorization(
+                Some(&proxy),
+                &request("http://example.com/mcp", Some("authorization")),
+            )
+            .is_ok()
+        );
+        assert!(
+            reject_proxy_authorization(Some(&proxy), &request("http://example.com/mcp", None))
+                .is_ok()
+        );
+        // `NO_PROXY` selects undici's direct agent, which has no such check.
+        let direct = config("example.com");
+        assert!(
+            reject_proxy_authorization(
+                Some(&direct),
+                &request("http://example.com/mcp", Some("proxy-authorization")),
+            )
+            .is_ok()
+        );
+        assert!(
+            reject_proxy_authorization(
+                None,
+                &request("http://example.com/mcp", Some("proxy-authorization"))
+            )
+            .is_ok()
         );
     }
 

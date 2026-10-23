@@ -355,7 +355,7 @@ where
 // Every proxied request, including plain `http:` targets, is sent through
 // `CONNECT` because undici's ProxyAgent defaults to `proxyTunnel: true`.
 // Proxy credentials come from the URL userinfo and become
-// `Proxy-Authorization: Basic base64(decodeURIComponent(user):password)`.
+// `Proxy-Authorization: Basic base64(decodeURIComponent(user):decodeURIComponent(password))`.
 
 /// A rejected CONNECT, shaped like the undici cause chain the TS transport
 /// flattens (`fetch failed: <cause>` in the legacy SSE rejection).
@@ -378,7 +378,11 @@ impl std::error::Error for ProxyError {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NoProxyEntry {
     hostname: String,
-    port: u32,
+    /// `Number.parseInt(port, 10)` (`env-http-proxy-agent.js:126`): `None` is
+    /// JS `0`, which is falsy and therefore matches every port. `Some` must
+    /// equal the target port. A numeric overflow stays nonzero, so (like JS's
+    /// unbounded Number) it can never equal a 16-bit port.
+    port: Option<u64>,
 }
 
 /// Proxy sources from `pilotdeck.yaml` (`proxy` in `src/pilot/cli/config`).
@@ -452,6 +456,11 @@ pub(crate) struct ProxyConfig {
     /// The joined value the baseline logs and matches `"*"` against.
     no_proxy: String,
     entries: Vec<NoProxyEntry>,
+    /// The CONNECT `Proxy-Authorization` value, built at construction like
+    /// `ProxyAgent`'s constructor. `decodeURIComponent` throws on malformed
+    /// userinfo, which makes the TS install fail; here that is `None` from
+    /// the constructor instead.
+    authorization: Option<String>,
 }
 impl ProxyConfig {
     /// Testable seam over the same lookup order, so env precedence is pinned
@@ -541,41 +550,50 @@ impl ProxyConfig {
                 continue;
             }
             // JS `/^(.+):(\d+)$/`: a trailing numeric port, anything else is
-            // part of the hostname (`[::1]` stays bracketed).
+            // part of the hostname (`[::1]` stays bracketed). `Number.parseInt`
+            // has no 32-bit limit, so an overflowing numeric port must stay a
+            // nonzero value that never equals a real port instead of becoming
+            // the wildcard `0`.
             let (host, port) = match entry.rsplit_once(':') {
                 Some((host, port))
                     if !host.is_empty()
                         && !port.is_empty()
                         && port.bytes().all(|byte| byte.is_ascii_digit()) =>
                 {
-                    (host, port.parse::<u32>().unwrap_or(0))
+                    (host, Some(port.parse::<u64>().unwrap_or(u64::MAX)))
                 }
-                _ => (entry, 0),
+                _ => (entry, None),
             };
             let hostname = host
                 .strip_prefix("*.")
                 .or_else(|| host.strip_prefix('.'))
                 .unwrap_or(host)
                 .to_ascii_lowercase();
-            entries.push(NoProxyEntry { hostname, port });
+            entries.push(NoProxyEntry {
+                hostname,
+                // JS `0` is falsy: it matches every port.
+                port: port.filter(|port| *port != 0),
+            });
         }
+        let authorization = proxy_authorization(&proxy).ok()?;
         Some(Self {
             proxy,
             no_proxy,
             entries,
+            authorization,
         })
     }
 
     /// `EnvHttpProxyAgent.#shouldProxy` against a hyper URI.
-    fn should_proxy(&self, uri: &hyper::Uri) -> bool {
+    pub(crate) fn should_proxy(&self, uri: &hyper::Uri) -> bool {
         let Some(host) = uri.host() else {
             return false;
         };
         let host = host.to_ascii_lowercase();
-        let port = uri.port_u16().unwrap_or(match uri.scheme_str() {
+        let port = u64::from(uri.port_u16().unwrap_or(match uri.scheme_str() {
             Some("https") => 443,
             _ => 80,
-        }) as u32;
+        }));
         if self.entries.is_empty() {
             return true;
         }
@@ -583,7 +601,7 @@ impl ProxyConfig {
             return false;
         }
         !self.entries.iter().any(|entry| {
-            if entry.port != 0 && entry.port != port {
+            if entry.port.is_some_and(|entry_port| entry_port != port) {
                 return false;
             }
             host == entry.hostname || host.ends_with(&format!(".{}", entry.hostname))
@@ -609,19 +627,7 @@ impl ProxyConfig {
     /// `Proxy-Authorization` from URL userinfo (`undici/lib/dispatcher/
     /// proxy-agent.js:113-121`); no header when there is no username.
     fn authorization(&self) -> Option<String> {
-        let username = self.proxy.username();
-        if username.is_empty() {
-            return None;
-        }
-        let username = percent_decode(username);
-        let password = self
-            .proxy
-            .password()
-            .map(percent_decode)
-            .unwrap_or_default();
-        let token =
-            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
-        Some(format!("Basic {token}"))
+        self.authorization.clone()
     }
 
     fn connect_error(&self, error: std::io::Error) -> ProxyError {
@@ -736,19 +742,42 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
-/// `decodeURIComponent` for proxy userinfo. Invalid escapes are kept literally
-/// (Node would throw while building the header, which the baseline never
-/// exercises).
-fn percent_decode(input: &str) -> String {
+/// `ProxyAgent`'s constructor header: `Basic base64(decodeURIComponent(user):
+/// decodeURIComponent(password))`, or `None` for no username. An invalid
+/// escape or a percent-decoded byte sequence that is not UTF-8 makes
+/// `decodeURIComponent` throw `URIError: URI malformed` in TS, which aborts
+/// the whole proxy install; `Err` here makes the caller fall back to direct
+/// exactly like that failed install (no proxy, so no credentials are sent).
+fn proxy_authorization(proxy: &url::Url) -> Result<Option<String>, ()> {
+    let username = proxy.username();
+    if username.is_empty() {
+        return Ok(None);
+    }
+    let username = percent_decode(username)?;
+    let password = match proxy.password() {
+        Some(password) => percent_decode(password)?,
+        None => String::new(),
+    };
+    let token = base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+    Ok(Some(format!("Basic {token}")))
+}
+
+/// `decodeURIComponent` for proxy userinfo: `%XX` escapes are decoded and the
+/// result must be valid UTF-8. Malformed escapes (`%ZZ`, a truncated `%A`) and
+/// invalid UTF-8 (`%FF`) are errors, matching the `URIError` the TS install
+/// raises (`undici/lib/dispatcher/proxy-agent.js:129,131`).
+fn percent_decode(input: &str) -> Result<String, ()> {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%'
-            && index + 2 < bytes.len()
-            && let (Some(high), Some(low)) =
-                (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2]))
-        {
+        if bytes[index] == b'%' {
+            let (Some(high), Some(low)) = (
+                bytes.get(index + 1).copied().and_then(hex_digit),
+                bytes.get(index + 2).copied().and_then(hex_digit),
+            ) else {
+                return Err(());
+            };
             out.push(high << 4 | low);
             index += 3;
         } else {
@@ -756,7 +785,7 @@ fn percent_decode(input: &str) -> String {
             index += 1;
         }
     }
-    String::from_utf8_lossy(&out).into_owned()
+    String::from_utf8(out).map_err(|_| ())
 }
 fn hex_digit(byte: u8) -> Option<u8> {
     match byte {
@@ -2563,6 +2592,77 @@ mod proxy_tests {
         );
         let anonymous = ProxyConfig::new("http://127.0.0.1:3128", "").expect("config");
         assert!(anonymous.authorization().is_none());
+    }
+
+    #[test]
+    fn no_proxy_port_parsing_matches_number_parse_int() {
+        // `example.com:4294967296` is a truthy number that never equals a real
+        // target port, so the entry must not bypass; the old `u32` overflow
+        // to 0 made it a wildcard.
+        let config = ProxyConfig::new(
+            "http://proxy:3128",
+            "example.com:4294967296,big.test:999999999999999999999999999999",
+        )
+        .expect("config");
+        for uri in [
+            "http://example.com/",
+            "http://example.com:8080/",
+            "http://example.com:65535/",
+            "http://big.test:8080/",
+        ] {
+            assert!(
+                config.should_proxy(&uri.parse().unwrap()),
+                "{uri} must go through the proxy"
+            );
+        }
+
+        // `key:0` is falsy in `if (entry.port && ...)`, so it is the wildcard
+        // form and bypasses every port of that host.
+        let config = ProxyConfig::new("http://proxy:3128", "example.com:0").expect("config");
+        for uri in ["http://example.com/", "http://example.com:8080/"] {
+            assert!(
+                !config.should_proxy(&uri.parse().unwrap()),
+                "{uri} must bypass (port 0 wildcard)"
+            );
+        }
+
+        // Anything failing `/^(.+):(\d+)$/` is part of the hostname: none of
+        // these entries can match `example.com`.
+        let config = ProxyConfig::new(
+            "http://proxy:3128",
+            "example.com:-1,example.com:abc,example.com:",
+        )
+        .expect("config");
+        for uri in ["http://example.com/", "http://example.com:8080/"] {
+            assert!(
+                config.should_proxy(&uri.parse().unwrap()),
+                "{uri} must go through the proxy"
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_auth_decode_matches_decode_uri_component() {
+        let authorization = |url: &str| {
+            ProxyConfig::new(url, "").map(|config| config.authorization().unwrap_or_default())
+        };
+        assert_eq!(
+            authorization("http://us%20er:p%40ss@127.0.0.1:3128").as_deref(),
+            Some("Basic dXMgZXI6cEBzcw==")
+        );
+        // `%2F` and a multi-byte UTF-8 sequence decode like
+        // decodeURIComponent before Base64.
+        assert_eq!(
+            authorization("http://u%2Fser:p%C3%A4ss@127.0.0.1:3128").as_deref(),
+            Some("Basic dS9zZXI6cMOkc3M=")
+        );
+        // `%ZZ`, a truncated escape and `%FF` (invalid UTF-8) throw
+        // `URIError: URI malformed` in TS, failing the whole install; here the
+        // config is absent, so no proxy and no credentials are used.
+        assert!(authorization("http://user%ZZ:pass@127.0.0.1:3128").is_none());
+        assert!(authorization("http://user%2:pass@127.0.0.1:3128").is_none());
+        assert!(authorization("http://user:%FF@127.0.0.1:3128").is_none());
+        assert!(authorization("http://user:pass%FF@127.0.0.1:3128").is_none());
     }
 
     #[test]

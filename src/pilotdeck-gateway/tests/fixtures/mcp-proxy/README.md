@@ -16,12 +16,19 @@
 - `src/mcp/client/McpClient.ts:163-205` — `streamable_http` / `sse` 的 transport 都不读代理，只把
   URL 交给全局 `fetch` / `EventSource`，因此代理行为完全来自上面的全局 dispatcher。
 - `node_modules/undici/lib/dispatcher/env-http-proxy-agent.js:82-140` — `NO_PROXY` 按 `/[, \s]/`
-  拆分、可选 `*.`/`.` 前缀、精确或 `.<entry>` 子域匹配、`host:port` 端口钉死、`*` 全绕过。
+  拆分、可选 `*.`/`.` 前缀、精确或 `.<entry>` 子域匹配、`host:port` 端口钉死（
+  `Number.parseInt`，无 32 位截断，`0` 为 falsy 通配）、`*` 全绕过。
 - `node_modules/undici/lib/dispatcher/proxy-agent.js`（默认 `proxyTunnel: true`）— **http 与 https
   目标都发 CONNECT**；CONNECT 行是 `host:port`（URL 未写端口时补 80/443），`host` 头是 URL 的
   `host`（仅显式非默认端口才带端口），并带 `proxy-connection: keep-alive`；URL userinfo 生成
   `proxy-authorization: Basic base64(decodeURIComponent(user):decodeURIComponent(password))`。
-  非 200 响应抛 `Proxy response (<status>) !== 200 when HTTP Tunneling`。
+  非法百分号转义或非法 UTF-8 在构造 `ProxyAgent` 时抛 `URIError: URI malformed`，被
+  `applyGlobalProxy` 捕获后不安装代理。非 200 响应抛
+  `Proxy response (<status>) !== 200 when HTTP Tunneling`。
+- `node_modules/undici/lib/dispatcher/proxy-agent.js:241-243,323-341` — `dispatch()` 对请求头做
+  `throwIfProxyAuthIsSent`：任何大小写形式的 `Proxy-Authorization` 都抛
+  `InvalidArgumentError: Proxy-Authorization should be sent in ProxyAgent constructor`，请求不会
+  进入隧道；`NO_PROXY` 选中的直连 agent 没有这个检查。
 - `src/model/streaming/streamModel.ts:56,61,63` — `UNDICI_TRANSPORT_TIMEOUT_MS = 600_000`、
   `connections = 1000`、`keepAliveTimeout = 120_000`，作为 `EnvHttpProxyAgent` 的
   `headersTimeout` / `bodyTimeout` / `connections` / `keepAliveTimeout`。本夹具只验证连接/隧道/
@@ -40,8 +47,9 @@ LANG=en_US.UTF-8 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs"
 生成器接共享溯源守卫 `tests/baseline_source_guard.mjs` 的 `bindSourceTree`（显式绝对 Git、
 HEAD==`cc7c4e6`、已跟踪文件干净）与 `sourceClosureSha256`（TS 依赖闭包，`oracle.json` 的
 `sourceSha256` 记录全部条目），并断言 en-US locale、SDK 1.29.0 与 Node v22.22.0。每次生成写入
-`oracle.json`，两次独立运行逐字节一致（2026-10-23 修复轮 1 实测两次均为 sha256
-`cb221a1bfe94cd176437eb18a7b450e1c50c70cbffbb7c4c0f49206607fe13b7`，128,350 B）。
+`oracle.json`，两次独立运行逐字节一致（2026-10-23 修复轮 2 实测两次均为 sha256
+`07c068cdf5950e5a9572619590fbade8b6c946f2e5223d02c85525eb693f301e`，177,679 B；
+修复轮 1 为 `cb221a1b…` / 128,350 B）。
 `proxy.url` / `proxy.noProxy` 由 `src/pilot/config/loadPilotConfig.ts:856-911`
 （`parseProxyConfig`）读取，启动时 `pilotdeck.ts:48-49` 只传 URL，配置变更时
 `pilotdeck.ts:150` 的 `reinstallGlobalProxy(url, noProxy)` 才把 `noProxy` 一并传入。
@@ -57,9 +65,11 @@ HEAD==`cc7c4e6`、已跟踪文件干净）与 `sourceClosureSha256`（TS 依赖�
 `connect_proxy.mjs` 是本目录的脚本化 HTTP CONNECT 代理：`PROXY_AUTH=user:pass` 时要求匹配的
 Basic 头，`PROXY_STATUS` 可返回 403/407，`PROXY_LOG` 逐行记录
 `{method,target,host,proxyConnection,proxyAuthorization}`（认证值写成 `Basic <scrub>`）。它同时
-接受 http 与 https 目标的 CONNECT，并原样双向转发隧道字节。
+接受 http 与 https 目标的 CONNECT，并原样双向转发隧道字节。目标端 `mock_server.mjs` 的请求日志
+也记录 `proxy-authorization`（小写），Rust 回放据此断言该头从未穿过隧道；直连场景则断言它原样
+到达目标。
 
-## 用例（25）
+## 用例（35）
 
 每个场景由父进程起 mock 与代理，再用**独立 Node 子进程**调用真实 `installGlobalProxy()`
 （或配置来源的 `installGlobalProxy(config.url)` / `reinstallGlobalProxy(config.url,
@@ -92,10 +102,20 @@ config.noProxy)`）；子进程环境只含该场景的代理变量，避免全�
 | 23 | `proxy-rejected-sse` | sse | 代理返回 403 | 同形文本，状态 403 |
 | 24 | `proxy-unreachable-streamable` | streamable_http | 关闭端口 | `MCP handshake failed: fetch failed` |
 | 25 | `proxy-unreachable-sse` | sse | 关闭端口 | `… fetch failed: connect ECONNREFUSED <proxyAuthority>`，地址是代理而非目标 |
+| 26 | `proxy-auth-header-rejected-upper` | streamable_http | 代理活 + 配置头 `Proxy-Authorization` | undici `ProxyAgent.dispatch` 拒绝 → `MCP handshake failed: fetch failed`；0 请求、0 CONNECT |
+| 27 | `proxy-auth-header-rejected-lower-sse` | sse | 代理活 + 配置头 `proxy-authorization` | 同上，SSE 展平为 `… fetch failed: Proxy-Authorization should be sent in ProxyAgent constructor` |
+| 28 | `proxy-auth-header-direct` | streamable_http | `NO_PROXY=<mock>` + 配置头 | 直连 agent 无此检查，头原样到达目标（钉住“只在代理 dispatch 拒绝”） |
+| 29 | `no-proxy-port-overflow` | streamable_http | `NO_PROXY=0.0.0.0:4294967296` | `Number.parseInt` 得非零大数，永不等于目标端口 → 仍走代理；1 CONNECT |
+| 30 | `no-proxy-port-negative` | streamable_http | `NO_PROXY=0.0.0.0:-1` | `:(\d+)$` 不匹配，整条当主机名 → 仍走代理 |
+| 31 | `no-proxy-port-non-numeric` | streamable_http | `NO_PROXY=0.0.0.0:abc` | 同上 |
+| 32 | `no-proxy-port-empty` | streamable_http | `NO_PROXY=0.0.0.0:` | 同上 |
+| 33 | `proxy-auth-decode-invalid-escape` | streamable_http | 配置 URL `user%ZZ` | `decodeURIComponent` 抛 `URIError: URI malformed`，安装失败 → 直连成功；0 CONNECT |
+| 34 | `proxy-auth-decode-invalid-utf8` | streamable_http | env URL `user:%FF` | 同上（非法 UTF-8） |
+| 35 | `proxy-auth-decode-valid-escapes` | streamable_http | 配置 URL `u%2Fser:p%C3%A4ss` + 代理校验 | 正确解码后 Basic 认证通过；1 CONNECT |
 
-成功场景（1-20）各 5 个 mock 请求、4 个步骤；失败场景（21-25）各 0 个请求、3 个步骤。合计
-95 步 / 100 个请求 / 18 条唯一 CONNECT。`proxy-unreachable-streamable` 的 fetch 层把原因吞成
-`fetch failed`，只有 SSE 暴露完整 cause，故 407/403/拒连的详细文本只在 SSE 录制。
+成功场景各 5 个 mock 请求、4 个步骤；失败场景各 0 个请求、3 个步骤。合计 **133 步 / 140 个请求 /
+23 条 CONNECT**（35 例）。`proxy-unreachable-streamable` 的 fetch 层把原因吞成 `fetch failed`，
+只有 SSE 暴露完整 cause，故 407/403/拒连的详细文本只在 SSE 录制。
 
 ## 替换与回放
 

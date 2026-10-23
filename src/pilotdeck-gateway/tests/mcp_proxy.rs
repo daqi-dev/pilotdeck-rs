@@ -436,7 +436,7 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
     );
     let oracle = oracle();
     let cases = array(field(&oracle, "cases"), "cases");
-    assert_eq!(cases.len(), 25);
+    assert_eq!(cases.len(), 35);
     let scratch = Scratch::new("mcp-proxy");
     let mut steps_seen = 0usize;
     let mut requests_seen = 0usize;
@@ -549,6 +549,36 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
             .map(text)
             .collect();
         assert_eq!(requests, expected, "{id}: server request log");
+        // The target-side proof for the P0 fix: a caller-supplied
+        // `Proxy-Authorization` is either refused before dispatch (the two
+        // proxied cases, whose request log is empty) or, on the direct
+        // `NO_PROXY` path, forwarded exactly like TS does. Either way it must
+        // never arrive through the tunnel; `mock_server.mjs` logs the header
+        // lowercased, so the check is case-insensitive.
+        let proxy_auth_case = pairs(field(case, "headers")).is_some_and(|headers| {
+            headers
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("proxy-authorization"))
+        });
+        if proxy_auth_case && id != "proxy-auth-header-direct" {
+            assert!(
+                requests
+                    .iter()
+                    .all(|line| !line.to_ascii_lowercase().contains("proxy-authorization")),
+                "{id}: target received Proxy-Authorization through the proxy"
+            );
+            assert!(requests.is_empty(), "{id}: refused request reached target");
+        }
+        if id == "proxy-auth-header-direct" {
+            // The direct agent has no undici check, so the header does arrive
+            // (and the oracle pins the same bytes).
+            assert!(
+                requests
+                    .iter()
+                    .any(|line| line.contains("\"proxy-authorization\":\"Basic abc\"")),
+                "direct path must preserve the caller header"
+            );
+        }
         requests_seen += requests.len();
         let connects = json_lines(&dir.join("proxy.jsonl"), &replacements, true);
         let expected: Vec<String> = array(field(case, "connects"), "connects")
@@ -560,9 +590,9 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
         drop(proxy);
         drop(mock);
     }
-    assert_eq!(steps_seen, 95);
-    assert_eq!(requests_seen, 100);
-    assert_eq!(connects_seen, 18);
+    assert_eq!(steps_seen, 133);
+    assert_eq!(requests_seen, 140);
+    assert_eq!(connects_seen, 23);
 }
 
 /// Re-runs the real TS generator and requires a byte-identical oracle.
