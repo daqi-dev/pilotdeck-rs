@@ -65,10 +65,10 @@ fn ids_input(ids: Vec<JsValue>, key: &str) -> JsObject {
 }
 
 impl EdgeClawFileStores {
-    /// Count independently capped workspace/global queries (5000 per store).
-    pub fn count_memory_entries(&self, options: &JsObject) -> Result<usize> {
-        Ok(self.entry_query(options)?.len())
-    }
+    /// The both-store query shared by `listMemoryEntries` /
+    /// `countMemoryEntries` (`sqlite.ts:1720-1775`): each store is capped at
+    /// its own 5000-entry page. The public ports live in `storage/overview.rs`;
+    /// `clearSessionMemoryData` (`sqlite.ts:1989`) reuses this internal one.
     fn entry_query(&self, options: &JsObject) -> Result<Vec<JsValue>> {
         let mut input = options.clone();
         input.insert("limit".into(), JsValue::Number(5000.0));
