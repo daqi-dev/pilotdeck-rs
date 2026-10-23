@@ -10,6 +10,9 @@
     "src/session/persistence/JsonlSessionPersistence.ts": "721c720f36f0fb0f2b6bd77bd2490d181182dfa909c3bd85e80d2ca3df643124",
     "src/session/transcript/TranscriptReader.ts": "d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead",
     "src/session/projection/AgentTranscriptProjections.ts": "445fb2c246d599235bd5bf24b1f048937242b6ba3e8439384043711a39519279",
+    "src/session/projection/WebHistoryProjections.ts": "ed23f778fded553efa9f2065409ce0a428fb150a4f7b45caf1e23bc687a3d7e2",
+    "src/session/projection/SessionProjectionDriver.ts": "fecb2715a856e4d337566d6f2f316fbba5e3a9215b6fcd533cce9f4169fe8517",
+    "src/session/projection/BuiltinSessionProjections.ts": "f01a3297b2b4af23886c35ecbeedf61d9dc16a951ace5b230082f9e1459c6401",
     "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a"
   },
   "node": "v22.22.0",
@@ -5303,6 +5306,3283 @@
       ],
       "files": {
         "home/projects/pdrs-fixture-project/chats/x.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]}\n{\"type\":\"turn_result\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"result\":null}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-string",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":\"str\"}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":\"str\"}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-null-block",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'type')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-message-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":5}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":5}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-message-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'metadata')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":null}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-message-missing",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'metadata')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-message-string",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":\"str\"}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":\"str\"}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-message-boolean",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":false}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":false}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-message-array",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":[]}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":[]}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-missing",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":null}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":null}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":5}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":5}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-boolean",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":false}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":false}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-object",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{}}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{}}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-object-some",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{\"some\":1}}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{\"some\":1}}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-late-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\"},null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'type')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\"},null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-primitive-blocks",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[5,\"str\",false,{},[]]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "assistant_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    5,
+                    "str",
+                    false,
+                    {},
+                    []
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[5,\"str\",false,{},[]]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-tool-short-circuit",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result\"},null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "assistant_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    {
+                      "type": "tool_result"
+                    },
+                    null
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result\"},null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-reference-short-circuit",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result_reference\"},null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "assistant_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    {
+                      "type": "tool_result_reference"
+                    },
+                    null
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result_reference\"},null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-empty",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "assistant_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": []
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-assistant_message-content-text-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\",\"text\":5}]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "assistant_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": 5
+                    }
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\",\"text\":5}]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-string",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":\"str\"}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":\"str\"}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-null-block",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'type')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-message-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":5}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":5}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-message-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'metadata')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":null}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-message-missing",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'metadata')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-message-string",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":\"str\"}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":\"str\"}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-message-boolean",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":false}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":false}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-message-array",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":[]}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":[]}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-missing",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":null}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":null}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":5}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":5}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-boolean",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":false}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":false}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-object",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{}}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{}}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-object-some",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{\"some\":1}}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{\"some\":1}}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-late-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\"},null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'type')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\"},null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-primitive-blocks",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[5,\"str\",false,{},[]]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "tool_result_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    5,
+                    "str",
+                    false,
+                    {},
+                    []
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[5,\"str\",false,{},[]]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-tool-short-circuit",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result\"},null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "tool_result_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    {
+                      "type": "tool_result"
+                    },
+                    null
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result\"},null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-reference-short-circuit",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result_reference\"},null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "tool_result_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    {
+                      "type": "tool_result_reference"
+                    },
+                    null
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result_reference\"},null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-empty",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "tool_result_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": []
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-tool_result_message-content-text-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\",\"text\":5}]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "tool_result_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": 5
+                    }
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"tool_result_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\",\"text\":5}]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-string",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":\"str\"}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":\"str\"}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-null-block",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'type')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-message-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":5}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":5}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-message-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'metadata')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":null}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-message-missing",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'metadata')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-message-string",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":\"str\"}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":\"str\"}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-message-boolean",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":false}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":false}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-message-array",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":[]}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":[]}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-missing",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":null}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'some')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":null}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":5}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":5}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-boolean",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":false}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":false}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-object",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{}}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{}}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-object-some",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{\"some\":1}}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "message.content.some is not a function"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":{\"some\":1}}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-late-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\"},null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'type')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\"},null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-primitive-blocks",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[5,\"str\",false,{},[]]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "durable_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    5,
+                    "str",
+                    false,
+                    {},
+                    []
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[5,\"str\",false,{},[]]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-tool-short-circuit",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result\"},null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "durable_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    {
+                      "type": "tool_result"
+                    },
+                    null
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result\"},null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-reference-short-circuit",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result_reference\"},null]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "durable_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    {
+                      "type": "tool_result_reference"
+                    },
+                    null
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"tool_result_reference\"},null]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-empty",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "durable_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": []
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-durable_message-content-text-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\",\"text\":5}]}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "durable_message",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "message": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": 5
+                    }
+                  ]
+                }
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":[{\"type\":\"text\",\"text\":5}]}}\n"
+      }
+    },
+    {
+      "name": "restore-message-reducer-order",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":\"str\"}}\n{\"type\":\"turn_result\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"result\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'usage')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"assistant_message\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"message\":{\"content\":\"str\"}}\n{\"type\":\"turn_result\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"result\":null}\n"
       }
     },
     {

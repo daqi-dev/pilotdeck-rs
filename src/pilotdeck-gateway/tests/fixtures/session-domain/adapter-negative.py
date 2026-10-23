@@ -58,7 +58,7 @@ try:
     restore()
     before = originals[ADAPTER]
     changes = [
-      ('premature-malformed-restore-refusal', '        // Hydration runs reducers, not conversation finalizers.', '        for entry in entries { projection_supported(entry)?; }\n        // Hydration runs reducers, not conversation finalizers.'),
+      ('premature-malformed-restore-refusal', '        // Hydration runs every registered reducer.', '        for entry in entries { projection_supported(entry)?; }\n        // Hydration runs every registered reducer.'),
       ('list-null-result-refusal', 'return Err(AdapterError::Type(format!(\n                    "Cannot read properties of {} (reading \'usage\')"', 'return Err(AdapterError::ProjectionUnavailable(format!(\n                    "Cannot read properties of {} (reading \'usage\')"'),
       ('adapter-skips-domain-validation', anchor, '        Ok(domain.clone())'),
       ('domain-published-before-store', '        self.base\n            .store\n            .append(&self.base.key(&self.path), &entry)', '        inner.recorder_domain = domain.clone();\n        self.base\n            .store\n            .append(&self.base.key(&self.path), &entry)'),
