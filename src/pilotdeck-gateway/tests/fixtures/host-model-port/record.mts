@@ -241,6 +241,19 @@ export async function record(baselineDir: string, scratchDir: string) {
       name: 'pre-content-terminal-error',
       scripts: [{ events: [frame, failure('server_error', false)] }],
     },
+    {
+      // Fix round 3: the same contentless terminal failure, but the consumer
+      // pulls only the first queued event and then cancels the turn. The
+      // cancel tears the provider connection down (streamModel.ts's
+      // cancelReader); it never advances the generator past its yield, so
+      // execute_failed / observeRequest never publish (RouterRuntime.ts:962
+      // stays behind the yields of :873-877), and the following return()
+      // discards the rest.
+      name: 'pre-content-error-abort-partial',
+      scripts: [{ events: [frame, failure('server_error', false)] }],
+      pulls: 1,
+      abortAfterPulls: 1,
+    },
   ];
 
   const cases = [];

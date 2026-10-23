@@ -372,8 +372,12 @@ impl RouterRuntime {
                         sink(queued);
                     }
                     // The drained events are TS yields; the terminal failure
-                    // handling stays behind the pulls that consume them.
-                    ctx.stream_options.yield_boundary().await;
+                    // handling stays behind the pulls that consume them. A
+                    // turn cancel must not open this boundary: it only tears
+                    // the provider connection down, it never advances the
+                    // suspended generator (`RouterRuntime.ts:962` follows
+                    // the yields of `:873-877`).
+                    ctx.stream_options.terminal_yield_boundary().await;
                     last_outcome = outcome;
                     break 'attempts;
                 }
@@ -405,8 +409,9 @@ impl RouterRuntime {
                     sink(queued);
                 }
                 // `observeRequest` runs on the pull after the last queued
-                // event, like the TS generator resuming past its yields.
-                ctx.stream_options.yield_boundary().await;
+                // event, like the TS generator resuming past its yields —
+                // and a turn cancel never resumes it.
+                ctx.stream_options.terminal_yield_boundary().await;
                 let ended_at = crate::runtime::context::prompt::iso_timestamp((self.clock)());
                 let usage = final_usage(&attempt_request, &outcome).await?;
                 self.cache_session_usage(&ctx.session_id, &usage);
@@ -454,8 +459,9 @@ impl RouterRuntime {
                     }
                 }
                 // The buffered events are TS yields; the terminal error event
-                // stays behind the pulls that consume them.
-                ctx.stream_options.yield_boundary().await;
+                // stays behind the pulls that consume them, not behind a
+                // turn cancel.
+                ctx.stream_options.terminal_yield_boundary().await;
             }
             let mut error = error.as_object().cloned().unwrap_or_default();
             error.insert("provider".into(), JsValue::String(attempt.provider));
