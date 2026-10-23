@@ -646,10 +646,13 @@ async fn unregister_after_replace_removes_current_generation_matches_ts() {
     let id = "a".into();
     let removing = registry.unregister(&id);
     tokio::pin!(removing);
-    assert!(matches!(
-        std::future::poll_fn(|cx| Poll::Ready(removing.as_mut().poll(cx))).await,
-        Poll::Pending
-    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), removing.as_mut())
+            .await
+            .is_err(),
+        "unregister must wait for the held lease to drain"
+    );
+    assert!(registry.get_provider_generation(&id).is_undefined());
     push(
         &trace,
         format!(
