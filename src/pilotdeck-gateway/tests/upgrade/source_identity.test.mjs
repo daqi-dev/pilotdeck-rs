@@ -1,119 +1,201 @@
-// Source identity regression fixtures using native Git and an explicit owned parent.
+// Native Git + real rustc fixtures; no Rust-source scanner or handwritten dep-info oracle.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,unlinkSync,symlinkSync,renameSync} from 'node:fs';
-import {join,dirname,isAbsolute} from 'node:path';
-import {execFileSync} from 'node:child_process';
-import {producerInputs,captureSourceIdentity,verifySourceIdentity} from './source_identity.mjs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,unlinkSync,symlinkSync,rmSync,realpathSync,utimesSync,existsSync} from 'node:fs';
+import {join,dirname} from 'node:path';
+import {execFileSync,spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {producerInputs,captureSourceIdentity,verifySourceIdentity,createBuildEvidence,assertBuildBinary,parseDepInfo,localPackages} from './source_identity.mjs';
 
-const parent=process.env.PDRS_SOURCE_IDENTITY_FIXTURES;
-function fixture(){
-  assert.ok(parent&&isAbsolute(parent),'explicit owned fixture parent required');
-  const root=mkdtempSync(join(parent,'source-identity-'));
+function fixture(t,{outside=false}={}){
+  const root=realpathSync(mkdtempSync(join('/tmp','pdrs-source-identity-')));
+  t.after(()=>{rmSync(root,{recursive:true,force:true});console.log('REMOVED '+root);});
   const put=(path,value)=>{mkdirSync(dirname(join(root,path)),{recursive:true});writeFileSync(join(root,path),value);};
   const git=(...args)=>execFileSync('/usr/bin/git',['-c','core.hooksPath=/dev/null','-C',root,...args],{timeout:10000,maxBuffer:1024*1024,env:{PATH:'/usr/bin:/bin',HOME:root,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',LANG:'C'}});
   git('init','-q');
-  for(const path of producerInputs.required)put(path,path.endsWith('/source_identity.mjs')?readFileSync(new URL('./source_identity.mjs',import.meta.url)):'fixture '+path+'\n');
-  for(const tree of producerInputs.trees)put(tree+'/entry.rs','fixture tree\n');
-  for(const name of ['upstream.rs','main.rs','acceptor.rs'])put('src/pilotdeck-gateway/src/'+name,'fixture '+name+'\n');
-  put('src/pilotdeck-gateway/src/space\n name.rs','newline path\n');
-  put('.gitignore','src/pilotdeck-gateway/build.rs\n.cargo/config.toml\nsrc/pilotdeck-gateway/src/ignored.rs\n');
-  git('add','-f','.');
-  const commit=()=>git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');
-  commit();return {root,put,git,commit};
+  put('.gitignore','/target/\n**/ignored.rs\n.cargo/config.toml\n');
+  put('Cargo.toml','[workspace]\nresolver="3"\nmembers=["app", "tokenizer", "transport", "agent", "vendor"]\n');
+  const crates=[['app','producer'],['tokenizer','tokenizer'],['transport','transport'],['agent','agent'],['vendor','vocab']];
+  for(const [dir,name]of crates){
+    const deps=dir==='app'?'tokenizer={path="../tokenizer"}\ntransport={path="../transport"}':dir==='transport'?'agent={path="../agent"}':dir==='tokenizer'?'vocab={path="../vendor"}':'';
+    put(dir+'/Cargo.toml',`[package]\nname="${name}"\nversion="0.1.0"\nedition="2024"\n[dependencies]\n${deps}\n`);
+    if(dir!=='app')put(dir+'/src/lib.rs',`pub fn value()->usize{1${dir==='tokenizer'?'+vocab::value()':dir==='transport'?'+agent::value()':''}}\n`);
+  }
+  put('app/src/main.rs',`use std::include_str as inc;
+#[path="../modules/external.rs"] mod external;
+const COMMENT:&str=include_str /* gap */ ! ["../assets/comment.txt"];
+const BRACE:&[u8]=include_bytes!{"../assets/brace.bin"};
+const WEIRD:&str=include_str!("../assets/space #$.txt");
+const ALIAS:&str=inc!("../assets/alias.txt");
+const TEST_ASSET:&str=include_str!("../tests/data.txt");
+const GENERATED:&str=include_str!(concat!(env!("OUT_DIR"),"/generated.txt"));
+include!("../modules/included.rs");
+fn main(){let _=WEIRD;println!("{}{}{}{}{}{}{}{}{}",COMMENT,BRACE.len(),ALIAS,TEST_ASSET,GENERATED,external::VALUE,NESTED,tokenizer::value(),transport::value());}
+`);
+  for(const name of ['comment.txt','brace.bin','alias.txt','nested.txt','path.txt'])put('app/assets/'+name,'asset '+name+'\n');
+  put('app/assets/space #$.txt','escaped-path asset\n');
+  put('app/tests/not_built.rs','#[test] fn test_only(){}\n');
+  put('app/tests/data.txt','production includes a tests asset\n');
+  put('app/modules/external.rs','pub const VALUE:&str=include_str!("../assets/path.txt");\n');
+  put('app/modules/included.rs','const NESTED:&str=include_str!("../assets/nested.txt");\n');
+  put('vendor/assets/vocabulary.txt','vocabulary\n');
+  put('vendor/src/lib.rs','pub fn value()->usize{include_str!("../assets/vocabulary.txt").len()}\n');
+  put('app/build.rs','fn main(){std::fs::write(std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("generated.txt"), "generated content").unwrap();}\n');
+  const cargo=(...args)=>execFileSync('cargo',args,{cwd:root,env:{...process.env,CARGO_TARGET_DIR:join(root,'target')},timeout:90000,maxBuffer:4*1024*1024,encoding:'utf8'});
+  cargo('generate-lockfile','--offline');
+  const commit=()=>{git('add','-f','--','.gitignore','Cargo.toml','Cargo.lock','app','tokenizer','transport','agent','vendor');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture');};
+  let extra;
+  if(outside){
+    extra=realpathSync(mkdtempSync(join('/tmp','pdrs-outside-input-')));t.after(()=>rmSync(extra,{recursive:true,force:true}));
+    writeFileSync(join(extra,'outside.txt'),'tree-external input');
+    put('vendor/src/lib.rs',`pub fn value()->usize{include_str!(${JSON.stringify(join(extra,'outside.txt'))}).len()}\n`);
+  }
+  commit();
+  const build=()=>createBuildEvidence(root,{manifestPath:join(root,'Cargo.toml'),packageName:'producer',targetDir:join(root,'target'),recorder:false});
+  return {root,put,git,commit,build,cargo,extra};
 }
+const sha=value=>createHash('sha256').update(value).digest('hex');
+const capture=f=>captureSourceIdentity(f.root,f.evidence);
+const verify=(f,before)=>verifySourceIdentity(f.root,before,f.evidence);
+const ready=t=>{const f=fixture(t);f.evidence=f.build();return f;};
 
-test('source identity fixed producerInputs git fixture matrix',t=>{
-  const rows=[];let completed=false;
-  t.after(()=>writeFileSync(join(parent,'source-identity-results.json'),JSON.stringify({status:completed&&!rows.some(r=>r.status==='FAIL')?'CHECKED_HELPER_ONLY':'FAILED_HELPER_ONLY',completed,rows,product:'NOT_RUN',artifactOrigin:'NOT_PROVED'},null,2)+'\n',{flag:'wx'}));
-  function run(id,action){const f=fixture();try{action(f);rows.push({id,fixture:f.root,status:'CHECKED'});}catch(error){rows.push({id,fixture:f.root,status:'FAIL',error:String(error)});throw error;}}
-  run('G0-clean',f=>{const before=captureSourceIdentity(f.root);assert.ok(before.files.length>producerInputs.required.length);assert.ok(before.files.some(x=>x.path.includes('\n')));assert.ok(before.files.some(x=>x.path==='src/pilotdeck-child-signals/Cargo.toml'));assert.ok(before.files.some(x=>x.path==='src/pilotdeck-child-signals/src/entry.rs'));assert.ok(before.optional.some(x=>x.path.endsWith('/build.rs')&&!x.present));assert.deepEqual(verifySourceIdentity(f.root,before),before);});
-  run('G0-optional-present',f=>{const path='src/pilotdeck-gateway/build.rs';f.put(path,'fixture build\n');f.git('add','-f','--',path);f.commit();const before=captureSourceIdentity(f.root);assert.ok(before.files.some(x=>x.path===path));assert.ok(before.optional.some(x=>x.path===path&&x.present));assert.deepEqual(verifySourceIdentity(f.root,before),before);});
-  for(const [id,path,staged]of [
-    ['G1-unstaged','src/pilotdeck-gateway/src/upstream.rs',false],
-    ['G2-staged','src/pilotdeck-gateway/src/upstream.rs',true],
-    ['G4-main','src/pilotdeck-gateway/src/main.rs',true],
-    ['G4-acceptor','src/pilotdeck-gateway/src/acceptor.rs',true],
-    ['G5-manifest','src/pilotdeck-gateway/Cargo.toml',true],
-    ['G5-protocol','src/pilotdeck-protocol/src/entry.rs',true],
-    ['G5-child-signals-unstaged','src/pilotdeck-child-signals/src/entry.rs',false],
-    ['G5-child-signals-staged','src/pilotdeck-child-signals/src/entry.rs',true],
-    ['G5-child-signals-manifest','src/pilotdeck-child-signals/Cargo.toml',true],
-    ['G11-newline','src/pilotdeck-gateway/src/space\n name.rs',true],
-  ])run(id,f=>{f.put(path,'changed\n');if(staged)f.git('add','--',path);if(id==='G2-staged')assert.doesNotThrow(()=>f.git('diff','--exit-code','--','src/pilotdeck-gateway/src','src/Cargo.toml','src/Cargo.lock'));assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_DIRTY'});});
-  run('G3-index-worktree-cancel',f=>{const path='src/pilotdeck-gateway/src/upstream.rs';const original=readFileSync(join(f.root,path));f.put(path,'staged\n');f.git('add','--',path);f.put(path,original);assert.doesNotThrow(()=>f.git('diff','HEAD','--exit-code','--',path));assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_DIRTY'});});
-  for(const [id,path,code]of [
-    ['G6-untracked','src/pilotdeck-gateway/src/new.rs','SOURCE_DIRTY'],
-    ['G6-ignored-source','src/pilotdeck-gateway/src/ignored.rs','SOURCE_UNTRACKED'],
-    ['G6-ignored-build','src/pilotdeck-gateway/build.rs','SOURCE_UNTRACKED'],
-    ['G6-ignored-config','.cargo/config.toml','SOURCE_UNTRACKED'],
-  ])run(id,f=>{f.put(path,'untracked\n');assert.throws(()=>captureSourceIdentity(f.root),{code});});
-  run('G7-deleted',f=>{unlinkSync(join(f.root,'src/pilotdeck-gateway/Cargo.toml'));assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_DIRTY'});});
-  run('G7-missing-required-clean',f=>{unlinkSync(join(f.root,'src/pilotdeck-gateway/Cargo.toml'));f.git('add','-u');f.commit();assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_REQUIRED'});});
-  run('G7-empty-tree-clean',f=>{unlinkSync(join(f.root,'src/pilotdeck-protocol/src/entry.rs'));f.git('add','-u');f.commit();assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_TREE'});});
-  run('G7-empty-before',f=>assert.throws(()=>verifySourceIdentity(f.root,{version:1,contract:producerInputs,files:[]}),{code:'SOURCE_BEFORE_INVALID'}));
-  run('G7-trim-before',f=>{const before=captureSourceIdentity(f.root);assert.throws(()=>verifySourceIdentity(f.root,{...before,files:before.files.slice(1)}),{code:'SOURCE_IDENTITY_DRIFT'});});
-  run('G7-extra-before',f=>{const before=captureSourceIdentity(f.root);assert.throws(()=>verifySourceIdentity(f.root,{...before,files:[...before.files,{path:'invented',sha256:'invented'}]}),{code:'SOURCE_IDENTITY_DRIFT'});});
-  run('G8-source-after',f=>{const before=captureSourceIdentity(f.root);f.put('src/pilotdeck-gateway/src/upstream.rs','after\n');assert.throws(()=>verifySourceIdentity(f.root,before),{code:'SOURCE_DIRTY'});});
-  run('G8-head-after',f=>{const before=captureSourceIdentity(f.root);f.put('docs/only.md','new head\n');f.git('add','docs');f.commit();assert.throws(()=>verifySourceIdentity(f.root,before),{code:'SOURCE_IDENTITY_DRIFT'});});
-  run('G9-outside-scope',f=>{const before=captureSourceIdentity(f.root);f.put('state/example.md','state\n');f.put('docs/example.md','docs\n');assert.deepEqual(verifySourceIdentity(f.root,before),before);});
-  for(const [id,option,tag]of [
-    ['G12-skip-worktree','--skip-worktree','S'],
-    ['G12-assume-unchanged','--assume-unchanged','h'],
-  ])run(id,f=>{
-    const path='src/pilotdeck-gateway/src/space\n name.rs';
-    f.git('update-index',option,'--',path);f.put(path,'hidden changed\n');
-    assert.equal(f.git('status','--porcelain=v1','-z','--',path).length,0,'actual Git hides the changed input');
-    assert.equal(f.git('ls-files','-v','-z','--',path).toString(),`${tag} ${path}\0`);
-    assert.notDeepEqual(readFileSync(join(f.root,path)),f.git('show',`HEAD:${path}`));
-    assert.throws(()=>captureSourceIdentity(f.root),error=>error.code==='SOURCE_DIRTY'&&error.details.flag===tag&&error.details.path===path);
-  });
-  for(const [id,option]of [
-    ['G12-outside-skip-worktree','--skip-worktree'],
-    ['G12-outside-assume-unchanged','--assume-unchanged'],
-  ])run(id,f=>{
-    const path='docs/hidden-source-excluded.md';f.put(path,'outside original\n');f.git('add','--',path);f.commit();
-    const before=captureSourceIdentity(f.root);f.git('update-index',option,'--',path);f.put(path,'outside changed\n');
-    assert.deepEqual(verifySourceIdentity(f.root,before),before);
-  });
-  run('G12-missing-root',f=>{
-    const holding=join(mkdtempSync(join(parent,'missing-root-held-')),'checkout');
-    renameSync(f.root,holding);
-    try{assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_ROOT'});}
-    finally{renameSync(holding,f.root);}
-    assert.doesNotThrow(()=>captureSourceIdentity(f.root));
-  });
-  run('G11-tracked-symlink',f=>{const path='src/pilotdeck-gateway/src/upstream.rs';unlinkSync(join(f.root,path));symlinkSync('main.rs',join(f.root,path));f.git('add','--',path);f.commit();assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_SYMLINK'});});
-  run('G11-not-repository',f=>{mkdirSync(join(f.root,'empty'));assert.throws(()=>captureSourceIdentity(join(f.root,'empty')),{code:'SOURCE_ROOT'});});
-  run('G11-git-command-error',f=>{f.put('.git/config','[invalid\n');assert.throws(()=>captureSourceIdentity(f.root),error=>Number.isInteger(error.status)&&error.status!==0);});
-  run('G12-missing-tree-clean',f=>{
-    const tree='src/pilotdeck-protocol/src';unlinkSync(join(f.root,tree,'entry.rs'));f.git('add','-u');f.commit();
-    const holding=join(mkdtempSync(join(parent,'missing-tree-held-')),'source');renameSync(join(f.root,tree),holding);
-    try{assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_TREE'});}
-    finally{renameSync(holding,join(f.root,tree));}
-  });
-  run('G13-optional-config-directory',f=>{
-    const path='.cargo/config.toml';mkdirSync(join(f.root,path),{recursive:true});
-    assert.equal(f.git('status','--porcelain=v1','-z').length,0,'physical empty config directory stays Git-clean');
-    assert.equal(f.git('ls-files','--others','-z','--',path).length,0);
-    assert.throws(()=>captureSourceIdentity(f.root),error=>error.code==='SOURCE_KIND'&&error.details.path===path);
-  });
-  run('G13-contract-only-before',f=>{
-    const before=captureSourceIdentity(f.root);
-    const changed={...before,contract:{...before.contract,version:before.contract.version+1}};
-    assert.deepEqual({...changed,contract:before.contract},before,'only contract changes');
-    assert.throws(()=>verifySourceIdentity(f.root,changed),{code:'SOURCE_BEFORE_INVALID'});
-  });
-  run('G13-combined-index-flags',f=>{
-    const path='src/pilotdeck-gateway/src/space\n name.rs';
-    f.git('update-index','--skip-worktree','--',path);f.git('update-index','--assume-unchanged','--',path);
-    f.put(path,'combined hidden changed\n');
-    assert.equal(f.git('status','--porcelain=v1','-z','--',path).length,0,'actual Git hides combined flags');
-    assert.equal(f.git('ls-files','-v','-z','--',path).toString(),`s ${path}\0`);
-    assert.notDeepEqual(readFileSync(join(f.root,path)),f.git('show',`HEAD:${path}`));
-    assert.throws(()=>captureSourceIdentity(f.root),error=>error.code==='SOURCE_DIRTY'&&error.details.flag==='s'&&error.details.path===path);
-  });
-  assert.equal(rows.length,38,'all registered source-identity rows completed');
-  assert.equal(new Set(rows.map(row=>row.id)).size,38,'all source-identity row IDs unique');
-  completed=true;
+// Every case uses a compiler build, including the historical gaps that a regex missed.
+test('dep-info covers comment gaps, all delimiters, alias, path module, nested include and tests asset',t=>{
+  const f=ready(t),contract=producerInputs(f.root,f.evidence),before=capture(f);
+  assert.deepEqual(contract.packages,['agent','app','tokenizer','transport','vendor']);
+  for(const path of ['app/assets/space #$.txt','app/assets/comment.txt','app/assets/brace.bin','app/assets/alias.txt','app/assets/nested.txt','app/assets/path.txt','app/modules/external.rs','app/modules/included.rs','app/tests/data.txt','vendor/assets/vocabulary.txt','app/build.rs']){
+    assert.ok(contract.required.includes(path),path);
+    assert.equal(before.files.find(x=>x.path===path)?.sha256,sha(readFileSync(join(f.root,path))),path);
+  }
+  assert.ok(!contract.trees.includes('app/tests'),'unbuilt integration-test targets do not expand the compiler source scope');
+  assert.ok(!before.files.some(x=>x.path==='app/tests/not_built.rs'));
+  assert.ok(before.generated.some(x=>x.path.endsWith('/generated.txt')&&x.sha256===sha('generated content')));
+  assert.deepEqual(verify(f,before),before);
+  assertBuildBinary(f.root,f.evidence.executable,f.evidence);
+  assert.throws(()=>assertBuildBinary(f.root,join(f.root,'different-binary'),f.evidence),{code:'BUILD_EVIDENCE'});
+});
+
+test('G8 asset hash is independently checked and verify detects hash drift with identical HEAD',t=>{
+  const f=ready(t),before=capture(f),path='vendor/assets/vocabulary.txt';
+  const entry=before.files.find(x=>x.path===path);
+  assert.equal(entry.sha256,sha('vocabulary\n'));
+  const forged=structuredClone(before);forged.files.find(x=>x.path===path).sha256=sha('changed vocabulary\n');
+  assert.equal(forged.head,before.head);
+  assert.throws(()=>verify(f,forged),{code:'SOURCE_IDENTITY_DRIFT'});
+  // Change real bytes, keep HEAD and mtime fixed. The build receipt input hash
+  // must reject this even when a timestamp check alone could not detect it.
+  const full=join(f.root,path),stamp=f.evidence.startedAt-1000;
+  f.put(path,'changed vocabulary\n');utimesSync(full,stamp/1000,stamp/1000);
+  assert.notEqual(sha(readFileSync(full)),entry.sha256);
+  assert.throws(()=>capture(f),{code:'BUILD_EVIDENCE_DRIFT'});
+});
+
+test('build.rs output is bound and cannot drift at constant timestamps',t=>{
+  const f=ready(t),before=capture(f),path=before.generated.find(x=>x.path.endsWith('/generated.txt')).path;
+  f.put(path,'modified generation');const stamp=f.evidence.startedAt-1000;utimesSync(join(f.root,path),stamp/1000,stamp/1000);
+  assert.throws(()=>verify(f,before),{code:'BUILD_EVIDENCE_DRIFT'});
+});
+
+test('metadata follows transitive path dependencies, including paths reached through registry nodes',()=>{
+  const p=(id,source)=>({id,name:id,source,manifest_path:'/repo/'+id+'/Cargo.toml'});
+  const metadata={packages:[p('producer',null),p('registry','registry+https://example.invalid'),p('patched',null)],resolve:{nodes:[{id:'producer',dependencies:['registry']},{id:'registry',dependencies:['patched']},{id:'patched',dependencies:[]}]}};
+  assert.deepEqual(localPackages(metadata,'producer').map(p=>p.name),['patched','producer']);
+  metadata.resolve.nodes.pop();assert.throws(()=>localPackages(metadata,'producer'),{code:'CARGO_METADATA'});
+});
+
+test('dep-info parse errors propagate through capture (never silently omit a unit)',t=>{
+  const f=ready(t),unit=f.evidence.units.find(u=>u.target==='vocab');
+  f.put(unit.depInfo,'this is not a Make rule\n');
+  assert.throws(()=>capture(f),{code:'DEP_INFO_PARSE'});
+});
+
+test('dep-info missing, old timestamp and mismatched compiler-artifact all fail closed',t=>{
+  const f=ready(t),unit=f.evidence.units.find(u=>u.target==='vocab'),path=join(f.root,unit.depInfo),original=readFileSync(path);
+  unlinkSync(path);assert.throws(()=>capture(f),{code:'DEP_INFO_MISSING'});
+  f.put(unit.depInfo,original);utimesSync(path,(f.evidence.startedAt-1)/1000,(f.evidence.startedAt-1)/1000);assert.throws(()=>capture(f),{code:'DEP_INFO_STALE'});
+  f.put(unit.depInfo,original.toString().replaceAll('libvocab-','libunrelated-'));
+  assert.throws(()=>capture(f),{code:'DEP_INFO_MISSING'});
+});
+
+test('cached Cargo artifacts are rejected as stale build evidence',t=>{
+  const f=ready(t);assert.throws(()=>f.build(),{code:'DEP_INFO_STALE'});
+});
+
+test('real compiler include outside checkout fails closed',t=>{
+  const f=fixture(t,{outside:true});assert.throws(()=>f.build(),{code:'SOURCE_OUTSIDE'});
+});
+
+test('successful complete Cargo stream and artifact-to-metadata binding are required',t=>{
+  const f=ready(t),original=structuredClone(f.evidence);
+  f.evidence.messages.pop();assert.throws(()=>capture(f),{code:'BUILD_EVIDENCE'});
+  f.evidence=structuredClone(original);f.evidence.messages.at(-1).success=false;assert.throws(()=>capture(f),{code:'BUILD_EVIDENCE'});
+  f.evidence=structuredClone(original);f.evidence.messages.find(m=>m.reason==='compiler-artifact').fresh=true;assert.throws(()=>capture(f),{code:'DEP_INFO_STALE'});
+  f.evidence=structuredClone(original);f.evidence.messages.find(m=>m.reason==='compiler-artifact').manifest_path='/incorrect';assert.throws(()=>capture(f),{code:'BUILD_EVIDENCE'});
+  assert.throws(()=>captureSourceIdentity(f.root,{}),{code:'BUILD_EVIDENCE'});
+});
+
+test('native Git cleanliness, hidden flags, config shape, contract and before validation',t=>{
+  const f=ready(t),before=capture(f);
+  const path='app/src/main.rs',original=readFileSync(join(f.root,path));
+  // Dirty tracked files not used by rustc still belong to the source tree scope.
+  f.put('app/src/unused.rs','// unused source\n');assert.throws(()=>capture(f),{code:'SOURCE_DIRTY'});unlinkSync(join(f.root,'app/src/unused.rs'));
+  f.put('app/src/ignored.rs','// ignored source\n');assert.throws(()=>capture(f),{code:'SOURCE_UNTRACKED'});unlinkSync(join(f.root,'app/src/ignored.rs'));
+  for(const option of ['--skip-worktree','--assume-unchanged']){
+    f.git('update-index',option,'--',path);
+    assert.throws(()=>capture(f),error=>error.code==='SOURCE_DIRTY'&&error.details.path===path);
+    f.git('update-index',option.replace('--','--no-'),'--',path);
+  }
+  f.git('update-index','--skip-worktree','--',path);f.git('update-index','--assume-unchanged','--',path);
+  assert.throws(()=>capture(f),error=>error.code==='SOURCE_DIRTY'&&error.details.flag==='s');
+  f.git('update-index','--no-skip-worktree','--',path);f.git('update-index','--no-assume-unchanged','--',path);
+  // Stage an edit, restore bytes and timestamps: avoid build-drift short circuit.
+  f.put(path,'// staged\n');f.git('add','--',path);f.put(path,original);const stamp=f.evidence.startedAt-1000;utimesSync(join(f.root,path),stamp/1000,stamp/1000);
+  assert.throws(()=>capture(f),{code:'SOURCE_DIRTY'});f.git('reset','-q','HEAD','--',path);
+  mkdirSync(join(f.root,'.cargo/config.toml'),{recursive:true});assert.throws(()=>capture(f),{code:'SOURCE_KIND'});rmSync(join(f.root,'.cargo'),{recursive:true});
+  for(const files of [[],before.files.slice(1),[...before.files,{path:'invented',sha256:'invented'}]])assert.throws(()=>verify(f,{...before,files}),{code:files.length?'SOURCE_IDENTITY_DRIFT':'SOURCE_BEFORE_INVALID'});
+  assert.throws(()=>verify(f,{...before,contract:{...before.contract,version:999}}),{code:'SOURCE_BEFORE_INVALID'});
+  f.put('docs/unrelated.md','docs\n');f.put('state/unrelated.md','state\n');assert.deepEqual(verify(f,before),before);
+  unlinkSync(join(f.root,path));symlinkSync('different.rs',join(f.root,path));assert.throws(()=>capture(f),{code:'SOURCE_SYMLINK'});
+});
+
+test('Git and metadata command/JSON failures propagate; non-checkout roots fail',t=>{
+  const f=ready(t);
+  mkdirSync(join(f.root,'empty'));assert.throws(()=>captureSourceIdentity(join(f.root,'empty'),f.evidence),{code:'SOURCE_ROOT'});
+  assert.throws(()=>captureSourceIdentity(join(f.root,'missing'),f.evidence),{code:'SOURCE_ROOT'});
+  f.put('bad-evidence.json','{invalid');assert.throws(()=>captureSourceIdentity(f.root,join(f.root,'bad-evidence.json')),SyntaxError);
+  const saved=readFileSync(join(f.root,'.git/config'));f.put('.git/config','[invalid\n');
+  assert.throws(()=>capture(f),error=>Number.isInteger(error.status)&&error.status!==0);f.put('.git/config',saved);
+  const metadata=structuredClone(f.evidence);metadata.metadata.resolve=null;assert.throws(()=>captureSourceIdentity(f.root,metadata),{code:'CARGO_METADATA'});
+});
+
+test('dep-info tokenizer matches rustc filename escaping and rejects malformed rules',()=>{
+  assert.deepEqual(parseDepInfo(String.raw`out.d: path\ name hash#name dollar$name back\slash colon:name
+path\ name:
+# env-dep:VALUE=x
+`)[0],{targets:['out.d'],inputs:['path name','hash#name','dollar$name','back\\slash','colon:name']});
+  for(const input of ['garbage\n','only:\n','out: a\0b','out: a\tb'])assert.throws(()=>parseDepInfo(input),{code:'DEP_INFO_PARSE'});
+});
+
+test('invalid include arguments and broken Cargo manifests propagate actual compiler/metadata errors',t=>{
+  const f=fixture(t);
+  f.put('app/src/main.rs','fn main(){let _=include_str![unknown!()];}');f.commit();
+  assert.throws(()=>f.build(),error=>error.status!==0&&Number.isInteger(error.status));
+  f.put('Cargo.toml','[not valid toml');
+  assert.throws(()=>f.build(),error=>error.status!==0&&Number.isInteger(error.status));
+});
+
+test('recorder rejects missing or foreign build evidence before creating output or reading baseline',t=>{
+  const f=ready(t),record=new URL('./record.mjs',import.meta.url),output=join(f.root,'record-output');
+  const env={...process.env};delete env.PDRS_SOURCE_IDENTITY_BUILD;
+  let p=spawnSync(process.execPath,[record.pathname,'/missing-baseline','/missing-binary',output],{env,timeout:10000,encoding:'utf8'});
+  assert.equal(p.status,1);assert.match(p.stderr,/PDRS_SOURCE_IDENTITY_BUILD is required/);assert.equal(existsSync(output),false);
+  const path=join(f.root,'build-evidence.json');writeFileSync(path,JSON.stringify(f.evidence));
+  p=spawnSync(process.execPath,[record.pathname,'/missing-baseline','/missing-binary',output],{env:{...env,PDRS_SOURCE_IDENTITY_BUILD:path},timeout:10000,encoding:'utf8'});
+  assert.equal(p.status,1);assert.match(p.stderr,/build checkout\/cwd mismatch/);assert.equal(existsSync(output),false);
+});
+
+test('dep-info symlinks and non-UTF8 files fail closed before parsing inputs',t=>{
+  const f=ready(t),unit=f.evidence.units.find(u=>u.target==='vocab'),path=join(f.root,unit.depInfo);
+  unlinkSync(path);symlinkSync('missing-target',path);assert.throws(()=>capture(f),{code:'SOURCE_SYMLINK'});
+  unlinkSync(path);f.put(unit.depInfo,Buffer.from([0xff,0xfe]));assert.throws(()=>capture(f),{code:'DEP_INFO_PARSE'});
 });
