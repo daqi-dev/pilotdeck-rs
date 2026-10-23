@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（#563 PR）**：accepted-diffs.md 末尾只追加 A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001 范围补充的更正（TS 读返回空、删为无操作）与机器判据；不改其他条目、不改判分语义；只重登记 accepted-diffs.md 哈希。
+
 > **2026-10-23 重登记（#551 PR）**：accepted-diffs.md 末尾只追加 A6.5-MCP-HTTP-LIFETIME-001「当前状态：代理部分已对 MCP 消除」与三条已知未对齐（未批准）：A6.5-MCP-PROXY-HTTPS-001、A6.5-MCP-PROXY-SOCKS-001、A6.5-MCP-PROXY-FALLBACK-001；不改其他条目、不改判分语义；只重登记 accepted-diffs.md 哈希。
 
 > **2026-10-23 重登记（PR #531 修复轮 3，判据补充）**：accepted-diffs.md 末尾追加 A6.6-EDGECLAW-IMPORT-SWAP-ROLLBACK-001 的机器判据补充（新增 cfg(unix) 单测覆盖单线程 copy 回退失败，原条目「尚无 Rust 测试」一句过期），不改原条目、不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希。
@@ -107,7 +109,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-8c3fd1089ec7c640ff1a13785357a81081ffbb1af8b6340cd4bbe8fb5f2d56c7  accepted-diffs.md
+f0f0569687252a81fb4db7f0b58dc663d7edcc9ee53995fd237b12a478004d84  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py

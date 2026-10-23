@@ -945,3 +945,14 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：真实 TS 用例“env http proxy 已装 → reload `ftp://` → 请求仍走 env 代理”；
   Rust 回放一致；负控改回“失败即直连”，CONNECT 日志必须转红。
 - **批准记录**：无；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义；后续实现见跟进单。
+
+### A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001 · 范围补充的更正与机器判据（追加，不改上文；#563）
+
+- **更正**：上文「范围补充：根内悬挂符号链接」写「TS 会跟随链接：读 ENOENT、写创建 real.md」不完全属实。#563 真实 TS 实测（`resources/PilotDeck/src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts`，@cc7c4e6）对根内 `global/UserIdentity/user-profile.md -> real.md`（real.md 缺失）：
+  - 读 `getMemoryRecordsByIds([link])`：返回 `[]`，不报错（`:664-675` `isPathWithinRoot` + `existsSync` 跟随为 false；`:1053-1068`）；
+  - 写 `upsertUserProfile`：`writeFileSync` 跟随链接创建 `global/UserIdentity/real.md`（`:693-699`，`:697`），链接仍在；
+  - 删 `deleteEntries([link])`：返回 `{mutatedIds: [], deletedProjectIds: []}`，链接仍在（`:1298-1308`，`existsSync` `:1303`）；
+  - `editEntry`：抛 `Memory entry not found: …`，与 Rust 同文案（`:1218-1225`），非偏离。
+  Rust（`runtime/memory/edgeclaw/file_memory.rs` 的 `within`）对读 / 写 / 删三种都报 `Memory entry not found: <id>`，不触碰链接与目标。故实际差异为：读（TS 空数组 vs Rust 报错）、写（TS 创建目标 vs Rust 报错）、删（TS 无操作的成功结果 vs Rust 报错）。方向仍为向安全偏离（主要是不经链接写盘）。
+- **机器判据**：`src/pilotdeck-gateway/tests/edgeclaw_dangling_links.rs` 的 `ts_golden_proves_the_link_is_followed`、`dangling_links_are_rejected_before_any_io`（逐一执行上述四个操作，断言 Rust 报错且全树与金样 `initialFiles` 逐字节一致）、`rust_follows_ts_write_through_the_link_once_the_target_exists`、`real_ts_generator_is_reproducible`（ignored，真实 TS 重生成）；金样 `tests/fixtures/edgeclaw-dangling-links/oracle.json`；负控放行悬挂链接转红。
+- **批准记录**：同上文（向安全偏离，AI 代批待人复核）；本条只更正描述并补判据，不改判分语义。
