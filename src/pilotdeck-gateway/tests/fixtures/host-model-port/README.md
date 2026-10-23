@@ -12,7 +12,7 @@ transcript 逐字节可比）。HTTP 场景把 providers 指向本进程独占�
 与 `sourceClosureSha256` 固定 651 项相对 import 闭包，并断言 en-US locale。生成目录由
 调用者独占提供；生成器用 `wx` 拒绝覆盖，没有删除动作。
 
-## 覆盖（25 个场景）
+## 覆盖（31 个场景）
 
 文本流、工具调用 delta、`modelOverride` 显式路由（含 subagent 位）、provider error 事件
 后的 fallback、抛出网络错误的 fallback 与终态、`managedModelPolicy` 拒绝（execute 内
@@ -38,6 +38,13 @@ provider 连接（`streamModel.ts` 的 `cancelReader`），不会推进挂起中
 `execute_failed` / `observeRequest` 不发布（`RouterRuntime.ts:962` 位于 `:873-877` 的逐条
 yield 之后），`return()` 丢弃其余。
 
+修复轮 4 追加六个 `modelOverride` 真值判定场景（`routerModelInvokerAdapter.ts:28`）：
+判定是 JavaScript 真值而非形状检查——缺 `model`（只剩 `provider`）、缺 `provider`（只剩
+`model`）、非字符串 `provider`（数字 42 原样进 decision / request / invoker 调用）、非对象
+真值（`'x'`，读 `.provider` / `.model` 得 `undefined`，键序列化时省略）、`null`（假值，照常
+走 `router.decide`）、空对象 `{}`（真值，两键均 `undefined`）。半路由（缺 provider 或缺
+model）跳过 capabilities 钳制（`getCapabilities` 抛错被捕获，`maxOutputTokens` 保持 100）。
+
 每个场景记录：`trace`（router 事件、prepared（含 `opaque` 决策）、每次拉取的事件、done、
 closed、error、metadata、materialized、invalidate 探针）、`calls`（invoker 收到的请求）、
 HTTP 场景的 `requests`（含 `clientClosed`）、`transcript`（完整 JSONL 文本）。全部与
@@ -62,7 +69,7 @@ cmp /tmp/<owned-run-1>/oracle.json src/pilotdeck-gateway/tests/fixtures/host-mod
 ```
 
 本次入库的两次运行哈希（SHA256）：
-`151c0deb4bb49ef218f2e3ca4c5c875f9b728ec85a91e72f67037e489586752c`。
+`666d0b70e5b0d134c47cde6a52a80d0c399b8cf0d07ae690130db9944fdcf4d9`。
 
 常规回放复用 `tests/common/baseline.rs` 的 `oracle()`；未设 `PDRS_BASELINE` 时仅检查固定
 commit 与哈希结构，不调用 Git。Rust 回放见 `tests/host_model_port.rs`（HTTP 场景在测试内

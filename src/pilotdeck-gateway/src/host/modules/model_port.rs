@@ -203,7 +203,11 @@ impl ModelExecution for RouterModelPort {
             let decision = match model_override(&input.context) {
                 // `routerModelInvokerAdapter.ts:28-37`: an override routes
                 // explicitly, without consulting the router at all.
-                Some((provider, model)) => explicit_decision(&provider, &model, &options),
+                Some(over) => explicit_decision(
+                    &override_field(&over, "provider"),
+                    &override_field(&over, "model"),
+                    &options,
+                ),
                 None => router
                     .decide(&RouterDecisionInput {
                         request: input.request.clone(),
@@ -220,12 +224,20 @@ impl ModelExecution for RouterModelPort {
                     .map_err(router_error)?,
             };
             let request = router.materialize_request(&decision, &input.request);
+            // `routerModelInvokerAdapter.ts:51-52`: `provider`/`model` are
+            // `decision.provider` / `decision.model` — raw route values, an
+            // override may leave either `undefined`.
+            let route = |key: &str| {
+                decision
+                    .as_object()
+                    .and_then(|object| object.get(key))
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined)
+            };
             Ok(PreparedInvocation {
                 request,
-                provider: field_string(decision.as_object().expect("decision object"), "provider")
-                    .unwrap_or_default(),
-                model: field_string(decision.as_object().expect("decision object"), "model")
-                    .unwrap_or_default(),
+                provider: route("provider"),
+                model: route("model"),
                 max_context_tokens: None,
                 max_output_tokens: None,
                 opaque: Some(decision),
@@ -815,15 +827,18 @@ fn recorder_error(error: RecorderError) -> ModuleError {
     ModuleError::new(error.to_string())
 }
 
-/// `routerModelInvokerAdapter.ts:29-37`.
+/// `routerModelInvokerAdapter.ts:29-37`. The route fields are the raw
+/// override reads: a missing or non-string field stays `undefined` (and a
+/// non-string value passes through), exactly like the TS decision literal —
+/// serialization drops `undefined`, it never invents a route.
 fn explicit_decision(
-    provider: &JsString,
-    model: &JsString,
+    provider: &JsValue,
+    model: &JsValue,
     options: &RouterModelPortOptions,
 ) -> JsValue {
     let mut decision = JsObject::new();
-    decision.insert("provider".into(), JsValue::String(provider.clone()));
-    decision.insert("model".into(), JsValue::String(model.clone()));
+    decision.insert("provider".into(), provider.clone());
+    decision.insert("model".into(), model.clone());
     decision.insert("scenarioType".into(), "explicit".into());
     decision.insert("isSubagent".into(), JsValue::Bool(!options.is_main_agent));
     decision.insert("orchestrating".into(), JsValue::Bool(false));
@@ -832,13 +847,23 @@ fn explicit_decision(
     JsValue::Object(decision)
 }
 
-/// `context.modelOverride`, present only with both route strings.
-fn model_override(context: &JsObject) -> Option<(JsString, JsString)> {
-    let over = context.get("modelOverride")?.as_object()?;
-    Some((
-        over.get("provider")?.as_string()?.clone(),
-        over.get("model")?.as_string()?.clone(),
-    ))
+/// `context.modelOverride` (`routerModelInvokerAdapter.ts:28`): any truthy
+/// value routes explicitly — the judgment is JavaScript truthiness, not a
+/// shape check. `null` and `undefined` (or `false`/`0`/`""`) fall through to
+/// `router.decide()`.
+fn model_override(context: &JsObject) -> Option<JsValue> {
+    let over = context.get("modelOverride")?;
+    super::model::js_truthy(over).then(|| over.clone())
+}
+
+/// `context.modelOverride.provider` / `.model` (`routerModelInvokerAdapter.ts:30-31`):
+/// a property read off the override. A truthy non-object has neither, so both
+/// read as `undefined`.
+fn override_field(over: &JsValue, key: &str) -> JsValue {
+    over.as_object()
+        .and_then(|object| object.get(key))
+        .cloned()
+        .unwrap_or(JsValue::Undefined)
 }
 
 fn context_string(context: &JsObject, key: &str) -> Option<JsString> {

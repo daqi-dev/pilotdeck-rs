@@ -207,9 +207,11 @@ impl Handler {
                         } else {
                             None
                         };
+                        // `dispatcher:334` compares the prepared route to the
+                        // request route with strict `!==`, raw values included.
                         if prepared.as_ref().is_some_and(|p| {
-                            request.get("provider") != Some(&JsValue::String(p.provider.clone()))
-                                || request.get("model") != Some(&JsValue::String(p.model.clone()))
+                            request.get("provider") != Some(&p.provider)
+                                || request.get("model") != Some(&p.model)
                         }) {
                             return Err(contract_error(
                                 "Sidecar compaction budget preparation does not match the request route.",

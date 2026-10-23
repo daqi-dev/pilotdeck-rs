@@ -26,12 +26,16 @@ pub type StreamFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ModuleError
 
 /// Result of `prepare`, mirroring `PreparedModelInvocation` boundary fields.
 /// `max_*` stay boundary values because the dispatcher serializes them by
-/// JavaScript truthiness without validating them (`dispatcher:92-105`).
+/// JavaScript truthiness without validating them (`dispatcher:92-105`). The
+/// route fields are boundary values too: an explicit override route reaches
+/// `prepare` with `provider`/`model` as-is (`routerModelInvokerAdapter.ts:51-52`),
+/// so either can be `undefined` or a non-string, and it serializes away like
+/// the TS prepared invocation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedInvocation {
     pub request: JsValue,
-    pub provider: JsString,
-    pub model: JsString,
+    pub provider: JsValue,
+    pub model: JsValue,
     pub max_context_tokens: Option<JsValue>,
     pub max_output_tokens: Option<JsValue>,
     /// `PreparedModelInvocation.opaque`: host-local routing state the preparing
@@ -40,7 +44,7 @@ pub struct PreparedInvocation {
     pub opaque: Option<JsValue>,
 }
 impl PreparedInvocation {
-    pub fn new(request: JsValue, provider: JsString, model: JsString) -> Self {
+    pub fn new(request: JsValue, provider: JsValue, model: JsValue) -> Self {
         Self {
             request,
             provider,
@@ -592,7 +596,11 @@ fn get_metadata(
     provider: &JsString,
     model: &JsString,
 ) -> Result<JsObject, HostError> {
-    let serialized = serialize_metadata(metadata, provider, model)?;
+    let serialized = serialize_metadata(
+        metadata,
+        &JsValue::String(provider.clone()),
+        &JsValue::String(model.clone()),
+    )?;
     let mut response = JsObject::new();
     response.insert("metadata".into(), JsValue::Object(serialized));
     Ok(response)
@@ -838,22 +846,16 @@ fn materialize_fallback(prepared: &PreparedInvocation, candidate: &JsValue) -> J
         .cloned()
         .expect("canonical request messages");
     request.insert("messages".into(), messages);
-    request.insert(
-        "provider".into(),
-        JsValue::String(prepared.provider.clone()),
-    );
-    request.insert("model".into(), JsValue::String(prepared.model.clone()));
+    request.insert("provider".into(), prepared.provider.clone());
+    request.insert("model".into(), prepared.model.clone());
     request
 }
 
 pub(crate) fn serialize_prepared(prepared: &PreparedInvocation) -> JsValue {
     let mut object = JsObject::new();
     object.insert("request".into(), prepared.request.clone());
-    object.insert(
-        "provider".into(),
-        JsValue::String(prepared.provider.clone()),
-    );
-    object.insert("model".into(), JsValue::String(prepared.model.clone()));
+    object.insert("provider".into(), prepared.provider.clone());
+    object.insert("model".into(), prepared.model.clone());
     if let Some(value) = prepared
         .max_context_tokens
         .as_ref()
@@ -873,32 +875,40 @@ pub(crate) fn serialize_prepared(prepared: &PreparedInvocation) -> JsValue {
 
 fn serialize_metadata(
     metadata: &dyn ModelMetadata,
-    provider: &JsString,
-    model: &JsString,
+    provider: &JsValue,
+    model: &JsValue,
 ) -> Result<JsObject, ModuleError> {
+    // `dispatcher:88` passes `prepared.provider` / `prepared.model` through
+    // as-is, so an override route can be `undefined` here. The lookups still
+    // run: a TS metadata port resolves them against its config by property
+    // key (`config.providers[providerId]`), so the raw route coerces to its
+    // `String()` form and every lookup misses exactly like the baseline's
+    // throw-and-catch wrappers (`ProjectSessionRuntimeBundle.ts:469-497`).
+    let key_provider = &crate::js_value::property_key(provider);
+    let key_model = &crate::js_value::property_key(model);
     // TS calls every lookup before validating any result (:446-453).
     let max_context = if metadata.provides(MetadataField::MaxContextTokens) {
-        defined(metadata.get_model_max_context_tokens(provider, model)?)
+        defined(metadata.get_model_max_context_tokens(key_provider, key_model)?)
     } else {
         None
     };
     let max_output = if metadata.provides(MetadataField::MaxOutputTokens) {
-        defined(metadata.get_model_max_output_tokens(provider, model)?)
+        defined(metadata.get_model_max_output_tokens(key_provider, key_model)?)
     } else {
         None
     };
     let token_limits = if metadata.provides(MetadataField::TokenLimits) {
-        defined(metadata.get_model_token_limits(provider, model)?).filter(js_truthy)
+        defined(metadata.get_model_token_limits(key_provider, key_model)?).filter(js_truthy)
     } else {
         None
     };
     let protocol = if metadata.provides(MetadataField::Protocol) {
-        defined(metadata.get_model_protocol(provider)?)
+        defined(metadata.get_model_protocol(key_provider)?)
     } else {
         None
     };
     let prompt_cache = if metadata.provides(MetadataField::SupportsPromptCache) {
-        defined(metadata.get_model_supports_prompt_cache(provider, model)?)
+        defined(metadata.get_model_supports_prompt_cache(key_provider, key_model)?)
     } else {
         None
     };
@@ -926,8 +936,8 @@ fn serialize_metadata(
     }
 
     let mut object = JsObject::new();
-    object.insert("provider".into(), JsValue::String(provider.clone()));
-    object.insert("model".into(), JsValue::String(model.clone()));
+    object.insert("provider".into(), provider.clone());
+    object.insert("model".into(), model.clone());
     if let Some(value) = max_context {
         object.insert("maxContextTokens".into(), value);
     }
@@ -967,7 +977,7 @@ fn defined(value: Option<JsValue>) -> Option<JsValue> {
     value.filter(|value| !value.is_undefined())
 }
 
-fn js_truthy(value: &JsValue) -> bool {
+pub(super) fn js_truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
         JsValue::Bool(value) => *value,

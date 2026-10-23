@@ -269,8 +269,8 @@ impl model::ModelExecution for Fake {
         Box::pin(async move {
             Ok(model::PreparedInvocation::new(
                 input.request,
-                field(&route, "provider").as_string().unwrap().clone(),
-                field(&route, "model").as_string().unwrap().clone(),
+                field(&route, "provider").clone(),
+                field(&route, "model").clone(),
             ))
         })
     }
@@ -290,8 +290,8 @@ impl model::RequestMaterializer for Fake {
                 "prepared",
                 val([
                     ("request", p.request),
-                    ("provider", JsValue::String(p.provider)),
-                    ("model", JsValue::String(p.model)),
+                    ("provider", p.provider),
+                    ("model", p.model),
                 ]),
             ),
             ("candidate", JsValue::Object(candidate.clone())),

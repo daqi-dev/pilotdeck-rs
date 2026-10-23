@@ -3066,6 +3066,782 @@
     },
     {
       "spec": {
+        "name": "override-missing-model",
+        "context": {
+          "modelOverride": {
+            "provider": "b"
+          }
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ],
+        "materialize": true
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "b",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 100
+            },
+            "provider": "b",
+            "opaque": {
+              "provider": "b",
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "materialized",
+          "value": {
+            "provider": "b",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "candidate"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 100
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "provider": "b",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 100
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"b\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":100},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-missing-provider",
+        "context": {
+          "modelOverride": {
+            "model": "m"
+          }
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 100
+            },
+            "model": "m",
+            "opaque": {
+              "model": "m",
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 100
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":100},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-non-string-provider",
+        "context": {
+          "modelOverride": {
+            "provider": 42,
+            "model": "m"
+          }
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ],
+        "materialize": true
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": 42,
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 100
+            },
+            "provider": 42,
+            "model": "m",
+            "opaque": {
+              "provider": 42,
+              "model": "m",
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "materialized",
+          "value": {
+            "provider": 42,
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "candidate"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 100
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "provider": 42,
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 100
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":42,\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":100},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-non-object-truthy",
+        "context": {
+          "modelOverride": "x"
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 100
+            },
+            "opaque": {
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 100
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":100},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-null",
+        "context": {
+          "modelOverride": null
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "a",
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": "a",
+            "model": "m",
+            "opaque": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-empty-object",
+        "context": {
+          "modelOverride": {}
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ],
+        "materialize": true
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 100
+            },
+            "opaque": {
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "materialized",
+          "value": {
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "candidate"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 100
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 100
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":100},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
         "name": "http-text-stream",
         "http": true,
         "replies": [

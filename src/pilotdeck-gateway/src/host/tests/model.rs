@@ -233,14 +233,8 @@ impl ModelExecution for FakeExecution {
             let ok = step.get("ok").expect("prepare step");
             let mut prepared = PreparedInvocation::new(
                 ok.get("request").unwrap().clone(),
-                ok.get("provider")
-                    .and_then(JsValue::as_string)
-                    .unwrap()
-                    .clone(),
-                ok.get("model")
-                    .and_then(JsValue::as_string)
-                    .unwrap()
-                    .clone(),
+                ok.get("provider").cloned().unwrap_or(JsValue::Undefined),
+                ok.get("model").cloned().unwrap_or(JsValue::Undefined),
             );
             prepared.max_context_tokens = ok.get("maxContextTokens").cloned();
             prepared.max_output_tokens = ok.get("maxOutputTokens").cloned();
