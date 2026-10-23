@@ -13,6 +13,12 @@ python3 scripts/gateway-parity/test_safety.py
 python3 scripts/gateway-parity/controls/run_all.py --offline --output _tmp/20261014-a4-controls
 ```
 
+Gateway 差异账本阅读正本为 `specs/gateway-parity/accepted-diffs.md` 加
+`specs/gateway-parity/diffs/*.md`（文件名排序，排除 README）。旧文件冻结，
+新增/更正只新增独立文件，模板见 `specs/gateway-parity/diffs/README.md`；
+`check_frozen.py --base origin/main` 强制 merge-base 中已有文件只读，
+`--print-ledger` 输出完整合并视图。其他阶段的同名账本仍沿用各自规则。
+
 运行 `check_ruler.py` 前须先在本目录执行 `npm ci --ignore-scripts --no-fund`，并提供已构建的只读 TS 基线；在线校准末尾也强制跑 A3 prerequisites，缺库/缺基线会 FAIL。
 
 默认产物 `_tmp/20261014-exp006/`。重新采集请选择新的 `--output _tmp/YYYYMMDD-名字`；脚本不覆盖既有 cur 或 label。每轮 run.json 与最终 ruler.json 记录 `common.py:A2_SCRIPTS` 白名单内 A2 装置脚本 sha256（含 controls、运行器和检查器；不绑定 A3 schema 脚本及 node_modules）。本目录下 .py/.mjs/.mts（除任意层级 node_modules）必须属于 A2 白名单或 A3 三件 check_schema.py/export_schema.mjs/validate_fixtures.mjs，新增未登记脚本即 FAIL。`check_ruler` 只复用脚本哈希完全匹配的六轮原件；无哈希的旧档案或版本不匹配均拒绝，要求新 output。复用时重新比 10 对 TS、代理，重新生成 controls 目录；原件损坏就 FAIL，不自动重跑盖掉失败。运行期间脚本改变也拒绝生成成功账本。每轮约 20 秒，整轮有 180 秒超时；独立 driver 上限 45 秒。等待共享锁默认 600 秒超时，可用 `--lock-timeout` 调整。全量 k=5 + 代理轮整体持有 `/tmp/pdrs-parity.lock`（owner.json、guard、陈旧接管、owner token 校验释放）。

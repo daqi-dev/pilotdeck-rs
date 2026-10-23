@@ -1,0 +1,55 @@
+# Gateway 差异账本新增条目
+
+历史正本 `../accepted-diffs.md` 原字节冻结，不搬迁、不再追加；完整阅读顺序为该文件，随后本目录条目文件按文件名排序（不含 README）。旧 ID 引用继续有效。
+
+一条一个 `<ID>.md`，例如 `A7.2-REPLAY-EXAMPLE-001.md`。ID 使用大写阶段码（允许点分阶段）、大写字母/数字模块、三位序号；不得与历史标题 ID 重复。新增条目**只新增文件，不改任何已有文件，不维护共享清单，不改 FROZEN.md**。
+
+更正只新增 `<ID>-R<n>.md`（n 为不带前导零的正整数）；frontmatter 的 `original: <ID>` 必填，指向历史标题或本目录已存在的基础条目 ID。原条目不增加反向关联，不回写；更正同样须完整六字段，说明旧结论的问题、新结论与适用范围。按文件名排序是读取顺序，R10 会排在 R2 前；更正轮次按数字解释。
+
+frontmatter 仅接受以下两种无引号单行字段：`id`（必填，与文件名一致）、`original`（仅更正必填）。正文六个非空二级标题见模板；`TS 依据` 可代替 `基线依据`。批准记录必须说明批准状态；引用 `state/decisions-*.md` 时校验文件存在，可以附行号/锚点（本检查不验证行号、原话或批准权限，不把存在性当成人批）。未批准条目明确写「未批准，非已接受差异」，不自动增加判分豁免。
+
+```markdown
+---
+id: A7.2-REPLAY-EXAMPLE-001
+---
+
+## 类别
+
+bug 修复 / 有意改进 / 不可避免（选择实际类别并说明依据）。
+
+## 基线依据
+
+cc7c4e6 的 TS 文件:行号、真实实测入口、输出及证据路径。
+
+## Rust 行为
+
+实现文件:行号和实际行为。
+
+## 范围
+
+具体字段、场景、边界与影响范围。
+
+## 机器判据
+
+测试文件:测试名、真实 TS 金样、负控及复算命令。
+
+## 批准记录
+
+未批准，非已接受差异。若有人批，写日期、原话及持久指针，
+例如 `state/decisions-20261023.md:25`（须确认该位置确为本条批准）。
+```
+
+更正模板沿用正文，只把 frontmatter 换成：
+
+```text
+---
+id: A7.2-REPLAY-EXAMPLE-001-R1
+original: A7.2-REPLAY-EXAMPLE-001
+---
+```
+
+本地静态检查：`python3 scripts/gateway-parity/check_frozen.py`。
+只追加检查：`python3 scripts/gateway-parity/check_frozen.py --base origin/main`，取 HEAD 与 ref 的 merge-base，已有 `diffs/` 文件（含 README）逐字节不变，禁止修改、删除、改名；新增文件只做静态校验。CI 在 PR、merge queue 和 main push 上传入对应 base。
+合并视图：`python3 scripts/gateway-parity/check_frozen.py --print-ledger`，可重定向到 `_tmp/`，不提交生成物。`diffs/` 无条目时输出与旧文件逐字节一致。
+
+规则回滚须独立审批：保存全部新增文件及哈希，先用上述合并视图保全所有条目，再由协调者恢复旧检查/CI，并将保全内容登记回单文件、重新冻结。不直接 revert 丢弃迁移后条目；已冻结文件的常规更正仍用新增文件。

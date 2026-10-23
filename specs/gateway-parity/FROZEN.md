@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（#581，人批账本拆文件规则）**：历史 accepted-diffs.md 原字节冻结、此后不再追加（其哈希行不变）；新条目与更正只新增 diffs/<ID>.md / <ID>-R<n>.md，六字段与 original / 决策文件存在性静态校验，--base 对照 merge-base 强制已有 diffs/ 文件逐字节不变。新增条目不改任何已有文件、不维护清单、不改 FROZEN。本次只重登记 check_frozen.py 哈希；模板与回滚见 diffs/README.md，真实复算由 #581 交付证据与两家非作者评审接续。
+
 > **2026-10-23 重登记（#553 pr1 PR）**：accepted-diffs.md 末尾只追加 A6.5-BACKGROUND-PERSIST-001「当前状态：输出 spill 与读回部分已实现，快照与启动恢复仍未对齐」；不改其他条目、不改判分语义；只重登记 accepted-diffs.md 哈希。
 
 > **2026-10-23 重登记（#552 PR r2）**：accepted-diffs.md 末尾只追加 A6.5-BASH-OS-001 当前状态更正二（glob 不 spawn ripgrep、MCP stdio 不设进程组），原文保留；不改判分语义；只重登记 accepted-diffs.md 哈希。
@@ -120,7 +122,7 @@
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
-cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
+8fcafbf7271eca436844415b22071695f0f7cf7888a14983dbc686908963c4a2  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
 4ae7570b725bfb79fdef01b0860d67f0a36864582a667da5a1e53eba1ecb8436  ../../scripts/gateway-parity/compare.py

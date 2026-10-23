@@ -33,6 +33,9 @@ jobs:
         working-directory: .
         run: exit 1
       - uses: actions/checkout@v4
+        with:
+          # --base needs merge-base history for PRs and merge queue commits.
+          fetch-depth: 0
       # rustup 读仓库根的 rust-toolchain.toml，装锁定的版本与 fmt/clippy
       - run: rustup show active-toolchain
       - name: 格式
@@ -69,6 +72,17 @@ jobs:
       - name: gateway 协议 schema 静态断言（A3）
         working-directory: .
         run: python3 scripts/gateway-parity/check_schema.py
+      - name: gateway 冻结账本（静态规则与只追加）
+        working-directory: .
+        env:
+          LEDGER_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          python3 scripts/test-gateway-ledger.py -v
+          if [ -n "$LEDGER_BASE" ] && [ "$LEDGER_BASE" != "0000000000000000000000000000000000000000" ]; then
+            python3 scripts/gateway-parity/check_frozen.py --base "$LEDGER_BASE"
+          else
+            python3 scripts/gateway-parity/check_frozen.py
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 20
