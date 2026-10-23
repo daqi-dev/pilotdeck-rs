@@ -2300,12 +2300,14 @@ fn parse_anthropic_complete_response(raw: &JsValue) -> JsValue {
                             .as_string()
                             .or_else(|| field(block_obj, "text").as_string())
                             .map_or("".into(), |s| JsValue::String(s.clone()));
-                        let mut thinking_block = object([
-                            ("type", "thinking".into()),
-                            ("text", thinking_text),
-                        ]);
+                        let mut thinking_block =
+                            object([("type", "thinking".into()), ("text", thinking_text)]);
                         if let Some(sig) = field(block_obj, "signature").as_string() {
-                            put(&mut thinking_block, "signature", JsValue::String(sig.clone()));
+                            put(
+                                &mut thinking_block,
+                                "signature",
+                                JsValue::String(sig.clone()),
+                            );
                         }
                         vec![thinking_block]
                     }
@@ -2419,7 +2421,10 @@ fn parse_openai_complete_response(raw: &JsValue, _provider_id: &JsValue) -> JsVa
     // Handle text content
     if let Some(text) = field(message, "content").as_string() {
         if !text.is_empty() {
-            content.push(object([("type", "text".into()), ("text", JsValue::String(text.clone()))]));
+            content.push(object([
+                ("type", "text".into()),
+                ("text", JsValue::String(text.clone())),
+            ]));
         }
     }
 
@@ -2527,7 +2532,7 @@ pub async fn complete_model(
     if is(field(&provider, "protocol"), "google") {
         return Err(ModelStreamError::thrown(
             "UnsupportedProtocol",
-            "complete(): Google protocol is not supported in non-streaming mode"
+            "complete(): Google protocol is not supported in non-streaming mode",
         ));
     }
 
