@@ -7,44 +7,27 @@
     {
       "name": "dag-10",
       "fileCount": 1025,
-      "totalSize": 3093,
-      "entries": 0
+      "totalSize": 3130
     },
     {
-      "name": "dag-15",
-      "fileCount": 32769,
-      "totalSize": 98325,
-      "entries": 0
+      "name": "linear-20",
+      "fileCount": 21,
+      "totalSize": 78
+    },
+    {
+      "name": "hops-20",
+      "fileCount": 2,
+      "totalSize": 61
     },
     {
       "name": "deep-300",
       "fileCount": 2,
-      "totalSize": 27,
-      "entries": 0
-    },
-    {
-      "name": "linear-20",
-      "fileCount": 41,
-      "totalSize": 144,
-      "entries": 0
-    },
-    {
-      "name": "hops-20",
-      "fileCount": 22,
-      "totalSize": 85,
-      "entries": 0
+      "totalSize": 63
     },
     {
       "name": "alias-10x5",
-      "fileCount": 551,
-      "totalSize": 1675,
-      "entries": 0
-    },
-    {
-      "name": "mutual",
-      "fileCount": 961,
-      "totalSize": 2901,
-      "entries": 0
+      "fileCount": 67,
+      "totalSize": 223
     }
   ]
 }

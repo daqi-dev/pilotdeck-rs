@@ -218,6 +218,14 @@ fn scan_folder(dir: &str, folder_name: &str) -> Result<ScanFolder> {
     })
 }
 
+// Test-only observability for the #595 cap tests: the thread-local counter
+// records every entry tree_files_capped listed, proving the walk stops at
+// the cap instead of collecting the whole tree first (fix round).
+#[cfg(test)]
+thread_local! {
+    static LISTED_BY_TREE_FILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// `fs.readdir(dir, { recursive: true })` (promises readdirRecursive), then a
 /// following stat of every listed path. The recursive readdir descends every
 /// entry its internalModuleStat sees as a directory, symlinks included, so a
@@ -245,6 +253,8 @@ fn tree_files_capped(dir: &str, cap: usize) -> Result<(f64, f64)> {
                 queue.push(path.clone());
             }
             listed.push(path);
+            #[cfg(test)]
+            LISTED_BY_TREE_FILES.with(|count| count.set(count.get() + 1));
             if listed.len() > cap {
                 return Err(SkillError::manager(
                     "tree_files_limit_exceeded",
@@ -523,10 +533,13 @@ mod tests {
 
     struct Scratch(PathBuf);
     impl Scratch {
-        fn new() -> Self {
-            let dir = std::env::temp_dir().join(format!("pdrs-tree-{}", uuid::Uuid::new_v4()));
+        fn under(parent: &std::path::Path) -> Self {
+            let dir = parent.join(format!("pdrs-tree-{}", uuid::Uuid::new_v4()));
             fs::create_dir(&dir).unwrap();
             Self(dir)
+        }
+        fn new() -> Self {
+            Self::under(&std::env::temp_dir())
         }
     }
     impl Drop for Scratch {
@@ -567,135 +580,289 @@ mod tests {
     }
 
     #[test]
+    fn tree_files_wide_dir_stops_listing_at_cap() {
+        // A wide directory far beyond the cap must stop reading at the limit
+        // instead of collecting first: LISTED_BY_TREE_FILES counts every
+        // entry tree_files_capped pushed (#595 fix round).
+        let scratch = Scratch::new();
+        let dir = scratch.0.join("skill");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "---\nname: test\n---\n").unwrap();
+        for i in 0..5000 {
+            fs::write(dir.join(format!("f{i:04}.txt")), "abc").unwrap();
+        }
+        reset_listed();
+        let result = tree_files_capped(dir.to_str().unwrap(), 100);
+        assert_eq!(
+            result.expect_err("5001 entries exceed cap 100").code,
+            "tree_files_limit_exceeded"
+        );
+        // The check runs after each push, so exactly cap+1 entries get listed.
+        assert_eq!(listed_count(), 101, "listing must stop at cap+1 entries");
+    }
+
+    #[test]
+    fn tree_files_accumulates_cap_across_directories() {
+        // The cap is a running total over the whole tree, not per directory:
+        // five subdirectories of 30 files each stay below a per-directory
+        // reading but exceed the cap together (6 root + 150 files = 156).
+        let scratch = Scratch::new();
+        let dir = scratch.0.join("skill");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "---\nname: test\n---\n").unwrap();
+        for d in 0..5 {
+            fs::create_dir_all(dir.join(format!("d{d}"))).unwrap();
+            for i in 0..30 {
+                fs::write(dir.join(format!("d{d}/f{i:03}.txt")), "abc").unwrap();
+            }
+        }
+        reset_listed();
+        let result = tree_files_capped(dir.to_str().unwrap(), 100);
+        assert_eq!(
+            result.expect_err("156 total entries exceed cap 100").code,
+            "tree_files_limit_exceeded"
+        );
+        assert_eq!(
+            listed_count(),
+            101,
+            "the cap must accumulate across directories"
+        );
+    }
+
+    #[test]
     fn tree_files_matches_ts_baseline() {
-        const ORACLE: &str = include_str!("../../tests/fixtures/skills-tree-files/oracle.json");
-        let oracle =
-            pilotdeck_protocol::parse_json(ORACLE).expect("oracle.json must be valid JSON");
+        replay_ts_oracle(
+            include_str!("../../tests/fixtures/skills-tree-files/oracle.json"),
+            None,
+            &std::env::temp_dir(),
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn tree_files_matches_ts_baseline_macos() {
+        // These cases' values depend on macOS MAXSYMLINKS=32 plus a
+        // one-symlink scratch prefix, so both the TS generator and this
+        // replay run under literal /tmp (-> /private/tmp); see the fixture
+        // README. Per tests/fixtures/skills/README.md they never enter the
+        // portable oracle that CI (ubuntu) replays.
+        replay_ts_oracle(
+            include_str!("../../tests/fixtures/skills-tree-files/oracle-macos.json"),
+            Some("darwin"),
+            std::path::Path::new("/tmp"),
+        );
+    }
+
+    fn replay_ts_oracle(json: &str, platform: Option<&str>, scratch_parent: &std::path::Path) {
+        let oracle = pilotdeck_protocol::parse_json(json).expect("oracle must be valid JSON");
         crate::test_baseline::check(
             &oracle,
             std::env::var_os("PDRS_BASELINE")
                 .as_deref()
                 .map(std::path::Path::new),
         );
-
+        if let Some(expected) = platform {
+            let actual = match oracle.get("platform").unwrap() {
+                JsValue::String(s) => s.to_utf8().unwrap(),
+                _ => panic!("platform must be a string"),
+            };
+            assert_eq!(actual, expected, "oracle platform tag");
+        }
         let cases = match oracle.get("cases").unwrap() {
-            pilotdeck_protocol::JsValue::Array(arr) => arr,
+            JsValue::Array(cases) => cases,
             _ => panic!("cases must be an array"),
         };
         for case in cases {
             let name = match case.get("name").unwrap() {
-                pilotdeck_protocol::JsValue::String(s) => s.to_utf8().unwrap(),
+                JsValue::String(s) => s.to_utf8().unwrap(),
                 _ => panic!("name must be a string"),
             };
-            let expected_file_count = match case.get("fileCount").unwrap() {
-                pilotdeck_protocol::JsValue::Number(n) => *n,
-                _ => panic!("fileCount must be a number"),
-            };
-            let expected_total_size = match case.get("totalSize").unwrap() {
-                pilotdeck_protocol::JsValue::Number(n) => *n,
-                _ => panic!("totalSize must be a number"),
-            };
+            let expected_file_count = number(case, "fileCount", &name);
+            let expected_total_size = number(case, "totalSize", &name);
 
-            let scratch = Scratch::new();
-            let skill_root = scratch.0.join("skill");
-            fs::create_dir(&skill_root).unwrap();
-
-            // Reconstruct the tree according to oracle.json's embedded setup
-            setup_tree_for_case(&skill_root, &name);
+            let scratch = Scratch::under(scratch_parent);
+            let skill_root = setup_tree_for_case(&scratch.0, &name);
 
             let result = tree_files_capped(skill_root.to_str().unwrap(), TREE_FILES_CAP);
-            assert!(result.is_ok(), "{}: tree_files_capped should succeed", name);
+            assert!(result.is_ok(), "{name}: tree_files_capped should succeed");
 
             let (file_count, total_size) = result.unwrap();
             assert_eq!(
                 file_count, expected_file_count,
-                "{}: fileCount mismatch",
-                name
+                "{name}: fileCount mismatch"
             );
             assert_eq!(
                 total_size, expected_total_size,
-                "{}: totalSize mismatch",
-                name
+                "{name}: totalSize mismatch"
             );
         }
     }
 
-    fn setup_tree_for_case(root: &std::path::Path, case: &str) {
+    fn number(case: &JsValue, key: &str, name: &str) -> f64 {
+        match case.get(key).unwrap() {
+            JsValue::Number(n) => *n,
+            _ => panic!("{name}: {key} must be a number"),
+        }
+    }
+
+    fn listed_count() -> usize {
+        LISTED_BY_TREE_FILES.with(|count| count.get())
+    }
+
+    fn reset_listed() {
+        LISTED_BY_TREE_FILES.with(|count| count.set(0));
+    }
+
+    /// The 58-byte SKILL.md of tests/fixtures/skills-tree-files/generate.mts;
+    /// every oracle value depends on its exact bytes.
+    const SKILL_MD: &str = "---\nname: Probe\ndescription: tree_files probe fixture\n---\n";
+
+    /// Rebuilds the fixture trees of tests/fixtures/skills-tree-files with the
+    /// generate.mts topology (link chains live outside the skill root, so only
+    /// the link paths are enumerated). Returns the skill root.
+    fn setup_tree_for_case(base: &std::path::Path, name: &str) -> std::path::PathBuf {
         use std::os::unix::fs::symlink;
 
-        match case {
-            "dag-10" => {
-                fs::write(root.join("SKILL.md"), "---\nname: dag-10\n---\n").unwrap();
-                for i in 0..10 {
-                    fs::create_dir(root.join(format!("d{}", i))).unwrap();
+        let put = |path: std::path::PathBuf, text: &str| {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        let link = |target: String, path: std::path::PathBuf| {
+            symlink(&target, path).unwrap();
+        };
+        let count = |prefix: &str| -> u32 {
+            name.strip_prefix(prefix)
+                .unwrap_or_else(|| panic!("unknown test case: {name}"))
+                .parse()
+                .unwrap()
+        };
+
+        let skill = base.join("skill");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), SKILL_MD).unwrap();
+
+        if name.starts_with("dag-") {
+            // Two absolute links per level, chain kept outside the skill root
+            // so only the 2^k link paths exist. Absolute targets re-resolve
+            // the scratch prefix, so each level follows prefix + 2 symlinks.
+            let k = count("dag-");
+            let chain = base.join("chain");
+            for i in 1..k {
+                fs::create_dir_all(chain.join(format!("d{i}"))).unwrap();
+            }
+            put(chain.join("leaf").join("only"), "xyz");
+            let node = |i: u32| {
+                if i < k {
+                    chain.join(format!("d{i}"))
+                } else {
+                    chain.join("leaf")
                 }
-                for i in 0..1024 {
-                    fs::write(root.join(format!("d{}/f{}.txt", i % 10, i)), "abc").unwrap();
+            };
+            for a in ["a1", "a2"] {
+                symlink(node(1), skill.join(a)).unwrap();
+            }
+            for i in 1..k {
+                for a in ["a1", "a2"] {
+                    symlink(node(i + 1), node(i).join(a)).unwrap();
                 }
             }
-            "dag-15" => {
-                fs::write(root.join("SKILL.md"), "---\nname: dag-15\n---\n").unwrap();
-                for i in 0..100 {
-                    fs::create_dir(root.join(format!("d{}", i))).unwrap();
-                }
-                for i in 0..32768 {
-                    fs::write(root.join(format!("d{}/f{}.txt", i % 100, i)), "abc").unwrap();
-                }
+        } else if name == "mutual" {
+            put(skill.join("A").join("a.txt"), "12345");
+            put(skill.join("B").join("b.txt"), "67");
+            link("../B".into(), skill.join("A").join("l"));
+            link("../A".into(), skill.join("B").join("m"));
+        } else if name == "self-1" {
+            put(skill.join("a.txt"), "12345");
+            link(".".into(), skill.join("l1"));
+        } else if name.starts_with("linear-") {
+            // skill/l -> chain/d1, each d_i/l -> d_{i+1}: one link per level.
+            let n = count("linear-");
+            let chain = base.join("chain");
+            for i in 1..=n {
+                put(chain.join(format!("d{i}")).join("f"), "x");
             }
-            "deep-300" => {
-                fs::write(root.join("SKILL.md"), "---\nname: deep-300\n---\n").unwrap();
-                let mut path = root.to_path_buf();
-                for _ in 0..299 {
-                    path = path.join("d");
-                    fs::create_dir(&path).unwrap();
-                }
-                fs::write(path.join("file.txt"), "deep").unwrap();
+            link("../chain/d1".into(), skill.join("l"));
+            for i in 1..n {
+                link(
+                    format!("../d{}", i + 1),
+                    chain.join(format!("d{i}")).join("l"),
+                );
             }
-            "linear-20" => {
-                fs::write(root.join("SKILL.md"), "---\nname: linear-20\n---\n").unwrap();
-                fs::write(root.join("f0.txt"), "abc").unwrap();
-                for i in 0..20 {
-                    fs::create_dir(root.join(format!("d{}", i))).unwrap();
-                    fs::write(root.join(format!("d{}/f{}.txt", i, i + 1)), "abc").unwrap();
-                }
-                for i in 0..19 {
-                    symlink(format!("d{}", i), root.join(format!("l{}", i))).unwrap();
-                }
+        } else if name.starts_with("hops-") {
+            // skill/x -> hops/h1 -> ... -> h_n -> real (one path).
+            let n = count("hops-");
+            let hops = base.join("hops");
+            fs::create_dir_all(&hops).unwrap();
+            put(base.join("real").join("f"), "xyz");
+            link("../hops/h1".into(), skill.join("x"));
+            for i in 1..n {
+                link(format!("h{}", i + 1), hops.join(format!("h{i}")));
             }
-            "hops-20" => {
-                fs::write(root.join("SKILL.md"), "---\nname: hops-20\n---\n").unwrap();
-                fs::write(root.join("target.txt"), "end").unwrap();
-                symlink("target.txt", root.join("l0")).unwrap();
-                for i in 0..19 {
-                    symlink(format!("l{}", i), root.join(format!("l{}", i + 1))).unwrap();
-                }
+            link("../real".into(), hops.join(format!("h{n}")));
+        } else if name.starts_with("deep-") {
+            let n = count("deep-");
+            let mut nested = skill.clone();
+            for _ in 0..n {
+                nested = nested.join("a");
             }
-            "alias-10x5" => {
-                fs::write(root.join("SKILL.md"), "---\nname: alias-10x5\n---\n").unwrap();
-                fs::create_dir(root.join("target")).unwrap();
-                for i in 0..5 {
-                    fs::create_dir(root.join(format!("target/sub{}", i))).unwrap();
-                }
-                for i in 0..50 {
-                    fs::write(root.join(format!("target/sub{}/f{}.txt", i % 5, i)), "abc").unwrap();
-                }
-                for i in 0..10 {
-                    symlink("target", root.join(format!("link{}", i))).unwrap();
-                }
+            put(nested.join("end.txt"), "12345");
+        } else if name == "alias-10x5" {
+            // Ten relative links to `real`, which holds f and 5 subdirectories.
+            put(skill.join("real").join("f"), "12345");
+            for i in 0..5 {
+                put(skill.join(format!("real/s{i}")).join("g"), "67");
             }
-            "mutual" => {
-                fs::write(root.join("SKILL.md"), "---\nname: mutual\n---\n").unwrap();
-                fs::create_dir(root.join("a")).unwrap();
-                fs::create_dir(root.join("b")).unwrap();
-                for i in 0..30 {
-                    let subdir = if i % 2 == 0 { "a" } else { "b" };
-                    fs::write(root.join(format!("{}/f{}.txt", subdir, i)), "abc").unwrap();
-                }
-                symlink("../b", root.join("a/linkb")).unwrap();
-                symlink("../a", root.join("b/linka")).unwrap();
+            for i in 0..10 {
+                link("real".into(), skill.join(format!("l{i}")));
             }
-            _ => panic!("unknown test case: {}", case),
+        } else {
+            panic!("unknown test case: {name}");
         }
+        skill
+    }
+
+    #[test]
+    #[ignore = "needs PDRS_BASELINE; regenerates the oracle files byte-identically"]
+    fn tree_files_fixture_regenerates_identically_from_ts() {
+        let baseline = std::path::PathBuf::from(
+            std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE to the PilotDeck checkout"),
+        );
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/skills-tree-files");
+        // Every invocation gets its own directory; nothing outside it is removed.
+        let scratch =
+            std::env::temp_dir().join(format!("pdrs-skills-tree-files-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&scratch).unwrap();
+        let output = std::process::Command::new("node")
+            .arg("--disable-warning=ExperimentalWarning")
+            .arg("--import")
+            .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
+            .arg(fixtures.join("generate.mts"))
+            .arg(&scratch)
+            .env("PDRS_BASELINE", &baseline)
+            .env("LANG", "en_US.UTF-8")
+            .env_remove("LC_ALL")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut names = vec!["oracle.json"];
+        if cfg!(target_os = "macos") {
+            names.push("oracle-macos.json");
+        }
+        for name in names {
+            let generated = fs::read(scratch.join(name)).unwrap();
+            let committed = fs::read(fixtures.join(name)).unwrap();
+            assert_eq!(
+                generated, committed,
+                "{name} differs from the TS regeneration"
+            );
+        }
+        fs::remove_dir_all(&scratch).unwrap();
     }
 
     #[test]
