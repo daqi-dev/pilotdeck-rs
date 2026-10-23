@@ -380,16 +380,36 @@ pub(crate) fn regular_files_at(root: &File, relative: &Path) -> io::Result<Vec<S
             Err(e) => return Err(e),
         };
         let name = relative.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-        File::from(
-            openat(
-                &parent,
-                name,
-                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-                Mode::empty(),
-            )
-            .map_err(io::Error::from)
-            .map_err(|e| leaf_open_error(&parent, name, e))?,
+        let open_result = openat(
+            &parent,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
         )
+        .map_err(io::Error::from);
+        match open_result {
+            Ok(fd) => File::from(fd),
+            Err(e) => {
+                // On Linux, walk_beneath uses O_PATH which skips x-bit checks on
+                // each ancestor, so an inaccessible ancestor's EACCES/ENOTDIR
+                // may surface only here at the leaf openat. Probe with statat to
+                // distinguish "ancestor unreachable → treat as absent (ENOENT)"
+                // from "leaf itself exists but is unreadable → keep the error".
+                let raw = e.raw_os_error();
+                if matches!(raw, Some(libc::EACCES) | Some(libc::ENOTDIR)) {
+                    use rustix::fs::{AtFlags, statat};
+                    let reachable = statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW).is_ok();
+                    if reachable {
+                        // Leaf exists but is unreadable: preserve the original error.
+                        return Err(leaf_open_error(&parent, name, e));
+                    } else {
+                        // Leaf unreachable (ancestor blocked): mirror existsSync → absent.
+                        return Err(io::Error::from_raw_os_error(libc::ENOENT));
+                    }
+                }
+                return Err(leaf_open_error(&parent, name, e));
+            }
+        }
     };
     let mut names = Vec::new();
     for entry in Dir::read_from(&directory).map_err(io::Error::from)? {
