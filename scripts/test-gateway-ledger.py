@@ -207,6 +207,68 @@ class Ledger(unittest.TestCase):
         path.write_bytes(b'!' + data[1:])
         self.check(ok=False, reason='accepted-diffs.md')
 
+    def register_legacy_hash(self):
+        path = self.folder / 'accepted-diffs.md'
+        manifest = self.folder / 'FROZEN.md'
+        rows = manifest.read_text().splitlines(keepends=True)
+        manifest.write_text(''.join(
+            f'{hashlib.sha256(path.read_bytes()).hexdigest()}  accepted-diffs.md\n'
+            if row.split()[-1] == 'accepted-diffs.md' else row for row in rows))
+
+    def test_legacy_append_and_reregister_cannot_bypass_base(self):
+        path = self.folder / 'accepted-diffs.md'
+        original = path.read_bytes()
+        path.write_bytes(original + b'\nunauthorized legacy append\n')
+        self.register_legacy_hash()
+        self.check()  # Reproduce the old bypass: self-consistent static hashes.
+        line = original.count(b'\n') + 1
+        output = self.check('--base', self.base, ok=False,
+                            reason=f'accepted-diffs.md:{line}:')
+        self.assertIn(b'accepted-diffs.md hash line changed', output)
+
+    def test_legacy_first_differing_line_and_byte_changes(self):
+        path = self.folder / 'accepted-diffs.md'
+        original = path.read_bytes()
+        offset = original.index(b'\n') + 1
+        for changed, line in ((original[:offset] + b'!' + original[offset + 1:], 2),
+                              (original.replace(b'\n', b'\r\n', 1), 1),
+                              (original[:-1], original.count(b'\n'))):
+            with self.subTest(line=line):
+                path.write_bytes(changed)
+                self.register_legacy_hash()
+                self.check('--base', self.base, ok=False,
+                           reason=f'accepted-diffs.md:{line}:')
+
+    def test_legacy_deletion_fails_at_first_line(self):
+        (self.folder / 'accepted-diffs.md').unlink()
+        self.check('--base', self.base, ok=False, reason='accepted-diffs.md:1:')
+
+    def test_legacy_hash_row_is_byte_frozen_even_with_same_digest(self):
+        path = self.folder / 'FROZEN.md'
+        path.write_bytes(path.read_bytes().replace(b'  accepted-diffs.md\n',
+                                                   b'\taccepted-diffs.md\n'))
+        self.check()  # The digest and historical bytes still match.
+        self.check('--base', self.base, ok=False, reason='accepted-diffs.md hash line changed')
+
+    def test_unchanged_legacy_allows_other_frozen_registration(self):
+        checker = self.root / CHECKER
+        checker.write_bytes(checker.read_bytes() + b'\n# approved registration test\n')
+        manifest = self.folder / 'FROZEN.md'
+        rows = manifest.read_text().splitlines(keepends=True)
+        name = '../../scripts/gateway-parity/check_frozen.py'
+        manifest.write_text('new registration note\n' + ''.join(
+            f'{hashlib.sha256(checker.read_bytes()).hexdigest()}  {name}\n'
+            if row.split()[-1] == name else row for row in rows))
+        self.check('--base', self.base)
+
+    def test_only_new_diff_preserves_legacy_and_hash_row(self):
+        manifest = (self.folder / 'FROZEN.md').read_bytes()
+        legacy = (self.folder / 'accepted-diffs.md').read_bytes()
+        self.add()
+        self.check('--base', self.base)
+        self.assertEqual((self.folder / 'FROZEN.md').read_bytes(), manifest)
+        self.assertEqual((self.folder / 'accepted-diffs.md').read_bytes(), legacy)
+
     def test_file_types_and_mode_changes(self):
         path, base = self.freeze_entry()
         path.chmod(0o755)
