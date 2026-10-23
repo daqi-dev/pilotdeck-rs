@@ -683,3 +683,14 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **A7.2-READ-LASTSEQ-DEPTH-001 判据更正二（追加）**：病态深度有界测试已由 PR #536 修复轮 3 补上——`src/pilotdeck-gateway/src/runtime/turn/read_tests.rs:623` `run_events_pathological_depth_last_seq_is_bounded`（10 万层嵌套，断言返回 gap:true 且有界、不崩溃；协调者沙箱外实跑 1/1，0.04 s）。上一条更正所说「该句暂不构成机器判据」自此不再适用。
 - **A7.2-READ-LASTSEQ-DEPTH-001 判据更正三（追加；PR #536 codex r4）**：更正二引用的进程内 2 s `tokio::time::timeout` 约束不了不让出执行权的同步转换，不构成「有界」判据。修复轮 4 起机器判据为 `src/pilotdeck-gateway/src/runtime/turn/read_tests.rs` 的 `run_events_pathological_depth_last_seq_is_bounded`：父测试以子进程运行 `run_events_pathological_depth_last_seq_child`（10 万层），由父进程施加可终止期限；同步自旋与改回递归两条负控均转红。**范围更正**：真实 TS 的 2530 / 2540 层观测是经 `runEvents` + 内存 registry 端口取得；经文件 registry 时 `structuredClone` 在约 2000 层已先失败，所以本差异只在非文件 registry 的端口下可观察。
 - **A7.2-READ-LASTSEQ-DEPTH-001 判据更正四（追加，不改上文；PR #536 gate5 boundary P1/P2）**：(1) 更正三「本差异只在非文件 registry 的端口下可观察」不成立：经生产文件 registry 时，TS `FileRunRegistry.get`（`src/gateway/run/RunRegistry.ts:271`）对整条记录 `structuredClone`，约 2000 层即抛 RangeError；Rust `read_snapshot`（storage/run_registry.rs:595）用无深度界的迭代 codec 成功返回记录，读面随后正常算出 gap / 返回投影——即文件 registry 路径上同样是「TS 抛、Rust 成功」，只是 TS 的失败点从比较提前到 get，属同一已登记差异在生产路径上的表现。(2) 更正三所称「同步自旋与改回递归两条负控均转红」此前只在树外临时执行；修复轮 5 已作为 `lastseq-conversion-spin`、`join-string-recursive` 两条 mutant 进仓内 `src/pilotdeck-gateway/tests/fixtures/turn-read/negative.py`，目标均为 `runtime::turn::read::tests::run_events_pathological_depth_last_seq_is_bounded`（实跑：自旋 10.02 s 因父进程期限失败，递归子进程栈溢出失败）。状态不变：已知未对齐（未批准），按 V8 栈深判据卡（AI 代批，待人复核）处理。
+
+## 向安全偏离（人批）· A6.5 MCP 工具结果自动读图
+
+### A6.5-MCP-IMAGE-READ-SANDBOX-001 · MCP 工具结果自动读图限制
+
+- **类别**：向安全偏离。
+- **TS 依据**：固定 `cc7c4e6` 的 `src/mcp/runtime/PluginToToolBridge.ts:184,195-202` 只按点开头图片 Markdown 目标做 lexical resolve 并无界 readFileSync，不检查 cwd 边界、普通文件或大小；`src/context/attachments/AttachmentResolver.ts:37` 的普通图片附件默认上限为 5 MiB。本单新增真实 TS 金样验证正常 cwd 内图片的完整输出字节。
+- **Rust 行为**：候选与授权目录 realpath 后按路径组件判包含，只允许真实 cwd 或可信宿主明确配置的白名单绝对目录；默认白名单空。只允许普通文件且 ≤5 MiB；逐级 NOFOLLOW 打开并复核句柄元数据与身份；实际读取 ≤cap+1 并拒绝超限。被拒绝的候选按“不是图片”处理，原工具结果文本/data/metadata 原样保留，不加错误。
+- **范围**：仅 stdio 有非空 cwd、无 inline image 的工具结果本地图片自动投影；保留既有点开头正则、后缀 MIME/base64 规则。白名单配置位于 bridge 的 `CreateToolDefinitionsOptions.image_read_allowed_roots` 宿主 API，默认空；不新增 mcp.json 字段，不修改 MCP client/http、inline image 或其他附件处理。
+- **机器判据**：`bridge/tests.rs` 覆盖正常内链/链式链接/符号链接 cwd、`../`、绝对目标、前缀碰撞、根外链接及链接链、白名单内外及无效项、目录/FIFO/设备、超限与恰好上限、打开前替换叶/祖先、打开后身份/类型/大小、fstat 后增长与实际读取上界；打开/读取探针断言不安全候选零打开/零读取。`tests/mcp_runtime.rs` 对完整正常 TS 输出逐字节比较，并验证宿主白名单接线和安全拒绝的文本/data/metadata；各类负控输出见本目录验证记录。
+- **批准记录**：人批 2026-10-23，用户本人采纳建议 A；原话“按照建议 A 向安全偏离 TS。读图前先规范化真实路径（realpath），只允许 cwd 及其子目录（另可配置白名单）；拒绝符号链接越界”。决策卡主仓 `_tmp/20261023-loop/card-mcp-image-read.md`；实现 issue #508。交协调者登记，本树未修改 accepted-diffs.md / FROZEN.md。 补注（协调者）：5 MiB 大小上限与只读普通文件属卡中建议 A 原文所列（卡第 7 行），人原话未逐项复述；取值 5 MiB 为实现方按 TS 图片附件上限所定，AI 判断，待人复核。
