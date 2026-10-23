@@ -26,7 +26,10 @@ const NOW: &str = "2026-10-18T00:00:00.000Z";
 const PROJECT_ROOT: &str = "/pdrs-fixture/project";
 
 fn oracle() -> JsValue {
-    let text = fs::read_to_string(format!("{FIXTURES}/oracle.json")).unwrap();
+    let path = std::env::var_os("PDRS_TRANSCRIPT_ADAPTER_ORACLE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("{FIXTURES}/oracle.json")));
+    let text = fs::read_to_string(path).unwrap();
     assert!(
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"

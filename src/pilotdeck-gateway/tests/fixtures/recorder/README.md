@@ -32,11 +32,11 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 计数负控（仓库根执行）：
 
 ```sh
-PDRS_BASELINE=/absolute/path/to/PilotDeck timeout 600 python3 \
+CARGO_TARGET_DIR="$PWD/src/target" PDRS_BASELINE=/absolute/path/to/PilotDeck timeout 600 python3 \
   src/pilotdeck-gateway/tests/fixtures/recorder/fix3-negative.py
 ```
 
-脚本要求沿用启动器的本树 `CARGO_TARGET_DIR=.../src/target`，串行执行：先跑 Rust 正控，临时从 oracle 删除一条场景确认 Rust 以 27/28 转红；恢复 oracle 后，临时让真实 TS 生成器少发布一条场景，确认生成器以 27/28 拒绝写出 oracle；最后恢复源码并跑 Rust 正控。所有变异均在 `finally` 中逐字节恢复；子进程有期限并回收，日志在本树 `_tmp/20261023-issue-222-domain-log/fix3-negative/`。
+脚本要求沿用启动器的本树 `CARGO_TARGET_DIR=.../src/target`，串行执行：先跑 Rust 正控，在 `/tmp` 独占副本中删除一条 oracle 场景，通过仅测试可见的 `PDRS_RECORDER_ORACLE` 确认 Rust 以 27/28 转红；再让生成器副本少发布一条场景，确认真实 TS 以 27/28 拒绝写出 oracle；最后用完整 oracle 副本跑正控。脚本不改工作树文件、不在本树 `_tmp` 建目录；正常结束、异常及 SIGTERM 均回收子进程并删除临时目录，SIGKILL 只可能留下 `/tmp` 副本。每个子进程限时 240 s、整套父进程限时 580 s，原始输出打印至 stdout，可由调用者留证。
 
 交叉测试 `real_ts_and_rust_continue_each_others_transcripts` 由 `generate.mts <dir> --cross-ts-write` / `--cross-ts-verify` 驱动：
 

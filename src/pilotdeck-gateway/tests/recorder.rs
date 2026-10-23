@@ -11,7 +11,7 @@ use regex::Regex;
 use std::{
     collections::HashMap,
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     process::Command,
     sync::{
         Arc,
@@ -50,35 +50,22 @@ fn text(value: &str) -> JsValue {
     JsValue::String(value.into())
 }
 fn oracle() -> JsValue {
-    let text = fs::read_to_string(format!("{FIXTURES}/oracle.json")).unwrap();
+    #[cfg(test)]
+    let path = std::env::var_os("PDRS_RECORDER_ORACLE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("{FIXTURES}/oracle.json")));
+    let text = fs::read_to_string(path).unwrap();
     assert!(
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
     baseline::oracle(&text)
 }
-fn clean(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            c => out.push(c.as_os_str()),
-        }
-    }
-    out
-}
 struct Scratch(PathBuf);
 impl Scratch {
     fn new(name: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let root = clean(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../_tmp/20261018-a6-recorder/test-scratch"),
-        );
-        fs::create_dir_all(&root).unwrap();
+        let root = std::env::temp_dir();
         loop {
             let dir = root.join(format!(
                 "{name}-{}-{}",

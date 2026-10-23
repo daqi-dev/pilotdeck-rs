@@ -722,10 +722,11 @@ mod tests {
     }
     #[test]
     fn real_ts_domain_logs_and_events_match_bytes() {
-        let oracle = parse_json(include_str!(
-            "../../tests/fixtures/session-domain/oracle.json"
-        ))
-        .unwrap();
+        let text = match std::env::var_os("PDRS_SESSION_DOMAIN_ORACLE") {
+            Some(path) => std::fs::read_to_string(path).unwrap(),
+            None => include_str!("../../tests/fixtures/session-domain/oracle.json").to_owned(),
+        };
+        let oracle = parse_json(&text).unwrap();
         let JsValue::Array(cases) = field(&oracle, "scenarios") else {
             panic!("cases")
         };

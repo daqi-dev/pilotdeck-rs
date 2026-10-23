@@ -1,78 +1,59 @@
 #!/usr/bin/env python3
 """#562 repair 2: count/zip tripwires and real post-hydrate writer state."""
 import json
-import os
 from pathlib import Path
-import signal
-import subprocess
+import shutil
+import sys
 
-REPO = Path(__file__).resolve().parents[5]
-SRC = REPO / 'src'
-assert Path(os.environ['CARGO_TARGET_DIR']).resolve() == SRC / 'target'
-OUT = REPO / '_tmp/20261023-issue-222-domain-log/fix2-negative'
-OUT.mkdir(parents=True, exist_ok=True)
-ADAPTER = SRC / 'pilotdeck-gateway/src/storage/transcript_adapter.rs'
-FIXTURES = SRC / 'pilotdeck-gateway/tests/fixtures'
-DOMAIN = FIXTURES / 'session-domain/oracle.json'
-TRANSCRIPT = FIXTURES / 'transcript-adapter/oracle.json'
-originals = {path: path.read_bytes() for path in [ADAPTER, DOMAIN, TRANSCRIPT]}
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_shared'))
+from negative_control import SRC, environment, run, scratch, source_copy
+
+FIXTURES = Path(__file__).resolve().parents[1]
 ADAPTER_TEST = 'storage::transcript_adapter_tests::real_ts_scenarios_match_outcomes_calls_and_bytes'
 DOMAIN_TEST = 'storage::session_domain::tests::real_ts_domain_logs_and_events_match_bytes'
-results = []
 
 
-def stop(signum, frame):
-    raise SystemExit(f'interrupted by signal {signum}')
+def test(name, target, env, diagnostic=None, cwd=SRC):
+    run(name, ['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib', target,
+               '--', '--exact', '--nocapture', '--test-threads=4'], env, cwd, diagnostic)
 
 
-signal.signal(signal.SIGTERM, stop)
-signal.signal(signal.SIGINT, stop)
-
-
-def run(name, test, red=False, diagnostic=None):
-    slot = subprocess.run(['/Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh'], timeout=10, capture_output=True, text=True)
-    (OUT / f'{name}-slots.log').write_text(slot.stdout + slot.stderr)
-    assert slot.returncode == 0, 'no cargo slot; rerun later'
-    env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG='0', CARGO_PROFILE_TEST_DEBUG='0', CARGO_INCREMENTAL='0', RUSTC_WRAPPER='', PDRS_BASELINE='/Users/da/ws/pilotdeck-rs/resources/PilotDeck')
-    with (OUT / f'{name}.log').open('w') as log:
-        child = subprocess.Popen(['cargo', 'test', '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact', '--nocapture', '--test-threads=4'], cwd=SRC, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        try:
-            code = child.wait(timeout=240)
-        except BaseException:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait()
-            raise
-    text = (OUT / f'{name}.log').read_text()
-    results.append(dict(name=name, pid=child.pid, exit=code, reaped=child.poll() is not None))
-    (OUT / 'processes.json').write_text(json.dumps(results, indent=2) + '\n')
-    assert 'running 1 test' in text, f'{name}: compilation/zero-test failure is not evidence'
-    if red:
-        assert code != 0 and 'test result: FAILED' in text and diagnostic in text, name
-    else:
-        assert code == 0 and 'test result: ok. 1 passed' in text, name
-    print(f'{name}: {"KILLED" if red else "PASS"}; exit={code}; reaped={child.poll() is not None}', flush=True)
-
-
-try:
-    run('baseline-adapter', ADAPTER_TEST)
-    run('baseline-domain', DOMAIN_TEST)
-    for name, path, test, count in [
-        ('drop-adapter-scenarios', TRANSCRIPT, ADAPTER_TEST, 397),
-        ('drop-domain-scenarios', DOMAIN, DOMAIN_TEST, 304),
+with scratch('fix2') as root:
+    env = environment(root)
+    domain = root / 'domain.json'
+    transcript = root / 'transcript.json'
+    shutil.copyfile(FIXTURES / 'session-domain/oracle.json', domain)
+    shutil.copyfile(FIXTURES / 'transcript-adapter/oracle.json', transcript)
+    env.update(PDRS_SESSION_DOMAIN_ORACLE=str(domain), PDRS_TRANSCRIPT_ADAPTER_ORACLE=str(transcript))
+    test('baseline-adapter', ADAPTER_TEST, env)
+    test('baseline-domain', DOMAIN_TEST, env)
+    for name, path, fixture, target, count in [
+        ('drop-adapter-scenarios', transcript, 'transcript-adapter', ADAPTER_TEST, 397),
+        ('drop-domain-scenarios', domain, 'session-domain', DOMAIN_TEST, 304),
     ]:
-        oracle = json.loads(originals[path])
+        oracle = json.loads(path.read_bytes())
         assert len(oracle['scenarios']) == count
         del oracle['scenarios'][-10:]
         path.write_text(json.dumps(oracle) + '\n')
-        run(name, test, True, 'oracle scenario count')
-        path.write_bytes(originals[path])
-    oracle = json.loads(originals[DOMAIN])
+        test(name, target, env, 'oracle scenario count')
+        shutil.copyfile(FIXTURES / fixture / 'oracle.json', path)
+    oracle = json.loads(domain.read_bytes())
     case = next(case for case in oracle['scenarios'] if case['outcomes'])
     case['outcomes'].pop()
-    DOMAIN.write_text(json.dumps(oracle) + '\n')
-    run('truncate-domain-outcomes', DOMAIN_TEST, True, 'outcome count')
-    DOMAIN.write_bytes(originals[DOMAIN])
-    original = originals[ADAPTER].decode()
+    domain.write_text(json.dumps(oracle) + '\n')
+    test('truncate-domain-outcomes', DOMAIN_TEST, env, 'outcome count')
+    shutil.copyfile(FIXTURES / 'session-domain/oracle.json', domain)
+    copied_src = source_copy(root / 'workspace')
+    # Cargo otherwise reuses the same package/artifact identity across copies
+    # in one target directory, letting a mutant binary poison a later positive.
+    manifest = copied_src / 'pilotdeck-gateway/Cargo.toml'
+    manifest_text = manifest.read_text()
+    version = 'version = "0.1.0"'
+    assert manifest_text.count(version) == 1
+    manifest.write_text(manifest_text.replace(version, 'version = "0.1.0-pdrs222-negative"'))
+    adapter = copied_src / 'pilotdeck-gateway/src/storage/transcript_adapter.rs'
+    original = adapter.read_text()
     start = original.index('    fn restore_entries(')
     end = original.index('    /// JsonlTranscriptWriter.close:', start)
     section = original[start:end]
@@ -83,13 +64,10 @@ try:
 '''
     assert section.count(block) == 1
     section = section.replace(block, '').replace('        Ok(())', block + '        Ok(())')
-    ADAPTER.write_text(original[:start] + section + original[end:])
-    run('install-state-after-hydrate', ADAPTER_TEST, True, 'restore-message-assistant_message-content-string: steps')
-    ADAPTER.write_bytes(originals[ADAPTER])
-    run('restored-adapter', ADAPTER_TEST)
-    run('restored-domain', DOMAIN_TEST)
+    adapter.write_text(original[:start] + section + original[end:])
+    test('install-state-after-hydrate', ADAPTER_TEST, env,
+         'restore-message-assistant_message-content-string: steps', cwd=copied_src)
+    # Subsequent positive controls read the original source and immutable goldens.
+    test('restored-adapter', ADAPTER_TEST, env)
+    test('restored-domain', DOMAIN_TEST, env)
     print('PASS: 4 / 4 repair-2 mutants killed', flush=True)
-finally:
-    for path, content in originals.items():
-        path.write_bytes(content)
-    assert all(path.read_bytes() == content for path, content in originals.items())
