@@ -585,12 +585,11 @@ impl Core {
     #[cfg(unix)]
     fn read_target(&self, relative: &str) -> Result<(fs::File, PathBuf)> {
         let (root, target) = self.checked_path(relative)?;
-        // The memory root itself may be missing, a dangling symlink, or a
-        // symlink to a non-directory, e.g. a scenario replacing it before a
-        // clear. The exists/read pair this replaces saw "no file" for every
-        // descendant then, so surface that instead of pinning through the
-        // link. A root swapped after this probe still fails the NOFOLLOW pin.
-        if !fs::metadata(&self.root).is_ok_and(|m| m.is_dir()) {
+        // checked_path resolves a valid root symlink as the trust boundary.
+        // Probe that resolved root without following another link, matching
+        // the NOFOLLOW pin below. Missing, dangling, or non-directory roots
+        // still mean "no file", like the exists/read pair this replaces.
+        if !fs::symlink_metadata(&root).is_ok_and(|m| m.is_dir()) {
             return Err(FileMemoryError::Io(std::io::Error::from_raw_os_error(
                 libc::ENOENT,
             )));
@@ -2785,7 +2784,69 @@ mod mutation_security_tests {
             ("maxLines", num(5000)),
         ]));
         assert!(fired.get(), "target-filtered hook did not fire");
-        denied(result.unwrap_err(), "Project/note.md");
+        let error = result.unwrap_err();
+        assert_eq!(error.io_code(), Some("ELOOP"), "{error:?}");
+        assert_eq!(
+            fs::read_to_string(outside.join("note.md")).unwrap(),
+            "outside sentinel"
+        );
+    }
+    #[test]
+    fn mutation_read_parent_symlink_reports_eloop() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        fs::write(store.core.root.join("Project/note.md"), "inside body").unwrap();
+        let root = store.core.root.clone();
+        let fired = Rc::new(Cell::new(false));
+        let flag = fired.clone();
+        let _hook = read_test_hook::set(move |path| {
+            if path == "Project/note.md" && !flag.replace(true) {
+                fs::rename(root.join("Project"), root.join("saved")).unwrap();
+                symlink("Project", root.join("Project")).unwrap();
+            }
+        });
+        let error = store.core.read_file("Project/note.md").unwrap_err();
+        assert!(fired.get(), "target-filtered hook did not fire");
+        assert_eq!(error.io_code(), Some("ELOOP"), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "ELOOP: too many symbolic links encountered, open '{}'",
+                store.core.root.join("Project/note.md").display()
+            )
+        );
+        assert_eq!(
+            fs::read_to_string(store.core.root.join("saved/note.md")).unwrap(),
+            "inside body"
+        );
+    }
+    #[test]
+    fn mutation_read_follows_existing_symlink_root() {
+        let scratch = Scratch::new();
+        let directory = scratch.0.join("directory");
+        fs::create_dir(&directory).unwrap();
+        let alias = scratch.0.join("memory");
+        // Both a relative and an absolute root link are valid trust boundaries.
+        for target in [Path::new("directory"), directory.as_path()] {
+            symlink(target, &alias).unwrap();
+            let store = store(&alias);
+            fs::write(directory.join("Project/note.md"), "root link body").unwrap();
+            assert!(
+                store.core.root.is_symlink(),
+                "exercise the lexical root link"
+            );
+            assert_eq!(
+                store.core.read_file("Project/note.md").unwrap().as_deref(),
+                Some("root link body")
+            );
+            let (pinned, relative) = store.core.read_target("Project/note.md").unwrap();
+            assert_eq!(relative, Path::new("Project/note.md"));
+            assert_eq!(
+                crate::project_files::read_at(&pinned, &relative).unwrap(),
+                b"root link body"
+            );
+            fs::remove_file(&alias).unwrap();
+        }
     }
     #[test]
     fn mutation_race_scandir() {

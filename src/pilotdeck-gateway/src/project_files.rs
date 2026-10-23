@@ -21,6 +21,7 @@ use std::{
 
 type Error = (&'static str, String);
 type Result<T> = std::result::Result<T, Error>;
+const FILE_INDEX_LIMIT: usize = 100_000;
 const OUTSIDE: &str = "File path is outside the project workspace.";
 const ESCAPE: &str = "File path resolves outside the project workspace.";
 const EXCLUDED: &[&str] = &[
@@ -327,6 +328,12 @@ pub(crate) fn read_at(root: &File, relative: &Path) -> io::Result<Vec<u8>> {
             true,
         ) {
             Ok(parent) => parent,
+            // NOFOLLOW may report ENOTDIR on a directory link, which the
+            // walk wraps in NoFollowLoop. Preserve Node's readFile ELOOP
+            // shape rather than treating this as an inaccessible ancestor.
+            Err(e) if nofollow_loop(&e) => {
+                return Err(io::Error::from_raw_os_error(libc::ELOOP));
+            }
             Err(e) if matches!(e.raw_os_error(), Some(libc::EACCES) | Some(libc::ENOTDIR)) => {
                 return Err(io::Error::from_raw_os_error(libc::ENOENT));
             }
@@ -652,7 +659,7 @@ pub(crate) fn native_entries(root: &Path, path: &Path) -> io::Result<Vec<(String
         }
         entries.push((name, entry.file_type() == rustix::fs::FileType::Directory));
         // Enough entries to force the method's existing FILE_INDEX_LIMIT.
-        if entries.len() > 100_000 {
+        if entries.len() > FILE_INDEX_LIMIT {
             break;
         }
     }
@@ -673,7 +680,7 @@ pub(crate) fn native_entries(root: &Path, path: &Path) -> io::Result<Vec<(String
             entry.file_type()?.is_dir(),
         ));
         // Enough entries to force the method's existing FILE_INDEX_LIMIT.
-        if entries.len() > 100_000 {
+        if entries.len() > FILE_INDEX_LIMIT {
             break;
         }
     }
@@ -1045,7 +1052,7 @@ struct Scan<'a, F> {
 }
 impl<F: Files> Scan<'_, F> {
     fn walk(&mut self, directory: &Path, depth: usize) -> Result<()> {
-        if depth > 64 || self.count >= 100_000 || self.started.elapsed() > self.deadline {
+        if depth > 64 || self.count >= FILE_INDEX_LIMIT || self.started.elapsed() > self.deadline {
             return Err(index_limit());
         }
         let mut children = self
@@ -1056,7 +1063,7 @@ impl<F: Files> Scan<'_, F> {
         children.sort_by(|a, b| self.collator.compare(&a.0, &b.0));
         for (name, is_directory) in children {
             self.count += 1;
-            if self.count > 100_000 || self.started.elapsed() > self.deadline {
+            if self.count > FILE_INDEX_LIMIT || self.started.elapsed() > self.deadline {
                 return Err(index_limit());
             }
             if is_directory && EXCLUDED.contains(&name.as_str()) {
