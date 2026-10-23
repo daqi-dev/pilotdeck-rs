@@ -2,7 +2,7 @@
 use super::prepare::{object, stable_serialize};
 use crate::{
     host::{HostError, ModuleError},
-    js_value::{StackOverflow, to_string_units},
+    js_value::{MAX_ARRAY_DEPTH, StackOverflow, to_string_units},
     project_files::{node_collator, node_locale},
 };
 use icu_locale_core::Locale;
@@ -28,6 +28,13 @@ use std::{
 /// all — JS `Array.prototype.sort` moves them (and holes, already
 /// materialized as `undefined` by the TS `[...input.tools]` spread) to the
 /// end without comparing them.
+///
+/// `depth_bound` keeps each caller's own pre-merge depth behavior for the
+/// underlying `stableSerialize` walk: the runtime coordinator passes the
+/// shared `js_value::MAX_ARRAY_DEPTH` gate it always had, the host entry no
+/// gate at all (see [`crate::js_value`] and
+/// `specs/gateway-parity/accepted-diffs.md` A6-JSVALUE-DEPTH-001).
+#[derive(Debug)]
 pub(crate) struct CachePlanIdentity {
     /// `selectRecentMessageBreakpoints`: the last 3 non-system indexes.
     pub breakpoints: Vec<usize>,
@@ -40,6 +47,7 @@ pub(crate) fn cache_plan_identity(
     system: &JsValue,
     tools: &[JsValue],
     messages: &[JsValue],
+    depth_bound: Option<usize>,
 ) -> Result<CachePlanIdentity, HostError> {
     let mut breakpoints: Vec<usize> = messages
         .iter()
@@ -80,9 +88,12 @@ pub(crate) fn cache_plan_identity(
         };
         let compare = |left: &JsValue, right: &JsValue| -> Result<Ordering, HostError> {
             // `left.name.localeCompare(right.name)` evaluates in JS order:
-            // the `left.name` read, the `localeCompare` property read (a
-            // nullish left name throws there), the `right.name` argument,
-            // and only then the call check on a non-string left name.
+            // the `left.name` read (a nullish left element throws there),
+            // the `localeCompare` property read (a nullish left name throws
+            // there), the `right.name` argument read (a nullish right
+            // element throws there; the raw value is only saved), the call
+            // check on a non-string left name, and only inside the call the
+            // argument's ToString coercion.
             let raw = tool_name(left)?;
             let left_name = match &raw {
                 JsValue::String(s) => Some(s.clone()),
@@ -99,20 +110,21 @@ pub(crate) fn cache_plan_identity(
                 }
                 _ => None,
             };
-            let right_name = to_string_units(&tool_name(right)?)
-                .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
+            let raw_right = tool_name(right)?;
             let left_name = left_name.ok_or_else(|| -> HostError {
                 ModuleError::new("left.name.localeCompare is not a function").into()
             })?;
+            let right_name = to_string_units(&raw_right)
+                .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
             let order = collator.compare_utf16(left_name.units(), &right_name);
             if order != Ordering::Equal {
                 return Ok(order);
             }
             // Tie-break on the stable serialization, compared as strings.
-            let left =
-                stable_serialize(left).map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
-            let right =
-                stable_serialize(right).map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
+            let left = stable_serialize(left, depth_bound)
+                .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
+            let right = stable_serialize(right, depth_bound)
+                .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
             Ok(collator.compare(&left, &right))
         };
         // The comparator must stay infallible for `sort_by`, so the first
@@ -152,8 +164,8 @@ pub(crate) fn cache_plan_identity(
             JsValue::Array(breakpoints.iter().map(|i| messages[*i].clone()).collect()),
         ),
     ]);
-    let serialized =
-        stable_serialize(&identity).map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
+    let serialized = stable_serialize(&identity, depth_bound)
+        .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
     Ok(CachePlanIdentity {
         breakpoints,
         fingerprint: format!("{:x}", Sha256::digest(serialized.as_bytes())),
@@ -230,6 +242,10 @@ impl PromptCacheCoordinator {
             &JsValue::String(input.system_prompt.into()),
             input.tools,
             input.messages,
+            // The runtime entry keeps its pre-merge depth behavior: the
+            // shared `js_value::MAX_ARRAY_DEPTH` gate on the stable
+            // serialization (registered divergence A6-JSVALUE-DEPTH-001).
+            Some(MAX_ARRAY_DEPTH),
         )?;
         let mut state = self.state.lock().unwrap();
         let force_reset = if commit {
@@ -279,12 +295,39 @@ mod tests {
         }
         value
     }
+    fn nested_objects(depth: usize) -> JsValue {
+        let mut value = JsValue::Number(0.0);
+        for _ in 0..depth {
+            value = object(vec![("x", value)]);
+        }
+        value
+    }
+    fn deep_tool(schema: JsValue) -> Vec<JsValue> {
+        vec![object(vec![
+            ("name", JsValue::String("t".into())),
+            ("inputSchema", schema),
+        ])]
+    }
+    fn probe_messages() -> Vec<JsValue> {
+        vec![object(vec![
+            ("role", JsValue::String("user".into())),
+            (
+                "content",
+                JsValue::Array(vec![object(vec![
+                    ("type", JsValue::String("text".into())),
+                    ("text", JsValue::String("hello".into())),
+                ])]),
+            ),
+        ])]
+    }
 
     /// The real `finalizePreparedModelRequest` (Node v22.22.0 probe, run
     /// twice byte-identical) succeeds on a single tool whose `inputSchema`
     /// nests 1998/2001 arrays — 2001/2004 containers with the
     /// identity/tools/tool envelope — and the fingerprints must match. The
-    /// old shared 2000-container bound rejected both inputs TS accepts.
+    /// host entry passes no depth gate (its pre-merge behavior), so both
+    /// succeed here; the runtime entry keeps the 2000-container gate and
+    /// rejects the same inputs (`depth_boundaries_match_pre_pr_rust_behavior`).
     #[test]
     fn deep_input_schema_fingerprints_match_real_ts() {
         for (depth, expected) in [
@@ -302,23 +345,144 @@ mod tests {
                 &JsValue::String("p".into()),
                 &JsValue::String("m".into()),
                 &JsValue::String("preview prompt".into()),
-                &[object(vec![
-                    ("name", JsValue::String("t".into())),
-                    ("inputSchema", nested_arrays(depth)),
-                ])],
-                &[object(vec![
-                    ("role", JsValue::String("user".into())),
-                    (
-                        "content",
-                        JsValue::Array(vec![object(vec![
-                            ("type", JsValue::String("text".into())),
-                            ("text", JsValue::String("hello".into())),
-                        ])]),
-                    ),
-                ])],
+                &deep_tool(nested_arrays(depth)),
+                &probe_messages(),
+                None,
             )
             .unwrap_or_else(|e| panic!("depth {depth}: {}", e.message));
             assert_eq!(identity.fingerprint, expected, "depth {depth}");
+        }
+    }
+
+    /// `tools: [{name: <2001-level nested array>}, {name: 42}]`: the
+    /// comparator reads the `right.name` argument before the call check
+    /// and only coerces it inside the call, so a deep name on either side
+    /// of a non-string left name reports the call check. Real TS (Node
+    /// v22.22.0, `buildCachePlan` and `finalizePreparedModelRequest` run
+    /// against both entries) reports `left.name.localeCompare is not a
+    /// function` for both orders — also pinned byte-for-byte by the
+    /// context-prepare golden `cache-tool-eval-order-deep`.
+    #[test]
+    fn deep_tool_name_reports_the_call_check_not_a_coercion_overflow() {
+        for tools in [
+            vec![
+                object(vec![("name", nested_arrays(2001))]),
+                object(vec![("name", JsValue::Number(42.0))]),
+            ],
+            vec![
+                object(vec![("name", JsValue::Number(42.0))]),
+                object(vec![("name", nested_arrays(2001))]),
+            ],
+        ] {
+            let error = cache_plan_identity(
+                &"en-US".parse().unwrap(),
+                &JsValue::String("p".into()),
+                &JsValue::String("m".into()),
+                &JsValue::String("preview prompt".into()),
+                &tools,
+                &probe_messages(),
+                Some(MAX_ARRAY_DEPTH),
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.message, "left.name.localeCompare is not a function",
+                "tools {tools:?}"
+            );
+        }
+    }
+
+    /// Depth boundaries pin the Rust behavior these two entries had before
+    /// this PR (expected values measured by running the pre-PR code at
+    /// 88feb4b4), NOT TS alignment: V8's real boundary is caller-, shape-
+    /// and JIT-dependent — through the real TS entries a 2398-level
+    /// nested-array `inputSchema` succeeds while a 2100-level nested object
+    /// overflows — so the runtime entry keeps its `js_value::MAX_ARRAY_DEPTH`
+    /// gate (a 1997-level object schema plus the identity/tools/tool
+    /// envelope is exactly 2000 containers, the last depth that succeeds)
+    /// and the host entry keeps no gate at all. The residual differences
+    /// against TS are registered in `specs/gateway-parity/accepted-diffs.md`
+    /// A6-JSVALUE-DEPTH-001 (unapproved).
+    #[test]
+    fn depth_boundaries_match_pre_pr_rust_behavior() {
+        for (label, schema, runtime_succeeds, host_fingerprint) in [
+            (
+                "1997-level object",
+                nested_objects(1997),
+                true,
+                "0fd878255dfcc52ddadea3ce5e063657ebeec095a497641736d820913630557f",
+            ),
+            (
+                "2000-level object",
+                nested_objects(2000),
+                false,
+                "72993c709c6c3755297511c7c8b07b56dbed5d6dca1732ea836a4c1ce21741d3",
+            ),
+            (
+                "2001-level object",
+                nested_objects(2001),
+                false,
+                "7ef8d751e5353b174e665d789c7ca6f8bdc627c928f0e4ccdb6604486309b43d",
+            ),
+            (
+                "2100-level object",
+                nested_objects(2100),
+                false,
+                "7158368fe2729d2fd5293783b0c178a6707bfa158338809c4e5c6f553bdffbd8",
+            ),
+            (
+                "2398-level array",
+                nested_arrays(2398),
+                false,
+                "b84cd74c717a1f7f357ac36edc241aa758129e0f5a197411305e54e857e87467",
+            ),
+        ] {
+            // Runtime entry (the coordinator): the pre-merge 2000-container
+            // gate with the original error text; only the exact gate edge
+            // still reaches a fingerprint.
+            let coordinator = PromptCacheCoordinator::new("en-US".parse().unwrap());
+            let runtime = coordinator.create_plan(
+                None,
+                CachePlanInput {
+                    provider: &JsValue::String("p".into()),
+                    model: &JsValue::String("m".into()),
+                    system_prompt: "preview prompt",
+                    tools: &deep_tool(schema.clone()),
+                    messages: &probe_messages(),
+                    enabled: true,
+                },
+                false,
+            );
+            if runtime_succeeds {
+                let plan = runtime.unwrap().expect("committed plan");
+                let fingerprint = plan
+                    .get("fingerprint")
+                    .and_then(JsValue::as_string)
+                    .unwrap();
+                assert_eq!(
+                    fingerprint.to_utf8().unwrap(),
+                    host_fingerprint,
+                    "{label} runtime"
+                );
+            } else {
+                assert_eq!(
+                    runtime.unwrap_err().message,
+                    StackOverflow::MESSAGE,
+                    "{label} runtime"
+                );
+            }
+            // Host entry: the pre-merge ungated walk succeeds at every
+            // scenario depth with the same fingerprint.
+            let identity = cache_plan_identity(
+                &"en-US".parse().unwrap(),
+                &JsValue::String("p".into()),
+                &JsValue::String("m".into()),
+                &JsValue::String("preview prompt".into()),
+                &deep_tool(schema),
+                &probe_messages(),
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{label} host: {}", e.message));
+            assert_eq!(identity.fingerprint, host_fingerprint, "{label} host");
         }
     }
 }

@@ -1134,14 +1134,17 @@ cases.push({ name: 'cache-tool-eval-order', steps: [
   [{ name: 42 }, { name: null }],
   [{ name: 'a' }, { name: 42 }, { name: null }],
 ].map(tools => ({ clockMs: baseClock, input: cacheInput({ tools }) })) });
-// A single tool's deeply nested inputSchema (1998/2001 levels; 2001/2004
-// containers with the identity/tools/tool envelope) succeeds in real TS and
-// must reach the fingerprint. JSON cannot hold the nesting readably, so the
-// spec marks it and both sides rebuild the same arrays.
-for (const depth of [1998, 2001]) {
-  cases.push({ name: `cache-tool-schema-depth-${depth}`, steps: [{ clockMs: baseClock, input: cacheInput({ tools: [{ name: 't', inputSchema: { $deepArray: depth } }] }) }] });
-}
-assert.equal(cases.length, 72, 'case count');
+// `left.name.localeCompare(right.name)` reads the `right.name` argument
+// before the call check and coerces it only inside the call, so a
+// 2001-level nested-array name on either side of a non-string left name
+// reports the call check (`left.name.localeCompare is not a function`),
+// not a coercion stack overflow. The deep name only reaches the oracle as
+// the `$deepArray` marker.
+cases.push({ name: 'cache-tool-eval-order-deep', steps: [
+  [{ name: { $deepArray: 2001 } }, { name: 42 }],
+  [{ name: 42 }, { name: { $deepArray: 2001 } }],
+].map(tools => ({ clockMs: baseClock, input: cacheInput({ tools }) })) });
+assert.equal(cases.length, 71, 'case count');
 
 // ---------------------------------------------------------------- execute
 // JSON cannot carry NaN/Infinity/-0. Inputs use {$number: "..."} markers and

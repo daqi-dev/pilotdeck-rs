@@ -231,7 +231,10 @@ fn cache_plan(
     };
     let system = value(prepared, "systemPrompt")?;
     // One fingerprint port for both TS call sites of `CachePlan.buildCachePlan`
-    // (this host-side finalization and the runtime's coordinator).
+    // (this host-side finalization and the runtime's coordinator). The host
+    // entry keeps its pre-merge depth behavior: no gate on the stable
+    // serialization's explicit stack (the residual TS divergence at
+    // ~2100-level objects is registered in A6-JSVALUE-DEPTH-001).
     let identity = crate::runtime::context::cache::cache_plan_identity(
         &crate::project_files::node_locale(|key| std::env::var(key).ok()),
         &get(request, "provider"),
@@ -239,6 +242,7 @@ fn cache_plan(
         &system,
         &tools,
         messages,
+        None,
     )?;
     Ok(JsValue::Object(object([
         ("provider", get(request, "provider")),
@@ -302,4 +306,79 @@ pub(super) async fn finalize(
     );
     result.insert("cachePlan".into(), cache);
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nested(kind: &str, depth: usize) -> JsValue {
+        let mut value = JsValue::Number(0.0);
+        for _ in 0..depth {
+            value = if kind == "obj" {
+                JsValue::Object(object([("x", value)]))
+            } else {
+                JsValue::Array(vec![value])
+            };
+        }
+        value
+    }
+
+    /// This host entry serializes the cache identity without a depth gate —
+    /// its pre-merge behavior — so deeply nested schemas reach a fingerprint.
+    /// The 2398-level nested array also matches real TS (Node v22.22.0 probe,
+    /// run twice byte-identical, both real entries succeed there); the
+    /// 2100-level nested object succeeds here while TS overflows V8's stack,
+    /// a registered divergence (A6-JSVALUE-DEPTH-001, unapproved — the
+    /// runtime coordinator instead keeps the 2000-container gate, see
+    /// `runtime::context::cache::tests::depth_boundaries_match_pre_pr_rust_behavior`).
+    #[test]
+    fn deep_input_schema_fingerprints_reach_the_host_entry() {
+        for (label, schema, expected) in [
+            (
+                "2398-level array",
+                nested("arr", 2398),
+                "b84cd74c717a1f7f357ac36edc241aa758129e0f5a197411305e54e857e87467",
+            ),
+            (
+                "2100-level object",
+                nested("obj", 2100),
+                "7158368fe2729d2fd5293783b0c178a6707bfa158338809c4e5c6f553bdffbd8",
+            ),
+        ] {
+            let request = object([("provider", "p".into()), ("model", "m".into())]);
+            let prepared = JsValue::Object(object([
+                (
+                    "tools",
+                    JsValue::Array(vec![JsValue::Object(object([
+                        ("name", "t".into()),
+                        ("inputSchema", schema),
+                    ]))]),
+                ),
+                ("systemPrompt", "preview prompt".into()),
+                (
+                    "cachePlan",
+                    JsValue::Object(object([("generation", JsValue::Number(0.0))])),
+                ),
+            ]));
+            let messages = vec![JsValue::Object(object([
+                ("role", "user".into()),
+                (
+                    "content",
+                    JsValue::Array(vec![JsValue::Object(object([
+                        ("type", "text".into()),
+                        ("text", "hello".into()),
+                    ]))]),
+                ),
+            ]))];
+            let cache = cache_plan(&request, &prepared, &messages)
+                .unwrap_or_else(|e| panic!("{label}: {}", e.message));
+            let fingerprint = value(&cache, "fingerprint").unwrap();
+            assert_eq!(
+                fingerprint.as_string().unwrap().to_utf8().unwrap(),
+                expected,
+                "{label}"
+            );
+        }
+    }
 }

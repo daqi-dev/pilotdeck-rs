@@ -25,7 +25,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 const ORACLE: &str = include_str!("fixtures/context-prepare/oracle.json");
-const CASES: usize = 72;
+const CASES: usize = 71;
 const STEPS: usize = 138;
 static UNDEFINED: JsValue = JsValue::Undefined;
 

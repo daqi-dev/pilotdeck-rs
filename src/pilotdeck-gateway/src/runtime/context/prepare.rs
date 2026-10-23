@@ -18,7 +18,7 @@ use super::{
 };
 use crate::host::modules::context::{ContextInput, ContextRuntime, Operation};
 use crate::host::{Cancellation, HostError, HostFuture, ModuleError};
-use crate::js_value::StackOverflow;
+use crate::js_value::{MAX_ARRAY_DEPTH, StackOverflow};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha2::{Digest, Sha256};
 use std::{
@@ -1312,7 +1312,7 @@ fn fingerprint(message: &JsValue) -> Result<[u8; 32], HostError> {
             .cloned()
             .unwrap_or(JsValue::Undefined),
     );
-    let serialized = stable_serialize(&JsValue::Object(stable))
+    let serialized = stable_serialize(&JsValue::Object(stable), Some(MAX_ARRAY_DEPTH))
         .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
     let mut hasher = Sha256::new();
     hasher.update(serialized.as_bytes());
@@ -1325,35 +1325,31 @@ enum StableFrame<'a> {
     Object(Vec<(&'a JsString, &'a JsValue)>, usize),
 }
 
-/// Deepest total container nesting `stable_serialize` walks, envelope
-/// included. TS `stableSerialize` recurses, so V8's real boundary is
-/// caller- and JIT-dependent (see `stable_serialize`); 2400 stays inside
-/// the deterministic-success region measured through the real entry while
-/// keeping the cache-plan inputs TS accepts (a 2001-level `inputSchema`
-/// plus its envelope is 2004 containers).
-const STABLE_SERIALIZE_MAX_DEPTH: usize = 2400;
-
 /// `context/cache/CachePlan.ts:stableSerialize`, including JS's `undefined`
 /// interpolation and UTF-16 key ordering.
 ///
 /// The baseline recurses and V8 throws `RangeError: Maximum call stack size
-/// exceeded` past a caller- and JIT-dependent depth. Wire arrays/objects may
-/// nest arbitrarily deep (the protocol parser, clone and Drop are iterative),
-/// so this walk uses an explicit stack and reports [`StackOverflow`] past the
-/// conservative [`STABLE_SERIALIZE_MAX_DEPTH`] container bound. Output is
-/// appended into one buffer, avoiding the per-level strings that made the
-/// recursive form O(depth²).
+/// exceeded` past a caller-, shape- and JIT-dependent depth (2026-10-23,
+/// Node v22.22.0: a 2398-level nested-array `inputSchema` succeeds through
+/// both real entries while a 2100-level nested object overflows). No fixed
+/// constant reproduces that boundary, so this walk uses an explicit stack
+/// that never exhausts the Rust stack and keeps each caller's own pre-merge
+/// depth behavior via `depth_bound`:
 ///
-/// Measured 2026-10-23 (Node v22.22.0, probe twice): through the real
-/// `buildCachePlan` entry the identity/tools/tool envelope makes a
-/// single-tool 1998- and 2001-level nested-array `inputSchema` (2001/2004
-/// containers) succeed, and 2525 levels (2528 containers) is the deepest
-/// success before the first observed RangeError at 2526 — the worst observed
-/// failure start, since a warmed JIT reaches past 4000. A shared 2000
-/// container bound rejected the 1998/2001-level inputs TS accepts, so the
-/// bound counts total containers and sits at 2400, inside the
-/// deterministic-success region with margin.
-pub(super) fn stable_serialize(value: &JsValue) -> Result<String, StackOverflow> {
+/// - the runtime entries (the coordinator's cache plans and the message
+///   fingerprints below) pass the shared `js_value::MAX_ARRAY_DEPTH`
+///   container gate and report [`StackOverflow`] past it, as they always
+///   have;
+/// - the host entry passes `None`, its pre-merge ungated walk.
+///
+/// Output is appended into one buffer, avoiding the per-level strings that
+/// made the recursive form O(depth²). Both sides' residual differences
+/// against V8 are registered in `specs/gateway-parity/accepted-diffs.md`
+/// A6-JSVALUE-DEPTH-001 (unapproved).
+pub(super) fn stable_serialize(
+    value: &JsValue,
+    depth_bound: Option<usize>,
+) -> Result<String, StackOverflow> {
     let mut out = String::new();
     let mut frames: Vec<StableFrame<'_>> = Vec::new();
     let mut next = Some(value);
@@ -1361,14 +1357,14 @@ pub(super) fn stable_serialize(value: &JsValue) -> Result<String, StackOverflow>
         if let Some(value) = next.take() {
             match value {
                 JsValue::Array(items) => {
-                    if frames.len() >= STABLE_SERIALIZE_MAX_DEPTH {
+                    if depth_bound.is_some_and(|bound| frames.len() >= bound) {
                         return Err(StackOverflow);
                     }
                     out.push('[');
                     frames.push(StableFrame::Array(items, 0));
                 }
                 JsValue::Object(object) => {
-                    if frames.len() >= STABLE_SERIALIZE_MAX_DEPTH {
+                    if depth_bound.is_some_and(|bound| frames.len() >= bound) {
                         return Err(StackOverflow);
                     }
                     let mut entries: Vec<(&JsString, &JsValue)> = object
@@ -1490,28 +1486,45 @@ mod tests {
 
     #[test]
     fn stable_serialize_succeeds_within_the_container_bound() {
-        let value = nested_arrays(STABLE_SERIALIZE_MAX_DEPTH);
+        let value = nested_arrays(MAX_ARRAY_DEPTH);
         let expected = format!(
             "{}\"x\"{}",
-            "[".repeat(STABLE_SERIALIZE_MAX_DEPTH),
-            "]".repeat(STABLE_SERIALIZE_MAX_DEPTH)
+            "[".repeat(MAX_ARRAY_DEPTH),
+            "]".repeat(MAX_ARRAY_DEPTH)
         );
-        assert_eq!(stable_serialize(&value), Ok(expected));
+        assert_eq!(
+            stable_serialize(&value, Some(MAX_ARRAY_DEPTH)),
+            Ok(expected)
+        );
 
         // Negative control: one container past the bound must fail instead of
         // silently producing a prefix.
-        let past = JsValue::Array(vec![nested_arrays(STABLE_SERIALIZE_MAX_DEPTH)]);
-        assert_eq!(stable_serialize(&past), Err(StackOverflow));
+        let past = JsValue::Array(vec![nested_arrays(MAX_ARRAY_DEPTH)]);
+        assert_eq!(
+            stable_serialize(&past, Some(MAX_ARRAY_DEPTH)),
+            Err(StackOverflow)
+        );
+
+        // The host caller passes no bound: its pre-merge walk never reports
+        // StackOverflow, however deep the value nests (one container past
+        // the runtime gate, and far past it).
+        let ungated = format!(
+            "{}\"x\"{}",
+            "[".repeat(MAX_ARRAY_DEPTH + 1),
+            "]".repeat(MAX_ARRAY_DEPTH + 1)
+        );
+        assert_eq!(stable_serialize(&past, None), Ok(ungated));
+        assert!(stable_serialize(&nested_arrays(100_000), None).is_ok());
     }
 
     #[test]
     fn fingerprint_allows_the_bound_but_not_one_past_it() {
         // The fingerprint wrapper is a container too, so content may nest
         // one level less than the bound; one more is past it.
-        let allowed = message_with_content(nested_arrays(STABLE_SERIALIZE_MAX_DEPTH - 1));
+        let allowed = message_with_content(nested_arrays(MAX_ARRAY_DEPTH - 1));
         assert!(fingerprint(&allowed).is_ok());
 
-        let past = message_with_content(nested_arrays(STABLE_SERIALIZE_MAX_DEPTH));
+        let past = message_with_content(nested_arrays(MAX_ARRAY_DEPTH));
         let error = fingerprint(&past).unwrap_err();
         assert_eq!(error.message, StackOverflow::MESSAGE);
         assert_eq!(
