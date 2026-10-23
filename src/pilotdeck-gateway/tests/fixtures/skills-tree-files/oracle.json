@@ -1,0 +1,50 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/extension/skills/SkillManager.ts": "b971873bf42bb0141480e42826088c5e30bd1c1617fc1710375762ded3f87111"
+  },
+  "cases": [
+    {
+      "name": "dag-10",
+      "fileCount": 1025,
+      "totalSize": 3093,
+      "entries": 0
+    },
+    {
+      "name": "dag-15",
+      "fileCount": 32769,
+      "totalSize": 98325,
+      "entries": 0
+    },
+    {
+      "name": "deep-300",
+      "fileCount": 2,
+      "totalSize": 27,
+      "entries": 0
+    },
+    {
+      "name": "linear-20",
+      "fileCount": 41,
+      "totalSize": 144,
+      "entries": 0
+    },
+    {
+      "name": "hops-20",
+      "fileCount": 22,
+      "totalSize": 85,
+      "entries": 0
+    },
+    {
+      "name": "alias-10x5",
+      "fileCount": 551,
+      "totalSize": 1675,
+      "entries": 0
+    },
+    {
+      "name": "mutual",
+      "fileCount": 961,
+      "totalSize": 2901,
+      "entries": 0
+    }
+  ]
+}
