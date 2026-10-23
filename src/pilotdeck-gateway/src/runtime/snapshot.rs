@@ -112,10 +112,11 @@ impl SnapshotProjectionError {
     pub fn message(&self) -> &JsString {
         &self.message
     }
-    /// True when the native projection hit a measured host boundary (R19
-    /// collation): the A8 entry must forward the request, not surface this as a
-    /// TS-shaped error. The wire code is `JS_HOST_REQUIRED`, matching the other
-    /// host-boundary ports.
+    /// True when the native projection hit a measured host boundary (R19): the
+    /// A8 entry must forward the request, not surface this as a TS-shaped
+    /// error. Two shapes carry it: the fs-errno admission boundary
+    /// (`NODE_IO_REQUIRED`, empty message, as in `session_model`/`skills`) and
+    /// the storage provider's `HostRequired` (`JS_HOST_REQUIRED`).
     pub fn requires_host(&self) -> bool {
         self.requires_host
     }
