@@ -1,0 +1,307 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts": "c64b368fa7fa329cbecb475b22972860bbc133444606017132c6edbf27ed3ad6",
+    "src/context/memory/edgeclaw-memory-core/src/core/general-projects.ts": "3a5512939027cc32efde9cd218e4bb400300a28fda6f9ac07391d75b56244e40",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/id.ts": "5d8f83f1a5d56b696829ffe8a26dff2505b6bb6317acd4e4ca9772219e0bd1f9"
+  },
+  "nodeVersion": "v22.22.0",
+  "link": {
+    "relativePath": "global/UserIdentity/user-profile.md",
+    "target": "real.md"
+  },
+  "scenarios": [
+    {
+      "name": "read",
+      "options": {},
+      "operations": [
+        {
+          "method": "getMemoryRecordsByIds",
+          "input": {
+            "ids": [
+              "global/UserIdentity/user-profile.md"
+            ],
+            "maxLines": 5000
+          }
+        }
+      ],
+      "initialFiles": [
+        {
+          "relativePath": "Feedback",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "Project",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity/user-profile.md",
+          "kind": "symlink",
+          "target": "real.md"
+        }
+      ],
+      "observations": [
+        []
+      ],
+      "files": [
+        {
+          "relativePath": "Feedback",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "Project",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity/user-profile.md",
+          "kind": "symlink",
+          "target": "real.md"
+        }
+      ]
+    },
+    {
+      "name": "write",
+      "options": {},
+      "operations": [
+        {
+          "method": "upsertUserProfile",
+          "input": {
+            "type": "user",
+            "scope": "global",
+            "name": "User",
+            "description": "身份",
+            "profile": "Rust",
+            "capturedAt": "2026-10-22T00:00:00.000Z",
+            "sourceSessionKey": "s"
+          }
+        }
+      ],
+      "initialFiles": [
+        {
+          "relativePath": "Feedback",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "Project",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity/user-profile.md",
+          "kind": "symlink",
+          "target": "real.md"
+        }
+      ],
+      "observations": [
+        {
+          "name": "User",
+          "description": "身份",
+          "type": "user",
+          "scope": "global",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "capturedAt": "2026-10-22T00:00:00.000Z",
+          "sourceSessionKey": "s",
+          "file": "user-profile.md",
+          "relativePath": "global/UserIdentity/user-profile.md",
+          "absolutePath": "$ROOT/global/UserIdentity/user-profile.md",
+          "content": "## 身份背景\n- Rust",
+          "preview": "身份背景 - Rust"
+        }
+      ],
+      "files": [
+        {
+          "relativePath": "Feedback",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "MEMORY.md",
+          "kind": "file",
+          "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## User Memory\n- [User](global/UserIdentity/user-profile.md) — 身份\n"
+        },
+        {
+          "relativePath": "Project",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity/real.md",
+          "kind": "file",
+          "content": "---\nname: User\ndescription: 身份\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: s\n---\n## 身份背景\n- Rust\n"
+        },
+        {
+          "relativePath": "global/UserIdentity/user-profile.md",
+          "kind": "symlink",
+          "target": "real.md"
+        }
+      ]
+    },
+    {
+      "name": "delete",
+      "options": {},
+      "operations": [
+        {
+          "method": "deleteEntries",
+          "input": {
+            "relativePaths": [
+              "global/UserIdentity/user-profile.md"
+            ]
+          }
+        }
+      ],
+      "initialFiles": [
+        {
+          "relativePath": "Feedback",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "Project",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity/user-profile.md",
+          "kind": "symlink",
+          "target": "real.md"
+        }
+      ],
+      "observations": [
+        {
+          "mutatedIds": [],
+          "deletedProjectIds": []
+        }
+      ],
+      "files": [
+        {
+          "relativePath": "Feedback",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "MEMORY.md",
+          "kind": "file",
+          "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n"
+        },
+        {
+          "relativePath": "Project",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity/user-profile.md",
+          "kind": "symlink",
+          "target": "real.md"
+        }
+      ]
+    },
+    {
+      "name": "edit-anchor",
+      "options": {},
+      "operations": [
+        {
+          "method": "editEntry",
+          "input": {
+            "relativePath": "global/UserIdentity/user-profile.md",
+            "name": "x",
+            "description": "x"
+          }
+        }
+      ],
+      "initialFiles": [
+        {
+          "relativePath": "Feedback",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "Project",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity/user-profile.md",
+          "kind": "symlink",
+          "target": "real.md"
+        }
+      ],
+      "observations": [
+        {
+          "error": "Error",
+          "message": "Memory entry not found: global/UserIdentity/user-profile.md"
+        }
+      ],
+      "files": [
+        {
+          "relativePath": "Feedback",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "Project",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "kind": "dir"
+        },
+        {
+          "relativePath": "global/UserIdentity/user-profile.md",
+          "kind": "symlink",
+          "target": "real.md"
+        }
+      ]
+    }
+  ]
+}
