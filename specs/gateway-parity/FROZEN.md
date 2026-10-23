@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（PR #544 修复轮 3）**：accepted-diffs.md 末尾只追加 A6.3-PLUGIN-MARKDOWN-CYCLE-001-R3（去掉 Markdown 候选预算与 64 层深度上限、R2 ② 的差异消除），首版、R1、R2 原文保留；不改判分语义、不新增豁免；只重登记 accepted-diffs.md 哈希。
+
 > **2026-10-23 重登记（#484 PR #544 修复轮 2，更正）**：accepted-diffs.md 末尾追加 A6.3-PLUGIN-MARKDOWN-CYCLE-001-R2（预算只计 .md 候选、超限诊断、更正 R1 对 TS 环行为的描述、补指数别名 DAG），首版与 R1 原文保留；AI 代批待人复核、未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希。两家评审见 PR。
 
 > **2026-10-23 重登记（#484 PR #544 修复轮 1，更正与新增）**：保留 A6.3-PLUGIN-MARKDOWN-CYCLE-001 首版原文、追加更正 A6.3-PLUGIN-MARKDOWN-CYCLE-001-R1（首版只按祖先防环、引用已移走的测试、误称别名与 TS 一致，按 Grok r1 与真实 TS 实测更正为全局去重 + 总预算并列出三处可观察差异），新增 A6.3-PLUGIN-MARKDOWN-ROOT-001（不经符号链接读插件根外文件）；均向安全偏离、AI 代批待人复核、未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
@@ -81,7 +83,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-d47ddfaaa7fff71b85a565ab645cffe596260f4783783e3b798bfeb2c8b2d270  accepted-diffs.md
+b2ffcd6d755167e208a5a6131ba25113b80ac352747fb14bfbbc35925738ca8f  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
