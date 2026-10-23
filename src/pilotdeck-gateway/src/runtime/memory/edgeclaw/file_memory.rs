@@ -2275,7 +2275,12 @@ mod read_test_hook {
 #[cfg(all(test, unix))]
 mod mutation_security_tests {
     use super::*;
-    use std::{cell::Cell, os::unix::fs::symlink, rc::Rc};
+    use std::{
+        cell::Cell,
+        os::unix::fs::symlink,
+        rc::Rc,
+        time::{Duration, Instant},
+    };
     struct Scratch(PathBuf);
     impl Scratch {
         fn new() -> Self {
@@ -2925,6 +2930,140 @@ mod mutation_security_tests {
                 fifo.display()
             )
         );
+    }
+    #[test]
+    fn mutation_directory_inaccessible_ancestor_is_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let ancestor = store.core.root.join("Project/blocked");
+        fs::create_dir_all(ancestor.join("nested")).unwrap();
+        fs::write(ancestor.join("nested/note.md"), "body").unwrap();
+        fs::set_permissions(&ancestor, fs::Permissions::from_mode(0o600)).unwrap();
+        // Independent native probe: do not let the wrapper certify its own
+        // permission fixture. Scratch restores permissions even on unwind.
+        assert_eq!(
+            fs::metadata(ancestor.join("nested"))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EACCES)
+        );
+        assert!(
+            store
+                .core
+                .directory("Project/blocked/nested")
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[test]
+    fn mutation_directory_non_directory_ancestor_is_empty() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let ancestor = store.core.root.join("Project/file");
+        fs::write(&ancestor, "body").unwrap();
+        assert_eq!(
+            fs::metadata(ancestor.join("nested"))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::ENOTDIR)
+        );
+        assert!(
+            store
+                .core
+                .directory("Project/file/nested")
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[test]
+    fn mutation_directory_unreadable_leaf_keeps_scandir_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let leaf = store.core.root.join("Project");
+        fs::set_permissions(&leaf, fs::Permissions::from_mode(0o300)).unwrap();
+        assert_eq!(
+            fs::read_dir(&leaf).unwrap_err().raw_os_error(),
+            Some(libc::EACCES)
+        );
+        let error = store.core.directory("Project").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("EACCES: permission denied, scandir '{}'", leaf.display())
+        );
+    }
+    #[test]
+    fn mutation_clear_deep_tree_with_low_fd_limit() {
+        const CHILD_ENV: &str = "PDRS_597_CLEAR_LOW_FD_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ENV) {
+            use rustix::process::{Resource, getrlimit, setrlimit};
+            let mut limit = getrlimit(Resource::Nofile);
+            limit.current = Some(64);
+            setrlimit(Resource::Nofile, limit).unwrap();
+            assert_eq!(getrlimit(Resource::Nofile).current, Some(64));
+            // Both the internal clear and public clearAllData must remove a
+            // tree deeper than the descriptor limit without touching links.
+            for (name, public) in [("internal", false), ("public", true)] {
+                let store = store(&Path::new(&root).join(name));
+                if public {
+                    store
+                        .clear_all_data(&obj(&[("rebuildManifest", JsValue::Bool(false))]))
+                        .unwrap();
+                } else {
+                    store.core.clear().unwrap();
+                }
+                assert!(!store.core.root.join("Project/deep").exists());
+                assert!(!store.core.root.join("Project/z.md").exists());
+                assert_eq!(store.core.root.join("Project").is_dir(), public);
+            }
+            return;
+        }
+        let scratch = Scratch::new();
+        let sentinel = scratch.0.join("sentinel.md");
+        fs::write(&sentinel, "outside sentinel").unwrap();
+        for name in ["internal", "public"] {
+            let store = store(&scratch.0.join(name));
+            let mut deep = store.core.root.join("Project/deep");
+            for _ in 0..96 {
+                deep.push("d");
+            }
+            fs::create_dir_all(&deep).unwrap();
+            fs::write(deep.join("note.md"), "deep body").unwrap();
+            symlink(&sentinel, deep.join("link.md")).unwrap();
+            // Keep a sibling to check traversal resumes after descending.
+            fs::write(store.core.root.join("Project/z.md"), "sibling").unwrap();
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "runtime::memory::edgeclaw::file_memory::mutation_security_tests::mutation_clear_deep_tree_with_low_fd_limit", "--nocapture", "--test-threads=1"])
+            .env(CHILD_ENV, &scratch.0)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("low-fd clear child exceeded 30 seconds");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "low-fd clear: {}\n{stdout}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), "outside sentinel");
+        for name in ["internal", "public"] {
+            assert!(!scratch.0.join(name).join("Project/deep").exists());
+        }
     }
     #[test]
     fn mutation_clear_reports_ts_scandir_errors() {
