@@ -18,7 +18,7 @@ use std::{
     collections::HashMap,
     fs, io,
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Mutex,
 };
 
@@ -256,8 +256,7 @@ impl ToolResultBudget {
             &self.tool_results_dir,
             &JsString::from(format!("{replacement_name}.{extension}")),
         );
-        self.persist_artifact(&self.tool_results_dir, &path, &flat)
-            .await?;
+        self.persist_artifact(&path, &flat).await?;
         let read_file_path = self.create_read_file_alias(&path, extension).await?;
 
         let preview = head_tail_preview(&flat, self.preview_bytes);
@@ -310,7 +309,11 @@ impl ToolResultBudget {
                 &refs_dir,
                 &JsString::from(format!("result-{index:04}.{extension}")),
             );
-            if copy_file_if_absent(&refs_dir, source, &alias)? {
+            #[cfg(unix)]
+            let root = &workspace_root;
+            #[cfg(not(unix))]
+            let root = &refs_dir;
+            if copy_file_if_absent(root, source, &alias)? {
                 return Ok(relative(&workspace_root, &alias));
             }
         }
@@ -333,11 +336,14 @@ impl ToolResultBudget {
 
     async fn persist_artifact(
         &self,
-        root: &JsString,
         path: &JsString,
         content: &JsString,
     ) -> Result<(), ToolBudgetError> {
-        write_text_if_absent(root, path, content)?;
+        #[cfg(unix)]
+        let (_, project) = self.read_file_alias_location();
+        #[cfg(not(unix))]
+        let project = self.tool_results_dir.clone();
+        write_text_if_absent(&project, path, content)?;
         Ok(())
     }
 
@@ -388,8 +394,7 @@ impl ToolResultBudget {
             &self.tool_results_dir,
             &JsString::from(format!("{id}.{extension}")),
         );
-        self.persist_artifact(&self.tool_results_dir, &path, &data)
-            .await?;
+        self.persist_artifact(&path, &data).await?;
 
         let preview = media_preview(media_type, &mime_type, original_bytes, block);
         let mut object = JsObject::new();
@@ -819,22 +824,45 @@ fn io_error(error: io::Error, syscall: &str, path: Option<&str>) -> ToolBudgetEr
 }
 
 /// Create every missing directory with Node's recursive-mkdir mode (`0700`).
-fn create_directories(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path)
-    }
-    #[cfg(not(unix))]
-    {
-        fs::create_dir_all(path)
-    }
+#[cfg(not(unix))]
+fn create_directories(path: &std::path::Path) -> io::Result<()> {
+    fs::create_dir_all(path)
 }
 
-/// Confine every spill write to `root` and reject symlinked components below it.
+/// Only resolve the trusted project root. Keep every descendant lexical so
+/// `.pilotdeck`, `tool-results`, session and refs are all checked with NOFOLLOW.
+#[cfg(unix)]
+fn ensure_directory(
+    root: &JsString,
+    target: &JsString,
+) -> Result<(PathBuf, PathBuf), ToolBudgetError> {
+    if !within(root, target) {
+        return Err(permission_denied("mkdir", target));
+    }
+    let root_path = os_path(root);
+    if fs::symlink_metadata(&root_path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err(permission_denied("mkdir", target));
+    }
+    let project = fs::canonicalize(&root_path)
+        .map_err(|error| io_error(error, "mkdir", Some(&path_text(target))))?;
+    let target_path = os_path(target);
+    let relative = target_path
+        .strip_prefix(&root_path)
+        .map_err(|_| permission_denied("mkdir", target))?;
+    let directory = project.join(relative);
+    #[cfg(test)]
+    BEFORE_SPILL_MKDIR.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().as_mut() {
+            hook(target);
+        }
+    });
+    crate::project_files::create_directories_beneath(&project, &directory)
+        .map_err(|error| io_error(error, "mkdir", Some(&path_text(target))))?;
+    Ok((project, directory))
+}
+
+// Non-Unix keeps the existing path-based directory creation behavior.
+#[cfg(not(unix))]
 fn ensure_directory(
     root: &JsString,
     target: &JsString,
@@ -907,8 +935,8 @@ fn ensure_directory(
     Ok((canonical_root, canonical_target))
 }
 
-// Keep the canonical paths captured by containment validation: resolving again
-// after the test hook (or a real replacement) would trust the attacker's link.
+// Keep the checked project root and lexical descendant path: resolving any
+// descendant again after a replacement would trust the attacker's link.
 fn create_spill_file(checked: &(PathBuf, PathBuf), path: &JsString) -> io::Result<fs::File> {
     #[cfg(all(test, unix))]
     BEFORE_SPILL_OPEN.with(|hook| {
@@ -956,6 +984,7 @@ fn spill_open_error(
 type BeforeSpillOpen = Box<dyn FnMut(&JsString)>;
 #[cfg(all(test, unix))]
 thread_local! {
+    static BEFORE_SPILL_MKDIR: std::cell::RefCell<Option<BeforeSpillOpen>> = const { std::cell::RefCell::new(None) };
     static BEFORE_SPILL_OPEN: std::cell::RefCell<Option<BeforeSpillOpen>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -1044,6 +1073,7 @@ mod tests {
     impl Drop for ResetSpillHook {
         fn drop(&mut self) {
             BEFORE_SPILL_OPEN.with(|hook| *hook.borrow_mut() = None);
+            BEFORE_SPILL_MKDIR.with(|hook| *hook.borrow_mut() = None);
         }
     }
 
@@ -1114,6 +1144,149 @@ mod tests {
     #[test]
     fn spill_alias_rejects_directory_swap_after_check() {
         raced_destination(true);
+    }
+
+    #[cfg(unix)]
+    async fn project_destination(copy: bool, component: &str, race: Option<bool>) {
+        use crate::test_scratch::Scratch;
+        use std::{cell::Cell, os::unix::fs::symlink, rc::Rc};
+        let scratch = Scratch::new("spill-project");
+        let outside = Scratch::new("spill-project-outside");
+        let project = scratch.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let spill = project.join(".pilotdeck/tool-results/session");
+        let refs = project.join(".pilotdeck/tool-results/refs");
+        let parent = if copy { &refs } else { &spill };
+        let changed = project.join(component);
+        // Supply the exact destination shape in the attacker's tree, so a
+        // vulnerable open writes a file rather than failing for missing dirs.
+        let outside_parent = outside.path().join(parent.strip_prefix(&changed).unwrap());
+        fs::create_dir_all(&outside_parent).unwrap();
+        let outside_file = outside_parent.join(if copy { "result-0001.txt" } else { "call.txt" });
+        fs::create_dir_all(changed.parent().unwrap()).unwrap();
+        let source = project.join("source.txt");
+        fs::write(&source, b"payload").unwrap();
+        let fired = Rc::new(Cell::new(false));
+        let fired_hook = fired.clone();
+        let outside_path = outside.path().to_owned();
+        let replace = move |_: &JsString| {
+            assert!(!fired_hook.replace(true));
+            if changed.exists() {
+                fs::rename(&changed, changed.with_extension("saved")).unwrap();
+            }
+            symlink(&outside_path, &changed).unwrap();
+        };
+        if let Some(before_mkdir) = race {
+            if !before_mkdir {
+                fs::create_dir_all(parent).unwrap();
+            }
+            if before_mkdir {
+                BEFORE_SPILL_MKDIR.with(|hook| *hook.borrow_mut() = Some(Box::new(replace)));
+            } else {
+                BEFORE_SPILL_OPEN.with(|hook| *hook.borrow_mut() = Some(Box::new(replace)));
+            }
+        } else {
+            replace(&JsString::from(""));
+        }
+        let _reset = ResetSpillHook;
+        let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: spill.clone(),
+            max_result_size_chars: Some(1),
+            max_result_size_tokens: Some(100),
+            preview_bytes: None,
+        });
+        let result = if copy {
+            budget
+                .create_read_file_alias(&JsString::from(source.to_str().unwrap()), "txt")
+                .await
+                .map(|_| ())
+        } else {
+            budget
+                .persist_artifact(
+                    &JsString::from(parent.join("call.txt").to_str().unwrap()),
+                    &JsString::from("payload"),
+                )
+                .await
+        };
+        assert!(fired.get(), "replacement hook did not run");
+        assert!(!outside_file.exists(), "spill wrote outside project");
+        let error = result.unwrap_err();
+        assert!(error.message.contains("EACCES"), "{}", error.message);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spill_project_rejects_preexisting_upstream_links() {
+        for copy in [false, true] {
+            for component in [".pilotdeck", ".pilotdeck/tool-results"] {
+                project_destination(copy, component, None).await;
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spill_project_rejects_upstream_swap_before_directory_creation() {
+        for copy in [false, true] {
+            for component in [".pilotdeck", ".pilotdeck/tool-results"] {
+                project_destination(copy, component, Some(true)).await;
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spill_project_rejects_upstream_and_root_swap_before_file_open() {
+        for copy in [false, true] {
+            for component in [
+                ".pilotdeck",
+                ".pilotdeck/tool-results",
+                if copy {
+                    ".pilotdeck/tool-results/refs"
+                } else {
+                    ".pilotdeck/tool-results/session"
+                },
+            ] {
+                project_destination(copy, component, Some(false)).await;
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spill_project_mkdir_swap_has_no_outside_directory_side_effect() {
+        use crate::test_scratch::Scratch;
+        use std::{cell::Cell, os::unix::fs::symlink, rc::Rc};
+        let project = Scratch::new("spill-project-mkdir");
+        let outside = Scratch::new("spill-project-mkdir-outside");
+        let changed = project.path().join(".pilotdeck");
+        let external = outside.path().to_owned();
+        let fired = Rc::new(Cell::new(false));
+        let hook_fired = fired.clone();
+        BEFORE_SPILL_MKDIR.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |_| {
+                assert!(!hook_fired.replace(true));
+                symlink(&external, &changed).unwrap();
+            }))
+        });
+        let _reset = ResetSpillHook;
+        let result = write_text_if_absent(
+            &JsString::from(project.path().to_str().unwrap()),
+            &JsString::from(
+                project
+                    .path()
+                    .join(".pilotdeck/tool-results/session/call.txt")
+                    .to_str()
+                    .unwrap(),
+            ),
+            &JsString::from("payload"),
+        );
+        assert!(fired.get());
+        assert!(
+            !outside.path().join("tool-results").exists(),
+            "mkdir escaped project"
+        );
+        assert!(result.unwrap_err().message.contains("EACCES"));
     }
 
     #[test]

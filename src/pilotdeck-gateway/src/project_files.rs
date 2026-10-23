@@ -120,6 +120,64 @@ pub(crate) fn create_new_beneath(root: &Path, canonical: &Path) -> io::Result<Fi
     }
     Ok(file)
 }
+/// Node recursive mkdir semantics below a trusted project root. Every lookup
+/// and mkdir is relative to the pinned parent; no symlink is ever followed.
+#[cfg(unix)]
+pub(crate) fn create_directories_beneath(root: &Path, target: &Path) -> io::Result<()> {
+    use rustix::fs::{AtFlags, FileType, Mode, mkdirat, openat, statat};
+    let relative = target
+        .strip_prefix(root)
+        .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
+    let components: Vec<_> = relative.components().collect();
+    let mut parent = open_checked(root, root, true)?;
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
+        };
+        let name: &std::ffi::OsStr = name;
+        let open = || openat(&parent, name, directory_flags(), Mode::empty());
+        let opened = match open() {
+            Err(rustix::io::Errno::NOENT) => {
+                match mkdirat(&parent, name, Mode::from_raw_mode(0o700)) {
+                    Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+                    Err(error) => return Err(error.into()),
+                }
+                open()
+            }
+            result => result,
+        };
+        parent = File::from(opened.map_err(|error| {
+            // Distinguish a refused link from Node's ordinary non-directory
+            // errors. statat also stays on the pinned parent, even in a race.
+            if matches!(error, rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP)
+                && let Ok(stat) = statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW)
+            {
+                let kind = FileType::from_raw_mode(stat.st_mode);
+                if kind == FileType::Symlink {
+                    return io::Error::from_raw_os_error(libc::EACCES);
+                }
+                if kind != FileType::Directory && index + 1 == components.len() {
+                    return io::Error::from_raw_os_error(libc::EEXIST);
+                }
+            }
+            checked_open_error(error.into())
+        })?);
+    }
+    Ok(())
+}
+
+fn directory_flags() -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+    // Traversing a directory needs search permission, not read permission.
+    #[cfg(target_os = "linux")]
+    let access = OFlags::PATH;
+    #[cfg(target_vendor = "apple")]
+    let access = OFlags::from_bits_retain(libc::O_SEARCH as u32);
+    #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+    let access = OFlags::RDONLY;
+    access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
+}
+
 fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Result<File> {
     use rustix::fs::{Mode, OFlags, openat};
     let relative = canonical
@@ -138,14 +196,7 @@ fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Re
             return Err(io::Error::from_raw_os_error(libc::EACCES));
         };
         let flags = if index + 1 < components.len() || search_directory {
-            // Traversing a directory needs search permission, not read permission.
-            #[cfg(target_os = "linux")]
-            let access = OFlags::PATH;
-            #[cfg(target_vendor = "apple")]
-            let access = OFlags::from_bits_retain(libc::O_SEARCH as u32);
-            #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
-            let access = OFlags::RDONLY;
-            access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
+            directory_flags()
         } else {
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK
         };

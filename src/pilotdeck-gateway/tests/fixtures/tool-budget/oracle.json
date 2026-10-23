@@ -655,8 +655,8 @@
   "node": "v22.22.0",
   "locale": "en-US",
   "counts": {
-    "cases": 38,
-    "steps": 41
+    "cases": 39,
+    "steps": 42
   },
   "cases": [
     {
@@ -2432,6 +2432,52 @@
           },
           "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result_reference\",\"toolCallId\":\"call-repeat\",\"path\":\"<fixture>/repeat-apply-cache/tool-results/session/turn-other-call-repeat.txt\",\"readFilePath\":\"repeat-apply-cache/tool-results/refs/result-0002.txt\",\"originalBytes\":11,\"preview\":\"repeat body\",\"hasMore\":false,\"mimeType\":\"text/plain\",\"reason\":\"tool_result_too_large\"}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result_reference\",\"toolCallId\":\"call-repeat\",\"path\":\"<fixture>/repeat-apply-cache/tool-results/session/turn-other-call-repeat.txt\",\"readFilePath\":\"repeat-apply-cache/tool-results/refs/result-0002.txt\",\"originalBytes\":11,\"preview\":\"repeat body\",\"hasMore\":false,\"mimeType\":\"text/plain\",\"reason\":\"tool_result_too_large\"}]}],\"diagnostics\":[]}",
           "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"},{\"path\":\"tool-results/refs\",\"kind\":\"dir\"},{\"path\":\"tool-results/refs/result-0001.txt\",\"kind\":\"file\",\"size\":11,\"sha256\":\"10bdaeaaa06fbc50ae5bcc41e864ab0885615f0270f4a1da2fe1cbbc50a054d2\",\"text\":\"repeat body\"},{\"path\":\"tool-results/refs/result-0002.txt\",\"kind\":\"file\",\"size\":11,\"sha256\":\"10bdaeaaa06fbc50ae5bcc41e864ab0885615f0270f4a1da2fe1cbbc50a054d2\",\"text\":\"repeat body\"},{\"path\":\"tool-results/session\",\"kind\":\"dir\"},{\"path\":\"tool-results/session/turn-other-call-repeat.txt\",\"kind\":\"file\",\"size\":11,\"sha256\":\"10bdaeaaa06fbc50ae5bcc41e864ab0885615f0270f4a1da2fe1cbbc50a054d2\",\"text\":\"repeat body\"},{\"path\":\"tool-results/session/turn-repeat-call-repeat.txt\",\"kind\":\"file\",\"size\":11,\"sha256\":\"10bdaeaaa06fbc50ae5bcc41e864ab0885615f0270f4a1da2fe1cbbc50a054d2\",\"text\":\"repeat body\"}]"
+        }
+      ]
+    },
+    {
+      "name": "project-layout-missing-parents",
+      "toolResultsDir": "<fixture>/project-layout-missing-parents/.pilotdeck/tool-results/session",
+      "budget": {
+        "maxResultSizeChars": 1,
+        "maxResultSizeTokens": 1000
+      },
+      "missingParents": true,
+      "toolResultsDirRelative": ".pilotdeck/tool-results/session",
+      "steps": [
+        {
+          "input": {
+            "sessionId": "fixture-session",
+            "turnId": "turn-1",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "prior message"
+                  }
+                ]
+              }
+            ],
+            "toolResultMessage": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-project",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "project payload"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result_reference\",\"toolCallId\":\"call-project\",\"path\":\"<fixture>/project-layout-missing-parents/.pilotdeck/tool-results/session/turn-1-call-project.txt\",\"readFilePath\":\".pilotdeck/tool-results/refs/result-0001.txt\",\"originalBytes\":15,\"preview\":\"project payload\",\"hasMore\":false,\"mimeType\":\"text/plain\",\"reason\":\"tool_result_too_large\"}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result_reference\",\"toolCallId\":\"call-project\",\"path\":\"<fixture>/project-layout-missing-parents/.pilotdeck/tool-results/session/turn-1-call-project.txt\",\"readFilePath\":\".pilotdeck/tool-results/refs/result-0001.txt\",\"originalBytes\":15,\"preview\":\"project payload\",\"hasMore\":false,\"mimeType\":\"text/plain\",\"reason\":\"tool_result_too_large\"}]}],\"diagnostics\":[]}",
+          "filesJson": "[{\"path\":\".pilotdeck\",\"kind\":\"dir\"},{\"path\":\".pilotdeck/tool-results\",\"kind\":\"dir\"},{\"path\":\".pilotdeck/tool-results/refs\",\"kind\":\"dir\"},{\"path\":\".pilotdeck/tool-results/refs/result-0001.txt\",\"kind\":\"file\",\"size\":15,\"sha256\":\"cbc4c76af95313df2a9c68c395c3b490abcdd61a5c75c04f8a3be0bbd6623b25\",\"text\":\"project payload\"},{\"path\":\".pilotdeck/tool-results/session\",\"kind\":\"dir\"},{\"path\":\".pilotdeck/tool-results/session/turn-1-call-project.txt\",\"kind\":\"file\",\"size\":15,\"sha256\":\"cbc4c76af95313df2a9c68c395c3b490abcdd61a5c75c04f8a3be0bbd6623b25\",\"text\":\"project payload\"}]"
         }
       ]
     },

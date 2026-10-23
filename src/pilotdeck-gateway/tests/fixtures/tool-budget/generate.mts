@@ -143,7 +143,7 @@ async function runCase(spec) {
     caseRoot,
     spec.toolResultsDir ?? (spec.layout === 'plain' ? 'spill' : 'tool-results/session'),
   );
-  if (spec.blockingFile) {
+  if (spec.blockingFile || spec.missingParents) {
     await mkdir(caseRoot, { recursive: true });
   } else {
     await mkdir(dirname(toolResultsDir), { recursive: true });
@@ -189,6 +189,7 @@ async function runCase(spec) {
     toolResultsDir: normalize(toolResultsDir, scratch),
     budget: spec.budget ?? {},
     ...(spec.layout ? { layout: spec.layout } : {}),
+    ...(spec.missingParents ? { missingParents: true } : {}),
     ...(spec.toolResultsDir ? { toolResultsDirRelative: spec.toolResultsDir } : {}),
     ...(spec.blockingFile ? { blockingFile: spec.blockingFile } : {}),
     ...(spec.files ? { files: spec.files } : {}),
@@ -726,6 +727,18 @@ await runCase({
       turnId: 'turn-other',
     },
   ],
+});
+
+// Production layout with every spill ancestor absent: the real port creates
+// .pilotdeck/tool-results/session and sibling refs recursively (0700).
+await runCase({
+  name: 'project-layout-missing-parents',
+  toolResultsDir: '.pilotdeck/tool-results/session',
+  missingParents: true,
+  budget: { maxResultSizeChars: 1, maxResultSizeTokens: 1_000 },
+  steps: [{ input: {
+    toolResultMessage: user([toolResult('call-project', [text('project payload')])]),
+  } }],
 });
 
 // The native spill port uses `wx`: a resumed artifact keeps its old bytes,
