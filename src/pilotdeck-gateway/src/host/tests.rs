@@ -521,6 +521,7 @@ async fn zero_and_inconsistent_limits_are_rejected_before_spawn() {
         "max_module_calls",
         "max_buffered_bytes",
         "buffer_smaller_than_frame",
+        "execution_timeout_unrepresentable",
     ] {
         let mut bounded = limits();
         match field {
@@ -535,6 +536,11 @@ async fn zero_and_inconsistent_limits_are_rejected_before_spawn() {
             "max_module_calls" => bounded.max_module_calls = 0,
             "max_buffered_bytes" => bounded.max_buffered_bytes = 0,
             "buffer_smaller_than_frame" => bounded.max_buffered_bytes = bounded.max_frame_bytes - 1,
+            // The executable does not exist: a Protocol rejection proves the
+            // checked_add validation ran before spawn rather than surfacing Io.
+            "execution_timeout_unrepresentable" => {
+                bounded.execution_timeout = Some(Duration::MAX);
+            }
             _ => unreachable!(),
         }
         let error = HostClient::spawn(
@@ -546,10 +552,10 @@ async fn zero_and_inconsistent_limits_are_rejected_before_spawn() {
         .err()
         .expect("invalid limits must fail before spawn");
         assert_eq!(error.kind, HostErrorKind::Protocol, "{field}: {error}");
-        let reason = if field == "buffer_smaller_than_frame" {
-            "must be at least max_frame_bytes"
-        } else {
-            "must be positive"
+        let reason = match field {
+            "buffer_smaller_than_frame" => "must be at least max_frame_bytes",
+            "execution_timeout_unrepresentable" => "must be representable",
+            _ => "must be positive",
         };
         assert!(error.message.contains(reason), "{field}: {error}");
     }
@@ -681,6 +687,182 @@ async fn default_execution_timeout_is_unbounded_past_former_watchdog() {
     assert!(matches!(result, ExecuteResult::Terminal(_)));
     receipt.assert_pass("positive");
     println!("HOST_PASS default-execution-timeout unbounded past 301s virtual time");
+}
+
+#[tokio::test]
+async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
+    for (mode, accepted, stream, last_applied) in [
+        ("host-cancel-before-acceptance-hang", false, None, None),
+        (
+            "host-cancel-after-acceptance-hang",
+            true,
+            Some("stream"),
+            Some(0.0),
+        ),
+        (
+            "host-cancel-no-terminal-hang",
+            true,
+            Some("stream"),
+            Some(0.0),
+        ),
+    ] {
+        let (mut command, receipt) = peer(mode);
+        let limits = Limits::default();
+        let deadline = POST_CANCEL_EXIT_TIMEOUT;
+        let client = HostClient::spawn(&mut command, None, limits).await.unwrap();
+        let cancellation = Cancellation::default();
+        let handler = Handler::new(mode);
+        let clock = ManualClock::start();
+        let task = tokio::spawn(client.execute_cancellable(
+            request(),
+            handler.clone(),
+            cancellation.clone(),
+        ));
+        wait_for_event("fixture ready", || {
+            receipt.0.with_extension("ready").exists()
+        })
+        .await;
+        if accepted {
+            // The event is delivered only after acceptance (it carries streamId).
+            wait_for_event("first event applied", || {
+                handler.applied_events.load(Ordering::SeqCst) == 1
+            })
+            .await;
+        }
+        cancellation.cancel(Some("test_abort".into()));
+        // Let the execute loop observe cancellation and register its timer.
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !task.is_finished(),
+            "{mode}: returned before the post-cancel deadline"
+        );
+        // Well inside the 5 s TS close grace: a silent peer must not cut the
+        // wait short.
+        tokio::time::advance(deadline - Duration::from_millis(100)).await;
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !task.is_finished(),
+            "{mode}: returned at 4.9s, before POST_CANCEL_EXIT_TIMEOUT"
+        );
+        // 5 s + 1 ms: silence past the bound is the only case that times out.
+        tokio::time::advance(Duration::from_millis(101)).await;
+        drop(clock);
+        let error = timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap_or_else(|_| panic!("{mode}: cancellation waited past its bounded exit"))
+            .unwrap()
+            .expect_err(mode);
+        assert_eq!(error.kind, HostErrorKind::Timeout, "{mode}: {error}");
+        assert_eq!(error.accepted, accepted, "{mode}: {error}");
+        assert_eq!(
+            error.stream_id,
+            stream.map(JsString::from),
+            "{mode}: {error}"
+        );
+        assert_eq!(error.last_applied_sequence, last_applied, "{mode}: {error}");
+        assert_eq!(
+            handler.disposed.load(Ordering::SeqCst),
+            1,
+            "{mode}: cleanup did not run"
+        );
+        receipt.assert_pass(mode);
+        println!("HOST_CANCEL_DEADLINE_PASS {mode}: {error}");
+    }
+}
+
+#[tokio::test]
+async fn late_terminal_after_cancel_wins_over_post_cancel_deadline() {
+    let mode = "host-cancel-late-terminal";
+    let (mut command, receipt) = peer(mode);
+    let client = HostClient::spawn(&mut command, None, Limits::default())
+        .await
+        .unwrap();
+    let cancellation = Cancellation::default();
+    let handler = Handler::new(mode);
+    let clock = ManualClock::start();
+    let task =
+        tokio::spawn(client.execute_cancellable(request(), handler.clone(), cancellation.clone()));
+    wait_for_event("first event applied", || {
+        handler.applied_events.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    cancellation.cancel(Some("test_abort".into()));
+    // Let the execute loop observe cancellation and register its timer.
+    for _ in 0..100 {
+        tokio::task::yield_now().await;
+    }
+    // The peer holds its authoritative terminal for 3 virtual seconds. TS has
+    // no post-cancel timer, so this late terminal is legitimate; the 5 s bound
+    // must not turn it into Timeout.
+    tokio::time::advance(Duration::from_secs(3)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !task.is_finished(),
+        "{mode}: cancelled execute returned before the late terminal"
+    );
+    std::fs::write(receipt.0.with_extension("release"), b"release\n").unwrap();
+    // If the bound is too short, the cancelled execute returns Timeout before
+    // the peer's 3 s terminal can be applied. Poll briefly, then resume the
+    // clock (child shutdown needs it) and report the actual settle result
+    // instead of a bare watchdog.
+    let watchdog = std::time::Instant::now() + Duration::from_secs(5);
+    while handler.applied_events.load(Ordering::SeqCst) != 2 && std::time::Instant::now() < watchdog
+    {
+        tokio::task::yield_now().await;
+    }
+    drop(clock);
+    if handler.applied_events.load(Ordering::SeqCst) != 2 {
+        let outcome = timeout(Duration::from_secs(10), task)
+            .await
+            .expect("cancelled execute did not settle after the late terminal");
+        panic!(
+            "{mode}: cancelled execute settled as {outcome:?} instead of applying the 3 s terminal"
+        );
+    }
+    let result = timeout(Duration::from_secs(10), task)
+        .await
+        .expect("late terminal did not win over the post-cancel exit deadline")
+        .unwrap()
+        .expect(mode);
+    assert!(
+        matches!(result, ExecuteResult::Terminal(_)),
+        "{mode}: expected the authoritative terminal, got {result:?}"
+    );
+    assert_eq!(
+        handler.disposed.load(Ordering::SeqCst),
+        1,
+        "{mode}: cleanup did not run"
+    );
+    receipt.assert_pass(mode);
+    println!("HOST_PASS {mode}: terminal arriving 3s after cancel won inside the 5s bound");
+}
+
+#[test]
+fn post_cancel_exit_timeout_matches_ts_close_grace() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../tests/fixtures/host-cancel-timeout/oracle.json"
+    ));
+    let expected = oracle
+        .get("defaultKillTimeoutMs")
+        .and_then(JsValue::as_number)
+        .expect("oracle defaultKillTimeoutMs");
+    assert_eq!(
+        POST_CANCEL_EXIT_TIMEOUT.as_millis() as f64,
+        expected,
+        "POST_CANCEL_EXIT_TIMEOUT must equal TS's child-close grace"
+    );
+}
+
+#[test]
+#[ignore = "requires PDRS_BASELINE and baseline node_modules"]
+fn host_cancel_timeout_fixture_regenerates_identically_from_ts() {
+    crate::test_baseline::regenerates_identically("host-cancel-timeout");
 }
 
 #[test]

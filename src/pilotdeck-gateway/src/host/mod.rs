@@ -34,6 +34,17 @@
 //! long turn. Session hosts may still configure a bound. After final application
 //! it is replaced by `terminal_drain_timeout`; unfinished cooperative callbacks
 //! are then dropped.
+//! Cancellation is a protocol request, not a local deadline: TS only sets
+//! `cancelRequested` and sends the cancel frame, then keeps waiting for the peer
+//! (agentLoopSidecarClient.ts:931-958, 543-556); it never arms a post-cancel
+//! timer. A peer may stay connected without ever emitting a terminal, so this
+//! host still needs a bounded exit to run cleanup and close the child. That
+//! bound is the independent `POST_CANCEL_EXIT_TIMEOUT` (5 s), matching TS's
+//! child-close grace (`DEFAULT_KILL_TIMEOUT_MS`,
+//! stdioAgentLoopSidecarConnection.ts:10) instead of the shorter
+//! `close_timeout`: a shorter bound would discard late-but-valid terminals that
+//! TS would still accept. A valid terminal that arrives inside the bound still
+//! wins.
 //! Unix close/Drop kills the owned process group, including grandchildren that
 //! retain pipes. A subprocess that deliberately leaves that group is not owned.
 //! Abrupt host death that bypasses close/Drop has no descendant cleanup guarantee.
@@ -65,6 +76,20 @@ use std::{
 };
 use tokio::{process::Command, sync::watch, time::timeout};
 
+/// Default bound for child shutdown and disposer cleanup.
+const DEFAULT_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Grace allowed for the sidecar's authoritative terminal after this host has
+/// observed cancellation. TS's execute wait has no post-cancel timer
+/// (agentLoopSidecarClient.ts:931-958, 543-556), so it would accept a valid
+/// terminal indefinitely; Rust still needs a bounded exit to dispose and close
+/// the child. Take TS's own child-close grace
+/// (`DEFAULT_KILL_TIMEOUT_MS = 5_000`, stdioAgentLoopSidecarConnection.ts:10)
+/// rather than the shorter `close_timeout`: a shorter bound silently discards
+/// late-but-valid terminals that TS would accept, and dropping a legitimate
+/// result is not more safe. A terminal that arrives inside this bound wins.
+pub(super) const POST_CANCEL_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub handshake_timeout: Duration,
@@ -75,6 +100,8 @@ pub struct Limits {
     /// After a validated terminal is applied, allow callbacks this long to finish.
     pub terminal_drain_timeout: Duration,
     pub io_timeout: Duration,
+    /// Child shutdown and disposer cleanup. It does not bound the post-cancel
+    /// wait; that uses the independent `POST_CANCEL_EXIT_TIMEOUT` (5 s).
     pub close_timeout: Duration,
     pub queue_capacity: usize,
     pub max_frame_bytes: usize,
@@ -95,7 +122,7 @@ impl Default for Limits {
             execution_timeout: None,
             terminal_drain_timeout: Duration::from_millis(100),
             io_timeout: Duration::from_secs(5),
-            close_timeout: Duration::from_secs(1),
+            close_timeout: DEFAULT_CLOSE_TIMEOUT,
             queue_capacity: 256,
             max_frame_bytes: 16 * 1024 * 1024,
             max_stderr_bytes: 64 * 1024,
@@ -449,9 +476,13 @@ impl HostClient {
         self.execute_cancellable(request, handler, Cancellation::default())
             .await
     }
-    /// Cancellation is best-effort and never overrides a valid final. There is
-    /// no separate cancel timer in TS; a configured execution_timeout bounds the
-    /// entire wait, while the default (None) waits without a local deadline.
+    /// Cancellation is best-effort and never overrides a valid final. TS has no
+    /// separate cancel timer; a configured execution_timeout bounds the entire
+    /// wait, while the default (None) waits without a local execution deadline.
+    /// After cancellation is observed, the independent
+    /// `POST_CANCEL_EXIT_TIMEOUT` (5 s, TS's child-close grace) keeps the exit
+    /// and cleanup finite even if the peer never emits a terminal; a valid
+    /// terminal arriving inside that bound still wins.
     pub async fn execute_cancellable(
         mut self,
         request: ExecuteRequest,
