@@ -2247,6 +2247,57 @@ async fn stream_google_model(
     Ok(())
 }
 
+/// `complete(request, config, options)` — non-streaming HTTP path.
+/// `streamModel.ts:76`: sends `stream: false`, reads the full body, returns the
+/// parsed response object. Shares the retry policy with the streaming path.
+pub async fn complete_model(
+    transport: &dyn ModelHttpTransport,
+    request: &JsValue,
+    config: &JsValue,
+    options: &StreamOptions,
+) -> Result<JsValue, ModelStreamError> {
+    let mut current = request.clone();
+    put(&mut current, "stream", JsValue::Bool(false));
+    let (provider, _) = providers::validate_model_request(&current, config)?;
+    let (max_retries, _) = retry_decide(&provider, 0.0, None, 0.0);
+    let mut attempt = 0.0;
+    loop {
+        throw_if_aborted(options)?;
+        let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
+        let body = providers::build_model_request(&current, &provider_now, &model_now)?;
+        let response = match send_provider_request(transport, &provider, &body, options).await {
+            Ok(r) => r,
+            Err(error) => {
+                if attempt < max_retries && is_retryable_stream_error(&error) {
+                    let (_, delay_ms) = retry_decide(&provider, attempt, None, (options.random)());
+                    let _ = delay(delay_ms, options).await?;
+                    attempt += 1.0;
+                    continue;
+                }
+                return Err(error);
+            }
+        };
+        let status = response.status().as_u16();
+        let (mut body_stream, before_abort) = response.into_body();
+        let text = response_text(&mut body_stream, options, before_abort).await?;
+        if !(200..300).contains(&status) {
+            let raw = parse_json(&text).unwrap_or(JsValue::Null);
+            return Err(ModelStreamError::Provider(normalize_model_error(
+                &provider_id(&provider),
+                &protocol(&provider),
+                ErrorInput::Value(&raw),
+                Some(f64::from(status)),
+            )));
+        }
+        let raw = parse_json(&text).map_err(|_| {
+            ModelStreamError::thrown("SyntaxError", "complete(): response is not valid JSON")
+        })?;
+        // `parseModelResponse(provider.protocol, raw, provider.id)`: for
+        // non-Google providers the raw JSON body is the response itself.
+        return Ok(raw);
+    }
+}
+
 /// `streamModel(request, config, options)` for the HTTP protocols.
 pub async fn stream_model(
     transport: &dyn ModelHttpTransport,

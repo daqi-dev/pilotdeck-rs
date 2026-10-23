@@ -465,6 +465,29 @@ impl RouterModelInvocation for NativeModelInvocationProvider {
             .cloned()
             .unwrap_or_default()
     }
+    fn supports_complete(&self) -> bool {
+        true
+    }
+    fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
+        let transport = self.transport.clone();
+        let config = self.config.clone();
+        Box::pin(async move {
+            let options = StreamOptions {
+                abort,
+                ..StreamOptions::default()
+            };
+            http::complete_model(transport.as_ref(), &request, &config, &options)
+                .await
+                .map_err(|e| match e {
+                    ModelStreamError::Request { code, message, .. } => {
+                        crate::runtime::model::router::RouterInvokeError::request(code, message)
+                    }
+                    other => {
+                        crate::runtime::model::router::RouterInvokeError::other(other.message())
+                    }
+                })
+        })
+    }
     fn stream<'a>(
         &'a self,
         request: &'a JsValue,
