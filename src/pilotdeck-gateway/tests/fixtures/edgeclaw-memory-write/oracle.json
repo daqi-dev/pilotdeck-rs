@@ -1,0 +1,50 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts": "c64b368fa7fa329cbecb475b22972860bbc133444606017132c6edbf27ed3ad6",
+    "src/context/memory/edgeclaw-memory-core/src/core/general-projects.ts": "3a5512939027cc32efde9cd218e4bb400300a28fda6f9ac07391d75b56244e40",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/id.ts": "5d8f83f1a5d56b696829ffe8a26dff2505b6bb6317acd4e4ca9772219e0bd1f9"
+  },
+  "missingMessage": "Memory entry not found: missing",
+  "writes": [
+    {
+      "relativePath": "Project/nested/note.md",
+      "frontmatter": {
+        "name": "Nested",
+        "description": "UTF-8 中文",
+        "type": "project",
+        "scope": "project",
+        "updatedAt": "2026-10-22T00:00:00.000Z"
+      },
+      "body": "first long body 中文 😀\nfirst long body 中文 😀\nfirst long body 中文 😀\nfirst long body 中文 😀\nfirst long body 中文 😀\n",
+      "bytes": "---\nname: Nested\ndescription: UTF-8 中文\ntype: project\nscope: project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\nfirst long body 中文 😀\nfirst long body 中文 😀\nfirst long body 中文 😀\nfirst long body 中文 😀\nfirst long body 中文 😀\n"
+    },
+    {
+      "relativePath": "Project/nested/note.md",
+      "frontmatter": {
+        "name": "Nested",
+        "description": "UTF-8 中文",
+        "type": "project",
+        "scope": "project",
+        "updatedAt": "2026-10-22T00:00:00.000Z"
+      },
+      "body": "short",
+      "bytes": "---\nname: Nested\ndescription: UTF-8 中文\ntype: project\nscope: project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\nshort\n"
+    },
+    {
+      "relativePath": "Project/nested/alias.md",
+      "frontmatter": {
+        "name": "Nested",
+        "description": "UTF-8 中文",
+        "type": "project",
+        "scope": "project",
+        "updatedAt": "2026-10-22T00:00:00.000Z"
+      },
+      "body": "through existing in-root link",
+      "bytes": "---\nname: Nested\ndescription: UTF-8 中文\ntype: project\nscope: project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\nthrough existing in-root link\n"
+    }
+  ],
+  "afterUnlink": "---\nname: Nested\ndescription: UTF-8 中文\ntype: project\nscope: project\nupdated_at: 2026-10-22T00:00:00.000Z\n---\nthrough existing in-root link\n",
+  "clearSentinel": "outside sentinel"
+}

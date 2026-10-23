@@ -663,6 +663,29 @@ fn real_ts_generator_is_reproducible() {
         ORACLE.as_bytes()
     );
 }
+#[test]
+#[ignore = "requires fixed TS baseline"]
+fn real_ts_write_fixture_is_reproducible() {
+    let baseline = PathBuf::from(std::env::var_os("PDRS_BASELINE").expect("PDRS_BASELINE"));
+    let oracle = include_str!("fixtures/edgeclaw-memory-write/oracle.json");
+    let _ = baseline::oracle(oracle);
+    let scratch = Scratch::new();
+    let mut command = Command::new("node");
+    command
+        .arg("--import")
+        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
+        .arg(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/edgeclaw-memory-write/generate.mts"),
+        )
+        .arg(&scratch.0)
+        .env("PDRS_BASELINE", baseline);
+    run_node(&mut command, &scratch.0);
+    assert_eq!(
+        fs::read(scratch.0.join("oracle.json")).unwrap(),
+        oracle.as_bytes()
+    );
+}
 
 fn run_node(command: &mut Command, scratch: &Path) {
     let stdout = scratch.join("node.stdout");

@@ -856,8 +856,15 @@ fn ensure_directory(
             hook(target);
         }
     });
-    crate::project_files::create_directories_beneath(&project, &directory)
-        .map_err(|error| io_error(error, "mkdir", Some(&path_text(target))))?;
+    crate::project_files::create_directories_beneath(&project, &directory).map_err(|error| {
+        // A refused link in the mkdir walk keeps the same public diagnostic as
+        // the pre-existing-link case (see `spill_open_error` for the open leg).
+        #[cfg(unix)]
+        if crate::project_files::nofollow_loop(&error) {
+            return permission_denied("mkdir", target);
+        }
+        io_error(error, "mkdir", Some(&path_text(target)))
+    })?;
     Ok((project, directory))
 }
 
