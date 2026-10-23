@@ -646,13 +646,14 @@ async fn unregister_after_replace_removes_current_generation_matches_ts() {
     let id = "a".into();
     let removing = registry.unregister(&id);
     tokio::pin!(removing);
+    // Poll through the synchronous removal before checking the drain wait.
+    // The held lease prevents disposal, independently of scheduler timing.
+    let first_poll = std::future::poll_fn(|cx| Poll::Ready(removing.as_mut().poll(cx))).await;
+    assert!(registry.get_provider_generation(&id).is_undefined());
     assert!(
-        tokio::time::timeout(Duration::from_millis(20), removing.as_mut())
-            .await
-            .is_err(),
+        first_poll.is_pending(),
         "unregister must wait for the held lease to drain"
     );
-    assert!(registry.get_provider_generation(&id).is_undefined());
     push(
         &trace,
         format!(
@@ -666,7 +667,10 @@ async fn unregister_after_replace_removes_current_generation_matches_ts() {
     );
     registry.register(make("later")).unwrap();
     drop(held_current);
-    let removed = bounded(removing).await.unwrap();
+    let removed = tokio::time::timeout(Duration::from_secs(5), removing)
+        .await
+        .expect("unregister must complete after the held lease drains")
+        .unwrap();
     push(&trace, format!("unregister:{removed}"));
     push(
         &trace,
