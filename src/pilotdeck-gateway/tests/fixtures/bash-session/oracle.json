@@ -1,0 +1,43 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/runtime/commandShell.ts": "b350a9cba14836c78ea4773758ec34d237c7abee4a6df1c207da6f8f92e79918",
+    "src/tool/builtin/bash/commandRunner.ts": "22f72ae28902b28f7b13675c26a7e6863eb39be4c10949ae224e1a7d6794f4cd"
+  },
+  "platform": "darwin",
+  "parentDevTty": "open",
+  "cases": [
+    {
+      "name": "session",
+      "command": "if /usr/bin/python3 -c \"import os,sys; sys.exit(0 if os.getsid(0)==int(sys.argv[1]) else 1)\" $$; then echo session=own; else echo session=inherited; fi",
+      "exitCode": 0,
+      "stdout": "session=own\n",
+      "stderr": "",
+      "timedOut": false
+    },
+    {
+      "name": "pgroup",
+      "command": "if /usr/bin/python3 -c \"import os,sys; sys.exit(0 if os.getpgrp()==int(sys.argv[1]) else 1)\" $$; then echo pgroup=own; else echo pgroup=inherited; fi",
+      "exitCode": 0,
+      "stdout": "pgroup=own\n",
+      "stderr": "",
+      "timedOut": false
+    },
+    {
+      "name": "ctty",
+      "command": "t=$(ps -o tty= -p $$ | tr -d ' '); if [ \"$t\" = \"??\" ]; then echo ctty=none; else echo ctty=present; fi",
+      "exitCode": 0,
+      "stdout": "ctty=none\n",
+      "stderr": "",
+      "timedOut": false
+    },
+    {
+      "name": "devtty",
+      "command": "/usr/bin/python3 -c \"import os\ntry:\n    os.open('/dev/tty', os.O_RDWR)\n    print('devtty=open')\nexcept OSError as e:\n    print('devtty=errno%d' % e.errno)\"",
+      "exitCode": 0,
+      "stdout": "devtty=errno6\n",
+      "stderr": "",
+      "timedOut": false
+    }
+  ]
+}

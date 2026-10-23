@@ -1,4 +1,6 @@
 //! The #386 human-approved exception: reset inherited child signals before exec.
+//! The #552 human-approved addition: libuv's `detached` `setsid()` in the same
+//! fork-to-exec window, for the bash runner (A6.5-BASH-OS-001 setsid half).
 #![cfg(unix)]
 
 use std::{io, os::unix::process::CommandExt, process::Command};
@@ -49,6 +51,33 @@ pub fn install_child_signal_reset(command: &mut Command) {
             }
             // Unblock only after every disposition has been reset.
             if libc::sigprocmask(libc::SIG_SETMASK, &action.sa_mask, std::ptr::null_mut()) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// `detached: true` (#552): libuv's child init calls `setsid()`, so the
+/// child leads a fresh session — its own process group with no controlling
+/// terminal, so commands cannot read the gateway's terminal (`/dev/tty`
+/// opens fail ENXIO). Install before `install_child_signal_reset`, which
+/// stays the last hook per its own contract; the run order relative to the
+/// resets is immaterial (the steps are independent, unlike in libuv where
+/// the resets come first). Only the bash runner installs this: other spawn
+/// sites mirror TS spawns that are not detached. Callers that use it must
+/// not also request `process_group(0)`: the forked child would already be
+/// a group leader and `setsid` would fail with EPERM.
+#[allow(unsafe_code)]
+pub fn install_child_detach_session(command: &mut Command) {
+    // SAFETY: pre_exec runs only in the single-threaded child after fork. The
+    // closure captures nothing and calls only setsid, an async-signal-safe
+    // syscall with no locks, environment access, allocation, formatting, or
+    // destructors. Its error path reports the child's errno through
+    // last_os_error, which constructs an inline OS error without allocating.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())

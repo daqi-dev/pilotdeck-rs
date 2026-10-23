@@ -11,9 +11,9 @@
 //! Known, documented differences from Node (unapproved):
 //! specs/gateway-parity/accepted-diffs.md A6.5-BASH-OS-001 and
 //! A6.5-BASH-WNOWAIT-001 (only the fallback/early-shutdown paths differ).
-//! - `detached` calls `setsid()`; here the child gets a new process group via
-//!   `process_group(0)` but stays in the parent's session. The sole approved
-//!   `pre_exec` hook only resets child signals.
+//! - `detached` runs `setsid()` in the child (the #552 half of
+//!   A6.5-BASH-OS-001): the shell leads a new session without a controlling
+//!   terminal, like the baseline; group signalling is unchanged.
 //! - Node's stdio pipes are UNIX socket pairs; these are `pipe(2)` FIFOs.
 //! - The baseline's SIGKILL follow-up fires 3 s after termination even when the
 //!   result has already settled. That one bounded timer is the only work that
@@ -380,7 +380,6 @@ impl PreparedSpawn {
         process
             .args(self.args.iter().map(lossy))
             .current_dir(os_path(&self.cwd))
-            .process_group(0)
             .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -390,8 +389,18 @@ impl PreparedSpawn {
                 process.env(lossy(key), lossy(value));
             }
         }
+        // `detached: !isWindows` (#552): the child calls `setsid()` between
+        // fork and exec, leading a new session — so its own process group,
+        // which replaces `process_group(0)` — with no controlling terminal.
+        // The signal reset stays the last installed hook, per its contract.
+        #[cfg(unix)]
+        pilotdeck_child_signals::install_child_detach_session(process.as_std_mut());
         #[cfg(unix)]
         pilotdeck_child_signals::install_child_signal_reset(process.as_std_mut());
+        // Non-Unix keeps the pre-#552 shape: TS detaches only off Windows,
+        // and the existing group here is std's `process_group(0)`.
+        #[cfg(not(unix))]
+        process.process_group(0);
         process
     }
 }

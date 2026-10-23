@@ -72,9 +72,10 @@ TS 的 `stdout += text` 在 data 监听里抛出未捕获的 RangeError，CLI �
 ## 已知边界
 
 - **Windows**：cmd/pwsh/Git Bash 选择与 GB18030 解码未移植。
-- **会话**：Node `detached` 调 `setsid()`；gateway 继承 workspace 的 `unsafe_code = "forbid"`；子进程信号重置例外仅在两文件成员 `pilotdeck-child-signals` 中，由其唯一函数在 fork 后、exec 前重置处置和屏蔽字。子进程用 `process_group(0)` 建新进程组但仍在父会话。
-  终止语义（信号发给整组）一致。不同的是控制终端：网关自身有控制终端时，子进程打开 `/dev/tty` 会成功
-  （TS 的 `setsid` 子进程得到 ENXIO），`sudo`/`ssh` 之类可能在用户终端提示乃至挂到超时。夹具不覆盖。
+- **会话**：Node `detached` 调 `setsid()`；#552 起 gateway 对 bash runner 子进程同样在 fork 后、exec 前 `setsid()`（人批 2026-10-23
+  例外仍只在两文件成员 `pilotdeck-child-signals`：信号重置与 setsid 两个已批准 hook，由 `unsafe_boundary` 逐字节 pin）。
+  子进程即新会话首进程（新进程组，替代 `process_group(0)`）、无控制终端，打开 `/dev/tty` 得 ENXIO，与 TS 一致；判据与金样在
+  `fixtures/bash-session/`。终止语义（信号发给整组）不变。
 - **3 s SIGKILL**：与 TS 同，返回后仍按时发出。实现是唯一一个比结果活得久的有界任务（3 s 内），只持有
   未回收的组长僵尸和组守卫；运行时被丢弃时守卫立即杀组。这是「工具 future 不留分离任务」端口约定的一处
   有意例外（否则 `deferred-kill` 与 TS 不同），例外已登记在 `ExecutableTool` 约定注释处。平台无 WNOWAIT
