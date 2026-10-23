@@ -1,6 +1,8 @@
 //! Owned process-group helpers shared by the sidecar connection and the hook
-//! command executor. Both spawn a leader in its own group (`process_group(0)`)
-//! and must not lose the group while a descendant still holds a pipe.
+//! command executor. Both spawn a leader in its own group — the sidecar via
+//! `process_group(0)`, the hook executor via the detached `setsid` (#552),
+//! whose session leader is also the group leader — and must not lose the
+//! group while a descendant still holds a pipe.
 //!
 //! Cleanup policy belongs to the caller, not to this module: the sidecar
 //! connection owns every descendant and clears the group after a natural exit,

@@ -1,6 +1,8 @@
 //! The #386 human-approved exception: reset inherited child signals before exec.
 //! The #552 human-approved addition: libuv's `detached` `setsid()` in the same
-//! fork-to-exec window, for the bash runner (A6.5-BASH-OS-001 setsid half).
+//! fork-to-exec window, for every spawn whose TS counterpart is detached (the
+//! bash runner, background tasks, the ripgrep engine spawn and command hooks;
+//! A6.5-BASH-OS-001 setsid half).
 #![cfg(unix)]
 
 use std::{io, os::unix::process::CommandExt, process::Command};
@@ -64,10 +66,12 @@ pub fn install_child_signal_reset(command: &mut Command) {
 /// opens fail ENXIO). Install before `install_child_signal_reset`, which
 /// stays the last hook per its own contract; the run order relative to the
 /// resets is immaterial (the steps are independent, unlike in libuv where
-/// the resets come first). Only the bash runner installs this: other spawn
-/// sites mirror TS spawns that are not detached. Callers that use it must
-/// not also request `process_group(0)`: the forked child would already be
-/// a group leader and `setsid` would fail with EPERM.
+/// the resets come first). Installers are the spawns whose TS counterparts
+/// are detached: the bash runner (with its shared background-task spawn),
+/// the ripgrep engine spawn and command hooks. The sidecar and MCP stdio
+/// spawns mirror TS spawns that are not detached. Callers that use this
+/// must not also request `process_group(0)`: the forked child would already
+/// be a group leader and `setsid` would fail with EPERM.
 #[allow(unsafe_code)]
 pub fn install_child_detach_session(command: &mut Command) {
     // SAFETY: pre_exec runs only in the single-threaded child after fork. The

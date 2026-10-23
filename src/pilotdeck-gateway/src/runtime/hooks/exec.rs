@@ -1,8 +1,9 @@
 //! Hook executors and `parseHookOutput` (TS `extension/hooks/execution/*`).
 //!
 //! Command hooks run the same shell shape as TS (`/bin/bash -c` on POSIX) in a
-//! new process group, so timeout/abort cleanup reaps descendants rather than
-//! only the shell. stdout/stderr are capped per stream at V8's
+//! new session (the detached shell `commandRunner.ts` spawns), so
+//! timeout/abort cleanup reaps descendants rather than only the shell.
+//! stdout/stderr are capped per stream at V8's
 //! `MAX_STRING_LENGTH` UTF-16 units, the same bound as the bash tool; a chunk
 //! that would not fit reports `Invalid string length`, the message of the
 //! `RangeError` TS's `stdout += text` throws in the shell runner's data
@@ -630,8 +631,14 @@ async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellRe
         let value = js_string(value).map_err(|error| JsString::from(error_message(error)))?;
         command.env(key, String::from_utf16_lossy(value.units()));
     }
+    // TS runs command hooks through `NodeShellCommandRunner` (the hook
+    // executor's `ShellPort` -> `SubprocessPort.execute` ->
+    // `commandRunner.ts` `spawn(..., { detached: !isWindows })`), so the
+    // shell leads a new session (#552: `setsid()` between fork and exec —
+    // its own process group, which replaces `process_group(0)`, with no
+    // controlling terminal) and gets libuv's child-init signal reset.
     #[cfg(unix)]
-    command.process_group(0);
+    pilotdeck_child_signals::install_child_detach_session(command.as_std_mut());
     #[cfg(unix)]
     pilotdeck_child_signals::install_child_signal_reset(command.as_std_mut());
     let mut child = command

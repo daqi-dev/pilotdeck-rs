@@ -1,0 +1,44 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/runtime/commandShell.ts": "b350a9cba14836c78ea4773758ec34d237c7abee4a6df1c207da6f8f92e79918",
+    "src/tool/builtin/bash/commandRunner.ts": "22f72ae28902b28f7b13675c26a7e6863eb39be4c10949ae224e1a7d6794f4cd",
+    "src/tool/execution-world/SubprocessPort.ts": "741522f149f6e01232777fbf5bf8269bff60886c46f81457dae0b9d6c7586d74"
+  },
+  "platform": "darwin",
+  "parentDevTty": "open",
+  "cases": [
+    {
+      "name": "session",
+      "script": "#!/bin/sh\nif /usr/bin/python3 -c \"import os,sys; sys.exit(0 if os.getsid(0)==int(sys.argv[1]) else 1)\" $$; then echo session=own; else echo session=inherited; fi\n",
+      "exitCode": 0,
+      "stdout": "session=own\n",
+      "stderr": "",
+      "timedOut": false
+    },
+    {
+      "name": "pgroup",
+      "script": "#!/bin/sh\nif /usr/bin/python3 -c \"import os,sys; sys.exit(0 if os.getpgrp()==int(sys.argv[1]) else 1)\" $$; then echo pgroup=own; else echo pgroup=inherited; fi\n",
+      "exitCode": 0,
+      "stdout": "pgroup=own\n",
+      "stderr": "",
+      "timedOut": false
+    },
+    {
+      "name": "ctty",
+      "script": "#!/bin/sh\nt=$(ps -o tty= -p $$ | tr -d ' '); if [ \"$t\" = \"??\" ]; then echo ctty=none; else echo ctty=present; fi\n",
+      "exitCode": 0,
+      "stdout": "ctty=none\n",
+      "stderr": "",
+      "timedOut": false
+    },
+    {
+      "name": "devtty",
+      "script": "#!/bin/sh\n/usr/bin/python3 -c \"import os\ntry:\n    os.open('/dev/tty', os.O_RDWR)\n    print('devtty=open')\nexcept OSError as e:\n    print('devtty=errno%d' % e.errno)\"\n",
+      "exitCode": 0,
+      "stdout": "devtty=errno6\n",
+      "stderr": "",
+      "timedOut": false
+    }
+  ]
+}
