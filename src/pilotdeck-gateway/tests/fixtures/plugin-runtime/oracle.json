@@ -657,8 +657,8 @@
     "src/web/client/protocol.ts": "d36eb220a30c04a58a77116a6ba0f1b54d250b5cf204b155ed065c4a52ef38f9",
     "src/web/client/webMessage.ts": "ada604e1438867fc15907e2dcd45daf3339c09c31e07d0cf595cd30fa9eb54a4"
   },
-  "count": 24,
-  "steps": 246,
+  "count": 25,
+  "steps": 259,
   "scenarios": [
     {
       "id": "empty-directories",
@@ -5446,6 +5446,206 @@
         {
           "result": {
             "generation": 5,
+            "lifecycleState": "disposed",
+            "snapshot": [],
+            "view": [],
+            "commands": [],
+            "skills": [],
+            "mcpServers": {},
+            "lspServers": {},
+            "mcpInstructions": []
+          },
+          "calls": []
+        }
+      ],
+      "teardown": []
+    },
+    {
+      "id": "dispose-sync-throw-with-retired-peer",
+      "builtins": [
+        {
+          "name": "panic",
+          "dir": "builtin/panic",
+          "dispose": "sync dispose failed",
+          "throwSync": true
+        },
+        {
+          "name": "other",
+          "dir": "builtin/other",
+          "dispose": "ok"
+        }
+      ],
+      "enabled": {},
+      "builtinSkills": false,
+      "steps": [
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "acquire",
+          "kind": "catalog",
+          "id": "g1"
+        },
+        {
+          "op": "write",
+          "file": "builtin/panic/plugin.json",
+          "text": "{\"name\":\"panic\"}"
+        },
+        {
+          "op": "write",
+          "file": "builtin/other/plugin.json",
+          "text": "{\"name\":\"other\"}"
+        },
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "start",
+          "what": "dispose",
+          "slot": "d"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "pending",
+          "slot": "d"
+        },
+        {
+          "op": "start",
+          "what": "release",
+          "id": "g1",
+          "slot": "r"
+        },
+        {
+          "op": "await",
+          "slot": "d"
+        },
+        {
+          "op": "await",
+          "slot": "r"
+        },
+        {
+          "op": "calls"
+        },
+        {
+          "op": "state"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "generation": 1,
+            "previous": [],
+            "next": [
+              "panic@builtin:<ROOT>/builtin/panic",
+              "other@builtin:<ROOT>/builtin/other"
+            ],
+            "added": [
+              "panic@builtin:<ROOT>/builtin/panic",
+              "other@builtin:<ROOT>/builtin/other"
+            ],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 1,
+            "frozen": true,
+            "contributions": {
+              "generation": 1,
+              "commands": []
+            }
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 2,
+            "previous": [
+              "panic@builtin:<ROOT>/builtin/panic",
+              "other@builtin:<ROOT>/builtin/other"
+            ],
+            "next": [
+              "panic@builtin:<ROOT>/builtin/panic",
+              "other@builtin:<ROOT>/builtin/other"
+            ],
+            "added": [],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": true,
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "error": {
+            "name": "AggregateError",
+            "message": "Failed to dispose plugins.",
+            "errors": [
+              {
+                "name": "Error",
+                "message": "sync dispose failed"
+              },
+              {
+                "name": "Error",
+                "message": "sync dispose failed"
+              }
+            ]
+          },
+          "calls": [
+            {
+              "event": "dispose",
+              "plugin": "panic"
+            },
+            {
+              "event": "dispose",
+              "plugin": "other"
+            }
+          ]
+        },
+        {
+          "error": {
+            "name": "Error",
+            "message": "sync dispose failed"
+          },
+          "calls": []
+        },
+        {
+          "result": [
+            {
+              "event": "dispose",
+              "plugin": "panic"
+            },
+            {
+              "event": "dispose",
+              "plugin": "other"
+            }
+          ],
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 2,
             "lifecycleState": "disposed",
             "snapshot": [],
             "view": [],
