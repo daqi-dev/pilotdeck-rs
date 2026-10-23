@@ -1255,6 +1255,7 @@ async fn replays_ts_project_provider() {
                 project_root: project.to_string_lossy().into_owned(),
                 pilot_home: home.to_string_lossy().into_owned(),
                 create_runtime: Some(factory),
+                proxy: None,
                 on_diagnostic: Some(Arc::new(move |message, error| {
                     let mut fields = vec![("message", s(&message))];
                     if let Some(error) = error {
@@ -1383,6 +1384,7 @@ fn race_provider(
         project_root: project.to_string_lossy().into_owned(),
         pilot_home: home.to_string_lossy().into_owned(),
         create_runtime: Some(factory),
+        proxy: None,
         on_diagnostic: None,
         environment: Arc::new(FixedEnvironment),
         builtin_paths: builtin_paths(),

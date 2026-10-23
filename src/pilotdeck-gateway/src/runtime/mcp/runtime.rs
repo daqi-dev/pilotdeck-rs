@@ -9,6 +9,7 @@
 
 use super::client::{McpCallOptions, McpClient, McpClientError, McpClientOptions, McpErrorCode};
 use super::protocol::{McpServerSpec, McpStatus, McpToolSpec, McpTransportSpec};
+use crate::runtime::model::http::ProxySettings;
 use crate::runtime::project::RuntimeError;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -93,7 +94,22 @@ pub type McpRuntimeFactory =
 
 /// `createNativeMcpRuntime`.
 pub fn native_mcp_runtime_factory() -> McpRuntimeFactory {
-    Arc::new(|servers| Arc::new(McpRuntime::new(servers, McpRuntimeOptions::default())))
+    native_mcp_runtime_factory_with_proxy(None)
+}
+
+/// `createNativeMcpRuntime` with the `pilotdeck.yaml` proxy source captured
+/// for every MCP client it creates. `None` keeps the env-only source.
+pub fn native_mcp_runtime_factory_with_proxy(proxy: Option<ProxySettings>) -> McpRuntimeFactory {
+    Arc::new(move |servers| {
+        let options = McpRuntimeOptions {
+            client_options: McpClientOptions {
+                proxy: proxy.clone(),
+                ..McpClientOptions::default()
+            },
+            ..McpRuntimeOptions::default()
+        };
+        Arc::new(McpRuntime::new(servers, options))
+    })
 }
 
 /// `McpRuntimeOptions`.

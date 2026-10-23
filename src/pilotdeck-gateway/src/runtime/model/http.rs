@@ -10,18 +10,30 @@
 //!
 //! HTTP redirects follow undici through `crate::fetch_redirect::follow`
 //! (#360-1), including the Google SDK transport. Not ported here: invocation
-//! audit staging (`options.invocation`, A6.4-pr10), `PILOTDECK_DUMP_REQUEST` and the
-//! proxy/global dispatcher.
+//! audit staging (`options.invocation`, A6.4-pr10) and `PILOTDECK_DUMP_REQUEST`.
+//! The outgoing HTTP proxy (`cli/proxy.ts`) is implemented here and wired into
+//! MCP's `streamable_http` / `sse` transports only; model and hook call sites
+//! still use [`https_connector`] and therefore stay direct. MCP clients pass
+//! the `pilotdeck.yaml` `proxy` source through [`ProxySettings`]; `None`
+//! resolves the environment exactly as before.
 #![allow(clippy::result_large_err)]
 
+use base64::Engine as _;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::{Request, Response};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
-use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use sha2::{Digest, Sha256};
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::count_body::{field, is, put, text as header_text};
 use super::providers::{self, StreamState};
@@ -309,6 +321,562 @@ where
             }
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Outgoing HTTP proxy (TS `src/cli/proxy.ts`)
+//
+// The baseline installs an undici `EnvHttpProxyAgent` as the process-wide
+// dispatcher at CLI startup, so every `fetch` (model, hook, MCP) uses it. This
+// port keeps the agent semantics but exposes them as an opt-in connector: MCP
+// `streamable_http` / `sse` use [`proxy_https_connector`], model and hook
+// transports keep calling [`https_connector`] and stay direct until a separate
+// decision wires them.
+//
+// Sources and priority copied from `src/cli/proxy.ts:20-31` and
+// `pilotdeck.ts:28,48-51,150`:
+// - URL: `PILOTDECK_PROXY > https_proxy > HTTPS_PROXY > http_proxy >
+//   HTTP_PROXY`; at startup an env URL wins over `proxy.url`, on hot reload
+//   `proxy.url` wins. Empty strings are falsy.
+// - noProxy: `no_proxy || NO_PROXY`; the config `noProxy` is appended only on
+//   hot reload (`pilotdeck.ts:150`), not by startup's
+//   `installGlobalProxy(config.url)`. `buildNoProxy` (`proxy.ts:159-166`) always appends
+//   `127.0.0.1` and `localhost`, so loopback MCP endpoints never use a proxy.
+//   Entries split on commas or whitespace, an optional `*.`/`.` prefix is
+//   stripped, and an entry matches its exact host or a `.<entry>` subdomain,
+//   optionally pinned to a port
+//   (`node_modules/undici/lib/dispatcher/env-http-proxy-agent.js:82-140`).
+//
+// Only `http:` proxies are tunnelled (the required CONNECT path); `https:` and
+// `socks5:`/`socks:` proxy URLs are supported by undici 8.3 but not by this
+// connector and fall back to a direct connection, like an unparsable URL does
+// in `installGlobalProxy`. See RESULT for the six-field candidate.
+//
+// Every proxied request, including plain `http:` targets, is sent through
+// `CONNECT` because undici's ProxyAgent defaults to `proxyTunnel: true`.
+// Proxy credentials come from the URL userinfo and become
+// `Proxy-Authorization: Basic base64(decodeURIComponent(user):password)`.
+
+/// A rejected CONNECT, shaped like the undici cause chain the TS transport
+/// flattens (`fetch failed: <cause>` in the legacy SSE rejection).
+#[derive(Debug)]
+pub(crate) struct ProxyError {
+    pub(crate) cause: String,
+}
+impl ProxyError {
+    fn new(cause: String) -> Self {
+        Self { cause }
+    }
+}
+impl std::fmt::Display for ProxyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.cause)
+    }
+}
+impl std::error::Error for ProxyError {}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NoProxyEntry {
+    hostname: String,
+    port: u32,
+}
+
+/// Proxy sources from `pilotdeck.yaml` (`proxy` in `src/pilot/cli/config`).
+///
+/// Mirrors `parseProxyConfig` (`src/pilot/config/loadPilotConfig.ts:856-911`):
+/// a bare string is a URL, an object needs a non-empty `url`, and `noProxy`
+/// is kept only when non-empty. `mode` selects the TS install path:
+/// [`ProxyInstallMode::Startup`] is `installGlobalProxy` from `pilotdeck.ts:48`
+/// (env URL wins, config is the fallback) and [`ProxyInstallMode::Reload`] is
+/// `reinstallGlobalProxy` from `pilotdeck.ts:150` (config URL wins and its
+/// `noProxy` is appended to `buildNoProxy`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProxySettings {
+    pub url: String,
+    pub no_proxy: Option<String>,
+    pub mode: ProxyInstallMode,
+}
+
+/// Which TS install path the config source came from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProxyInstallMode {
+    /// `installGlobalProxy(config.url)` during `server` startup.
+    #[default]
+    Startup,
+    /// `reinstallGlobalProxy(config.url, config.noProxy)` on config change.
+    Reload,
+}
+
+impl ProxySettings {
+    /// Parse a `proxy` config value (string or `{url, noProxy}`). Empty URLs
+    /// are absent, exactly like `parseProxyConfig` and the `if
+    /// (snapshot.config.proxy?.url)` guard in `pilotdeck.ts:48`.
+    pub fn from_config(value: &JsValue) -> Option<Self> {
+        if let Some(url) = value.as_string() {
+            let url = url.to_utf8().ok()?;
+            return (!url.is_empty()).then(|| Self {
+                url,
+                ..Self::default()
+            });
+        }
+        let object = value.as_object()?;
+        let url = object.get("url")?.as_string()?.to_utf8().ok()?;
+        if url.is_empty() {
+            return None;
+        }
+        let no_proxy = object
+            .get("noProxy")
+            .and_then(|value| value.as_string())
+            .and_then(|value| value.to_utf8().ok())
+            .filter(|value| !value.is_empty());
+        Some(Self {
+            url,
+            no_proxy,
+            mode: ProxyInstallMode::Startup,
+        })
+    }
+}
+
+/// `||` truthiness for a config/env string: `""` is absent.
+fn non_empty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_owned())
+}
+fn non_empty_opt(value: Option<&str>) -> Option<String> {
+    value.and_then(non_empty)
+}
+
+/// The active proxy (undici `EnvHttpProxyAgent` + `buildNoProxy`).
+#[derive(Clone, Debug)]
+pub(crate) struct ProxyConfig {
+    proxy: url::Url,
+    /// The joined value the baseline logs and matches `"*"` against.
+    no_proxy: String,
+    entries: Vec<NoProxyEntry>,
+}
+impl ProxyConfig {
+    /// Testable seam over the same lookup order, so env precedence is pinned
+    /// without mutating the process environment.
+    #[cfg(test)]
+    pub(crate) fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Option<Self> {
+        Self::from_settings_lookup(None, lookup)
+    }
+
+    /// Resolve the config source against the env source. `None` or
+    /// [`ProxyInstallMode::Startup`] keeps the env URL ahead of config and
+    /// ignores `noProxy`; [`ProxyInstallMode::Reload`] is the TS hot-reload
+    /// path where the config URL and `noProxy` replace the env ones.
+    pub(crate) fn from_settings(settings: Option<&ProxySettings>) -> Option<Self> {
+        Self::from_settings_lookup(settings, |key| std::env::var(key).ok())
+    }
+
+    fn from_settings_lookup(
+        settings: Option<&ProxySettings>,
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Option<Self> {
+        let env_url = [
+            "PILOTDECK_PROXY",
+            "https_proxy",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "HTTP_PROXY",
+        ]
+        .into_iter()
+        .find_map(|key| lookup(key).filter(|value| !value.is_empty()));
+        let (proxy_url, extra_no_proxy) = match settings {
+            None => (env_url?, None),
+            Some(settings) if settings.mode == ProxyInstallMode::Reload => {
+                // `reinstallGlobalProxy`: config URL is authoritative and its
+                // noProxy is passed as `extraNoProxy`.
+                let url = non_empty(&settings.url)?;
+                (url, non_empty_opt(settings.no_proxy.as_deref()))
+            }
+            Some(settings) => match env_url {
+                // `installGlobalProxy`: an env-sourced dispatcher wins over
+                // the first config install (`proxy.ts:64-69`).
+                Some(url) => (url, None),
+                None => {
+                    // `installGlobalProxy(config.url)` only passes the URL;
+                    // `config.noProxy` is first honored on the reload path.
+                    let url = non_empty(&settings.url)?;
+                    (url, None)
+                }
+            },
+        };
+        let user_no_proxy = lookup("no_proxy")
+            .filter(|value| !value.is_empty())
+            .or_else(|| lookup("NO_PROXY").filter(|value| !value.is_empty()))
+            .unwrap_or_default();
+        Self::new_with_extra(&proxy_url, &user_no_proxy, extra_no_proxy.as_deref())
+    }
+
+    #[cfg(test)]
+    fn new(proxy_url: &str, user_no_proxy: &str) -> Option<Self> {
+        Self::new_with_extra(proxy_url, user_no_proxy, None)
+    }
+
+    fn new_with_extra(
+        proxy_url: &str,
+        user_no_proxy: &str,
+        extra_no_proxy: Option<&str>,
+    ) -> Option<Self> {
+        let proxy = url::Url::parse(proxy_url).ok()?;
+        if proxy.host_str().is_none() || proxy.scheme() != "http" {
+            return None;
+        }
+        let no_proxy = [
+            Some(user_no_proxy),
+            extra_no_proxy,
+            Some("127.0.0.1"),
+            Some("localhost"),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join(",");
+        let mut entries = Vec::new();
+        for entry in no_proxy.split(|character: char| character == ',' || character.is_whitespace())
+        {
+            if entry.is_empty() {
+                continue;
+            }
+            // JS `/^(.+):(\d+)$/`: a trailing numeric port, anything else is
+            // part of the hostname (`[::1]` stays bracketed).
+            let (host, port) = match entry.rsplit_once(':') {
+                Some((host, port))
+                    if !host.is_empty()
+                        && !port.is_empty()
+                        && port.bytes().all(|byte| byte.is_ascii_digit()) =>
+                {
+                    (host, port.parse::<u32>().unwrap_or(0))
+                }
+                _ => (entry, 0),
+            };
+            let hostname = host
+                .strip_prefix("*.")
+                .or_else(|| host.strip_prefix('.'))
+                .unwrap_or(host)
+                .to_ascii_lowercase();
+            entries.push(NoProxyEntry { hostname, port });
+        }
+        Some(Self {
+            proxy,
+            no_proxy,
+            entries,
+        })
+    }
+
+    /// `EnvHttpProxyAgent.#shouldProxy` against a hyper URI.
+    fn should_proxy(&self, uri: &hyper::Uri) -> bool {
+        let Some(host) = uri.host() else {
+            return false;
+        };
+        let host = host.to_ascii_lowercase();
+        let port = uri.port_u16().unwrap_or(match uri.scheme_str() {
+            Some("https") => 443,
+            _ => 80,
+        }) as u32;
+        if self.entries.is_empty() {
+            return true;
+        }
+        if self.no_proxy == "*" {
+            return false;
+        }
+        !self.entries.iter().any(|entry| {
+            if entry.port != 0 && entry.port != port {
+                return false;
+            }
+            host == entry.hostname || host.ends_with(&format!(".{}", entry.hostname))
+        })
+    }
+
+    fn host_port(&self) -> (String, u16) {
+        let host = match self.proxy.host() {
+            Some(url::Host::Ipv6(address)) => address.to_string(),
+            Some(url::Host::Ipv4(address)) => address.to_string(),
+            Some(url::Host::Domain(name)) => name.to_owned(),
+            None => String::new(),
+        };
+        (host, self.proxy.port_or_known_default().unwrap_or(80))
+    }
+
+    /// `host:port` as Node's socket errors print it (IPv6 without brackets).
+    fn address(&self) -> String {
+        let (host, port) = self.host_port();
+        format!("{host}:{port}")
+    }
+
+    /// `Proxy-Authorization` from URL userinfo (`undici/lib/dispatcher/
+    /// proxy-agent.js:113-121`); no header when there is no username.
+    fn authorization(&self) -> Option<String> {
+        let username = self.proxy.username();
+        if username.is_empty() {
+            return None;
+        }
+        let username = percent_decode(username);
+        let password = self
+            .proxy
+            .password()
+            .map(percent_decode)
+            .unwrap_or_default();
+        let token =
+            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+        Some(format!("Basic {token}"))
+    }
+
+    fn connect_error(&self, error: std::io::Error) -> ProxyError {
+        let address = self.address();
+        let cause = match error.kind() {
+            std::io::ErrorKind::ConnectionRefused => {
+                format!("connect ECONNREFUSED {address}")
+            }
+            std::io::ErrorKind::TimedOut => {
+                format!("Connect Timeout Error (attempted address: {address}, timeout: 10000ms)")
+            }
+            _ if error
+                .to_string()
+                .contains("failed to lookup address information") =>
+            {
+                format!("getaddrinfo ENOTFOUND {}", self.host_port().0)
+            }
+            _ => format!("connect {address}"),
+        };
+        ProxyError::new(cause)
+    }
+
+    fn response_error(status: u16) -> ProxyError {
+        // eventsource@3 flattens the fetch rejection as
+        // `<DOMException name>: <message>: <cause.message>`; the fetch layer
+        // produced a "Request was cancelled." DOMException whose cause is the
+        // undici ProxyAgent tunnel error.
+        ProxyError::new(format!(
+            "Error: Request was cancelled.: Proxy response ({status}) !== 200 when HTTP Tunneling"
+        ))
+    }
+
+    /// Open one `CONNECT` tunnel; the returned stream is the raw tunnel plus
+    /// any bytes the proxy already sent after its response headers.
+    async fn tunnel(
+        &self,
+        target: &hyper::Uri,
+    ) -> Result<(tokio::net::TcpStream, Vec<u8>), ProxyError> {
+        let (host, port) = self.host_port();
+        let mut stream = tokio::net::TcpStream::connect((host.as_str(), port))
+            .await
+            .map_err(|error| self.connect_error(error))?;
+        let (authority, host_header) = connect_target(target);
+        let mut request = format!(
+            "CONNECT {authority} HTTP/1.1\r\nhost: {host_header}\r\nproxy-connection: keep-alive\r\n"
+        );
+        if let Some(auth) = self.authorization() {
+            request.push_str(&format!("proxy-authorization: {auth}\r\n"));
+        }
+        request.push_str("\r\n");
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .map_err(|error| self.connect_error(error))?;
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let header_end = loop {
+            if let Some(at) = find_header_end(&buffer) {
+                break at;
+            }
+            if buffer.len() > 64 * 1024 {
+                return Err(ProxyError::new(
+                    "Proxy response (0) !== 200 when HTTP Tunneling".into(),
+                ));
+            }
+            let read = stream
+                .read(&mut chunk)
+                .await
+                .map_err(|error| self.connect_error(error))?;
+            if read == 0 {
+                return Err(ProxyError::new(
+                    "Proxy response (0) !== 200 when HTTP Tunneling".into(),
+                ));
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+        };
+        let head = String::from_utf8_lossy(&buffer[..header_end]);
+        let status = head
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|status| status.parse::<u16>().ok())
+            .unwrap_or(0);
+        if status != 200 {
+            return Err(Self::response_error(status));
+        }
+        Ok((stream, buffer[header_end + 4..].to_vec()))
+    }
+}
+
+/// `CONNECT` target and `host` header for one URL, matching undici
+/// `proxy-agent.js:183-196`: `opts.host` is the normalized `URL.host` (default
+/// port omitted, IPv6 brackets kept), `requestedPath` appends `:defaultPort`
+/// only when the URL had no port, and the header is `opts.host` unchanged.
+fn connect_target(target: &hyper::Uri) -> (String, String) {
+    let host = target.host().unwrap_or_default();
+    let default_port = match target.scheme_str() {
+        Some("https") => 443,
+        _ => 80,
+    };
+    let port = target.port_u16().unwrap_or(default_port);
+    let authority = format!("{host}:{port}");
+    let header = if port == default_port {
+        host.to_owned()
+    } else {
+        authority.clone()
+    };
+    (authority, header)
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+/// `decodeURIComponent` for proxy userinfo. Invalid escapes are kept literally
+/// (Node would throw while building the header, which the baseline never
+/// exercises).
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) =
+                (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2]))
+        {
+            out.push(high << 4 | low);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Socket bytes already read past the CONNECT response, then the socket.
+/// Both the tcp and proxy paths return this same type so
+/// `HttpsConnector` can wrap one connector type.
+pub(crate) struct PrefixedStream<S> {
+    inner: S,
+    prefix: Vec<u8>,
+    position: usize,
+}
+impl<S> PrefixedStream<S> {
+    fn new(inner: S, prefix: Vec<u8>) -> Self {
+        Self {
+            inner,
+            prefix,
+            position: 0,
+        }
+    }
+}
+impl<S: hyper::rt::Read + Unpin> hyper::rt::Read for PrefixedStream<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        mut buffer: hyper::rt::ReadBufCursor<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if this.position < this.prefix.len() {
+            let count = (this.prefix.len() - this.position).min(buffer.remaining());
+            buffer.put_slice(&this.prefix[this.position..this.position + count]);
+            this.position += count;
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut this.inner).poll_read(context, buffer)
+    }
+}
+impl<S> hyper_util::client::legacy::connect::Connection for PrefixedStream<S> {
+    fn connected(&self) -> hyper_util::client::legacy::connect::Connected {
+        hyper_util::client::legacy::connect::Connected::new()
+    }
+}
+impl<S: hyper::rt::Write + Unpin> hyper::rt::Write for PrefixedStream<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write(context, buffer)
+    }
+    fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(context)
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(context)
+    }
+}
+
+/// TCP connector that either delegates to hyper's `HttpConnector` or opens an
+/// HTTP `CONNECT` tunnel first. `HttpsConnector` still terminates TLS to the
+/// target on top of the returned socket.
+#[derive(Clone)]
+pub(crate) struct ProxyConnect {
+    inner: HttpConnector,
+    proxy: Option<Arc<ProxyConfig>>,
+}
+impl tower_service::Service<hyper::Uri> for ProxyConnect {
+    type Response = PrefixedStream<TokioIo<tokio::net::TcpStream>>;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(context).map_err(Into::into)
+    }
+    fn call(&mut self, destination: hyper::Uri) -> Self::Future {
+        if let Some(proxy) = self
+            .proxy
+            .clone()
+            .filter(|proxy| proxy.should_proxy(&destination))
+        {
+            return Box::pin(async move {
+                let (stream, prefix) = proxy
+                    .tunnel(&destination)
+                    .await
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
+                Ok(PrefixedStream::new(TokioIo::new(stream), prefix))
+            });
+        }
+        let direct = self.inner.call(destination);
+        Box::pin(async move {
+            direct
+                .await
+                .map(|stream| PrefixedStream::new(stream, Vec::new()))
+                .map_err(Into::into)
+        })
+    }
+}
+
+/// Shared connector for MCP transports: [`https_connector`] plus the outgoing
+/// proxy (env-configured; `None` keeps the direct path).
+pub(crate) fn proxy_https_connector(
+    config: rustls::ClientConfig,
+    proxy: Option<ProxyConfig>,
+) -> hyper_rustls::HttpsConnector<ProxyConnect> {
+    let mut http = HttpConnector::new();
+    http.enforce_http(false);
+    http.set_connect_timeout(Some(Duration::from_secs(10)));
+    hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(config)
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(ProxyConnect {
+            inner: http,
+            proxy: proxy.map(Arc::new),
+        })
 }
 
 /// rustls client config trusting the Mozilla roots (`webpki-roots`).
@@ -1789,3 +2357,237 @@ mod tests;
 #[cfg(test)]
 #[path = "http_timing_tests.rs"]
 mod timing_tests;
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect();
+        move |key| map.get(key).cloned()
+    }
+
+    #[test]
+    fn proxy_env_priority_matches_the_ts_cli() {
+        // `PILOTDECK_PROXY > https_proxy > HTTPS_PROXY > http_proxy > HTTP_PROXY`
+        let config = ProxyConfig::from_lookup(lookup(&[
+            ("HTTP_PROXY", "http://http:1"),
+            ("http_proxy", "http://http-lower:2"),
+            ("HTTPS_PROXY", "http://https-upper:3"),
+            ("https_proxy", "http://https-lower:4"),
+            ("PILOTDECK_PROXY", "http://pilotdeck:5"),
+        ]))
+        .expect("proxy configured");
+        assert_eq!(config.host_port(), ("pilotdeck".into(), 5));
+
+        let config = ProxyConfig::from_lookup(lookup(&[
+            ("HTTP_PROXY", "http://http:1"),
+            ("http_proxy", "http://http-lower:2"),
+            ("HTTPS_PROXY", "http://https-upper:3"),
+            ("https_proxy", "http://https-lower:4"),
+        ]))
+        .expect("proxy configured");
+        assert_eq!(config.host_port(), ("https-lower".into(), 4));
+
+        let config = ProxyConfig::from_lookup(lookup(&[
+            ("HTTP_PROXY", "http://http:1"),
+            ("http_proxy", "http://http-lower:2"),
+            ("HTTPS_PROXY", "http://https-upper:3"),
+        ]))
+        .expect("proxy configured");
+        assert_eq!(config.host_port(), ("https-upper".into(), 3));
+
+        // Empty values are falsy in `env.X || env.Y` and fall through.
+        let config = ProxyConfig::from_lookup(lookup(&[
+            ("HTTP_PROXY", "http://http:1"),
+            ("HTTPS_PROXY", ""),
+            ("PILOTDECK_PROXY", ""),
+        ]))
+        .expect("proxy configured");
+        assert_eq!(config.host_port(), ("http".into(), 1));
+
+        assert!(ProxyConfig::from_lookup(lookup(&[])).is_none());
+        // An unparsable URL keeps the baseline's direct dispatcher.
+        assert!(ProxyConfig::from_lookup(lookup(&[("HTTP_PROXY", "127.0.0.1:1")])).is_none());
+    }
+
+    #[test]
+    fn proxy_config_source_priority_matches_ts_install_paths() {
+        let settings = |url: &str, no_proxy: Option<&str>, mode| ProxySettings {
+            url: url.into(),
+            no_proxy: no_proxy.map(Into::into),
+            mode,
+        };
+        let env = lookup(&[("HTTP_PROXY", "http://env:1"), ("no_proxy", "env.example")]);
+
+        // Startup: the env dispatcher wins and the config source (including
+        // its noProxy) is not installed (`proxy.ts:64-69`).
+        let config = ProxyConfig::from_settings_lookup(
+            Some(&settings(
+                "http://config:9",
+                Some("config.example"),
+                ProxyInstallMode::Startup,
+            )),
+            env,
+        )
+        .expect("env proxy");
+        assert_eq!(config.host_port(), ("env".into(), 1));
+        assert_eq!(config.no_proxy, "env.example,127.0.0.1,localhost");
+
+        // Startup: without an env URL the config URL is the fallback, but the
+        // config noProxy is not passed to `installGlobalProxy(config.url)`.
+        let config = ProxyConfig::from_settings_lookup(
+            Some(&settings(
+                "http://config:9",
+                Some("config.example"),
+                ProxyInstallMode::Startup,
+            )),
+            lookup(&[("HTTP_PROXY", ""), ("no_proxy", "env.example")]),
+        )
+        .expect("config proxy");
+        assert_eq!(config.host_port(), ("config".into(), 9));
+        assert_eq!(config.no_proxy, "env.example,127.0.0.1,localhost");
+
+        // Reload: `reinstallGlobalProxy` replaces the env dispatcher and
+        // appends the config noProxy (`pilotdeck.ts:150`).
+        let config = ProxyConfig::from_settings_lookup(
+            Some(&settings(
+                "http://config:9",
+                Some("config.example"),
+                ProxyInstallMode::Reload,
+            )),
+            lookup(&[("HTTP_PROXY", "http://env:1"), ("no_proxy", "env.example")]),
+        )
+        .expect("reloaded config proxy");
+        assert_eq!(config.host_port(), ("config".into(), 9));
+        assert_eq!(
+            config.no_proxy,
+            "env.example,config.example,127.0.0.1,localhost"
+        );
+
+        // Reload with no config URL removes the proxy (`reinstallGlobalProxy`
+        // applies the direct dispatcher).
+        assert!(
+            ProxyConfig::from_settings_lookup(
+                Some(&settings("", None, ProxyInstallMode::Reload)),
+                lookup(&[("HTTP_PROXY", "http://env:1")]),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn proxy_settings_from_config_match_parse_proxy_config() {
+        let parse = |text: &str| ProxySettings::from_config(&parse_json(text).unwrap());
+        assert_eq!(
+            parse("\"http://proxy:1\""),
+            Some(ProxySettings {
+                url: "http://proxy:1".into(),
+                no_proxy: None,
+                mode: ProxyInstallMode::Startup,
+            })
+        );
+        assert_eq!(
+            parse("{\"url\":\"http://proxy:2\",\"noProxy\":\"a.example,b.example\"}"),
+            Some(ProxySettings {
+                url: "http://proxy:2".into(),
+                no_proxy: Some("a.example,b.example".into()),
+                mode: ProxyInstallMode::Startup,
+            })
+        );
+        // Empty strings are absent, exactly like `parseProxyConfig`.
+        assert_eq!(parse("{\"url\":\"\"}"), None);
+        assert_eq!(parse("{}"), None);
+        assert_eq!(
+            parse("{\"url\":\"http://p\",\"noProxy\":\"\"}"),
+            Some(ProxySettings {
+                url: "http://p".into(),
+                no_proxy: None,
+                mode: ProxyInstallMode::Startup,
+            })
+        );
+        assert_eq!(parse("42"), None);
+    }
+
+    #[test]
+    fn no_proxy_parsing_and_matching_match_undici() {
+        let config = ProxyConfig::new("http://proxy:3128", "").expect("config");
+        assert_eq!(config.no_proxy, "127.0.0.1,localhost");
+        assert!(config.should_proxy(&"http://example.com/".parse().unwrap()));
+        assert!(!config.should_proxy(&"http://127.0.0.1:9/".parse().unwrap()));
+        assert!(!config.should_proxy(&"https://LOCALHOST/".parse().unwrap()));
+        assert!(!config.should_proxy(&"http://sub.localhost/".parse().unwrap()));
+
+        let config = ProxyConfig::new(
+            "http://proxy:3128",
+            " example.com:8080,\t.internal\n*.corp,127.0.0.9:1 ",
+        )
+        .expect("config");
+        assert_eq!(
+            config.no_proxy,
+            " example.com:8080,\t.internal\n*.corp,127.0.0.9:1 ,127.0.0.1,localhost"
+        );
+        let bypass = |uri: &str| !config.should_proxy(&uri.parse().unwrap());
+        assert!(bypass("http://example.com:8080/"));
+        assert!(!bypass("http://example.com:8081/"));
+        assert!(bypass("http://a.example.com:8080/"));
+        assert!(bypass("http://a.internal/"));
+        assert!(bypass("http://a.corp/"));
+        assert!(bypass("http://corp/"));
+        assert!(!bypass("http://notcorp/"));
+        assert!(bypass("http://127.0.0.9:1/"));
+        assert!(!bypass("http://127.0.0.9:2/"));
+
+        // TS `buildNoProxy` joins entries, so a user `*` never equals `"*"`;
+        // the wildcard branch is unreachable through the env path. Pin it.
+        let config = ProxyConfig::new("http://proxy", "*").expect("config");
+        assert_eq!(config.no_proxy, "*,127.0.0.1,localhost");
+        assert!(config.should_proxy(&"http://example.com/".parse().unwrap()));
+    }
+
+    #[test]
+    fn proxy_auth_uses_basic_credentials_from_the_url() {
+        let config = ProxyConfig::new("http://us%20er:p%40ss@127.0.0.1:3128", "").expect("config");
+        assert_eq!(
+            config.authorization().as_deref(),
+            Some("Basic dXMgZXI6cEBzcw==") // base64("us er:p@ss")
+        );
+        let username_only = ProxyConfig::new("http://user@127.0.0.1:3128", "").expect("config");
+        assert_eq!(
+            username_only.authorization().as_deref(),
+            Some("Basic dXNlcjo=") // base64("user:")
+        );
+        let anonymous = ProxyConfig::new("http://127.0.0.1:3128", "").expect("config");
+        assert!(anonymous.authorization().is_none());
+    }
+
+    #[test]
+    fn connect_target_uses_the_normalized_url_host() {
+        let target = |uri: &str| {
+            let uri: hyper::Uri = uri.parse().unwrap();
+            connect_target(&uri)
+        };
+        assert_eq!(
+            target("http://example.com/"),
+            ("example.com:80".into(), "example.com".into())
+        );
+        // An explicit default port is normalized away from `URL.host`.
+        assert_eq!(
+            target("http://example.com:80/"),
+            ("example.com:80".into(), "example.com".into())
+        );
+        assert_eq!(
+            target("http://example.com:8080/"),
+            ("example.com:8080".into(), "example.com:8080".into())
+        );
+        assert_eq!(
+            target("https://example.com/"),
+            ("example.com:443".into(), "example.com".into())
+        );
+        assert_eq!(target("http://[::1]/"), ("[::1]:80".into(), "[::1]".into()));
+    }
+}

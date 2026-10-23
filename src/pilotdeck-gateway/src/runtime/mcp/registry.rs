@@ -22,7 +22,7 @@ use super::protocol::{
     load_mcp_server_config,
 };
 use super::runtime::{McpRuntimeFactory, McpRuntimePort, SessionMcpRuntime};
-use crate::{js_value, runtime::project::RuntimeError};
+use crate::{js_value, runtime::model::http::ProxySettings, runtime::project::RuntimeError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     path::Path,
@@ -602,6 +602,8 @@ pub struct ProjectMcpRuntimeProviderOptions {
     pub project_root: String,
     pub pilot_home: String,
     pub create_runtime: Option<McpRuntimeFactory>,
+    /// `pilotdeck.yaml` `proxy` source for the default runtime factory.
+    pub proxy: Option<ProxySettings>,
     pub on_diagnostic: Option<McpDiagnosticSink>,
     pub environment: Arc<dyn McpEnvironment>,
     pub builtin_paths: BuiltinMcpPaths,
@@ -864,11 +866,10 @@ impl ProjectMcpRuntimeProvider {
                 {
                     Some(entry) => entry.clone(),
                     None => {
-                        let factory = self
-                            .options
-                            .create_runtime
-                            .clone()
-                            .unwrap_or_else(super::runtime::native_mcp_runtime_factory);
+                        let proxy = self.options.proxy.clone();
+                        let factory = self.options.create_runtime.clone().unwrap_or_else(|| {
+                            super::runtime::native_mcp_runtime_factory_with_proxy(proxy)
+                        });
                         let runtime = factory(servers.clone());
                         let tools = Arc::new(Mutex::new(Vec::new()));
                         let provider = self.clone();

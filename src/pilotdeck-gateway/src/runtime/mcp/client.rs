@@ -77,6 +77,7 @@ use super::protocol::{
 pub use super::wire::{McpAbort, McpAbortSignal};
 use super::wire::{Reply, Settled, Wire, lock, node_delay};
 use crate::js_value;
+use crate::runtime::model::http::ProxySettings;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashMap;
 use std::{
@@ -293,6 +294,9 @@ pub struct McpClientOptions {
     pub call_timeout_ms: Option<f64>,
     /// Connect handshake timeout. Default 10 s.
     pub handshake_timeout_ms: Option<f64>,
+    /// `pilotdeck.yaml` `proxy` (`url` / `noProxy`), resolved against the
+    /// environment by the shared connector. `None` keeps the env-only source.
+    pub proxy: Option<ProxySettings>,
 }
 
 /// `callTool` options.
@@ -1039,6 +1043,7 @@ impl McpClient {
                         .handshake_timeout_ms
                         .unwrap_or(DEFAULT_GET_TIMEOUT_MS),
                     (*config).clone(),
+                    options.proxy.as_ref(),
                 ))))
             }
         }
