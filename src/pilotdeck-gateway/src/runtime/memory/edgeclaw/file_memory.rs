@@ -2994,6 +2994,50 @@ mod mutation_security_tests {
         );
     }
     #[test]
+    fn mutation_read_inaccessible_parent_is_none() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let parent = store.core.root.join("Project/blocked");
+        fs::create_dir_all(&parent).unwrap();
+        fs::write(parent.join("note.md"), "body").unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o600)).unwrap();
+        // Native probe: the parent dir is not searchable.
+        assert_eq!(
+            fs::metadata(parent.join("note.md"))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EACCES)
+        );
+        // TS existsSync swallows EACCES to false → readFile yields no record.
+        assert!(
+            store
+                .core
+                .read_file("Project/blocked/note.md")
+                .unwrap()
+                .is_none()
+        );
+    }
+    #[test]
+    fn mutation_read_unreadable_leaf_keeps_open_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let leaf = store.core.root.join("Project/note.md");
+        fs::write(&leaf, "body").unwrap();
+        fs::set_permissions(&leaf, fs::Permissions::from_mode(0o000)).unwrap();
+        // Native probe: the leaf file is not readable.
+        assert_eq!(
+            fs::read(&leaf).unwrap_err().raw_os_error(),
+            Some(libc::EACCES)
+        );
+        // Parent is searchable, so statat probe succeeds → the leaf's own
+        // open EACCES is preserved as an error, matching TS readFile.
+        let error = store.core.read_file("Project/note.md").unwrap_err();
+        assert!(error.to_string().contains("EACCES"), "{}", error);
+        assert!(error.to_string().contains("open"), "{}", error);
+    }
+    #[test]
     fn mutation_clear_deep_tree_with_low_fd_limit() {
         const CHILD_ENV: &str = "PDRS_597_CLEAR_LOW_FD_ROOT";
         if let Some(root) = std::env::var_os(CHILD_ENV) {
