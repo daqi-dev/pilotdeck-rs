@@ -39,7 +39,7 @@ MCP/LSP 从 manifest 到 LoadedPlugin 及 runtime 合并保持现有协议类型
 
 #484 补充金样使用独立 `generate-regressions.mts` → `regressions.json`，原 `oracle.json` 不改。生成命令与上面相同，只替换脚本名，并逐字节比较两次 `regressions.json`。生成器同样绑定固定源树和完整导入闭包；输入通过磁盘 manifest 进入真实 TS runtime，结果中的 `inputJson` / `resultJson` 保留孤立代理的 JSON 转义。
 
-补充样本覆盖 2047/2048/2049 个 UTF-16 码元、CJK 跨字节边界、代理对在截断点两侧、孤立高低代理、ECMAScript trim、skills 的首次插入位置和各级优先覆盖，以及目录别名的 TS 原始行为。`plugin_regressions` 回放 instructions 与别名，unit `skill_contributions_keep_ts_map_order` 回放 skills。目录环由独立 TS 子进程观测，3 秒超时后 SIGKILL 并由父进程清理临时目录；Rust 遍历测试通过子进程实现 1 秒超时边界，避免不可取消的遍历阻塞测试进程退出。安全偏离的具体范围与候选登记文字见 RESULT，不把 Rust 防环结果写成 TS 期望。
+补充样本覆盖 2047/2048/2049 个 UTF-16 码元、CJK 跨字节边界、代理对在截断点两侧、孤立高低代理、ECMAScript trim、skills 的首次插入位置和各级优先覆盖，以及目录别名的 TS 原始行为。`plugin_regressions` 回放 instructions 与别名，unit `skill_contributions_keep_ts_map_order` 回放 skills。目录环由独立 TS 子进程观测，3 秒超时后 SIGKILL 并由父进程清理临时目录；Rust 遍历测试通过可终止并回收的子进程防挂起；父进程的 20 秒期限不是性能通过上界。安全偏离的具体范围与候选登记文字见 RESULT，不把 Rust 防环结果写成 TS 期望。
 
 仓库负控脚本现在也覆盖 `plugins.rs` / `contributions.rs` 的 publication 状态、refresh/dispose 等待、退休清理、共享 dispose、三种租约的 release 错误，以及 UTF-16、防环、合法别名、skills 插入序与同优先级覆盖。脚本支持 `lib:` / `regressions:` / `runtime:` 测试目标，仍要求实际断言失败、唯一变异锚点及 finally 字节恢复；编译失败与外部超时不计击杀。
 
@@ -48,7 +48,7 @@ MCP/LSP 从 manifest 到 LoadedPlugin 及 runtime 合并保持现有协议类型
 
 Rust 每次贡献目录遍历用全局 dev+ino 集合（Unix）只展开首次遇到的物理目录；非 Unix 使用规范化路径身份。无环别名也去重，保留首次访问的词法命名与路径。遍历使用显式 DFS 栈，没有条目预算、Markdown 候选预算或深度上限，也没有超限错误与 stderr 诊断。规范化条目必须位于规范化插件根内，否则跳过；两参数 `load_plugin_commands` 以 base 为根。插件三个贡献族和 style-only 传入实际插件根。原有 ROOT-001 金样投影仍只排除那两条已知越界贡献。
 
-`plugin_traversal` 的四个互链团测试各有 1 秒子进程期限，Drop 在全部退出路径 kill + wait。负控 `markdown-cycle` 只去掉全局目录去重，必须命中 k=10 超时。`markdown-alias`、根边界与 serverName 负控保持。原 entry/depth-budget 测试改名为 `plugin_markdown_entries_match_ts` / `plugin_markdown_deep_tree_matches_ts`，现在分别回放真实 TS 的 4097 个贡献和 65 层完整贡献；原超限诊断测试及对应负控已删除。
+`plugin_traversal` 的四个互链团与 24 层 DAG 统一使用 20 秒父进程防挂起期限（spawn 返回后起算）；子进程退出优先于期限检查，Drop 在全部退出路径 kill + wait。TS 探针中的 1000 ms 只是截断 TS 未返回探针的观察预算，与 Rust 的通过条件无关。线性/有界的确定性判据来自图夹具：每个非根物理目录恰好一份 Markdown、根目录为空，故贡献数等于已完成的非根目录展开数；再断言贡献的父目录 dev+ino 集合大小等于唯一目录数（clique 为 k、DAG 为 25，另加空根 1 次）。不作墙钟性能断言。负控 `markdown-cycle` 只去掉全局目录去重，必须触发确定性断言或 k=10 的防挂起期限。`markdown-alias`、根边界与 serverName 负控保持。原 entry/depth-budget 测试改名为 `plugin_markdown_entries_match_ts` / `plugin_markdown_deep_tree_matches_ts`，现在分别回放真实 TS 的 4097 个贡献和 65 层完整贡献；原超限诊断测试及对应负控已删除。
 
 修复轮 2 的 `budget.json` 保留原始字节，仍由 `generate-budget.mts` 生成，包含 4800 个非 Markdown 资产、12 层双别名 DAG 与简单兄弟互链。DAG 验证物理目录首次路径投影，24 层独立压力在子进程内限时；简单环比较唯一正文集合，TS 可以经 ELOOP 截止后成功返回重复贡献，不概括成所有环不返回。
 
@@ -57,3 +57,7 @@ Rust 每次贡献目录遍历用全局 dev+ino 集合（Unix）只展开首次�
 物化时每个逻辑目录对应插件根内 backing pool 中的一个物理目录，子目录以链接暴露，文件只写入 backing pool；不经任何 node_modules 路径写文件。真实树位于 `skills/s0/vendor/node_modules`，TS 实测结果完整回放；第二个输入含 5000 个 README.md、54000 个 .js、3 个 skill；第三个输入把 node_modules 放到 80 层无环路径后，完整比较 commands / skills / output-styles / style-only。运行方法同上，将生成器改成 `generate-unbounded.mts`，双跑比较两份输出中的两个文件。
 
 新负控恢复 4096 候选预算，分别使真实依赖树和 README/JS 回放转红；恢复 64 层上限，使深 node_modules 的四入口回放转红。宽树和 65 层回放各有恢复对应预算的负控，非 Markdown 资产仍有恢复全条目预算的负控。DAG/简单环负控只去掉去重。所有负控要求专属断言文本与选中测试的 FAILED 行；编译失败、未执行测试及外部超时不计击杀。最终双跑哈希、断言失败摘要和检查日志见指定 RESULT 的「修复轮 3」。
+
+修复轮 4 的 `generate-boundary.mts` → `boundary.json` 沿用固定 TS 源树、clean tree 与完整导入闭包守卫。按上方命令双跑并逐字节比较，所有写入均在新建的 `/private/tmp` scratch 目录内。四个回归完整比较 commands / skills / output-styles / style-only：配置 base 越界符号链接（按 ROOT-001 从 TS 投影剔除外部贡献）、插件根符号链接（保留词法路径）、`/private/tmp/...` 绝对配置路径（Node join 仍追加在插件内）、外部不可读 Markdown。最后一种真实 TS 因 readFile 的 EACCES 丢弃整个配置目录，而 ROOT-001 在读取前跳过越界文件、保留根内安全贡献；保留值由去掉外部链接后再次运行真实 TS 的 control 提供。两侧均独立验证 chmod 000 确实拒绝原生读取，不把 stat 成功说成 EACCES。对应四项负控为 `markdown-base-symlink` / `markdown-root-symlink` / `markdown-absolute-configured` / `markdown-outside-unreadable`，记录在 RESULT「修复轮 4」。
+
+`markdown-expansion-identity` 保持贡献数量但把所有贡献路径改成第一个目录的路径，必须由子进程内的物理目录身份断言确定性转红（1 ≠ k），验证身份断言本身生效；不依赖防挂起期限。另复跑 `markdown-cycle` 和 `markdown-dag-no-dedup`，检查移除全局去重时仍会被期限/贡献断言抓住。
