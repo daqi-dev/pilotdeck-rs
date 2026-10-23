@@ -15,10 +15,10 @@
 //! each one with an explicit error instead of staging silently. The rollback
 //! (`ProjectRuntimeResourcesBundle.disposeResources`, lines 408-439) is owned
 //! by the single [`ProjectResources`] group registered before the first
-//! family step can fail; it disposes in the baseline's order:
-//! mcp provider, then the parallel set in array order, then the memory
-//! bundle. Context storage and the prompt-cache coordinator have no baseline
-//! disposal and are never disposed here either.
+//! family step can fail; it disposes in the baseline's order: the mcp
+//! provider, then the parallel set started together in array order, then the
+//! memory bundle. Context storage and the prompt-cache coordinator have no
+//! baseline disposal and are never disposed here either.
 //!
 //! Not in this port (staged for the family packages): `BackgroundSubagentRuntime`
 //! and `projectStorage` (buildRuntime's non-bundle members), the
@@ -40,8 +40,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-/// `() => Date`; handed to every staged family and stamped into the config
-/// snapshot's `loadedAt`.
+/// `() => Date`; handed to every staged family (the bundle's `options.now`),
+/// never to the config read.
 pub type Now = Arc<dyn Fn() -> SystemTime + Send + Sync>;
 
 /// `SANDBOX_MODES` / `resolveSandboxMode` (SandboxPort.ts:5-23): an unknown
@@ -333,7 +333,6 @@ pub struct NativeConfigSource {
     cwd: PathBuf,
     env: Env,
     version: f64,
-    now: Now,
 }
 impl NativeConfigSource {
     /// `version` is the baseline's `options.version ?? 1`.
@@ -342,7 +341,6 @@ impl NativeConfigSource {
         env: Env,
         homedir: Option<PathBuf>,
         version: Option<f64>,
-        now: Now,
     ) -> Self {
         let cwd = cwd.into();
         Self {
@@ -350,7 +348,6 @@ impl NativeConfigSource {
             cwd,
             env,
             version: version.unwrap_or(1.0),
-            now,
         }
     }
 }
@@ -365,14 +362,18 @@ impl ConfigSource for NativeConfigSource {
             &self.env,
             Some(project),
             self.version,
-            &loaded_at(&(self.now)()),
+            &loaded_at(&SystemTime::now()),
         )
         .map_err(|error| RuntimeError::new(String::from_utf16_lossy(error.message.units())))?;
         Ok(Arc::new(snapshot))
     }
 }
 
-/// `new Date().toISOString()` for the snapshot's `loadedAt`.
+/// `new Date().toISOString()` for the snapshot's `loadedAt`. The baseline's
+/// `loadPilotConfig` takes its own wall clock (`new Date()`,
+/// loadPilotConfig.ts:65) — the bundle passes it only `projectRoot`/`env`
+/// (ProjectRuntimeResourcesBundle.ts:201-204), never `options.now` — so the
+/// injected resource clock neither stamps nor advances with this read.
 fn loaded_at(now: &SystemTime) -> String {
     let ms = match now.duration_since(UNIX_EPOCH) {
         Ok(elapsed) => elapsed.as_millis().min(i64::MAX as u128) as i64,
@@ -688,43 +689,83 @@ impl ProjectResources {
 impl RuntimeResources for ProjectResources {
     /// `disposeResources` (ProjectRuntimeResourcesBundle.ts:408-439): the mcp
     /// provider first, then the parallel set in array order, then the memory
-    /// bundle. The baseline starts all eight concurrently but reports failures
-    /// in array order; this sequential drain keeps both the call order and
-    /// the failure order. Context storage and the prompt-cache coordinator
-    /// are never disposed, as in the baseline.
+    /// bundle. The baseline starts all eight parallel disposals together
+    /// (`Promise.allSettled`, lines 416-425) and only awaits the memory bundle
+    /// after every one of them settles, so a disposal that waits on a
+    /// sibling's progress still sees that sibling start; failures are
+    /// collected in the array order. Exactly one failure is rethrown as-is
+    /// (line 435); two or more become the single `AggregateError("Failed to
+    /// dispose project runtime resources.")` (lines 436-438). Context storage
+    /// and the prompt-cache coordinator are never disposed, as in the
+    /// baseline.
     fn dispose(&self) -> DisposeFuture<'_> {
         let slots = lock(&self.slots);
-        let mut handles = Vec::with_capacity(10);
-        handles.push(slots.mcp_provider.clone());
-        handles.extend(
-            [
-                &slots.plugin_runtime,
-                &slots.router_custom_routers,
-                &slots.compaction,
-                &slots.session_title_provider,
-                &slots.lsp_service,
-                &slots.execution_world_bundle,
-                &slots.router_runtime,
-                &slots.model_runtime,
-            ]
-            .into_iter()
-            .cloned(),
+        let mcp_provider = slots.mcp_provider.clone();
+        let parallel = (
+            slots.plugin_runtime.clone(),
+            slots.router_custom_routers.clone(),
+            slots.compaction.clone(),
+            slots.session_title_provider.clone(),
+            slots.lsp_service.clone(),
+            slots.execution_world_bundle.clone(),
+            slots.router_runtime.clone(),
+            slots.model_runtime.clone(),
         );
-        handles.push(slots.memory_bundle.clone());
+        let memory_bundle = slots.memory_bundle.clone();
         drop(slots);
         // The single group of a generation: `ResourceBundle::aggregate`
-        // returns this error unchanged, keeping the baseline's single
-        // `AggregateError("Failed to dispose project runtime resources.")`
-        // instead of nesting it.
+        // returns this error unchanged, so the group's own single- or
+        // multi-failure shape reaches the caller without a second wrapper.
         Box::pin(async move {
+            let (
+                plugin_runtime,
+                custom_routers,
+                compaction,
+                session_title,
+                lsp,
+                execution_world,
+                router,
+                model,
+            ) = parallel;
             let mut failures = Vec::new();
-            for handle in handles.into_iter().flatten() {
-                if let Err(error) = handle.dispose().await {
+            if let Err(error) = dispose_one(mcp_provider).await {
+                failures.push(error);
+            }
+            // All eight start before any of them is awaited to completion,
+            // like `Promise.allSettled`; `join!` polls them in array order
+            // and reports their results in that order.
+            let results = tokio::join!(
+                dispose_one(plugin_runtime),
+                dispose_one(custom_routers),
+                dispose_one(compaction),
+                dispose_one(session_title),
+                dispose_one(lsp),
+                dispose_one(execution_world),
+                dispose_one(router),
+                dispose_one(model)
+            );
+            for result in [
+                results.0, results.1, results.2, results.3, results.4, results.5, results.6,
+                results.7,
+            ] {
+                if let Err(error) = result {
                     failures.push(error);
                 }
             }
+            if let Err(error) = dispose_one(memory_bundle).await {
+                failures.push(error);
+            }
             RuntimeError::aggregate("Failed to dispose project runtime resources.", failures)
         })
+    }
+}
+
+/// One family's disposal, when that family registered a rollback handle; the
+/// baseline's `?? Promise.resolve()` arm for an absent family.
+async fn dispose_one(handle: Option<Arc<dyn FamilyResource>>) -> RuntimeResult {
+    match handle {
+        Some(handle) => handle.dispose().await,
+        None => Ok(()),
     }
 }
 
@@ -741,7 +782,9 @@ pub struct ProjectResourcesOptions {
     /// home directory.
     pub homedir: Option<PathBuf>,
     pub builtin_skills_root: Option<PathBuf>,
-    /// `options.now`; also stamps the config snapshot's `loadedAt`.
+    /// `options.now`; the resource clock handed to the staged families. The
+    /// config snapshot's `loadedAt` is the config read's own wall clock, as
+    /// in the baseline.
     pub now: Now,
     /// `loadPilotConfig`'s `options.version ?? 1`.
     pub config_version: Option<f64>,
@@ -763,7 +806,6 @@ impl ProjectResourcesFactory {
             options.env.clone(),
             options.homedir.clone(),
             options.config_version,
-            Arc::clone(&options.now),
         ));
         Self { options, config }
     }
