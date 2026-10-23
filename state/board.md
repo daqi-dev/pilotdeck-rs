@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-23 23:15 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-24 01:15 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
@@ -12,22 +12,19 @@ updated: 2026-10-23 23:15 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - regress | coord | blocked | 等 regress 发布带 UTF-16 回溯预算的稳定版；金样在 codex/regress-pr1-output-schema@2c2e4f87
 - accepted-diffs-1023 | coord | human | 10-23 新登记未批准约 30 条 + AI 代批待复核（含 #547 两块挂起拆分卡 _tmp/20261023-loop/card-547-*.md）
 - state-files | coord | human | 状态文件精简提案 _tmp/20261023-loop/proposal-state-files.md（人：先不动，待人读后再定）
-- #566 | impl | doing | A6.9-pr1 GLM 修复轮 6 核验中 → codex+DeepSeek r7
-- #591 | impl | doing | #564 codex 修复轮 3（接手 fable 修复轮 2，补两项负控）
-- #562 | impl | doing | #222 codex 修复轮 6（session_domain 金样 provenance）
-- #598 | impl | doing | #426 dep-info 合同；交付 HEAD 真实构建证据重跑中 → DeepSeek r2
-- #595 | impl | doing | tree_files 重做：Claude-fable 设计 v2 → 两家设计评审后再实现
-- #597 | impl | ready | P0：EdgeClaw file_memory 检查后按路径写（复用 #596 的 project_files 创建变体）
+- #591 | impl | doing | #564 r6 收尾中（负控 82/82）
+- #595 | impl | doing | tree_files 上限：fable 实现修复轮 1（上限与超限行为 AI 代批待复核）
+- #600 | impl | doing | #597 P0 file_memory 写入走目录句柄；GLM 修复轮 1
 - #594 | impl | blocked | P0：独立技能 SKILL.md 按路径读；等 #591 合入（同文件）
-- #572 | impl | blocked | provider 尾项；等 #566（同改 model/http.rs）
-- #576 | impl | blocked | MCP 代理尾项；等 #566（同改 model/http.rs）
-- #583 | impl | blocked | A6.9-pr2b；等 #566
-- #584 | impl | blocked | A6.9-pr3b；等 #566
+- #572 | impl | blocked | provider 尾项；等 #584（同改 model/http.rs）
+- #576 | impl | blocked | MCP 代理尾项；等 #584（同改 model/http.rs）
+- #583 | impl | doing | A6.9-pr2b handler 绑定；GLM 实现中
+- #584 | impl | doing | A6.9-pr3b 模型资源 factory；codex 实现中
 - #585 | impl | blocked | A6.9-pr3c1；等 #583
 - #586 | impl | blocked | A6.9-pr3c2；等 #583
-- #587 | impl | blocked | A6.9-pr3d；等 #562
+- #587 | impl | ready | A6.9-pr3d 上下文与持久资源接入 factory（#562、#578 已合入）
 - #588 | impl | blocked | A6.9-pr3e；等 #584
-- #589 | impl | blocked | A7.2-pr6a；等 A6.9 全部与 #562
+- #589 | impl | blocked | A7.2-pr6a；等 A6.9 全部
 - #590 | impl | blocked | A7.2-pr6b；等 #589
 - #553-pr2 | impl | ready | 后台任务重启恢复第二包（#580 已合入）
 <!-- READY:END -->
@@ -842,3 +839,15 @@ updated: 2026-10-23 23:15 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 > **22:52 CST**：**#547（p2-sweep-13，最终只剩 snapshot host 边界注释）合入**，树回收；其原有两块已分别拆到 #595 / #598。#596（#344 spill 写入 TOCTOU）r2 DeepSeek 0 P1（实测 21 段原始输出，含 P0 闭合）、GLM 0 P1（如实声明无执行工具、仅静态）、gate2 0 P1 → 已入队第 1 位，PR 留言说明收敛依据。
 > **23:02 CST**：#596 队列第 1 位。#562 gate8 sibling P1（session_domain 金样测试绕过 test_baseline::oracle 的基线 commit / sourceSha256 校验，另三个同源消费者都有）→ codex 修复轮 6。#598（#426）GLM r1 0 P1、gate1 0 P1，等 DeepSeek r1。磁盘 90 GiB（disk-trim 生效）。
 > **23:15 CST 交接（持有人：协调者本会话，19:10 接手）**：本段合入 #574 #568 #577 #578 #592 #579 #573 #593 #580 #582 #547 #596（邮箱 noreply）。#582 后 gateway 旧账本冻结，新条目写 diffs/。在途与下一步见 READY 与 `_tmp/20261023-loop/handoff-2315.md`。待人复核：#547 两块按「同一处修 3 次」挂起拆分（`_tmp/20261023-loop/card-547-*.md`）。worktree 7/16（含本 board 树）、cargo 1/4、磁盘约 91 GiB / 200。下一个交接点约 01:15 CST。
+> **23:22 CST**：#599（board 23:15 交接）等 CI 后入队。#566 修复轮 6 核验绿（host_model_port 14/0、lib 1179/0）推送 aaae7011 → codex+DeepSeek r7 与 gate8。#598 交付 HEAD 真实构建补证通过（CAPTURE_OK_HEAD，9 包 409 文件）→ PR 留言、DeepSeek r2 复核后收尾。#597 codex 实现中；#591 codex 修复轮 3、#562 codex 修复轮 6、#595 fable 设计 v2 在跑。
+> **23:35 CST**：#599（board）入队。#566 codex r7 0/0，等 DeepSeek r7 与 gate8 后自动收尾。#562 codex 修复轮 6 交付（域金样与副本统一经 test_baseline::oracle 校验，篡改 sha / commit 均转红；storage 97/0）→ 沙箱外核验。**#597 codex 被其内容安全过滤中断**（误判为网络安全风险，exit=1，留未提交半成品）→ 改派 GLM 在同一工作树接手，任务书改为「防御性加固、与 #596 同一做法」措辞；auto-memory「codex-cyber-filter」。#591 codex 修复轮 3、#595 fable 设计 v2（已跑 50 分钟）在跑。
+> **23:43 CST**：**#599（board 23:15 交接）合入**，树回收。#598（#426）入队第 1 位。#566 gate8 P1（context.rs 路由比对把缺失键与 undefined 当不同，偏离 JS !==）→ GLM 修复轮 7。#562 修复轮 6 核验绿（lib 1179/0）推送 458838ea → DeepSeek+GLM r9 与 gate9。#591 codex 修复轮 3 交付（两测试修正后手工回退均转红、新增 pre-lstat 真实 TS 金样）；其沙箱内负控 78/79、lib 23 失败均为监听 / socket EPERM → 协调者沙箱外重跑 verify4 + 整套负控。
+> **23:53 CST**：**#598（#426 源码身份合同改由 cargo metadata + rustc dep-info 认定）合入**，树回收。#562 r9 GLM 0/0、gate9 0 P1，等 DeepSeek r9 后自动收尾。#591 修复轮 3 沙箱外核验绿（plugin_traversal 22/0、plugin_runtime 26/0、lib 1185/0），整套负控沙箱外重跑中。#595 设计 v2 交付（基线 = main 完整路径遍历，只加总工作量上限 8,388,608，实测 Rust 最坏 164 s / 2.34 GB；超限 A 报错 / B 返回 0/0 待人定）→ codex+GLM 设计评审第 2 轮；待人定两项写卡 `_tmp/20261023-loop/card-595-limit.md`（建议 8,388,608 + A）。
+> **00:05 CST**：#591 负控沙箱外 79/79 → 修复轮 2–3 合并提交（署名 Claude Fable + Codex）推送 0122f796 → 两作者谱系都排除，GLM+DeepSeek r5 与 gate4。#595 codex 设计评审 r2 P1×4（探针移动后不能复跑；上限不能解释为覆盖 TS 能力，应定位为产品资源策略；cap 计的是累计 listed 条目而非资源上界、宽目录先 collect 未受限；差异草稿措辞超出观测）——方向已认可（祖先链删除、以完整路径系统调用保留内核截断），等 GLM 后派 fable 设计 v3。#597 GLM 接手交付（写 / mkdir / unlink / clear 都改目录句柄，竞态负控 7/9 转红、2 条按设计保持绿；另改 tool_budget.rs 的 mkdir 边界错误映射）→ 沙箱外核验。
+> **00:14 CST**：#562（#222）r9 收敛，结果块已贴、入队第 1 位。#597 GLM 接手完成，沙箱外核验绿（edgeclaw_file_memory 10/0、entries 9/0、tool_budget 5/0、lib 1192/0）→ PR #600（Codex + GLM 两作者，评审派 DeepSeek + Grok）与 gate1。#591 GLM r5 0 P1；gate4 P1（祖先被换成普通文件也得 ENOTDIR，被误当链接换入跳过，TS 整拒）→ codex 修复轮 4。#595 GLM 设计 r2 P1×1（差异草稿格式）、codex P1×4 → fable 设计 v3（探针可复跑、上限定位为产品资源策略、边读边计数、草稿措辞）。#566 修复轮 7（缺失键归一为 undefined）交付，核验中。
+> **00:23 CST**：**#562（#222 会话域日志校验）合入**，树回收；A6.9-pr3d（#587）前置之一解除。#566 修复轮 7 核验绿（host_model_port 14/0、lib 1185/0）推送 da047192 → codex+DeepSeek r8 与 gate9。#600 gate1 P1×2（project_files 新函数无条件用 unix API；overwrite_at 拒绝 nlink≥2 / 非普通文件是未登记偏离）→ 写 after-r1.sh：等 DeepSeek+Grok r1 后自动派 GLM 修复轮 1。
+> **00:38 CST**：#566 r8 codex 0/0、gate9 0 P1，等 DeepSeek r8 后自动收尾。#595 设计 v3 交付（逐条回应表、探针可复跑、上限定位为产品资源策略），按决策卡建议（8,388,608 + A，AI 代批待复核）派 fable 实现——任务书两处改动：边读边计数（不先 collect）、账本写 diffs/ 新格式（v3 §7 追加旧账本的说法已过时）。#591 修复轮 4（ENOTDIR 仅祖先为符号链接时跳过）提交推送 1e033e05；DeepSeek r5 P1#2：79/79 负控跑时 project_files.rs 哈希与 HEAD 不同 → 在新 HEAD 上沙箱外重跑整套负控并记录源码哈希。#600 GLM 修复轮 1 在跑（after-r1.sh 已触发）。
+> **00:45 CST**：**#566（A6.9-pr1 模型端口）收敛入队**（8 轮修复；r8 codex 0/0、DeepSeek 0 P1 带原始输出 8 段、gate9 0 P1）。预写 `_tmp/20261023-loop/after-566.sh`：合入后自动开 #583（pr2b handler 绑定，GLM）与 #584（pr3b 模型资源 factory，codex）两棵树派单，任务书 `_tmp/20261024-issue-583/`、`_tmp/20261024-issue-584/`；#572 / #576 同改 model/http.rs，待 #584 后串行。#591 新 HEAD 上负控与核验在跑。
+> **00:51 CST**：无新状态：#566 队列中等检查；#591 新 HEAD 核验与整套负控在跑；#600 GLM 修复轮 1、#595 fable 实现在跑；after-566 链待命。
+> **01:05 CST**：**#566（A6.9-pr1 模型端口）合入**，树回收；after-566 已开 #583（GLM）、#584（codex）两树派单。#591 在 head 1e033e05 负控 82/82、源码哈希与 HEAD 一致、插件四套与 lib 全绿 → PR 留言，DeepSeek+GLM r6 与 gate5。#595 fable 实现交付，协调者复核挡回 5 处（条目读取错误改为跳过——偏离 main/TS 的整目录 (0,0)；全局 static 改上限致并行测试干扰；oracle.json 金样无测试读取；负控缺 canonicalize / collect 两项；账本 frontmatter 与六字段不合格式）→ fable 实现修复轮 1。
+> **01:15 CST 交接（持有人：协调者本会话）**：本段合入 #599 #598 #562 #566（邮箱 noreply）；A6.9 后续 #583（GLM）、#584（codex）已开工。在途与下一步见 READY 与 `_tmp/20261023-loop/handoff-0115.md`。待人：`_tmp/20261023-loop/card-595-limit.md`（tree_files 上限与超限行为，已按建议先实现）。worktree 7/16（含本 board 树）、磁盘约 94 GiB / 200。下一个交接点约 03:15 CST。
