@@ -223,6 +223,23 @@ ops.push(
   {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'a.md',content:42}]})}},
   {repo:'empty',method:'overview'},
 );
+// Review fix round 6; appended after everything else so every earlier
+// observation keeps its index.
+ops.push(
+  // ToNumber's ToPrimitive exceptions: a wire object with an own `toString`
+  // property (JSON cannot hold a callable, so it shadows the prototype
+  // method with a non-callable) makes the `Math.max` coercions throw
+  // `TypeError: Cannot convert object to primitive value` — directly, and
+  // inside arrays whose join converts their elements. Without one, the
+  // object stringifies to "[object Object]" and converts to NaN (empty).
+  ...[{limit:{toString:null}},{offset:{toString:null}},{limit:[{toString:null}]},{limit:{toString:null,valueOf:null}},{limit:{valueOf:null}},{limit:{}}].map(input=>({method:'list',input})),
+  {method:'uiSnapshot',input:{limit:{toString:null}}},
+  // The bundle scope check goes through normalizeString, which does NOT trim
+  // (sqlite.ts:141-143, unlike the timestamp `.trim()` call sites), so padded
+  // and whitespace-only scopes stay unequal to "current_project" and throw.
+  ...[' current_project ','  ','current_project '].map(scope=>({repo:'empty',method:'import',input:{bundle:bundle({scope})}})),
+  {repo:'empty',method:'overview'},
+);
 // The observed phase runs on a stepping clock so timestamps expose the number
 // and order of nowIso() reads (exportedAt, manifest "Updated" lines,
 // importedAt); the seed phase above stayed frozen.

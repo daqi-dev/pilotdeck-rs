@@ -1924,6 +1924,100 @@
     {
       "repo": "empty",
       "method": "overview"
+    },
+    {
+      "method": "list",
+      "input": {
+        "limit": {
+          "toString": null
+        }
+      }
+    },
+    {
+      "method": "list",
+      "input": {
+        "offset": {
+          "toString": null
+        }
+      }
+    },
+    {
+      "method": "list",
+      "input": {
+        "limit": [
+          {
+            "toString": null
+          }
+        ]
+      }
+    },
+    {
+      "method": "list",
+      "input": {
+        "limit": {
+          "toString": null,
+          "valueOf": null
+        }
+      }
+    },
+    {
+      "method": "list",
+      "input": {
+        "limit": {
+          "valueOf": null
+        }
+      }
+    },
+    {
+      "method": "list",
+      "input": {
+        "limit": {}
+      }
+    },
+    {
+      "method": "uiSnapshot",
+      "input": {
+        "limit": {
+          "toString": null
+        }
+      }
+    },
+    {
+      "repo": "empty",
+      "method": "import",
+      "input": {
+        "bundle": {
+          "formatVersion": "clawxmemory-memory-snapshot.v4",
+          "scope": " current_project ",
+          "files": []
+        }
+      }
+    },
+    {
+      "repo": "empty",
+      "method": "import",
+      "input": {
+        "bundle": {
+          "formatVersion": "clawxmemory-memory-snapshot.v4",
+          "scope": "  ",
+          "files": []
+        }
+      }
+    },
+    {
+      "repo": "empty",
+      "method": "import",
+      "input": {
+        "bundle": {
+          "formatVersion": "clawxmemory-memory-snapshot.v4",
+          "scope": "current_project ",
+          "files": []
+        }
+      }
+    },
+    {
+      "repo": "empty",
+      "method": "overview"
     }
   ],
   "observations": [
@@ -4213,6 +4307,52 @@
     {
       "error": "MemoryBundleValidationError",
       "message": "Invalid files[0].content"
+    },
+    {
+      "pendingSessions": 0,
+      "workspaceMode": "single",
+      "currentProjectCount": 0,
+      "projectMetaPresent": false,
+      "projectMemoryCount": 0,
+      "feedbackMemoryCount": 0,
+      "userProfileCount": 1,
+      "recentRecallTraceCount": 0,
+      "recentIndexTraceCount": 0,
+      "recentDreamTraceCount": 0
+    },
+    {
+      "error": "TypeError",
+      "message": "Cannot convert object to primitive value"
+    },
+    {
+      "error": "TypeError",
+      "message": "Cannot convert object to primitive value"
+    },
+    {
+      "error": "TypeError",
+      "message": "Cannot convert object to primitive value"
+    },
+    {
+      "error": "TypeError",
+      "message": "Cannot convert object to primitive value"
+    },
+    [],
+    [],
+    {
+      "error": "TypeError",
+      "message": "Cannot convert object to primitive value"
+    },
+    {
+      "error": "MemoryBundleValidationError",
+      "message": "Unsupported memory bundle scope. Expected current_project."
+    },
+    {
+      "error": "MemoryBundleValidationError",
+      "message": "Unsupported memory bundle scope. Expected current_project."
+    },
+    {
+      "error": "MemoryBundleValidationError",
+      "message": "Unsupported memory bundle scope. Expected current_project."
     },
     {
       "pendingSessions": 0,

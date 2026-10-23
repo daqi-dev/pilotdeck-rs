@@ -135,6 +135,10 @@ fn error(e: FileMemoryError) -> Value {
         FileMemoryError::Bundle(message) => {
             json!({"error":"MemoryBundleValidationError","message":message})
         }
+        // `TypeError`s raised before any store call: the ToNumber/ToPrimitive
+        // failures of the `Math.max` pagination coercions (js_value's checked
+        // ports), reported like the TS harness (`e.code ?? e.name`).
+        FileMemoryError::Type(message) => json!({"error":"TypeError","message":message}),
         e => panic!("unexpected repository error: {e}"),
     }
 }
