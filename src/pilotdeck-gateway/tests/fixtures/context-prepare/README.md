@@ -40,7 +40,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
 录用前生成两次并逐字节比较两份 `oracle.json`，再覆盖仓库金样；生成器每次用
 `mkdtemp` 独占目录，不删除。
 
-覆盖 72 个用例 / 138 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
+覆盖 71 个用例 / 138 步，Rust 精确断言条数并按序逐字节比较完整 `ModelContext`
 （不排序键、无容差）：
 
 - 默认 prompt 三种文档策略（web_search / 仅 web_fetch / 无网络工具）、权限/运行
@@ -86,12 +86,14 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
   `NaN` / `Infinity` 不截断；`-Infinity` 丢弃全部消息，warning 含 Infinity，`droppedCount` 在 JSON 输出为 null。JSON 不能表示这些数，生成器在 oracle 输入里用
   `{"$number": "NaN" | "Infinity" | "-Infinity" | "-0"}` 标记，Rust 回放重建；
   `{"$undefined": true}` 标记 undefined 元素，`{"$deepArray": N}` 标记 N 层嵌套
-  数组（深 `inputSchema` 只以标记进 oracle，避免在记录侧重新走一遍深结构）。
-  消息指纹的 `stableSerialize` 与 TS 逐字节同序，但用显式栈：超过 2400 层容器
-  按 V8 同文 `RangeError: Maximum call stack size exceeded` 拒绝（确定性成功区
-  取保守上界；Node v22.22.0 经真实 `buildCachePlan` 入口实测 1998/2001 层
-  `inputSchema` 连指纹都成功、2525 层是最深成功、2526 层首次 RangeError，
-  预热 JIT 后可超 4000；上界按容器总数取 2400，2000 会误拒 TS 接受的输入）。
+  数组（深结构只以标记进 oracle，避免在记录侧重新走一遍深结构）。
+  消息指纹的 `stableSerialize` 与 TS 逐字节同序，但用显式栈：运行路径（本夹具
+  的 coordinator 与消息指纹）保持本 PR 之前的 2000 容器门限，超过即按 V8 同文
+  `RangeError: Maximum call stack size exceeded` 拒绝；host 路径保持原先无门限的
+  显式栈（深度指纹由 `cache.rs` 单测钉住）。V8 真实边界随调用方、容器形状与
+  JIT 变化（Node v22.22.0 经真实入口实测 2398 层嵌套数组成功、约 2100 层嵌套
+  对象溢出），无法用常数逐字复刻，两条路径的剩余差异登记
+  A6-JSVALUE-DEPTH-001（未批准）。
 
 负控至少八处：`previewOnly` 后的真实调用必须仍产生同一 date-update（若预览提交了
 状态就会消失）；带 checkpoint 的 `maxMessages` 不截断（若忽略 checkpoint 会丢消息）；
@@ -150,9 +152,23 @@ provider 后的检查，会返回 `LATE` 而不是中止。
   扫描都短路成功后才轮到比较器——比较器对 `null` 仍报 `name` 读取错误）；
   比较器求值序按 JS：`left.name` 读取 → `localeCompare` 属性读取（nullish 名在此
   抛错）→ `right.name` 参数（nullish 元素在此抛错）→ 非字符串左名的调用检查；
-- `cache-tool-schema-depth-1998` / `cache-tool-schema-depth-2001`：`inputSchema`
-  嵌套 1998 / 2001 层数组经真实 `buildCachePlan` 出全指纹（fingerprint 逐字节
-  比对），`$deepArray` 标记进 oracle，证明 2400 容器上界不误拒 TS 接受的输入；
-  host 侧同深度的指纹由 `cache.rs` 单测 `deep_input_schema_fingerprints_match_real_ts`
-  以两次 TS 探针指纹钉住（host-context 的 oracle 记录 indent-2 JSON 会膨胀到
-  ~16MB，深 schema 不进那套夹具）。
+- `cache-tool-schema-depth-1998/2001`（修复轮 1 引入）已随修复轮 2 移除：协调者
+  判定运行路径恢复本 PR 之前的 2000 容器门限，同输入在 Rust 侧按既有行为报
+  `Maximum call stack size exceeded` 而 TS 成功，属登记差异（A6-JSVALUE-DEPTH-001），
+  不能作金样回放；host 侧同深度的指纹仍由 `cache.rs` 单测
+  `deep_input_schema_fingerprints_match_real_ts`（无门限）以两次 TS 探针指纹钉住
+  （host-context 的 oracle 记录 indent-2 JSON 会膨胀到 ~16MB，深 schema 不进那套
+  夹具）。
+
+本轮（#495 修复轮 2，评审 P1）新增：
+
+- `cache-tool-eval-order-deep`（2 步）：比较器按 JS 求值序先读取 `right.name`
+  原始值、再作非字符串左名的调用检查、只有左名为字符串才在调用内强转右值，
+  故 `[{name: <2001 层嵌套数组>}, {name: 42}]` 两种元素序都报
+  `left.name.localeCompare is not a function`（TS 实测，两个入口一致），而不是
+  右值强转的栈溢出；
+- 深度行为收回本 PR 之前：`stable_serialize` 增加 `depth_bound` 参数，运行
+  路径（coordinator 与消息指纹）传 `js_value::MAX_ARRAY_DEPTH`（2000 容器）
+  门限、原错误文本不变，host 路径传 `None`（原先无门限的显式栈）。边界由
+  `cache.rs` 单测 `depth_boundaries_match_pre_pr_rust_behavior` 用本 PR 之前的
+  代码（88feb4b4）跑出的期望值钉住，注明是 Rust 既有行为而非 TS 对齐。
