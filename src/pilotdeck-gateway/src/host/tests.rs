@@ -3,10 +3,24 @@ use pilotdeck_protocol::parse_json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::Instant};
 
+mod cancel_exit;
 mod event;
 mod model;
 mod modules;
 mod resume;
+
+/// Test-only observations plus an opt-in reconnect gate. Production builds
+/// contain neither; the gate separates real child exit from virtual timers.
+#[derive(Clone, Default)]
+pub(super) struct ExecutionSignals {
+    pub(super) loop_exited: Arc<std::sync::atomic::AtomicBool>,
+    pub(super) final_received: Arc<std::sync::atomic::AtomicBool>,
+    pub(super) last_applied_bits: Arc<AtomicU64>,
+    pub(super) cancel_deadline: tokio::sync::watch::Sender<Option<Instant>>,
+    pub(super) reconnect_started: tokio::sync::watch::Sender<bool>,
+    pub(super) reconnect_completed: tokio::sync::watch::Sender<bool>,
+    pub(super) reconnect_gate: Option<Arc<Notify>>,
+}
 
 struct Handler {
     calls: AtomicUsize,
@@ -710,6 +724,8 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
         let limits = Limits::default();
         let deadline = POST_CANCEL_EXIT_TIMEOUT;
         let client = HostClient::spawn(&mut command, None, limits).await.unwrap();
+        let pid = client.connection.pid().expect("owned peer pid");
+        let signals = client.test_signals.clone();
         let cancellation = Cancellation::default();
         let handler = Handler::new(mode);
         let clock = ManualClock::start();
@@ -729,6 +745,7 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
             })
             .await;
         }
+        let cancel_at = Instant::now();
         cancellation.cancel(Some("test_abort".into()));
         // Let the execute loop observe cancellation and register its timer.
         for _ in 0..100 {
@@ -750,6 +767,15 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
         );
         // 5 s + 1 ms: silence past the bound is the only case that times out.
         tokio::time::advance(Duration::from_millis(101)).await;
+        // Observe the real execute wrapper leaving run while time is STILL
+        // paused at 5.001 s. A +1 s arming bug cannot pass this barrier.
+        wait_for_event(mode, || signals.loop_exited.load(Ordering::SeqCst)).await;
+        assert_eq!(Instant::now(), cancel_at + Duration::from_millis(5001));
+        wait_for_event("peer entered close", || {
+            receipt.0.with_extension("closing").exists()
+        })
+        .await;
+        std::fs::write(receipt.0.with_extension("close-release"), b"release").unwrap();
         drop(clock);
         let error = timeout(Duration::from_secs(10), task)
             .await
@@ -770,6 +796,7 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
             "{mode}: cleanup did not run"
         );
         receipt.assert_pass(mode);
+        assert_reaped(pid).await;
         println!("HOST_CANCEL_DEADLINE_PASS {mode}: {error}");
     }
 }

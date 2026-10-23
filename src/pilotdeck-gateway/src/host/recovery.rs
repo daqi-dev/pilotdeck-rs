@@ -42,6 +42,13 @@ impl HostClient {
         // Keep one budget for retained events, in-flight callbacks, cached
         // responses and both generations of transport, never reset on resume.
         let budget = self.connection.budget.clone();
+        #[cfg(test)]
+        {
+            self.test_signals.reconnect_started.send_replace(true);
+            if let Some(gate) = &self.test_signals.reconnect_gate {
+                gate.notified().await;
+            }
+        }
         self.connection.close().await?;
         let command = self.reconnect_command.as_mut().expect("checked command");
         self.connection = Connection::spawn_with_budget(command, self.limits, budget)?;

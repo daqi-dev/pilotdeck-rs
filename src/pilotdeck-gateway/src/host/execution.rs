@@ -18,7 +18,54 @@ struct Call {
 }
 enum Completed {
     Module(JsString, Result<Frame, HostError>),
-    Event(Frame, bool, Result<(), HostError>),
+    Event(Arc<Frame>, bool, Result<(), HostError>),
+}
+
+/// Observation and arming are one synchronous transition. Sending uses only
+/// this saved reason, never a fresh cancellation read that could bypass arming.
+#[derive(Default)]
+struct CancelExit {
+    reason: Option<JsString>,
+    deadline: Option<Instant>,
+    sent: bool,
+}
+impl CancelExit {
+    fn observe(&mut self, cancellation: &Cancellation) {
+        if self.reason.is_none()
+            && let Some(reason) = cancellation.reason()
+        {
+            self.deadline = Some(Instant::now() + POST_CANCEL_EXIT_TIMEOUT);
+            self.reason = Some(reason);
+        }
+    }
+    fn take_reason_to_send(&mut self) -> Option<JsString> {
+        if self.sent {
+            return None;
+        }
+        let reason = self.reason.clone()?;
+        debug_assert!(self.deadline.is_some());
+        self.sent = true;
+        Some(reason)
+    }
+}
+
+fn post_cancel_timeout() -> HostError {
+    HostError::new(
+        HostErrorKind::Timeout,
+        "Sidecar execute did not reach a terminal within the post-cancel exit deadline; progress is unknown.",
+    )
+}
+
+fn terminal_result(event: Arc<Frame>, aborted: bool, progress: &mut Progress) -> ExecuteResult {
+    // All callback/queue references have been released before transferring the
+    // original lease. Sharing a validated final adds no unbudgeted payload copy.
+    let event = Arc::try_unwrap(event).expect("terminal exclusively owned");
+    progress.terminal_lease = Some(event.lease);
+    if aborted {
+        ExecuteResult::Aborted { terminal: None }
+    } else {
+        ExecuteResult::Terminal(event.value)
+    }
 }
 
 /// Own callbacks and their cleanup together: abort alone is not a join barrier.
@@ -95,8 +142,9 @@ pub(super) async fn run(
         })
         .transpose()?;
     let mut cancel_changes = cancellation.0.subscribe();
-    let mut cancel_sent = false;
-    let mut cancel_deadline = None;
+    let mut cancel = CancelExit::default();
+    #[cfg(test)]
+    let signals = client.test_signals.clone();
     let execute_id = JsString::from("execute");
     let identity = request.identity;
     let mut outgoing = request_frame("execute", &execute_id, request.payload)
@@ -124,24 +172,20 @@ pub(super) async fn run(
     drop(outgoing);
     let mut next_sequence = 0.0;
     let mut calls: HashMap<JsString, Call> = HashMap::new();
-    let mut events: VecDeque<(Frame, bool)> = VecDeque::new();
+    let mut events: VecDeque<(Arc<Frame>, bool)> = VecDeque::new();
     let mut event_running = false;
     let mut terminal_received = false;
+    let mut known_terminal = None;
     let mut terminal_applied = None;
     let mut drain_deadline = None;
     let callbacks = &mut scope.callbacks;
     let mut interruption = None;
     loop {
-        // Cancellation is best-effort; TS keeps waiting for the peer without a
-        // timer after sending cancel (client:931-958, 543-556). Arm one
-        // independent bounded exit as soon as cancellation is observed, before
-        // or after acceptance, so a peer that stays connected without a
-        // terminal can never pin execute (and its cleanup) forever. The bound is
-        // the 5 s TS child-close grace, not the shorter close_timeout, so a
-        // late-but-valid terminal that TS would accept is not discarded.
-        if cancel_deadline.is_none() && cancellation.is_cancelled() {
-            cancel_deadline = Some(Instant::now() + POST_CANCEL_EXIT_TIMEOUT);
-        }
+        // The deadline survives acceptance, best-effort cancel, reconnect and
+        // terminal application. Repeated observations never move it forward.
+        cancel.observe(&cancellation);
+        #[cfg(test)]
+        signals.cancel_deadline.send_replace(cancel.deadline);
         if let Some(error) = interruption.take() {
             // A known final never opens another connection. Preserve pr2's
             // required-write failure semantics and bounded terminal drain.
@@ -155,12 +199,29 @@ pub(super) async fn run(
             for call in calls.values_mut() {
                 call.deliveries = 0;
             }
-            tokio::select! {
-                result = client.reconnect(progress, &handler, error, next_sequence - 1.0) => result?,
-                _ = wait_for_deadline(execution_deadline) => {
-                    return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out during reconnect."));
+            let reconnect = client.reconnect(progress, &handler, error, next_sequence - 1.0);
+            tokio::pin!(reconnect);
+            loop {
+                cancel.observe(&cancellation);
+                #[cfg(test)]
+                signals.cancel_deadline.send_replace(cancel.deadline);
+                tokio::select! {
+                    result = &mut reconnect => {
+                        result?;
+                        #[cfg(test)]
+                        signals.reconnect_completed.send_replace(true);
+                        break;
+                    }
+                    _ = wait_for_deadline(execution_deadline) => {
+                        return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out during reconnect."));
+                    }
+                    _ = wait_for_deadline(cancel.deadline) => return Err(post_cancel_timeout()),
+                    _ = cancel_changes.changed(), if cancel.deadline.is_none() => {}
                 }
             }
+            // Reobserve before sending: cancellation may have raced with the
+            // successful reconnect poll. Do not restart the reconnect future.
+            continue;
         }
         if callbacks.is_empty()
             && let Some(terminal) = terminal_applied.take()
@@ -168,13 +229,11 @@ pub(super) async fn run(
             return Ok(terminal);
         }
         if client.cancel_enabled
-            && !cancel_sent
             && progress.stream_id.is_some()
-            && let Some(reason) = cancellation.reason()
+            && let Some(reason) = cancel.take_reason_to_send()
         {
             // TS client:943-958: once, only after acceptance, no streamId/payload.
             // Set before attempting the best-effort write; failure never retries.
-            cancel_sent = true;
             let mut cancel = JsObject::new();
             for (key, value) in [
                 ("kind", "request"),
@@ -231,11 +290,17 @@ pub(super) async fn run(
             _ = wait_for_deadline(execution_deadline), if terminal_applied.is_none() => {
                 return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out."));
             }
-            // A terminal that already arrived is authoritative and wins even if
-            // its callback application is still pending; only silence before
-            // any terminal hits this bound.
-            _ = wait_for_deadline(cancel_deadline), if !terminal_received && terminal_applied.is_none() => {
-                return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute did not reach a terminal within the post-cancel exit deadline; progress is unknown."));
+            // Receiving final does not mean its event callback has completed.
+            // At the same absolute bound, stop cooperative application and keep
+            // the validated terminal authoritative without claiming it applied.
+            _ = wait_for_deadline(cancel.deadline) => {
+                callbacks.shutdown().await;
+                events.clear();
+                if let Some(terminal) = terminal_applied.take() { return Ok(terminal); }
+                if let Some((event, aborted)) = known_terminal.take() {
+                    return Ok(terminal_result(event, aborted, progress));
+                }
+                return Err(post_cancel_timeout());
             }
             _ = wait_for_deadline(drain_deadline), if terminal_applied.is_some() => {
                 // TS processes callbacks serially (570-579); this host runs them
@@ -245,7 +310,7 @@ pub(super) async fn run(
                 while callbacks.join_next().await.is_some() {}
                 return Ok(terminal_applied.take().expect("applied terminal"));
             }
-            _ = cancel_changes.changed(), if !cancel_sent => {}
+            _ = cancel_changes.changed(), if cancel.deadline.is_none() => {}
 
             completion = callbacks.join_next(), if !callbacks.is_empty() => {
                 match completion.expect("nonempty callback set").map_err(|error|
@@ -266,9 +331,8 @@ pub(super) async fn run(
                         event_running = false;
                         let MessageRef::Event(view) = decode(&event)? else { unreachable!() };
                         if view.final_event {
-                            progress.terminal_lease = Some(event.lease);
-                            terminal_applied = Some(if aborted { ExecuteResult::Aborted { terminal: None } }
-                                else { ExecuteResult::Terminal(event.value) });
+                            known_terminal.take();
+                            terminal_applied = Some(terminal_result(event, aborted, progress));
                             // Pre-existing drain policy: an unrepresentable
                             // terminal_drain_timeout is effectively unbounded.
                             // `unbounded_execution_and_maximum_terminal_drain_do_not_panic`
@@ -338,6 +402,13 @@ pub(super) async fn run(
                         terminal_received = event.final_event;
                         if events.len() >= limits.queue_capacity {
                             return Err(HostError::new(HostErrorKind::Limit, "Host event application queue full."));
+                        }
+                        let final_event = event.final_event;
+                        let raw = Arc::new(raw);
+                        if final_event {
+                            known_terminal = Some((raw.clone(), aborted));
+                            #[cfg(test)]
+                            client.test_signals.final_received.store(true, Ordering::SeqCst);
                         }
                         events.push_back((raw, aborted));
                     }
@@ -592,4 +663,35 @@ fn validate_event(
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod cancel_state_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancellation_between_observation_and_send_cannot_send_without_deadline() {
+        let cancellation = Cancellation::default();
+        let mut state = CancelExit::default();
+        state.observe(&cancellation);
+        // A different OS thread cancels after the top-of-loop observation.
+        std::thread::spawn({
+            let cancellation = cancellation.clone();
+            move || cancellation.cancel(Some("concurrent-cancel".into()))
+        })
+        .join()
+        .unwrap();
+        assert_eq!(state.take_reason_to_send(), None);
+        assert!(!state.sent && state.deadline.is_none());
+        state.observe(&cancellation);
+        let deadline = state.deadline.expect("observation must arm before send");
+        assert_eq!(
+            state.take_reason_to_send(),
+            Some("concurrent-cancel".into())
+        );
+        assert!(state.sent && state.deadline.is_some());
+        state.observe(&cancellation);
+        assert_eq!(state.deadline, Some(deadline));
+        assert_eq!(state.take_reason_to_send(), None);
+    }
 }
