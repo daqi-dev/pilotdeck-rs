@@ -966,3 +966,10 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
   Rust 对读 / 写 / 删均报 `Memory entry not found: <id>`，整树不变（也不建 `MEMORY.md`）。差异因此包括写、删两种操作下 TS 的 `MEMORY.md` 落盘。
 - **机器判据**：`src/pilotdeck-gateway/tests/edgeclaw_dangling_links.rs` 的 `dangling_link_read_is_rejected_before_any_io`、`dangling_link_write_is_rejected_before_any_io`、`dangling_link_delete_is_rejected_before_any_io`、`dangling_link_edit_is_rejected_before_any_io`（各自独立），`ts_golden_proves_the_link_is_followed` 断言金样中写 / 删后的 `MEMORY.md`（`tests/fixtures/edgeclaw-dangling-links/oracle.json:141-143`、`:217-219`）；`negative.py` 对读 / 写 / 删各一条单操作放行变异，均只让目标测试转红。
 - **批准记录**：同上文（向安全偏离，AI 代批待人复核）。
+
+### A6.5-BASH-OS-001 · 当前状态（追加，不改上文；#552）
+
+- **当前状态**：setsid 部分已消除——bash runner 在 `pre_exec` 里 `setsid()`（libuv `detached: true` 等价），子进程是新会话首进程、无控制终端，打开 `/dev/tty` 得 ENXIO，与 TS 一致；不再同时请求 `process_group(0)`（新会话即新进程组）。实现为 `src/pilotdeck-child-signals/src/lib.rs` 的 `install_child_detach_session`，属人批扩展的局部 unsafe 例外（2026-10-23，条件同 #386；`tests/unsafe_boundary.rs` 按函数名精确放行）。只有 bash runner 安装此 hook，其他 spawn 点在 TS 中本就不是 detached。
+- **仍为已知差异**：stdio 为 pipe 而非 socketpair（人批 2026-10-23 接受）。
+- **机器判据**：`src/pilotdeck-gateway/tests/bash_session.rs`（子进程 `getsid == getpid`、`/dev/tty` ENXIO；去掉 setsid 时转红），bash_tool / background_tasks / unsafe_boundary 回归。
+- **批准记录**：人批 2026-10-23「A6.5-BASH-OS-001（setsid 部分）修」与「#552 选 A」，原话见 `state/decisions-20261023.md`。
