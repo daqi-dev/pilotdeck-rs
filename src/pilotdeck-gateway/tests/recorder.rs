@@ -330,11 +330,8 @@ fn real_ts_scenarios_match_outcomes_and_bytes() {
     let JsValue::Array(scenarios) = field(&oracle, "scenarios") else {
         panic!("scenarios")
     };
-    assert!(
-        scenarios.len() >= 25,
-        "oracle has {} scenarios",
-        scenarios.len()
-    );
+    // Keep in sync with recorder/generate.mts and its README.
+    assert_eq!(scenarios.len(), 28, "recorder oracle scenario count");
     let scratch = Scratch::new("replay");
     for scenario in scenarios {
         let name = s(field(scenario, "name"));
