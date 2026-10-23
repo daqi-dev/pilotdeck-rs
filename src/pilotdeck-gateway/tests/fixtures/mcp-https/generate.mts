@@ -22,7 +22,7 @@ import {
 } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
-import { createServer as createNetServer } from 'node:net';
+import { connect as netConnect, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -38,6 +38,8 @@ const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
 const MOCK = fileURLToPath(new URL('../mcp-client/mock_server.mjs', import.meta.url));
 const TLS = fileURLToPath(new URL('../model-stream/tls.json', import.meta.url));
+// A self-signed leaf trusted by nothing; the SSE certificate-error case.
+const UNTRUSTED_TLS = fileURLToPath(new URL('./untrusted-tls.json', import.meta.url));
 const ENTRIES = ['src/mcp/client/McpClient.ts', 'src/network/fetch.ts'];
 
 // The legacy SSE transport uses the global `fetch`, whose trust store only
@@ -214,14 +216,96 @@ const scenarios = [
     script: {},
     ops: [{ op: 'start' }, { op: 'status' }, { op: 'close' }],
   },
+  {
+    id: 'https-to-http-308',
+    transport: 'streamable_http',
+    url: 'https://<redirect>/mcp',
+    redirect: { status: 308, mockTls: false },
+    headers: { 'X-Api-Key': 'k', Authorization: 'Bearer secret' },
+    mockTls: false,
+    script: {
+      initialize: [{ json: INIT }],
+      'tools/list': [{ json: TOOLS }],
+      'tools/call:echo': [{ json: CALL('over 308 downgrade') }],
+    },
+    ops: [
+      { op: 'start' },
+      { op: 'listTools' },
+      { op: 'callTool', name: 'echo', args: {} },
+      { op: 'close' },
+    ],
+  },
+  {
+    // The EventSource GET follows 307 to the TLS mock; the SDK's endpoint is
+    // resolved against the original URL, so its POSTs go through the redirect
+    // too (method/body preserved by 307).
+    id: 'https-sse-redirect',
+    transport: 'sse',
+    url: 'https://<redirect>/sse',
+    redirect: { status: 307, mockTls: true },
+    headers: { 'x-api-key': 'k' },
+    mockTls: true,
+    script: {
+      'GET /sse': [{ sse: [': hello\n\n', 'event: endpoint\ndata: /messages?session=abc\n\n'], channel: true }],
+      initialize: [{ status: 202, push: [`data: ${sseJson(INIT)}\n\n`] }],
+      'tools/list': [{ status: 202, push: [`data: ${sseJson(TOOLS)}\n\n`] }],
+      'tools/call:echo': [{ status: 202, push: [`data: ${sseJson(CALL('over sse redirect'))}\n\n`] }],
+    },
+    ops: [
+      { op: 'start' },
+      { op: 'listTools' },
+      { op: 'callTool', name: 'echo', args: {} },
+      { op: 'close' },
+    ],
+  },
+  // Legacy SSE first-connect failures. The SDK's EventSource flattens the
+  // undici `TypeError: fetch failed` plus its cause into the rejection, so
+  // these are the only cases that pin the cause text.
+  {
+    id: 'https-sse-certificate',
+    transport: 'sse',
+    url: 'https://<mock>/sse',
+    mockTls: true,
+    untrustedTls: true,
+    script: {},
+    ops: [{ op: 'start' }, { op: 'status' }, { op: 'close' }],
+  },
+  {
+    id: 'https-sse-handshake-stall',
+    transport: 'sse',
+    url: 'https://<stall>/sse',
+    stall: true,
+    // Longer than undici's 10 s connectTimeout so the fetch failure, not the
+    // client's own handshake timer, is what start() reports.
+    options: { handshakeTimeoutMs: 30_000 },
+    script: {},
+    ops: [{ op: 'start' }, { op: 'status' }, { op: 'close' }],
+  },
+  {
+    id: 'https-sse-refused',
+    transport: 'sse',
+    url: 'https://<closed>/sse',
+    closed: true,
+    script: {},
+    ops: [{ op: 'start' }, { op: 'status' }, { op: 'close' }],
+  },
+  {
+    // No explicit port: the failure text must name https's default 443.
+    id: 'https-sse-default-port',
+    transport: 'sse',
+    url: 'https://127.0.0.1/sse',
+    defaultPort: true,
+    script: {},
+    ops: [{ op: 'start' }, { op: 'status' }, { op: 'close' }],
+  },
 ];
 
-function startMock(dir, tls) {
+function startMock(dir, tlsFile) {
   const child = spawn('node', [MOCK, '--http'], {
     env: {
       ...process.env,
       MOCK_DIR: dir,
-      ...(tls ? { MOCK_TLS: TLS } : {}),
+      ...(tlsFile ? { MOCK_TLS: tlsFile } : {}),
     },
     stdio: ['pipe', 'pipe', 'inherit'],
   });
@@ -287,6 +371,18 @@ async function startStall() {
       await new Promise((done) => server.close(() => done()));
     },
   };
+}
+
+/** The default-port case needs port 443 genuinely closed on this host. */
+async function assertPortClosed(port) {
+  await new Promise((ready, fail) => {
+    const socket = netConnect(port, '127.0.0.1');
+    socket.once('connect', () => {
+      socket.destroy();
+      fail(new Error(`port ${port} is in use; the default-port oracle needs it closed`));
+    });
+    socket.once('error', () => ready());
+  });
 }
 
 /** A loopback port that is closed again before use. */
@@ -375,6 +471,7 @@ const runRoot = realpathSync(mkdtempSync(join(tmpdir(), 'pdrs-mcp-https-')));
 const recorded = [];
 try {
   for (const scenario of scenarios) {
+    if (scenario.defaultPort) await assertPortClosed(443);
     const dir = join(runRoot, scenario.id);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'script.json'), JSON.stringify({ http: scenario.script }));
@@ -386,7 +483,9 @@ try {
       hosts.push({ origin, other, authority, placeholder });
       origins.push(origin, other, authority);
     };
-    const mock = scenario.mockTls || scenario.redirect ? await startMock(dir, scenario.mockTls) : undefined;
+    const mock = scenario.mockTls || scenario.redirect
+      ? await startMock(dir, scenario.mockTls ? (scenario.untrustedTls ? UNTRUSTED_TLS : TLS) : undefined)
+      : undefined;
     let redirect;
     let stall;
     if (mock) {
@@ -446,6 +545,7 @@ try {
       headers: scenario.headers ?? {},
       options: scenario.options ?? {},
       mockTls: !!scenario.mockTls,
+      untrustedTls: !!scenario.untrustedTls,
       redirect: scenario.redirect ?? null,
       stall: !!scenario.stall,
       closed: !!scenario.closed,
