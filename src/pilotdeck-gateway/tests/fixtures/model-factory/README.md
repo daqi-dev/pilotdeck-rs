@@ -11,26 +11,33 @@
 ```sh
 export PDRS_BASELINE=/absolute/PilotDeck
 export PDRS_GIT=/usr/bin/git
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/src/target}"
 out=$(mktemp -d /tmp/pdrs-model-factory.XXXXXX)
 timeout 120 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/model-factory/generate.mts "$out"
 # 用新的 out 再生成并 cmp，两次与入库 oracle.json 逐字节一致。
-CARGO_TARGET_DIR="$PWD/src/target" timeout 600 cargo test --manifest-path src/Cargo.toml \
+timeout 600 cargo test --manifest-path src/Cargo.toml \
   --offline -p pilotdeck-gateway --test model_factory -- --test-threads=2
 ```
 
 `Families::unwired().with_native_models()` 安装真实 model/router 资源族，其余族仍由各自总装单提供。每轮从 RuntimeLease 的 ProjectResources 取 RouterResources，再调用 ports。调用方持有 runtime lease 到 turn settle；provider registry 的调用租约另外保护在途 stream/complete，drop 也释放。provider 尾项归 #572，插件 customRouter 注入归 #588。
 
-现有 HTTP 层无 non-streaming `complete()`，原生 provider 明确不广告该能力；启用 token-saver 的 router 构造会报告 judge_invoker_missing。注入支持 complete 的 provider 可正常使用注册表的 complete 租约。此存量缺口列入 RESULT「范围外」，本单不把流式聚合伪装成 TS 非流式请求。
+registry adapter 与 TS 一样始终暴露 `complete()` 分派端口，混合注册表、全 native 和空表均可构造启用 token-saver 的 router；调用时按 request.provider 取租约并分派。混合表的 judge 可正常调用 complete-capable provider；空表到调用时才报 provider_not_found。直接注入不提供 complete 的非 registry invocation port 仍在 router 构造时报 judge_invoker_missing。
 
-补充金样：9 项 registry API 结果（空/空白/BOM provider id、重复注册、重复 lease.release、unregister、missing/closed 错误）；替换保留 JS Map 原插入位置的多错误清理及聚合；complete 调用在取消 settle 前保持 lease，whenDrained 的前后状态；原生 provider 默认构造分支（TS 只在调用层注入 fetch，router 使用保留的 model-runtime 兼容注入口）；4 组真实 `ensureRouterConfig` 默认与显式覆盖输入。源闭包共 728 个文件。
+现有 Rust HTTP 层无 non-streaming `complete()`，原生 provider 自身的 supports_complete 仍为 false；经 registry 调它会在调用时返回缺失端口错误。全 native 金样仅验证 enabled router staging，不声明原生 judge HTTP 已对齐 TS。该存量缺口继续列入 RESULT「范围外」。
+
+补充金样：9 项 registry API 结果（空/空白/BOM provider id、重复注册、重复 lease.release、unregister、missing/closed 错误）；替换保留 JS Map 原插入位置的多错误清理及聚合；complete 调用在取消 settle 前保持 lease，whenDrained 的前后状态；原生 provider 默认构造分支（TS 只在调用层注入 fetch，router 使用保留的 model-runtime 兼容注入口）；4 组真实 `ensureRouterConfig` 默认与显式覆盖输入。源闭包共 728 个文件。新增 registryRouterCases 来自真实 ProjectModelRuntimeBundle / ProjectRouterRuntimeBundle：混合（native a + complete b，judge=b）、全 native（judge=a）、空表（合法配置声明 b，但注入返回空注册表，judge=b）；后两种中的全 native 只对照 staging，混合和空表另对照 registry port 的真实 complete 调用。每次使用真实配置加载器校验配置。
+
+上述命令的 PDRS_BASELINE 必须保留到 Rust replay；仅在设置该环境变量时，common/baseline.rs 才逐项比对真实源文件与 Git blob，默认未设置时只校验 fixture 的 commit 和哈希格式。
 
 负控脚本只修改本树，SHA-256 校验恢复，复用唯一 CARGO_TARGET_DIR；逐个 cargo 先查 slots、每个最多 100 秒，外围仍须 timeout 600。只接受已编译测试的断言失败，不把编译错误当转红。
 
 ```sh
-CARGO_TARGET_DIR="$PWD/src/target" CARGO_BUILD_JOBS=4 timeout 600 python3 \
+CARGO_BUILD_JOBS=4 timeout 600 python3 \
   src/pilotdeck-gateway/tests/fixtures/model-factory/negative-controls.py /tmp/pdrs-584-negative-new
 # 可在输出目录后跟一个或多个 control 名称，只重跑选定负控。
 ```
 
-10 个变异：新调用误拿旧代、drain 前释放、HTTP 不接取消、旧 registration 误删新代、替换改变 Map 清理次序、complete 提前释放 lease、factory 跳过 recorder、漏校验 JS BOM 空白、原生族不注册 provider、忽略项目 router 默认值。各项的测试名与精确变异锚点直接见脚本。
+15 个变异：新调用误拿旧代、drain 前释放、HTTP 不接取消、旧 registration 误删新代、替换改变 Map 清理次序、complete 提前释放 lease、factory 跳过 recorder、漏校验 JS BOM 空白、原生族不注册 provider、忽略项目 router 默认值。各项的测试名与精确变异锚点直接见脚本。
+
+本轮增加 5 项：混合表错误要求全 provider complete、全 native staging 错误拒绝、空表 staging 错误拒绝、complete 忽略请求 provider、model staging 在无 Tokio 线程 panic。构建复用启动器的 CARGO_TARGET_DIR（本树 src/target）；缺失时只补此同一路径，不另建 target。
