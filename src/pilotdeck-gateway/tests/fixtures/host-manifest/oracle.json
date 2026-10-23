@@ -1,0 +1,3626 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/modules/checkpoint/hostToolCheckpoint.ts": "0e437ecd537ad13e17383598aa7863afd0250ac58d326f1b17a6641ab5e969ea",
+    "src/agent/modules/transport/sidecarToolContext.ts": "ea3d5900092cdb34ab659cba19cd2bef565b6d9bb58a8d8ffab96cc28b9d73e4",
+    "src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts": "77a492b9a1a01cad44a6c7feb51fddaaf1d26a5a28de939abf3ed6310216424e"
+  },
+  "cases": [
+    {
+      "name": "minimal",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "full-composition",
+      "tools": [
+        {
+          "name": "Read",
+          "description": "Reads files",
+          "kind": "read",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          },
+          "readOnly": "true",
+          "concurrencySafe": "true",
+          "requiresUserInteraction": "false",
+          "requiredRuntimeCapabilities": []
+        },
+        {
+          "name": "Grep",
+          "description": "Searches files",
+          "kind": "search",
+          "inputSchema": {
+            "type": "object"
+          },
+          "readOnly": "true",
+          "concurrencySafe": "false",
+          "requiresUserInteraction": "false",
+          "requiredRuntimeCapabilities": [
+            "fs.read",
+            "net.fetch",
+            "\ud800"
+          ]
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "bypassPermissions",
+        "permissionContext": {
+          "mode": "spoof-mode",
+          "rules": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "**"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/spoof",
+          "canPrompt": true,
+          "additionalWorkingDirectories": [
+            "/extra/one",
+            "/extra/two"
+          ],
+          "bypassAvailable": true,
+          "policyCanPrompt": false,
+          "acceptEdits": false,
+          "planDirectoryPath": "/plans",
+          "extraKey": "kept"
+        }
+      },
+      "input": {
+        "canPrompt": true,
+        "drainSteer": true,
+        "drainOrClose": true,
+        "persistCompaction": true
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": true,
+          "metadata": true
+        },
+        "budget": {
+          "estimateRequestInput": true,
+          "evaluateRequestBudget": true,
+          "estimateUsageCost": true
+        },
+        "planTodo": true,
+        "context": {
+          "applyToolResults": true,
+          "recoverFromModelError": true,
+          "captureTurn": true,
+          "tryAutoCompact": true
+        },
+        "permission": true,
+        "lifecycle": true,
+        "event": true,
+        "interaction": true
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Reads files",
+            "kind": "read",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            },
+            "readOnly": true,
+            "concurrencySafe": true,
+            "requiresUserInteraction": false,
+            "requiredRuntimeCapabilities": []
+          },
+          {
+            "name": "Grep",
+            "description": "Searches files",
+            "kind": "search",
+            "inputSchema": {
+              "type": "object"
+            },
+            "readOnly": true,
+            "concurrencySafe": false,
+            "requiresUserInteraction": false,
+            "requiredRuntimeCapabilities": [
+              "fs.read",
+              "net.fetch",
+              "\ud800"
+            ]
+          }
+        ],
+        "permissionContext": {
+          "mode": "bypassPermissions",
+          "rules": {
+            "allow": [
+              {
+                "source": "user",
+                "behavior": "allow",
+                "toolName": "Read",
+                "pattern": "**"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "canPrompt": true,
+          "additionalWorkingDirectories": [
+            "/extra/one",
+            "/extra/two"
+          ],
+          "bypassAvailable": true,
+          "policyCanPrompt": false,
+          "acceptEdits": false,
+          "planDirectoryPath": "/plans",
+          "extraKey": "kept"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "materialize_prepared_request",
+              "stream",
+              "stream_next",
+              "close_stream",
+              "get_metadata"
+            ]
+          },
+          "budget": {
+            "methods": [
+              "estimate_request_input",
+              "evaluate_request_budget",
+              "estimate_usage_cost"
+            ]
+          },
+          "turn": {
+            "methods": [
+              "drain_steer",
+              "drain_or_close_steer",
+              "persist_compaction"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools",
+              "plan_todo"
+            ]
+          },
+          "context": {
+            "methods": [
+              "prepare_for_model",
+              "apply_tool_results",
+              "recover_from_model_error",
+              "capture_turn",
+              "try_auto_compact"
+            ]
+          },
+          "permission": {
+            "methods": [
+              "decide"
+            ]
+          },
+          "lifecycle": {
+            "methods": [
+              "dispatch"
+            ]
+          },
+          "event": {
+            "methods": [
+              "emit"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": true
+        }
+      }
+    },
+    {
+      "name": "model-materialize-request",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": true,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "materialize_prepared_request",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "model-metadata",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": true
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream",
+              "get_metadata"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "budget-no-methods",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": {},
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "budget": {
+            "methods": []
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "budget-estimate-input",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": {
+          "estimateRequestInput": true
+        },
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "budget": {
+            "methods": [
+              "estimate_request_input"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "budget-evaluate",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": {
+          "evaluateRequestBudget": true
+        },
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "budget": {
+            "methods": [
+              "evaluate_request_budget"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "budget-usage-cost",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": {
+          "estimateUsageCost": true
+        },
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "budget": {
+            "methods": [
+              "estimate_usage_cost"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "budget-two-methods",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": {
+          "estimateRequestInput": true,
+          "estimateUsageCost": true
+        },
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "budget": {
+            "methods": [
+              "estimate_request_input",
+              "estimate_usage_cost"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "turn-drain",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {
+        "drainSteer": true
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "turn": {
+            "methods": [
+              "drain_steer"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "turn-or-close",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {
+        "drainOrClose": true
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "turn": {
+            "methods": [
+              "drain_or_close_steer"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "turn-persist",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {
+        "persistCompaction": true
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "turn": {
+            "methods": [
+              "persist_compaction"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "turn-drain-and-persist",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {
+        "drainSteer": true,
+        "persistCompaction": true
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "turn": {
+            "methods": [
+              "drain_steer",
+              "persist_compaction"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "turn-all",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {
+        "drainSteer": true,
+        "drainOrClose": true,
+        "persistCompaction": true
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "turn": {
+            "methods": [
+              "drain_steer",
+              "drain_or_close_steer",
+              "persist_compaction"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "plan-todo",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": true,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools",
+              "plan_todo"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "context-bare",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": {},
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          },
+          "context": {
+            "methods": [
+              "prepare_for_model"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "context-apply-tool-results",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": {
+          "applyToolResults": true
+        },
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          },
+          "context": {
+            "methods": [
+              "prepare_for_model",
+              "apply_tool_results"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "context-recover",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": {
+          "recoverFromModelError": true
+        },
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          },
+          "context": {
+            "methods": [
+              "prepare_for_model",
+              "recover_from_model_error"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "context-capture-turn",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": {
+          "captureTurn": true
+        },
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          },
+          "context": {
+            "methods": [
+              "prepare_for_model",
+              "capture_turn"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "context-auto-compact",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": {
+          "tryAutoCompact": true
+        },
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          },
+          "context": {
+            "methods": [
+              "prepare_for_model",
+              "try_auto_compact"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "context-all-optional",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": {
+          "applyToolResults": true,
+          "recoverFromModelError": true,
+          "captureTurn": true,
+          "tryAutoCompact": true
+        },
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          },
+          "context": {
+            "methods": [
+              "prepare_for_model",
+              "apply_tool_results",
+              "recover_from_model_error",
+              "capture_turn",
+              "try_auto_compact"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "permission-module",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": true,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          },
+          "permission": {
+            "methods": [
+              "decide"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "lifecycle-module",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": true,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          },
+          "lifecycle": {
+            "methods": [
+              "dispatch"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "event-module",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": true,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          },
+          "event": {
+            "methods": [
+              "emit"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "interaction-true",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": true
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": true
+        }
+      }
+    },
+    {
+      "name": "interaction-false",
+      "tools": [],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": false
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "permission-context-empty",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {}
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "permission-context-spoof-overrides",
+      "tools": [],
+      "config": {
+        "cwd": "/real/cwd",
+        "permissionMode": "plan",
+        "permissionContext": {
+          "mode": "spoof",
+          "cwd": "/spoof",
+          "canPrompt": true,
+          "rules": "spoof-rules"
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "mode": "plan",
+          "cwd": "/real/cwd",
+          "canPrompt": true,
+          "rules": "spoof-rules"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "permission-context-order",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "canPrompt": false,
+          "cwd": "/spoof",
+          "mode": "spoof"
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "canPrompt": false,
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "permission-context-numeric-keys",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {
+          "10": "numeric",
+          "b": 1,
+          "a": 2,
+          "01": "leading-zero",
+          "canPrompt": true
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "10": "numeric",
+          "b": 1,
+          "a": 2,
+          "01": "leading-zero",
+          "canPrompt": true,
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "permission-context-missing-canprompt",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "permission-context-missing-rules",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": true
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": true,
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "input-canprompt-true",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {
+        "canPrompt": true
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": true,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "input-canprompt-false",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": true,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {
+        "canPrompt": false
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "input-canprompt-zero",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": true,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {
+        "canPrompt": 0
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": 0,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "input-canprompt-null",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": true,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {
+        "canPrompt": null
+      },
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": true,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "permission-mode-plan",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "plan",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/w",
+          "mode": "plan"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "permission-context-policy-fields",
+      "tools": [],
+      "config": {
+        "cwd": "/w",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "additionalWorkingDirectories": [
+            "/a",
+            "/b"
+          ],
+          "bypassAvailable": true,
+          "policyCanPrompt": false,
+          "acceptEdits": true,
+          "planDirectoryPath": "/plans"
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "additionalWorkingDirectories": [
+            "/a",
+            "/b"
+          ],
+          "bypassAvailable": true,
+          "policyCanPrompt": false,
+          "acceptEdits": true,
+          "planDirectoryPath": "/plans",
+          "cwd": "/w",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-one-full",
+      "tools": [
+        {
+          "name": "Read",
+          "description": "Reads files",
+          "kind": "read",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          },
+          "readOnly": "true",
+          "concurrencySafe": "true",
+          "requiresUserInteraction": "false",
+          "requiredRuntimeCapabilities": []
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Reads files",
+            "kind": "read",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            },
+            "readOnly": true,
+            "concurrencySafe": true,
+            "requiresUserInteraction": false,
+            "requiredRuntimeCapabilities": []
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-required-capabilities",
+      "tools": [
+        {
+          "name": "Grep",
+          "description": "Searches files",
+          "kind": "search",
+          "inputSchema": {
+            "type": "object"
+          },
+          "readOnly": "true",
+          "concurrencySafe": "false",
+          "requiresUserInteraction": "false",
+          "requiredRuntimeCapabilities": [
+            "fs.read",
+            "net.fetch",
+            "\ud800"
+          ]
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Grep",
+            "description": "Searches files",
+            "kind": "search",
+            "inputSchema": {
+              "type": "object"
+            },
+            "readOnly": true,
+            "concurrencySafe": false,
+            "requiresUserInteraction": false,
+            "requiredRuntimeCapabilities": [
+              "fs.read",
+              "net.fetch",
+              "\ud800"
+            ]
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-missing-fields",
+      "tools": [
+        {
+          "name": "Bare"
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Bare",
+            "readOnly": false,
+            "concurrencySafe": false,
+            "requiresUserInteraction": false
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-predicates-throw",
+      "tools": [
+        {
+          "name": "Throws",
+          "description": "d",
+          "kind": "k",
+          "inputSchema": {},
+          "readOnly": "throw",
+          "concurrencySafe": "throw",
+          "requiresUserInteraction": "throw"
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Throws",
+            "description": "d",
+            "kind": "k",
+            "inputSchema": {},
+            "readOnly": false,
+            "concurrencySafe": false,
+            "requiresUserInteraction": false
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-predicates-undefined",
+      "tools": [
+        {
+          "name": "Undef",
+          "description": "d",
+          "kind": "k",
+          "inputSchema": {},
+          "readOnly": "undefined",
+          "concurrencySafe": "undefined",
+          "requiresUserInteraction": "undefined"
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Undef",
+            "description": "d",
+            "kind": "k",
+            "inputSchema": {},
+            "requiresUserInteraction": false
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-predicate-null",
+      "tools": [
+        {
+          "name": "Null",
+          "description": "d",
+          "kind": "k",
+          "inputSchema": {},
+          "readOnly": "null",
+          "concurrencySafe": "true"
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Null",
+            "description": "d",
+            "kind": "k",
+            "inputSchema": {},
+            "readOnly": null,
+            "concurrencySafe": true,
+            "requiresUserInteraction": false
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-requires-interaction",
+      "tools": [
+        {
+          "name": "Ask",
+          "description": "d",
+          "kind": "k",
+          "inputSchema": {},
+          "requiresUserInteraction": "true"
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Ask",
+            "description": "d",
+            "kind": "k",
+            "inputSchema": {},
+            "readOnly": false,
+            "concurrencySafe": false,
+            "requiresUserInteraction": true
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-extra-fields",
+      "tools": [
+        {
+          "name": "Extra",
+          "description": "d",
+          "kind": "k",
+          "inputSchema": {},
+          "title": "Extra tool",
+          "aliases": [
+            "X"
+          ],
+          "shouldDefer": true
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Extra",
+            "description": "d",
+            "kind": "k",
+            "inputSchema": {},
+            "readOnly": false,
+            "concurrencySafe": false,
+            "requiresUserInteraction": false
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-unicode",
+      "tools": [
+        {
+          "name": "\ud800-tool",
+          "description": "中文描述 😀",
+          "kind": "read",
+          "inputSchema": {
+            "type": "object",
+            "key\ud800": "value\ud800",
+            "hidden": {
+              "$undefined": true
+            }
+          }
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "\ud800-tool",
+            "description": "中文描述 😀",
+            "kind": "read",
+            "inputSchema": {
+              "type": "object",
+              "key\ud800": "value\ud800"
+            },
+            "readOnly": false,
+            "concurrencySafe": false,
+            "requiresUserInteraction": false
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    },
+    {
+      "name": "tools-many",
+      "tools": [
+        {
+          "name": "Read",
+          "description": "Reads files",
+          "kind": "read",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          },
+          "readOnly": "true",
+          "concurrencySafe": "true",
+          "requiresUserInteraction": "false",
+          "requiredRuntimeCapabilities": []
+        },
+        {
+          "name": "Grep",
+          "description": "Searches files",
+          "kind": "search",
+          "inputSchema": {
+            "type": "object"
+          },
+          "readOnly": "true",
+          "concurrencySafe": "false",
+          "requiresUserInteraction": "false",
+          "requiredRuntimeCapabilities": [
+            "fs.read",
+            "net.fetch",
+            "\ud800"
+          ]
+        },
+        {
+          "name": "Bare"
+        }
+      ],
+      "config": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        }
+      },
+      "input": {},
+      "modules": {
+        "model": {
+          "materializeRequest": false,
+          "metadata": false
+        },
+        "budget": null,
+        "planTodo": false,
+        "context": null,
+        "permission": false,
+        "lifecycle": false,
+        "event": false,
+        "interaction": null
+      },
+      "expected": {
+        "tools": [
+          {
+            "name": "Read",
+            "description": "Reads files",
+            "kind": "read",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            },
+            "readOnly": true,
+            "concurrencySafe": true,
+            "requiresUserInteraction": false,
+            "requiredRuntimeCapabilities": []
+          },
+          {
+            "name": "Grep",
+            "description": "Searches files",
+            "kind": "search",
+            "inputSchema": {
+              "type": "object"
+            },
+            "readOnly": true,
+            "concurrencySafe": false,
+            "requiresUserInteraction": false,
+            "requiredRuntimeCapabilities": [
+              "fs.read",
+              "net.fetch",
+              "\ud800"
+            ]
+          },
+          {
+            "name": "Bare",
+            "readOnly": false,
+            "concurrencySafe": false,
+            "requiresUserInteraction": false
+          }
+        ],
+        "permissionContext": {
+          "canPrompt": false,
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          },
+          "cwd": "/fixture/project",
+          "mode": "default"
+        },
+        "hostModules": {
+          "model": {
+            "methods": [
+              "prepare",
+              "stream",
+              "stream_next",
+              "close_stream"
+            ]
+          },
+          "capability": {
+            "methods": [
+              "execute",
+              "execute_batch",
+              "list_tools"
+            ]
+          }
+        },
+        "interactionCapabilities": {
+          "elicitationAvailable": false
+        }
+      }
+    }
+  ]
+}
