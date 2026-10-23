@@ -329,13 +329,20 @@ impl EdgeClawFileStores {
             .expect("external cache poisoned");
         let mut next = HashMap::new();
         if self.repository.workspaces_root.exists() {
-            let mut dirs = fs::read_dir(&self.repository.workspaces_root)?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let root = &self.repository.workspaces_root;
+            let mut dirs = fs::read_dir(root)
+                .map_err(|e| crate::node_io::path_error(e, "scandir", root))?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| crate::node_io::path_error(e, "scandir", root))?;
             // Node readdir is in filename order on supported hosts; stable order
             // also determines which of duplicate-workspace stores is cached.
             dirs.sort_by_key(|e| e.file_name());
             for dir in dirs {
-                if !dir.file_type()?.is_dir() {
+                if !dir
+                    .file_type()
+                    .map_err(|e| crate::node_io::path_error(e, "scandir", root))?
+                    .is_dir()
+                {
                     continue;
                 }
                 let memory_dir = dir.path().join("memory");
@@ -763,10 +770,7 @@ impl EdgeClawFileStores {
                     .encode_utf16()
                     .collect::<Vec<_>>();
                 path.extend(
-                    record
-                        .get("relativePath")
-                        .and_then(JsValue::as_string)
-                        .unwrap()
+                    external_record_path(&record)?
                         .units()
                         .iter()
                         .map(|u| if *u == 92 { 47 } else { *u }),
@@ -790,4 +794,48 @@ pub(super) fn sort_entry_values(entries: &mut Vec<JsValue>) -> Result<()> {
     sort_manifest_entries(&mut records, |o| text(o, "updatedAt"), "relativePath")?;
     *entries = records.into_iter().map(JsValue::Object).collect();
     Ok(())
+}
+
+fn external_record_path(record: &JsObject) -> Result<&JsString> {
+    record
+        .get("relativePath")
+        .and_then(JsValue::as_string)
+        .ok_or_else(|| {
+            FileMemoryError::Invalid(
+                "Internal error: external record relativePath is not a string".into(),
+            )
+        })
+}
+#[cfg(test)]
+mod round6_tests {
+    use super::*;
+    #[test]
+    fn malformed_external_record_returns_internal_error() {
+        for value in [None, Some(JsValue::Null), Some(JsValue::Number(1.0))] {
+            let mut record = JsObject::new();
+            if let Some(value) = value {
+                record.insert("relativePath".into(), value);
+            }
+            assert!(
+                matches!(external_record_path(&record), Err(FileMemoryError::Invalid(message))
+                if message == "Internal error: external record relativePath is not a string")
+            );
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+use super::super::file_memory::round6_io;
+#[cfg(all(test, unix))]
+mod round6_io_tests {
+    use super::*;
+    #[test]
+    fn external_scandir_matches_real_ts() {
+        round6_io::check("external-scandir", |repo, root| {
+            round6_io::deny(root, true);
+            repo.external_snapshots()
+                .err()
+                .expect("external scandir must fail")
+        });
+    }
 }

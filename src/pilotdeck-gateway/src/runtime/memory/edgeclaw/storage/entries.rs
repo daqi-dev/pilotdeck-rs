@@ -50,10 +50,15 @@ fn exposed(v: &JsValue) -> JsValue {
     units.extend(id.units());
     JsValue::String(JsString::from_utf16(units))
 }
-fn map_record(v: JsValue) -> JsValue {
-    let mut o = v.as_object().expect("file record").clone();
+fn map_record(v: JsValue) -> Result<JsValue> {
+    let mut o = v
+        .as_object()
+        .ok_or_else(|| {
+            FileMemoryError::Invalid("Internal error: file record is not an object".into())
+        })?
+        .clone();
     o.insert("relativePath".into(), exposed(field(&v, "relativePath")));
-    JsValue::Object(o)
+    Ok(JsValue::Object(o))
 }
 fn ids_input(ids: Vec<JsValue>, key: &str) -> JsObject {
     object(&[(key, JsValue::Array(ids))])
@@ -121,7 +126,8 @@ impl EdgeClawFileStores {
         records.extend(
             array(read(&self.global_user_memory, globals)?)
                 .into_iter()
-                .map(map_record),
+                .map(map_record)
+                .collect::<Result<Vec<_>>>()?,
         );
         records.extend(self.entry_external_records(&external, max_lines)?);
         let by_id = records
@@ -174,11 +180,11 @@ impl EdgeClawFileStores {
             } else {
                 self.workspace_memory.edit_entry(&next)?
             };
-            Ok(if is_global {
+            if is_global {
                 map_record(record)
             } else {
-                record
-            })
+                Ok(record)
+            }
         })
     }
     fn mutate_entries(&self, ids: &[JsString], method: &str) -> Result<JsValue> {
@@ -395,5 +401,19 @@ impl EdgeClawFileStores {
 impl From<rusqlite::Error> for FileMemoryError {
     fn from(e: rusqlite::Error) -> Self {
         Self::Storage(super::StorageError::Sqlite(e))
+    }
+}
+
+#[cfg(test)]
+mod round6_tests {
+    use super::*;
+    #[test]
+    fn malformed_global_record_returns_internal_error() {
+        for value in [JsValue::Null, JsValue::Undefined, JsValue::Array(vec![])] {
+            assert!(
+                matches!(map_record(value), Err(FileMemoryError::Invalid(message))
+                if message == "Internal error: file record is not an object")
+            );
+        }
     }
 }

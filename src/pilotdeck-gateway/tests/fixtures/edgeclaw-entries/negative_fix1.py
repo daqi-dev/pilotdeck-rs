@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Fix-round security / snapshot-lock mutations; each must fail at runtime."""
-import argparse, hashlib, json, os, pathlib, subprocess
+import argparse, hashlib, json, os, pathlib, sys
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
 p=argparse.ArgumentParser();p.add_argument('--out',required=True);p.add_argument('--only');args=p.parse_args()
 root=pathlib.Path(__file__).resolve().parents[5]
 out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=True)
@@ -14,11 +16,11 @@ def run(name,path,changed,target,test,env_extra=None):
     if args.only and name != args.only: return
     path.write_text(changed)
     try:
-        slot=subprocess.run([str(root/'scripts/cargo-slots.sh')],capture_output=True,text=True)
+        slot=wait_for_slot(root/'scripts/cargo-slots.sh')
         if slot.returncode:raise RuntimeError(slot.stdout+slot.stderr)
         env=os.environ.copy();env.update(env_extra or {})
         cmd=['cargo','test','--locked','--offline','-p','pilotdeck-gateway',*target,test,'--','--exact','--nocapture']
-        r=subprocess.run(cmd,cwd=root/'src',env=env,capture_output=True,text=True,timeout=120)
+        r=run_owned(cmd,cwd=root/'src',env=env,timeout=120)
         log=slot.stdout+slot.stderr+r.stdout+r.stderr;(out/(name+'.log')).write_text(log)
         assert r.returncode and 'panicked at' in log and 'could not compile' not in log,(name,log[-2000:])
         failures=[line for line in log.splitlines() if 'panicked at' in line or 'unsafe ' in line or 'unfinished clear' in line or 'left:' in line or 'right:' in line]
