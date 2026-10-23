@@ -718,3 +718,13 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：仅上述四个入口的 ids 参数形状；字符串 ids 的行为已与 TS 对拍一致。接入客户端动态入口时须按本条补对拍，或在入口按 TS 文案抛 TypeError。
 - **机器判据**：暂无（强类型签名本身即边界）；接线时由接线 PR 以 idAudit 金样补判据。
 - **批准记录**：无；PR #537 修复轮 5 实现方列为残余差异候选，协调者核对后登记；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义。
+
+### A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001 · 范围补充：根内悬挂符号链接（追加，不改上文；PR #537）
+
+- **类别**：向安全偏离（范围补充）。
+- **TS 依据**：TS 对根内 `link.md -> real.md`（real.md 缺失）会跟随链接：读得 ENOENT、写会创建 real.md（PR #537 gate5 boundary 第 2 条）。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs:418-455` 的 `within` 逐级解析已存在的祖先与叶，悬挂链接无法证明目标在根内，一律按 `Memory entry not found: <id>` 拒绝（读、写、删都一样）。
+- **范围**：上文条目只写「解析后越出根」；本补充把「根内悬挂链接也拒绝」明确纳入，宽于 TS。
+- **机器判据**：暂缺专门用例，补测由 #563 跟进（前置于 A6.6 关闭）。
+- **批准记录**：无；与上文同一政策（AI 代批，待人复核），不新增豁免、不改判分语义。
+

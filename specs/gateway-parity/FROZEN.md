@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（PR #537 修复轮 6）**：accepted-diffs.md 末尾只追加 A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001 的范围补充（根内悬挂符号链接一律拒绝），原条目保留；不改判分语义、不新增豁免；只重登记 accepted-diffs.md 哈希。
+
 > **2026-10-23 重登记（PR #537 修复轮 5）**：accepted-diffs.md 末尾只追加 A6.6-EDGECLAW-ENTRY-IDS-SHAPE-001（四个按 ids 批量入口的参数形状接口边界，已知未对齐、未批准）；不改其他条目、不改判分语义；只重登记 accepted-diffs.md 哈希。
 
 > **2026-10-23 重登记（PR #537，透明披露）**：accepted-diffs.md 末尾新增「已知未对齐（未批准，待人批）· A6.6 EdgeClaw memory entries」一节，登记 A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001（entry id 不得越出 store 根，向安全偏离，AI 代批待人复核），状态未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
@@ -71,7 +73,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-73c456de36c4b382597821288a2bb5e8e12dc2c3fd1c74fa30b8b386eb4f40ec  accepted-diffs.md
+3025c40cddf244a80434ec7eac1a68d2cc4fc64fc27bbf83aba7c22bef190d6e  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
