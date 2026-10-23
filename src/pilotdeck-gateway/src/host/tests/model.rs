@@ -326,6 +326,7 @@ fn turn_context(turn: &JsValue) -> TurnContext {
         operation_deadline: optional_text(turn, "operationDeadline"),
         workspace_id: optional_text(turn, "workspaceId"),
         storage_config_version: optional_text(turn, "storageConfigVersion"),
+        abort: None,
     }
 }
 fn sticky_route(value: &JsValue) -> StickyRoute {
@@ -1023,6 +1024,7 @@ async fn unstarted_sticky_close_and_next_do_not_consume_tier_like_ts() {
         .stream(StreamInput {
             prepared,
             context: JsObject::new(),
+            abort: None,
         })
         .await
         .unwrap();
@@ -1074,4 +1076,204 @@ async fn close_accepted_before_eof_still_returns_the_iterator() {
     assert_eq!(control.entries("close"), ["a"]);
     finish(handler.dispose()).await.unwrap();
     assert_eq!(control.entries("close"), ["a"]);
+}
+
+/// Fix round 1: `DurableModelStream`'s transcript appends are synchronous
+/// file I/O (`open(append)` + `write_all` per record); they must run on
+/// `cpu::run`'s bound blocking pool, not the executor thread. Hold all four
+/// permits, then prove the first pull — which records the request before
+/// yielding anything — waits for one, and completes with the on-disk order
+/// intact once a permit frees. A regression to the inline call completes
+/// within the timeout and fails the wait assertion.
+#[tokio::test(flavor = "current_thread")]
+async fn durable_stream_recording_shares_the_cpu_permit_pool() {
+    use crate::host::modules::model_port::{self, DurableRecorder, RouterModelPortOptions};
+    use crate::runtime::model::cpu;
+    use crate::runtime::model::fallback::RouterStreamFuture;
+    use crate::runtime::model::http::{StreamOptions, StreamOutput};
+    use crate::runtime::model::router::{
+        RouterConfig, RouterDeps, RouterModelInvocation, RouterRuntime,
+    };
+    use crate::storage::recorder::Recorder;
+    use crate::storage::{JsonlTranscriptStore, TranscriptKey};
+
+    struct OneEvent;
+    impl RouterModelInvocation for OneEvent {
+        fn get_capabilities(&self, _: &JsString, _: &JsString) -> Result<JsValue, ModuleError> {
+            Ok(obj(vec![]))
+        }
+        fn get_multimodal(&self, _: &JsString, _: &JsString) -> Result<JsValue, ModuleError> {
+            Ok(obj(vec![("input", JsValue::Array(vec![]))]))
+        }
+        fn get_provider_protocol(&self, _: &JsString) -> JsString {
+            "anthropic".into()
+        }
+        fn stream<'a>(
+            &'a self,
+            _: &'a JsValue,
+            options: &'a StreamOptions,
+            sink: &'a mut (dyn FnMut(StreamOutput) + Send),
+        ) -> RouterStreamFuture<'a> {
+            Box::pin(async move {
+                sink(StreamOutput::Event(obj(vec![(
+                    "type",
+                    string("message_start"),
+                )])));
+                options.yield_boundary().await;
+                Ok(())
+            })
+        }
+    }
+
+    let mut deps = RouterDeps::new(Arc::new(OneEvent));
+    deps.clock = Arc::new(|| 0.0);
+    let snapshot = obj(vec![(
+        "config",
+        obj(vec![(
+            "router",
+            obj(vec![
+                ("enabled", JsValue::Bool(true)),
+                (
+                    "scenarios",
+                    obj(vec![(
+                        "default",
+                        parse_json(r#"{"id":"a/m","provider":"a","model":"m"}"#).unwrap(),
+                    )]),
+                ),
+            ]),
+        )]),
+    )]);
+    let router = Arc::new(
+        RouterRuntime::with_deps(RouterConfig::from_snapshot(&snapshot), deps)
+            .expect("router runtime"),
+    );
+    let scratch = std::env::temp_dir().join(format!(
+        "pdrs-a69-cpu-permit-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let transcript_path = scratch.join("cpu-permit-s1.jsonl");
+    let ids = Arc::new(Mutex::new(0));
+    let next_id = ids.clone();
+    let recorder = Recorder::with_sources(
+        Arc::new(JsonlTranscriptStore::new()),
+        TranscriptKey {
+            project_root: scratch.clone(),
+            pilot_home: scratch.join("home"),
+            session_id: "s1".into(),
+            transcript_path: transcript_path.clone(),
+        },
+        Arc::new(|| Ok("2026-10-18T00:00:00.000Z".to_string())),
+        Arc::new(move || {
+            let mut ids = next_id.lock().unwrap();
+            *ids += 1;
+            Ok(format!("id-{ids}"))
+        }),
+    );
+    let session: JsString = "s1".into();
+    recorder.start_turn(&session, &"t1".into()).unwrap();
+    let model_port::ComposedPorts { execution, .. } = model_port::ports(
+        router,
+        obj(vec![("providers", obj(vec![]))]),
+        Some(DurableRecorder {
+            recorder: Arc::new(recorder),
+            recording_session_id: None,
+        }),
+        RouterModelPortOptions::main_agent(),
+        &session,
+    );
+    let mut context = JsObject::new();
+    context.insert("sessionId".into(), string("s1"));
+    context.insert("turnId".into(), string("t1"));
+    context.insert("runId".into(), string("t1"));
+    let stream_context = context.clone();
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: obj(vec![
+                ("provider", string("a")),
+                ("model", string("m")),
+                (
+                    "messages",
+                    parse_json(r#"[{"role":"user","content":[{"type":"text","text":"hello"}]}]"#)
+                        .unwrap(),
+                ),
+                ("maxOutputTokens", JsValue::Number(100.0)),
+            ]),
+            context,
+        })
+        .await
+        .expect("prepare");
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context: stream_context,
+            abort: None,
+        })
+        .await
+        .expect("stream");
+
+    // Hold all four cpu permits, like the router cache-policy regression.
+    let started = Arc::new(AtomicUsize::new(0));
+    let mut releases = Vec::new();
+    let mut holders = Vec::new();
+    for _ in 0..4 {
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        releases.push(release);
+        let started = started.clone();
+        holders.push(tokio::spawn(async move {
+            cpu::run(move || {
+                started.fetch_add(1, Ordering::SeqCst);
+                let _ = wait.recv();
+                Ok::<_, crate::host::HostError>(())
+            })
+            .await
+        }));
+    }
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while started.load(Ordering::SeqCst) < 4 {
+        assert!(
+            Instant::now() < deadline,
+            "four cpu permits were not acquired"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    let mut next = tokio::spawn(async move { stream.next().await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(500), &mut next)
+            .await
+            .is_err(),
+        "the recording first pull must wait for a cpu permit while all four are held"
+    );
+
+    for release in releases {
+        release.send(()).expect("release cpu holder");
+    }
+    for holder in holders {
+        holder.await.expect("cpu holder task").expect("cpu holder");
+    }
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), next)
+        .await
+        .expect("the first pull resumes after a permit frees")
+        .expect("first pull task")
+        .expect("first pull");
+    let event = event.expect("one scripted event");
+    assert_eq!(text(&event, "type"), "message_start");
+    let transcript = std::fs::read_to_string(&transcript_path).unwrap();
+    let types: Vec<String> = transcript
+        .lines()
+        .map(|line| text(&parse_json(line).unwrap(), "type"))
+        .collect();
+    // The record-before-yield order survives the off-thread hop.
+    assert_eq!(
+        types,
+        vec![
+            "turn_started",
+            "step_started",
+            "model_request",
+            "model_stream_event",
+        ]
+    );
+    std::fs::remove_dir_all(&scratch).unwrap();
 }

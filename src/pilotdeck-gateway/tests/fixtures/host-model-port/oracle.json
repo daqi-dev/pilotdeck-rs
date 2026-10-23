@@ -3961,6 +3961,882 @@
         }
       ],
       "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"request_started\",\"provider\":\"b\",\"model\":\"m\",\"providerBaseUrl\":\"$MOCK/b/v1\",\"requestFingerprint\":\"dc780417132e39f28ee40eca4852418aade3cd0afe725d2fa15fa4b7e386cd65\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"role\":\"assistant\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"outputTokens\":7,\"totalTokens\":7}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"tool_call\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":8,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-8\",\"parentEntryId\":\"id-7\"}\n"
+    },
+    {
+      "spec": {
+        "name": "content-error-drain",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "error",
+                "error": {
+                  "provider": "a",
+                  "protocol": "anthropic",
+                  "code": "server_error",
+                  "message": "failed",
+                  "retryable": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "a",
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": "a",
+            "model": "m",
+            "opaque": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "server_error",
+              "message": "failed",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "server_error",
+              "message": "failed",
+              "retryable": true
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "server_error",
+              "message": "failed",
+              "retryable": true,
+              "model": "m"
+            }
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"error\",\"error\":{\"provider\":\"a\",\"protocol\":\"anthropic\",\"code\":\"server_error\",\"message\":\"failed\",\"retryable\":true}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"error\",\"error\":{\"provider\":\"a\",\"protocol\":\"anthropic\",\"code\":\"server_error\",\"message\":\"failed\",\"retryable\":true,\"model\":\"m\"}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "content-error-partial",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "error",
+                "error": {
+                  "provider": "a",
+                  "protocol": "anthropic",
+                  "code": "server_error",
+                  "message": "failed",
+                  "retryable": true
+                }
+              }
+            ]
+          }
+        ],
+        "pulls": 1
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "a",
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": "a",
+            "model": "m",
+            "opaque": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "closed"
+        }
+      ],
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n"
+    },
+    {
+      "spec": {
+        "name": "pre-aborted",
+        "scripts": [],
+        "abortPre": true
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "a",
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": "a",
+            "model": "m",
+            "opaque": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n"
+    },
+    {
+      "spec": {
+        "name": "sync-abort-mid-stream",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ],
+        "abortAfterPulls": 1
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "a",
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": "a",
+            "model": "m",
+            "opaque": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "error",
+          "value": {
+            "message": "This operation was aborted"
+          }
+        }
+      ],
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n"
+    },
+    {
+      "spec": {
+        "name": "http-abort-while-waiting",
+        "http": true,
+        "replies": [
+          {
+            "chunks": [],
+            "end": "hold"
+          }
+        ],
+        "abortAtMs": 100
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "a",
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": "a",
+            "model": "m",
+            "opaque": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "error",
+          "value": {
+            "message": "This operation was aborted"
+          }
+        }
+      ],
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/a/v1/messages",
+          "headers": [
+            [
+              "anthropic-version",
+              "2023-06-01"
+            ],
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "x-api-key",
+              "fixture-key"
+            ]
+          ],
+          "body": "{\"model\":\"m\",\"max_tokens\":64,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"stream\":true}",
+          "clientClosed": true
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n"
+    },
+    {
+      "spec": {
+        "name": "http-abort-mid-stream",
+        "http": true,
+        "replies": [
+          {
+            "chunks": [
+              "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"m\",\"usage\":{\"input_tokens\":11,\"output_tokens\":1}}}\n\n",
+              "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n"
+            ],
+            "end": "hold"
+          }
+        ],
+        "abortAtMs": 150
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "a",
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": "a",
+            "model": "m",
+            "opaque": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "request_started",
+            "provider": "a",
+            "model": "m",
+            "providerBaseUrl": "$MOCK/a/v1",
+            "requestFingerprint": "27bf9439992d7af526fe971562809bf28a05e65db0f72a27cffc32b967f191c9"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "role": "assistant",
+            "raw": {
+              "type": "message_start",
+              "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "m",
+                "usage": {
+                  "input_tokens": 11,
+                  "output_tokens": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok",
+            "raw": {
+              "type": "content_block_delta",
+              "index": 0,
+              "delta": {
+                "type": "text_delta",
+                "text": "ok"
+              }
+            }
+          }
+        },
+        {
+          "kind": "error",
+          "value": {
+            "message": "This operation was aborted"
+          }
+        }
+      ],
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/a/v1/messages",
+          "headers": [
+            [
+              "anthropic-version",
+              "2023-06-01"
+            ],
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "x-api-key",
+              "fixture-key"
+            ]
+          ],
+          "body": "{\"model\":\"m\",\"max_tokens\":64,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"stream\":true}",
+          "clientClosed": true
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"request_started\",\"provider\":\"a\",\"model\":\"m\",\"providerBaseUrl\":\"$MOCK/a/v1\",\"requestFingerprint\":\"27bf9439992d7af526fe971562809bf28a05e65db0f72a27cffc32b967f191c9\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"role\":\"assistant\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n"
+    },
+    {
+      "spec": {
+        "name": "pre-content-terminal-error",
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "error",
+                "error": {
+                  "provider": "a",
+                  "protocol": "anthropic",
+                  "code": "server_error",
+                  "message": "failed",
+                  "retryable": false
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "a",
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": "a",
+            "model": "m",
+            "opaque": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "server_error",
+              "message": "failed",
+              "retryable": false
+            }
+          }
+        },
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_execute_failed",
+            "sessionId": "s1",
+            "turnId": "t1",
+            "scenarioType": "default",
+            "provider": "a",
+            "model": "m",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "server_error",
+              "message": "failed",
+              "retryable": false
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "error",
+            "error": {
+              "provider": "a",
+              "protocol": "anthropic",
+              "code": "server_error",
+              "message": "failed",
+              "retryable": false,
+              "model": "m"
+            }
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "provider": "a",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"error\",\"error\":{\"provider\":\"a\",\"protocol\":\"anthropic\",\"code\":\"server_error\",\"message\":\"failed\",\"retryable\":false}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"error\",\"error\":{\"provider\":\"a\",\"protocol\":\"anthropic\",\"code\":\"server_error\",\"message\":\"failed\",\"retryable\":false,\"model\":\"m\"}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
     }
   ]
 }

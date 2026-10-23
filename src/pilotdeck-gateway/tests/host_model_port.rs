@@ -26,7 +26,8 @@ use pilotdeck_gateway::{
         fallback::{HttpRouterInvocation, RouterStreamFuture},
         http::{HyperModelTransport, ModelStreamError, StreamOptions, StreamOutput},
         router::{
-            ManagedModelPolicy, RouterConfig, RouterDeps, RouterModelInvocation, RouterRuntime,
+            AbortFlag, ManagedModelPolicy, RouterConfig, RouterDeps, RouterModelInvocation,
+            RouterRuntime,
         },
     },
     storage::recorder::Recorder,
@@ -185,7 +186,7 @@ impl RouterModelInvocation for ScriptedInvoker {
     fn stream<'a>(
         &'a self,
         request: &'a JsValue,
-        _: &'a StreamOptions,
+        options: &'a StreamOptions,
         sink: &'a mut (dyn FnMut(StreamOutput) + Send),
     ) -> RouterStreamFuture<'a> {
         Box::pin(async move {
@@ -200,6 +201,9 @@ impl RouterModelInvocation for ScriptedInvoker {
                 .expect("unexpected invocation");
             for event in items(get(script, "events")) {
                 sink(StreamOutput::Event(event.clone()));
+                // The TS provider generator suspends at every yield; the pull
+                // that consumed the last delivered event is what resumes it.
+                options.yield_boundary().await;
             }
             let thrown = get(script, "throw");
             if !thrown.is_undefined() {
@@ -563,10 +567,19 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                     ("value", materialized),
                 ]));
             }
+            // `record.mts` abort specs: `abortPre` / `abortAfterPulls` /
+            // `abortAtMs` drive the same `context.abortSignal` controller the
+            // dispatcher wires (`sidecarDefaultModuleDispatcher.ts:81,441`).
+            let abort_pre = get(&spec, "abortPre") == &JsValue::Bool(true);
+            let abort_after_pulls = get(&spec, "abortAfterPulls").as_number();
+            let abort_at_ms = get(&spec, "abortAtMs").as_number();
+            let turn_abort = (abort_pre || abort_after_pulls.is_some() || abort_at_ms.is_some())
+                .then(AbortFlag::new);
             let mut stream = match execution
                 .stream(StreamInput {
                     prepared: prepared.clone(),
                     context: context.clone(),
+                    abort: turn_abort.clone(),
                 })
                 .await
             {
@@ -576,6 +589,16 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                     continue;
                 }
             };
+            if abort_pre {
+                turn_abort.as_ref().expect("abort spec").abort();
+            }
+            if let Some(at_ms) = abort_at_ms {
+                let flag = turn_abort.clone().expect("abort spec");
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(at_ms as u64)).await;
+                    flag.abort();
+                });
+            }
             let pulls = get(&spec, "pulls").as_number();
             let mut pulled = 0.0f64;
             let mut drained = false;
@@ -596,6 +619,11 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                             .unwrap()
                             .push(obj(&[("kind", "event".into()), ("value", event)]));
                         pulled += 1.0;
+                        if let Some(after) = abort_after_pulls
+                            && pulled >= after
+                        {
+                            turn_abort.as_ref().expect("abort spec").abort();
+                        }
                     }
                 }
             }
@@ -683,7 +711,7 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
 async fn port_sequences_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let cases = items(get(&oracle, "cases"));
-    assert_eq!(cases.len(), 17);
+    assert_eq!(cases.len(), 24);
     for case in cases {
         replay_case(case, &oracle).await.unwrap();
     }
@@ -896,4 +924,219 @@ async fn composed_handler_serves_module_wire_calls() {
             "model_stream_event",
         ]
     );
+}
+
+/// Fix round 1: the turn's abort flag (`TurnContext::abort`,
+/// `sidecarDefaultModuleDispatcher.ts:81,441` → `routerModelInvokerAdapter.ts:68`)
+/// must interrupt a `stream_next` that is waiting on the provider — without
+/// going through `close_stream`'s stream mutex. The waiting call rejects with
+/// the abort error, the mock observes the dropped provider connection, and
+/// the recorder never advances past the request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn turn_cancel_interrupts_waiting_stream_next() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let scratch = Scratch::new("turn-abort");
+    let transcript_path = scratch.0.join(format!("turn-abort-{SESSION}.jsonl"));
+    let exchange = Arc::new(Mutex::new(model_mock::Exchange {
+        // The reply never sends a body event and never ends: the first pull
+        // is waiting on the provider when the turn is cancelled.
+        replies: vec![obj(&[
+            ("chunks", JsValue::Array(vec![])),
+            ("end", "hold".into()),
+        ])],
+        ..Default::default()
+    }));
+    let excluded = items(get(&oracle, "transportHeaders"))
+        .iter()
+        .map(text)
+        .collect();
+    let server = model_mock::start_mock(exchange.clone(), excluded, None);
+    let mut configured = providers.as_object().cloned().unwrap();
+    let mut provider = configured
+        .get_key(&"a".into())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    provider.insert(
+        "url".into(),
+        format!("{}/a/v1", server.origin).as_str().into(),
+    );
+    configured.insert("a".into(), JsValue::Object(provider));
+    let model_config = obj(&[("providers", JsValue::Object(configured))]);
+    let invoker: Arc<dyn RouterModelInvocation> = Arc::new(HttpRouterInvocation::new(
+        Arc::new(ScriptedInvoker {
+            providers: providers.clone(),
+            spec: obj(&[("scripts", JsValue::Array(vec![]))]),
+            calls: Arc::default(),
+        }),
+        Arc::new(HyperModelTransport::new()),
+        model_config.clone(),
+    ));
+    let mut deps = RouterDeps::new(invoker);
+    deps.clock = Arc::new(|| 0.0);
+    let snapshot = obj(&[(
+        "config",
+        obj(&[(
+            "router",
+            obj(&[
+                ("enabled", JsValue::Bool(true)),
+                (
+                    "scenarios",
+                    obj(&[(
+                        "default",
+                        parsed(r#"{"id":"a/m","provider":"a","model":"m"}"#),
+                    )]),
+                ),
+            ]),
+        )]),
+    )]);
+    let router = Arc::new(
+        RouterRuntime::with_deps(RouterConfig::from_snapshot(&snapshot), deps)
+            .expect("router runtime"),
+    );
+    let ids = AtomicUsize::new(0);
+    let recorder = Recorder::with_sources(
+        Arc::new(JsonlTranscriptStore::new()),
+        TranscriptKey {
+            project_root: PathBuf::from(PROJECT_ROOT),
+            pilot_home: scratch.0.join("home"),
+            session_id: SESSION.into(),
+            transcript_path: transcript_path.clone(),
+        },
+        Arc::new(|| Ok(NOW.to_string())),
+        Arc::new(move || Ok(format!("id-{}", ids.fetch_add(1, Ordering::SeqCst) + 1))),
+    );
+    let session: JsString = SESSION.into();
+    let turn_id: JsString = "t1".into();
+    recorder.start_turn(&session, &turn_id).unwrap();
+    let abort = AbortFlag::new();
+    let handler = model_port::compose(
+        router,
+        model_config,
+        Some(DurableRecorder {
+            recorder: Arc::new(recorder),
+            recording_session_id: None,
+        }),
+        RouterModelPortOptions::main_agent(),
+        TurnContext {
+            session_id: session.clone(),
+            turn_id: turn_id.clone(),
+            abort: Some(abort.clone()),
+            ..Default::default()
+        },
+    );
+    let call = |operation: &str, request: Option<JsValue>| -> JsValue {
+        let mut payload = JsObject::new();
+        payload.insert("operation".into(), operation.into());
+        payload.insert("preparationId".into(), "p1".into());
+        if let Some(request) = request {
+            payload.insert("request".into(), request);
+        }
+        obj(&[("payload", JsValue::Object(payload))])
+    };
+    handler
+        .call(call("prepare", Some(base_request())))
+        .await
+        .unwrap();
+    let timer = {
+        let flag = abort.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            flag.abort();
+        })
+    };
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        handler.call(call("stream_next", Some(base_request()))),
+    )
+    .await
+    .expect("turn cancel must interrupt the waiting stream_next")
+    .expect_err("the aborted provider wait must reject stream_next");
+    assert_eq!(error.message, "This operation was aborted", "{error:?}");
+    timer.await.expect("abort timer");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let closed = exchange
+                .lock()
+                .unwrap()
+                .requests
+                .iter()
+                .any(|request| request.get("clientClosed") == Some(&JsValue::Bool(true)));
+            if closed {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the cancelled turn must close the provider request");
+    let transcript = fs::read_to_string(&transcript_path).unwrap();
+    let types: Vec<String> = transcript
+        .lines()
+        .map(|line| text(get(&parsed(line), "type")))
+        .collect();
+    // The request was recorded before the body started; the aborted stream
+    // never yields an event, so nothing else reaches the transcript.
+    assert_eq!(types, vec!["turn_started", "step_started", "model_request"]);
+}
+
+/// Fix round 1: `RouterModelPortOptions::default()` is the main agent
+/// (`routerModelInvokerAdapter.ts:33,41`: `options.isMainAgent ?? true` when
+/// the caller omits the flag), so a composition that never sets it routes
+/// with `isSubagent: false` — the derived `Default` regressed this to false.
+#[tokio::test]
+async fn default_options_compose_the_main_agent() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let invoker: Arc<dyn RouterModelInvocation> = Arc::new(ScriptedInvoker {
+        providers: providers.clone(),
+        spec: obj(&[("scripts", JsValue::Array(vec![]))]),
+        calls: Arc::default(),
+    });
+    let mut deps = RouterDeps::new(invoker);
+    deps.clock = Arc::new(|| 0.0);
+    let snapshot = obj(&[(
+        "config",
+        obj(&[(
+            "router",
+            obj(&[
+                ("enabled", JsValue::Bool(true)),
+                (
+                    "scenarios",
+                    obj(&[(
+                        "default",
+                        parsed(r#"{"id":"a/m","provider":"a","model":"m"}"#),
+                    )]),
+                ),
+            ]),
+        )]),
+    )]);
+    let router = Arc::new(
+        RouterRuntime::with_deps(RouterConfig::from_snapshot(&snapshot), deps)
+            .expect("router runtime"),
+    );
+    let session: JsString = SESSION.into();
+    let model_port::ComposedPorts { execution, .. } = model_port::ports(
+        router,
+        obj(&[("providers", providers)]),
+        None,
+        RouterModelPortOptions::default(),
+        &session,
+    );
+    assert!(RouterModelPortOptions::default().is_main_agent);
+    let mut context = JsObject::new();
+    context.insert("sessionId".into(), JsValue::String(session.clone()));
+    context.insert("turnId".into(), "t1".into());
+    context.insert("runId".into(), "t1".into());
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context,
+        })
+        .await
+        .expect("prepare");
+    let decision = prepared.opaque.expect("router decision");
+    assert_eq!(get(&decision, "isSubagent"), &JsValue::Bool(false));
 }

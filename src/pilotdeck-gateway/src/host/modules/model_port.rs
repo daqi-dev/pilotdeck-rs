@@ -20,9 +20,16 @@
 //! `RouterRuntime::execute`, so one stream owns a lazily started body future
 //! whose sink feeds an unbounded queue. The body starts on the first `next`
 //! (a TS async generator's body never runs before that, so an unstarted
-//! stream never touches the provider) and shares a child [`AbortFlag`] with
-//! the stream handle: closing the handle interrupts the provider request and
-//! joins the body, so no provider work outlives the closed stream.
+//! stream never touches the provider), advances only at its await points and
+//! suspends at every consumer-visible event behind a [`YieldGate`] — the TS
+//! yield boundary — so provider reads and terminal side effects stay behind
+//! the pull that consumes the last delivered event. The turn's abort flag
+//! (`dispatcher:81,441`, `adapter:68`) is forwarded into the per-stream
+//! child [`AbortFlag`], so a turn cancel interrupts a `next()` waiting on the
+//! provider without waiting for the stream mutex. Closing the handle aborts
+//! and drops the body — a TS `return()` never runs the code after the
+//! suspension it returns at — and closing also drops undelivered queued
+//! events, so a closed stream answers `done` like an exhausted generator.
 //!
 //! Out of scope by design (composition gaps, not silently accepted here):
 //! per-generation provider registry/leases (`ModelInvocationProviderRegistry`),
@@ -37,6 +44,8 @@ use super::model::{
     with_sticky,
 };
 use crate::host::ModuleError;
+use crate::runtime::model::cpu;
+use crate::runtime::model::http::YieldGate;
 use crate::runtime::model::router::{
     AbortFlag, ManagedModelPolicy, RouterDecisionInput, RouterExecuteContext, RouterExecuteError,
     RouterModelRef, RouterRuntime, RouterRuntimeError,
@@ -48,7 +57,7 @@ use tokio::sync::mpsc;
 
 /// `RouterModelInvokerAdapterOptions`. `workspaceId`/`storageConfigVersion`
 /// only feed the invocation audit sink (out of scope), so they are absent.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct RouterModelPortOptions {
     /// `options.isMainAgent ?? true`.
     pub is_main_agent: bool,
@@ -64,6 +73,21 @@ pub struct RouterModelPortOptions {
     /// the capability when the route matches the configured agent model.
     pub agent_model: Option<(JsString, JsString)>,
     pub agent_max_context_tokens: Option<JsValue>,
+}
+impl Default for RouterModelPortOptions {
+    /// `isMainAgent` defaults to true, like the TS adapter's
+    /// `options.isMainAgent ?? true` (`routerModelInvokerAdapter.ts:33,41`)
+    /// when the caller omits it.
+    fn default() -> Self {
+        Self {
+            is_main_agent: true,
+            project_path: None,
+            fallback_models: Vec::new(),
+            managed_model_policy: None,
+            agent_model: None,
+            agent_max_context_tokens: None,
+        }
+    }
 }
 impl RouterModelPortOptions {
     /// `isMainAgent` defaults to true, like every TS call site that omits it.
@@ -211,8 +235,11 @@ impl ModelExecution for RouterModelPort {
         let session_id = context_string(&input.context, "sessionId").unwrap_or_default();
         let turn_id = context_string(&input.context, "turnId").unwrap_or_default();
         // A child flag per stream: closing or dropping the stream handle
-        // interrupts this provider request without touching turn state.
+        // interrupts this provider request without touching turn state. The
+        // turn's flag forwards into it, like `context.abortSignal` flowing
+        // through `router.execute` into the fetch signal.
         let abort = AbortFlag::new();
+        let gate = YieldGate::new();
         let ctx = RouterExecuteContext {
             session_id,
             turn_id,
@@ -221,6 +248,7 @@ impl ModelExecution for RouterModelPort {
             project_path: self.options.project_path.clone(),
             stream_options: crate::runtime::model::http::StreamOptions {
                 abort: Some(abort.clone()),
+                yield_gate: Some(gate.clone()),
                 ..Default::default()
             },
         };
@@ -239,6 +267,9 @@ impl ModelExecution for RouterModelPort {
                 events: None,
                 failure: None,
                 abort,
+                gate,
+                turn_abort: input.abort,
+                turn_wait: None,
             }) as Box<dyn ModelStream>)
         })
     }
@@ -399,15 +430,23 @@ impl ModelStream for DurableModelStream {
         Box::pin(async move {
             if !self.started {
                 self.started = true;
-                self.recorder
-                    .record_model_request(&self.session_id, &self.turn_id, self.request.clone())
-                    .map_err(recorder_error)?;
+                record_off_thread(
+                    self.recorder.clone(),
+                    self.session_id.clone(),
+                    self.turn_id.clone(),
+                    RecordCall::Request(self.request.clone()),
+                )
+                .await?;
             }
             let event = self.inner.next().await?;
             if let Some(event) = &event {
-                self.recorder
-                    .record_model_event(&self.session_id, &self.turn_id, event)
-                    .map_err(recorder_error)?;
+                record_off_thread(
+                    self.recorder.clone(),
+                    self.session_id.clone(),
+                    self.turn_id.clone(),
+                    RecordCall::Event(event.clone()),
+                )
+                .await?;
             }
             Ok(event)
         })
@@ -419,8 +458,41 @@ impl ModelStream for DurableModelStream {
     }
 }
 
+/// Which recorder call a [`record_off_thread`] run performs.
+enum RecordCall {
+    Request(JsValue),
+    Event(JsValue),
+}
+
+/// The recorder's transcript append is synchronous file I/O (`open` +
+/// `write_all` per event). It must not run on the executor thread
+/// (`model.rs`: ports are cooperative async work), so it goes through the
+/// same bound blocking pool as the tokenizer batches (`cpu::run`). The
+/// record still completes before the event is yielded, preserving the
+/// durable wrapper's on-disk order.
+async fn record_off_thread(
+    recorder: Arc<Recorder>,
+    session_id: JsString,
+    turn_id: JsString,
+    call: RecordCall,
+) -> Result<(), ModuleError> {
+    cpu::run(move || {
+        let recorded = match &call {
+            RecordCall::Request(request) => recorder
+                .record_model_request(&session_id, &turn_id, request.clone())
+                .map(|_| ()),
+            RecordCall::Event(event) => recorder.record_model_event(&session_id, &turn_id, event),
+        };
+        recorded.map_err(|error| crate::host::HostError::from(recorder_error(error)))
+    })
+    .await
+    .map_err(|error| ModuleError::new(error.message.clone()))
+}
+
 /// The lazily started `RouterRuntime::execute` body of one stream.
 type ExecuteBody = Pin<Box<dyn Future<Output = Result<(), RouterExecuteError>> + Send>>;
+/// The turn abort's `cancelled()` wait, boxed so it can live in the stream.
+type TurnWait = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// The router-backed stream: a lazily started `execute` body feeding a queue.
 struct RouterModelStream {
@@ -431,6 +503,11 @@ struct RouterModelStream {
     events: Option<mpsc::UnboundedReceiver<JsValue>>,
     failure: Option<ModuleError>,
     abort: AbortFlag,
+    gate: YieldGate,
+    /// The turn-level abort forwarded into [`Self::abort`].
+    turn_abort: Option<AbortFlag>,
+    /// `turn_abort.cancelled()` once the body has started.
+    turn_wait: Option<TurnWait>,
 }
 
 impl RouterModelStream {
@@ -440,9 +517,15 @@ impl RouterModelStream {
         };
         let (sender, receiver) = mpsc::unbounded_channel();
         let router = self.router.clone();
+        let gate = self.gate.clone();
         self.events = Some(receiver);
+        self.turn_wait = self.turn_abort.as_ref().map(|turn| {
+            let turn = turn.clone();
+            Box::pin(async move { turn.cancelled().await }) as TurnWait
+        });
         self.body = Some(Box::pin(async move {
             let mut sink = move |event: JsValue| {
+                gate.deliver();
                 let _ = sender.send(event);
             };
             router.execute(&decision, &request, &ctx, &mut sink).await
@@ -461,10 +544,25 @@ impl ModelStream for RouterModelStream {
                         match received {
                             // Events ahead of the body's completion are yielded
                             // first; only a drained closed channel falls through.
-                            Poll::Ready(Some(event)) => return Poll::Ready(Ok(Some(event))),
+                            // Taking one completes a TS yield: the suspended body
+                            // may advance to its next provider read.
+                            Poll::Ready(Some(event)) => {
+                                self.gate.pull();
+                                return Poll::Ready(Ok(Some(event)));
+                            }
                             Poll::Ready(None) => self.events = None,
                             Poll::Pending => {}
                         }
+                    }
+                    // Forward the turn abort into the child flag, then let the
+                    // body observe it at its own await points. A pre-aborted
+                    // turn therefore finishes the body with no provider work,
+                    // like the attempts-loop check in `RouterRuntime.ts:685`.
+                    if let Some(wait) = self.turn_wait.as_mut()
+                        && wait.as_mut().poll(cx).is_ready()
+                    {
+                        self.turn_wait = None;
+                        self.abort.abort();
                     }
                     let polled = match self.body.as_mut() {
                         Some(body) => body.as_mut().poll(cx),
@@ -500,24 +598,20 @@ impl ModelStream for RouterModelStream {
                 self.pending = None;
                 return Ok(());
             }
-            self.start();
-            // Interrupt the provider request, then join the body so no
-            // provider work outlives the closed stream. The interrupted
-            // body's error is discarded: `close_stream` is `await
-            // iterator.return()`, and a TS generator's early return never
-            // rejects (`sidecarDefaultModuleDispatcher.ts:153-158`).
+            // Interrupt the provider request, then drop the body: a TS
+            // `return()` never runs the code after the suspension it returns
+            // at, so outcome handling (health, `execute_failed`, terminal
+            // error events) must not fire after a partial pull. Dropping the
+            // body future also drops the provider connection, like undici
+            // losing its consumer. The interrupted body's error is discarded:
+            // `close_stream` is `await iterator.return()`, and a TS
+            // generator's early return never rejects
+            // (`sidecarDefaultModuleDispatcher.ts:153-158`). Undelivered
+            // queued events go with it — a closed generator is `done`.
             self.abort.abort();
-            std::future::poll_fn(|cx| match self.body.as_mut() {
-                Some(body) => match body.as_mut().poll(cx) {
-                    Poll::Pending => Poll::Pending,
-                    Poll::Ready(_) => {
-                        self.body = None;
-                        Poll::Ready(())
-                    }
-                },
-                None => Poll::Ready(()),
-            })
-            .await;
+            self.body = None;
+            self.events = None;
+            self.failure = None;
             Ok(())
         })
     }

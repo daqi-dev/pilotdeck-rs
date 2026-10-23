@@ -371,6 +371,9 @@ impl RouterRuntime {
                     for queued in outcome.pending.drain(..) {
                         sink(queued);
                     }
+                    // The drained events are TS yields; the terminal failure
+                    // handling stays behind the pulls that consume them.
+                    ctx.stream_options.yield_boundary().await;
                     last_outcome = outcome;
                     break 'attempts;
                 }
@@ -401,6 +404,9 @@ impl RouterRuntime {
                 for queued in outcome.pending.drain(..) {
                     sink(queued);
                 }
+                // `observeRequest` runs on the pull after the last queued
+                // event, like the TS generator resuming past its yields.
+                ctx.stream_options.yield_boundary().await;
                 let ended_at = crate::runtime::context::prompt::iso_timestamp((self.clock)());
                 let usage = final_usage(&attempt_request, &outcome).await?;
                 self.cache_session_usage(&ctx.session_id, &usage);
@@ -447,6 +453,9 @@ impl RouterRuntime {
                         sink(event);
                     }
                 }
+                // The buffered events are TS yields; the terminal error event
+                // stays behind the pulls that consume them.
+                ctx.stream_options.yield_boundary().await;
             }
             let mut error = error.as_object().cloned().unwrap_or_default();
             error.insert("provider".into(), JsValue::String(attempt.provider));
