@@ -7,6 +7,7 @@ are INVALID, recorded in summary.json; timeout kills the entire process group.
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -110,7 +111,9 @@ try:
     for control in selected:
         assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
         slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
+        slot_deadline = time.monotonic() + 1800
         while slots.returncode == 1:
+            assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
             time.sleep(20)
             slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
         assert slots.returncode == 0
@@ -122,7 +125,9 @@ try:
         if 'filter' in control:
             key, value = control['filter']
             run_env[key] = value
-        cmd = command + [control['test'], '--', '--nocapture']
+        module = 'submit' if control['test'] == cap_test else 'gateway'
+        test_name = f"runtime::turn::{module}::tests::{control['test']}"
+        cmd = command + [test_name, '--', '--exact', '--nocapture']
         process = subprocess.Popen(cmd, cwd=repo, env=run_env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, start_new_session=True)
         timed_out = False
@@ -138,7 +143,11 @@ try:
                 if modified[path] != data:
                     path.write_bytes(data)
         marker = control['marker']
-        valid = not timed_out and ((process.returncode == 0 and '1 passed' in raw) if marker is None else (
+        result = re.search(r'^test result: ok\. (\d+) passed; 0 failed;', raw, re.MULTILINE)
+        baseline_ok = (process.returncode == 0 and result is not None
+            and int(result.group(1)) == 1
+            and re.search(r'^test ' + re.escape(test_name) + r' \.\.\. ok$', raw, re.MULTILINE) is not None)
+        valid = not timed_out and (baseline_ok if marker is None else (
             process.returncode == 101 and 'test result: FAILED' in raw and marker in raw
             and 'could not compile' not in raw))
         (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr

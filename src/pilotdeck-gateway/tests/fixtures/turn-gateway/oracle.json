@@ -3022,6 +3022,1537 @@
         "after",
         "session_dispose"
       ]
+    },
+    {
+      "name": "abort-missing-session",
+      "setup": {
+        "abortParams": {}
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "abort",
+        "terminal",
+        "end"
+      ],
+      "input": {
+        "sessionKey": "s",
+        "projectKey": "p",
+        "runId": "r",
+        "message": "hello",
+        "channelKey": "test"
+      },
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":3,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":4,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":5,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}"
+          ],
+          "active": false,
+          "ended": true
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "replay": {
+        "active": false,
+        "sessionKey": "s",
+        "runId": "r",
+        "events": [
+          {
+            "type": "turn_started",
+            "runId": "r"
+          },
+          {
+            "type": "input_accepted",
+            "runId": "r"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          },
+          {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          },
+          {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        ],
+        "terminal": true
+      },
+      "hostCalls": [
+        "refresh",
+        "prepare",
+        "submit",
+        "commit",
+        "release",
+        "after",
+        "session_dispose"
+      ]
+    },
+    {
+      "name": "abort-numeric-session",
+      "setup": {
+        "abortParams": {
+          "sessionKey": 123
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "abort",
+        "terminal",
+        "end"
+      ],
+      "input": {
+        "sessionKey": "s",
+        "projectKey": "p",
+        "runId": "r",
+        "message": "hello",
+        "channelKey": "test"
+      },
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":3,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":4,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":5,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}"
+          ],
+          "active": false,
+          "ended": true
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "replay": {
+        "active": false,
+        "sessionKey": "s",
+        "runId": "r",
+        "events": [
+          {
+            "type": "turn_started",
+            "runId": "r"
+          },
+          {
+            "type": "input_accepted",
+            "runId": "r"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          },
+          {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          },
+          {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        ],
+        "terminal": true
+      },
+      "hostCalls": [
+        "refresh",
+        "prepare",
+        "submit",
+        "commit",
+        "release",
+        "after",
+        "session_dispose"
+      ]
+    },
+    {
+      "name": "abort-null-session",
+      "setup": {
+        "abortParams": {
+          "sessionKey": null
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "abort",
+        "terminal",
+        "end"
+      ],
+      "input": {
+        "sessionKey": "s",
+        "projectKey": "p",
+        "runId": "r",
+        "message": "hello",
+        "channelKey": "test"
+      },
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":3,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":4,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":5,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}"
+          ],
+          "active": false,
+          "ended": true
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "replay": {
+        "active": false,
+        "sessionKey": "s",
+        "runId": "r",
+        "events": [
+          {
+            "type": "turn_started",
+            "runId": "r"
+          },
+          {
+            "type": "input_accepted",
+            "runId": "r"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          },
+          {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          },
+          {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        ],
+        "terminal": true
+      },
+      "hostCalls": [
+        "refresh",
+        "prepare",
+        "submit",
+        "commit",
+        "release",
+        "after",
+        "session_dispose"
+      ]
+    },
+    {
+      "name": "abort-numeric-run",
+      "setup": {
+        "abortParams": {
+          "sessionKey": "s",
+          "runId": 123
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "abort",
+        "terminal",
+        "end"
+      ],
+      "input": {
+        "sessionKey": "s",
+        "projectKey": "p",
+        "runId": "r",
+        "message": "hello",
+        "channelKey": "test"
+      },
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":3,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":4,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":5,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}"
+          ],
+          "active": false,
+          "ended": true
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "replay": {
+        "active": false,
+        "sessionKey": "s",
+        "runId": "r",
+        "events": [
+          {
+            "type": "turn_started",
+            "runId": "r"
+          },
+          {
+            "type": "input_accepted",
+            "runId": "r"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          },
+          {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          },
+          {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        ],
+        "terminal": true
+      },
+      "hostCalls": [
+        "refresh",
+        "prepare",
+        "submit",
+        "commit",
+        "release",
+        "after",
+        "session_dispose"
+      ]
+    },
+    {
+      "name": "abort-null-run",
+      "setup": {
+        "abortParams": {
+          "sessionKey": "s",
+          "runId": null
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "abort",
+        "terminal",
+        "end"
+      ],
+      "input": {
+        "sessionKey": "s",
+        "projectKey": "p",
+        "runId": "r",
+        "message": "hello",
+        "channelKey": "test"
+      },
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":3,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":4,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":5,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}"
+          ],
+          "active": false,
+          "ended": true
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "replay": {
+        "active": false,
+        "sessionKey": "s",
+        "runId": "r",
+        "events": [
+          {
+            "type": "turn_started",
+            "runId": "r"
+          },
+          {
+            "type": "input_accepted",
+            "runId": "r"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          },
+          {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          },
+          {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        ],
+        "terminal": true
+      },
+      "hostCalls": [
+        "refresh",
+        "prepare",
+        "submit",
+        "commit",
+        "release",
+        "after",
+        "session_dispose"
+      ]
+    },
+    {
+      "name": "abort-false-run",
+      "setup": {
+        "abortParams": {
+          "sessionKey": "s",
+          "runId": false
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "abort",
+        "terminal",
+        "end"
+      ],
+      "input": {
+        "sessionKey": "s",
+        "projectKey": "p",
+        "runId": "r",
+        "message": "hello",
+        "channelKey": "test"
+      },
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":3,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":4,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":5,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}"
+          ],
+          "active": false,
+          "ended": true
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "replay": {
+        "active": false,
+        "sessionKey": "s",
+        "runId": "r",
+        "events": [
+          {
+            "type": "turn_started",
+            "runId": "r"
+          },
+          {
+            "type": "input_accepted",
+            "runId": "r"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          },
+          {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          },
+          {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        ],
+        "terminal": true
+      },
+      "hostCalls": [
+        "refresh",
+        "prepare",
+        "submit",
+        "commit",
+        "release",
+        "after",
+        "session_dispose"
+      ]
+    },
+    {
+      "name": "abort-object-run",
+      "setup": {
+        "abortParams": {
+          "sessionKey": "s",
+          "runId": {}
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "abort",
+        "terminal",
+        "end"
+      ],
+      "input": {
+        "sessionKey": "s",
+        "projectKey": "p",
+        "runId": "r",
+        "message": "hello",
+        "channelKey": "test"
+      },
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":3,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":4,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":5,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}"
+          ],
+          "active": false,
+          "ended": true
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "replay": {
+        "active": false,
+        "sessionKey": "s",
+        "runId": "r",
+        "events": [
+          {
+            "type": "turn_started",
+            "runId": "r"
+          },
+          {
+            "type": "input_accepted",
+            "runId": "r"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          },
+          {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          },
+          {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        ],
+        "terminal": true
+      },
+      "hostCalls": [
+        "refresh",
+        "prepare",
+        "submit",
+        "commit",
+        "release",
+        "after",
+        "session_dispose"
+      ]
+    },
+    {
+      "name": "abort-array-run",
+      "setup": {
+        "abortParams": {
+          "sessionKey": "s",
+          "runId": []
+        }
+      },
+      "steps": [
+        "observe",
+        "accept",
+        "abort",
+        "terminal",
+        "end"
+      ],
+      "input": {
+        "sessionKey": "s",
+        "projectKey": "p",
+        "runId": "r",
+        "message": "hello",
+        "channelKey": "test"
+      },
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":3,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":4,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":5,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}}"
+          ],
+          "active": false,
+          "ended": true
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "replay": {
+        "active": false,
+        "sessionKey": "s",
+        "runId": "r",
+        "events": [
+          {
+            "type": "turn_started",
+            "runId": "r"
+          },
+          {
+            "type": "input_accepted",
+            "runId": "r"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          },
+          {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          },
+          {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        ],
+        "terminal": true
+      },
+      "hostCalls": [
+        "refresh",
+        "prepare",
+        "submit",
+        "commit",
+        "release",
+        "after",
+        "session_dispose"
+      ]
     }
   ],
   "moduleSequences": [

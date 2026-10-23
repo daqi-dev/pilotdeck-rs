@@ -249,10 +249,18 @@ impl ConnectionGateway for ConnectionTurnGateway {
     }
     fn abort_on_close(&self, params: JsValue) -> Call<'_, Result<(), RequestError>> {
         Box::pin(async move {
-            let key = params
-                .get("sessionKey")
-                .and_then(JsValue::as_string)
-                .ok_or_else(|| RequestError::new("sessionKey must be a string."))?;
+            // TS uses strict Map keys and run-id equality. Non-string values
+            // cannot match a live session/run; they must not become an
+            // unfiltered session abort when converted to Option<JsString>.
+            let Some(key) = params.get("sessionKey").and_then(JsValue::as_string) else {
+                return Ok(());
+            };
+            if params
+                .get("runId")
+                .is_some_and(|run| !matches!(run, JsValue::String(_) | JsValue::Undefined))
+            {
+                return Ok(());
+            }
             let run = params.get("runId").and_then(JsValue::as_string);
             let reason = params.get("reason").and_then(JsValue::as_string);
             let allowed = self
