@@ -529,3 +529,25 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：仅启用该 run policy 的提交；不得据此宣称 guard 已对齐，也不放宽其他 submit 路径的对拍。推迟到 A7.2-pr4b（FailureGuard / classify 移植与 submit 的 observe / trip / active 生命周期接线），前置于 A7.2-pr6 生产宿主接线验收与 A7.2 关闭；补齐后移除此能力拒绝，须有真实 TS guard 金样与计数 / trip 负控。
 - **机器判据**：`src/pilotdeck-gateway/src/runtime/turn/submit_tests.rs:805` `unavailable_capabilities_are_explicitly_refused` 的 `failure-guard-unavailable` 用例（:811）。
 - **批准记录**：无；PR #533 Grok r1 F1 要求登记，实现方在修复轮 1 给出候选，协调者核对引用后登记；**已知未对齐（未批准，待人批）**。
+
+## A6.7 hooks 执行器状态更新与新增条目（p2-hooks，10-23）
+
+- **A6.7-HOOK-HTTPS-001 当前状态（追加，不改原条目）**：已实现。HTTP hook 复用 model 传输的 webpki TLS 连接器，https 初始 URL 与 http→https 重定向可执行；机器判据 `src/pilotdeck-gateway/tests/hooks_https.rs` 的 `http_hooks_over_tls_match_real_ts`（本地 TLS 服务回放真实 TS 金样）与 `hooks_https_fixtures_regenerate_identically_from_ts`；负控「拒绝 https」转红。原条目所述差异消除；残余的信任源差异见下方 A6.7-HOOK-TLS-TRUST-001。
+
+### A6.7-HOOK-OUTPUT-001 · command hook stdout / stderr 按 V8 字符串上限封顶
+
+- **类别**：有界 containment（与 A6.5-BASH-OUTPUT-001 同规则：整块丢弃并继续排空）。
+- **TS 依据**（cc7c4e6）：`extension/hooks/execution/CommandHookExecutor.ts:5、28、33` 经 `commandRunner.ts:118、130-132`，输出超过 V8 字符串上限抛 `RangeError: Invalid string length`，CLI 未捕获而 `shutdownAndExit(1)`（`cli/pilotdeck.ts:267-270`）。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/hooks/exec.rs` 单流按 `MAX_STRING_LENGTH`（UTF-16 码元）封顶（:469），正常结束时溢出为 `non_blocking_error`、stderr `Invalid string length`、stdout 空、无 exitCode；timeout / cancel 保留原结果，exit 2 保留 blocking。TS 是整个进程退出，Rust 只让该 hook 失败。
+- **范围**：仅 command hook 输出超过 V8 字符串上限。
+- **机器判据**：`src/pilotdeck-gateway/tests/hooks_runtime.rs:293` `command_output_over_string_limit_is_a_range_error`；负控「忽略输出上限」转红。
+- **批准记录**：无；**已知未对齐（未批准，待人批）**。
+
+### A6.7-HOOK-TLS-TRUST-001 · https hook 的信任源与代理不同于 Node
+
+- **类别**：未实现（信任源 / 代理）。
+- **TS 依据**：Node `fetch` 读取 `NODE_EXTRA_CA_CERTS` 扩展信任；TS CLI 启动时安装 undici proxy dispatcher（`cli/pilotdeck.ts:28`）。
+- **Rust 行为**：HTTP hook 只信任 webpki（Mozilla bundle），不读 `NODE_EXTRA_CA_CERTS`，不走 TS 的代理 dispatcher；私有 CA 的 https hook 在 Rust 报 `fetch failed`。与 model 传输一致。
+- **范围**：用私有 CA 或依赖代理的 https hook。扩展信任源会改变安全边界，需产品决定。
+- **机器判据**：暂无（实现方在 `_tmp/20261023-p2-hooks/RESULT.md`「范围外」记录）。
+- **批准记录**：无；**已知未对齐（未批准，待人批）**。
