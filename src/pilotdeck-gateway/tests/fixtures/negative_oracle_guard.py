@@ -16,6 +16,9 @@ from negative_process import run_owned, wait_for_slot
 
 
 CASES = [
+    ("session-domain", ["--lib"], "storage::session_domain::tests::real_ts_domain_logs_and_events_match_bytes"),
+    ("transcript-adapter", ["--lib"], "storage::transcript_adapter_tests::real_ts_scenarios_match_outcomes_calls_and_bytes"),
+    ("run-registry", ["--lib"], "storage::run_registry_tests::real_ts_scenarios_match_outcomes_and_snapshot_bytes"),
     ("host-tool-context", ["--test", "host_tool_context"], "replay_real_ts_constructors"),
     ("recorder", ["--test", "recorder"], "real_ts_scenarios_match_outcomes_and_bytes"),
     ("host-budget", ["--test", "host_budget"], "budget_dispatch_matches_real_ts_calls_responses_and_capabilities"),
@@ -49,7 +52,7 @@ def main():
         assert len(recorded) == 64 and original.count(recorded.encode()) == 1
         forged = "0" * 64 if recorded != "0" * 64 else "1" * 64
         command = ["cargo", "test", "--offline", "-p", "pilotdeck-gateway", *target,
-                   test, "--", "--exact", "--nocapture"]
+                   test, "--", "--exact", "--nocapture", "--test-threads=4"]
         try:
             for phase in ("baseline", "tampered"):
                 if phase == "tampered":

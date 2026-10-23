@@ -28,6 +28,21 @@ with scratch('fix2') as root:
     env.update(PDRS_SESSION_DOMAIN_ORACLE=str(domain), PDRS_TRANSCRIPT_ADAPTER_ORACLE=str(transcript))
     test('baseline-adapter', ADAPTER_TEST, env)
     test('baseline-domain', DOMAIN_TEST, env)
+    assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE for source hash verification'
+    for name, key, diagnostic in [
+        ('tamper-domain-source-hash', 'sourceSha256', 'oracle hash for src/session/events/SessionDomainValidation.ts does not match'),
+        ('tamper-domain-source-commit', 'sourceCommit', 'oracle baseline commit'),
+    ]:
+        oracle = json.loads(domain.read_bytes())
+        if key == 'sourceSha256':
+            source = 'src/session/events/SessionDomainValidation.ts'
+            assert oracle[key][source] != '0' * 64
+            oracle[key][source] = '0' * 64
+        else:
+            oracle[key] = '0' * 40
+        domain.write_text(json.dumps(oracle) + '\n')
+        test(name, DOMAIN_TEST, env, diagnostic)
+        shutil.copyfile(FIXTURES / 'session-domain/oracle.json', domain)
     for name, path, fixture, target, count in [
         ('drop-adapter-scenarios', transcript, 'transcript-adapter', ADAPTER_TEST, 397),
         ('drop-domain-scenarios', domain, 'session-domain', DOMAIN_TEST, 304),
@@ -70,4 +85,4 @@ with scratch('fix2') as root:
     # Subsequent positive controls read the original source and immutable goldens.
     test('restored-adapter', ADAPTER_TEST, env)
     test('restored-domain', DOMAIN_TEST, env)
-    print('PASS: 4 / 4 repair-2 mutants killed', flush=True)
+    print('PASS: 6 / 6 repair-2 and provenance mutants killed', flush=True)
