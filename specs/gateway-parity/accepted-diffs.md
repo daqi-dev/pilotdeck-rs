@@ -899,3 +899,49 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **批准记录**：无；实现方在修复轮 1 自述，协调者改写为六字段登记（实现方误写入 `specs/parity/accepted-diffs.md`，已撤回，原文见 `_tmp/20261023-a66-pr10f-export/worker-wrong-ledger.diff`）；PR #531 codex r2 指出原登记「TS 条件恒真、单线程两侧可观察相同」不准确，协调者按其实测更正；**已知未对齐（未批准，待人批）**。
 
 - **A6.6-EDGECLAW-IMPORT-SWAP-ROLLBACK-001 机器判据补充（追加，不改原条目；PR #531 修复轮 3）**：上方条目「单线程 copy 回退中途失败的场景尚无 Rust 测试」已过期——修复轮 3 新增 `src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/bundle.rs` 的 `#[cfg(unix)]` 单测 `failed_copy_fallback_restores_live_root`，在 Linux 与 macOS 上都覆盖单线程 rename 回退 copy 中途失败后的恢复；macOS 另有 `failed_swap_restores_live_root_even_when_recreated`（chflags）。（PR #531 gate3 concurrency P1 指出。）
+
+### A6.5-MCP-HTTP-LIFETIME-001 · 当前状态（追加，不改上文；#551）
+
+- **当前状态**：代理部分已对 MCP 消除——`src/pilotdeck-gateway/src/runtime/model/http.rs` 共享连接器层实现 HTTP `CONNECT` 代理（按 TS `src/cli/proxy.ts` 的来源与优先级读环境变量与 `proxy.url` / `noProxy` 配置、NO_PROXY 匹配、代理认证），MCP streamable_http / sse 已接入（`runtime/mcp/http.rs`）。关闭即丢流、首连失败不重试按人批（2026-10-23）接受为已知差异，不在本条。
+- **范围外**：模型与 hook 调用点切到代理归 #572；MCP provider 尚无生产构造点，配置到 provider 的最后一跳归 A6.9-pr3c；`https:` / `socks` 代理与非法 scheme 回退见下三条。
+- **机器判据**：`src/pilotdeck-gateway/tests/mcp_proxy.rs`（`tests/fixtures/mcp-proxy/` 真实 TS 金样两次生成一致：经代理成功、NO_PROXY 绕过、认证、配置来源优先级、代理拒绝 / 不可达）；负控：忽略代理变量、NO_PROXY 匹配写错、丢弃认证、优先级改反。
+- **批准记录**：人批 2026-10-23「A6.5-MCP-HTTP-LIFETIME-001（代理部分）修」；本条为修复完成的状态追加。
+
+### A6.5-MCP-PROXY-HTTPS-001 · `https:` 代理不支持（MCP 直连）（已知未对齐，未批准；#551）
+
+- **类别**：代理 scheme 功能缺失（行为差异）。
+- **TS 依据**：`proxy-agent.js` 的 `ProxyAgent` 对 `https:` 代理建 TLS 连接；探针
+  `https://127.0.0.1:1081` 安装成功（`fix1/proxy-scheme-probe.log`）。
+- **Rust 行为**：`ProxyConfig::new_with_extra` 在 `proxy.scheme() != "http"` 时返回 `None`，
+  MCP 请求直连目标，不向代理发 CONNECT。
+- **范围**：`runtime/model/http.rs` 的 `ProxyConfig`/`proxy_https_connector`；新增夹具与
+  `tests/mcp_proxy.rs` 用例；不含 model/hook（#572）。
+- **机器判据**：用现有 `proxy-tls.json` 的 CA/生成方式补一张 SAN 为 `IP:127.0.0.1` 的代理证书，起一个 **TLS 代理监听**，真实 TS 录
+  `https://` 代理 + https 目标（streamable 与 SSE 各 1）金样；Rust 回放必须出现经 TLS 代理的
+  CONNECT 且步骤通过；负控把 `https:` 分支改回直连，`proxy CONNECT log` 必须转红。
+- **批准记录**：无；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义；后续实现见跟进单。
+
+### A6.5-MCP-PROXY-SOCKS-001 · `socks5:` / `socks:` 代理不支持（MCP 直连）（已知未对齐，未批准；#551）
+
+- **类别**：代理 scheme 功能缺失（行为差异）。
+- **TS 依据**：`proxy-agent.js:143,166` 显式识别 `socks5:`/`socks:` 并走
+  `Socks5ProxyAgent`；探针两种写法均安装成功。
+- **Rust 行为**：同候选 1，非 `http:` 直接 `None`，无 SOCKS 握手。
+- **范围**：同候选 1，另需 SOCKS5 测试服务器夹具（无认证 + user/pass 两种）与可选依赖评估。
+- **机器判据**：真实 TS 录 `socks5://` 与 `socks://` 各 1 个成功用例；Rust 回放必须完成
+  SOCKS5 握手并经代理到 mock；负控把 scheme 分支改回直连，CONNECT/SOCKS 日志必须转红。
+- **批准记录**：无；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义；后续实现见跟进单。
+
+### A6.5-MCP-PROXY-FALLBACK-001 · 非法 / 不支持的代理 URL 时直连，而 TS 保留已装 dispatcher（已知未对齐，未批准；#551）
+
+- **类别**：错误处理差异（非功能缺失）。
+- **TS 依据**：`proxy.ts:122-145` 的 `catch` 打印告警并返回 `undefined`，**不改变已有
+  dispatcher**；探针 ftp/坏 URL 后 state 仍是上一个 http proxy。
+- **Rust 行为**：`from_settings_lookup` 对非法/不支持 URL 返回 `None`，client 变直连；
+  reload 场景会丢掉此前 env/config 代理；启动场景若 env URL 非法而 config 有效，TS 会让
+  config 补装，Rust 目前直接直连、不回退 config。
+- **范围**：`runtime/model/http.rs` 的解析/回退策略；需要“安装失败保留旧状态”的进程级或
+  client 级状态模型，不能只改一个 `Option`。
+- **机器判据**：真实 TS 用例“env http proxy 已装 → reload `ftp://` → 请求仍走 env 代理”；
+  Rust 回放一致；负控改回“失败即直连”，CONNECT 日志必须转红。
+- **批准记录**：无；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义；后续实现见跟进单。
