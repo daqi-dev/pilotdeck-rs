@@ -96,6 +96,7 @@ pub(super) async fn run(
         .transpose()?;
     let mut cancel_changes = cancellation.0.subscribe();
     let mut cancel_sent = false;
+    let mut cancel_deadline = None;
     let execute_id = JsString::from("execute");
     let identity = request.identity;
     let mut outgoing = request_frame("execute", &execute_id, request.payload)
@@ -131,6 +132,16 @@ pub(super) async fn run(
     let callbacks = &mut scope.callbacks;
     let mut interruption = None;
     loop {
+        // Cancellation is best-effort; TS keeps waiting for the peer without a
+        // timer after sending cancel (client:931-958, 543-556). Arm one
+        // independent bounded exit as soon as cancellation is observed, before
+        // or after acceptance, so a peer that stays connected without a
+        // terminal can never pin execute (and its cleanup) forever. The bound is
+        // the 5 s TS child-close grace, not the shorter close_timeout, so a
+        // late-but-valid terminal that TS would accept is not discarded.
+        if cancel_deadline.is_none() && cancellation.is_cancelled() {
+            cancel_deadline = Some(Instant::now() + POST_CANCEL_EXIT_TIMEOUT);
+        }
         if let Some(error) = interruption.take() {
             // A known final never opens another connection. Preserve pr2's
             // required-write failure semantics and bounded terminal drain.
@@ -220,6 +231,12 @@ pub(super) async fn run(
             _ = wait_for_deadline(execution_deadline), if terminal_applied.is_none() => {
                 return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out."));
             }
+            // A terminal that already arrived is authoritative and wins even if
+            // its callback application is still pending; only silence before
+            // any terminal hits this bound.
+            _ = wait_for_deadline(cancel_deadline), if !terminal_received && terminal_applied.is_none() => {
+                return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute did not reach a terminal within the post-cancel exit deadline; progress is unknown."));
+            }
             _ = wait_for_deadline(drain_deadline), if terminal_applied.is_some() => {
                 // TS processes callbacks serially (570-579); this host runs them
                 // concurrently. Once final is applied, bounded drain cannot turn
@@ -252,6 +269,12 @@ pub(super) async fn run(
                             progress.terminal_lease = Some(event.lease);
                             terminal_applied = Some(if aborted { ExecuteResult::Aborted { terminal: None } }
                                 else { ExecuteResult::Terminal(event.value) });
+                            // Pre-existing drain policy: an unrepresentable
+                            // terminal_drain_timeout is effectively unbounded.
+                            // `unbounded_execution_and_maximum_terminal_drain_do_not_panic`
+                            // pins that behavior; unlike execution_timeout, this
+                            // accepted-diff field is not validated for
+                            // representability in this fix.
                             drain_deadline = Instant::now().checked_add(limits.terminal_drain_timeout);
                             continue;
                         }

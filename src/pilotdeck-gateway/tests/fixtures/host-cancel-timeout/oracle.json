@@ -1,0 +1,7 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts": "2ec674ccf767533e0cd7c592d16bc0157a1c441c3c43d35e6288276300dc7e2f"
+  },
+  "defaultKillTimeoutMs": 5000
+}
