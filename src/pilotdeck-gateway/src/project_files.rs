@@ -502,7 +502,13 @@ fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io:
             // statat to tell apart "non-directory entry → re-report as unlink"
             // from "directory → keep as the rmdir error", matching Node's
             // rmSync which lstat()s before choosing the syscall.
-            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            // Use lookup() to match EACCES exactly: std maps both EACCES and
+            // EPERM to PermissionDenied, and EPERM on a sticky directory must
+            // reach descends_after_rmdir below to recurse into child entries.
+            Err(e)
+                if crate::node_io::lookup(&e)
+                    .is_some_and(|(code, _)| code == "EACCES") =>
+            {
                 use rustix::fs::{AtFlags as AF2, statat};
                 let is_dir = statat(&directory, name, AF2::SYMLINK_NOFOLLOW)
                     .map(|st| (st.st_mode & libc::S_IFMT) == libc::S_IFDIR)
