@@ -257,6 +257,49 @@ fn closed_origin() -> String {
     format!("https://{address}")
 }
 
+/// Accepts TCP but never answers the TLS ClientHello, so socket
+/// establishment hangs inside the handshake. The accepted sockets stay open
+/// on purpose: dropping them would fail the connect instead of stalling it.
+struct StallServer {
+    origin: String,
+    sockets: Arc<Mutex<Vec<std::net::TcpStream>>>,
+    stop: Arc<AtomicBool>,
+}
+impl Drop for StallServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        // Close the sockets held for the stall so nothing outlives the test.
+        self.sockets.lock().unwrap().clear();
+    }
+}
+
+fn start_stall() -> StallServer {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind stall listener");
+    listener.set_nonblocking(true).unwrap();
+    let origin = format!("https://{}", listener.local_addr().unwrap());
+    let stop = Arc::new(AtomicBool::new(false));
+    let sockets = Arc::new(Mutex::new(Vec::new()));
+    let flag = stop.clone();
+    let held = sockets.clone();
+    thread::spawn(move || {
+        while !flag.load(Ordering::SeqCst) {
+            match listener.accept() {
+                // Read and write nothing: the ClientHello just sits there.
+                Ok((socket, _)) => held.lock().unwrap().push(socket),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("stall accept: {error}"),
+            }
+        }
+    });
+    StallServer {
+        origin,
+        sockets,
+        stop,
+    }
+}
+
 // ---------------------------------------------------------------- replay
 
 #[tokio::test]
@@ -266,6 +309,7 @@ async fn http_hooks_over_tls_match_real_ts() {
     let tls = start_tls(server_config);
     let redirect = start_redirect(tls.origin.clone());
     let closed = closed_origin();
+    let stall = start_stall();
     let hook_input = object(field(&oracle, "hookInput"));
     let cases = array(field(&oracle, "cases"));
     assert!(!cases.is_empty(), "oracle has no cases");
@@ -274,23 +318,41 @@ async fn http_hooks_over_tls_match_real_ts() {
         let target = text(field(case, "url"))
             .replace("<tls>", &tls.origin)
             .replace("<http>", &redirect.origin)
-            .replace("<closed>", &closed);
+            .replace("<closed>", &closed)
+            .replace("<stall>", &stall.origin);
         let trusted = field(case, "trusted").as_bool().unwrap_or(false);
         let executor = if trusted {
             HttpHookExecutor::with_roots(trusted_roots.clone())
         } else {
             HttpHookExecutor::new()
         };
-        let result = executor
-            .execute(HttpHookOptions {
-                url: target.into(),
-                headers: None,
-                allowed_env_vars: None,
-                hook_input: hook_input.clone(),
-                env: Some(JsObject::new()),
-                signal: None,
-            })
-            .await;
+        let options = HttpHookOptions {
+            url: target.into(),
+            headers: None,
+            allowed_env_vars: None,
+            hook_input: hook_input.clone(),
+            env: Some(JsObject::new()),
+            signal: None,
+        };
+        let started = std::time::Instant::now();
+        let result = if name == "https-handshake-stall" {
+            // Test-owned bound: without the hook's 10 s connect deadline this
+            // future would sit on the 600 s headers timer, so fail at 12 s
+            // instead of hanging the suite.
+            match tokio::time::timeout(Duration::from_secs(12), executor.execute(options)).await {
+                Ok(result) => result,
+                Err(_) => panic!("https case {name}: connect deadline did not fire within 12 s"),
+            }
+        } else {
+            executor.execute(options).await
+        };
+        if name == "https-handshake-stall" {
+            assert!(
+                started.elapsed() >= Duration::from_secs(9),
+                "https case {name}: returned after {:?}, before the 10 s deadline",
+                started.elapsed()
+            );
+        }
         assert_eq!(
             json(&result.to_value()),
             text(field(case, "expected")),

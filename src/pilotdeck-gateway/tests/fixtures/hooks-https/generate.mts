@@ -12,6 +12,7 @@ import { realpathSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
+import net from 'node:net';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { bindSourceTree } from '../../baseline_source_guard.mjs';
@@ -91,6 +92,17 @@ const closedPort = (closedServer.address() as any).port;
 await new Promise<void>((closed) => closedServer.close(() => closed()));
 const closedOrigin = `https://127.0.0.1:${closedPort}`;
 
+// Accepts TCP but never answers the TLS ClientHello. undici's connect timeout
+// (10 s) covers the whole socket establishment, handshake included, so this
+// case records the real TS failure after the deadline.
+const stallSockets: net.Socket[] = [];
+const stallServer = net.createServer((socket) => {
+  stallSockets.push(socket);
+  socket.on('error', () => {});
+});
+await new Promise<void>((ready) => stallServer.listen(0, '127.0.0.1', ready));
+const stallOrigin = `https://127.0.0.1:${(stallServer.address() as any).port}`;
+
 const cases: any[] = [];
 async function record(name: string, url: string, trusted: boolean) {
   const executor = new HttpHookExecutor();
@@ -106,7 +118,8 @@ async function record(name: string, url: string, trusted: boolean) {
     const masked = url
       .replace(tlsOrigin, '<tls>')
       .replace(httpOrigin, '<http>')
-      .replace(closedOrigin, '<closed>');
+      .replace(closedOrigin, '<closed>')
+      .replace(stallOrigin, '<stall>');
     cases.push({ name, url: masked, trusted, expected: JSON.stringify(result) });
   } finally {
     if (agent) {
@@ -120,9 +133,13 @@ await record('https-direct', `${tlsOrigin}/hook`, true);
 await record('http-to-https-redirect', `${httpOrigin}/hook`, true);
 await record('https-untrusted-certificate', `${tlsOrigin}/hook`, false);
 await record('https-connection-refused', `${closedOrigin}/hook`, true);
+await record('https-handshake-stall', `${stallOrigin}/hook`, false);
 
 await new Promise<void>((closed) => httpsServer.close(() => closed()));
 await new Promise<void>((closed) => httpServer.close(() => closed()));
+// `net.Server.close` waits for open connections; end the held sockets first.
+for (const socket of stallSockets) socket.destroy();
+await new Promise<void>((closed) => stallServer.close(() => closed()));
 
 const oracle = {
   sourceCommit,
@@ -133,7 +150,8 @@ const oracle = {
 };
 const text = JSON.stringify(oracle, null, 2) + '\n';
 assert.ok(!text.includes(baseline), 'oracle leaked the baseline path');
-assert.ok(!text.includes(tlsOrigin) && !text.includes(httpOrigin) && !text.includes(closedOrigin),
+assert.ok(!text.includes(tlsOrigin) && !text.includes(httpOrigin) && !text.includes(closedOrigin)
+  && !text.includes(stallOrigin),
   'oracle leaked a run-varying origin');
 await mkdir(output, { recursive: true });
 await writeFile(join(output, 'oracle.json'), text);

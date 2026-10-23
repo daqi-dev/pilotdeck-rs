@@ -34,6 +34,12 @@
       "url": "<closed>/hook",
       "trusted": true,
       "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}"
+    },
+    {
+      "name": "https-handshake-stall",
+      "url": "<stall>/hook",
+      "trusted": false,
+      "expected": "{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}"
     }
   ]
 }

@@ -891,6 +891,7 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-tungstenite",
+ "tower-service",
  "url",
  "uuid",
 ]
