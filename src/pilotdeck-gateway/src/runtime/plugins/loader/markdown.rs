@@ -60,45 +60,20 @@ fn relative(base: &Path, target: &Path) -> String {
     parts.join("/")
 }
 
-// Count only Markdown candidates after directory identity de-duplication.
-// Bundled scripts/assets must not consume the contribution budget. Limits apply
-// to one configured directory; exceeding either discards that entire directory.
-const MAX_MARKDOWN_ENTRIES: usize = 4096;
-const MAX_MARKDOWN_DEPTH: usize = 64;
-const TRAVERSAL_LIMIT: &str = "Plugin markdown traversal limit exceeded.";
-
-fn traversal_limit() -> PluginRuntimeError {
-    PluginRuntimeError::new(TRAVERSAL_LIMIT)
-}
-
-pub(super) fn warn_if_traversal_limit(base: &Path, error: &PluginRuntimeError) {
-    // TS PluginLoader catches per-directory errors without logging. Keep that
-    // result boundary, but make our additional safety rejection observable.
-    if error.message == TRAVERSAL_LIMIT {
-        eprintln!(
-            "[plugins] Markdown directory '{}' discarded: {} (maxMarkdownCandidates={}, maxDepth={})",
-            base.display(),
-            error.message,
-            MAX_MARKDOWN_ENTRIES,
-            MAX_MARKDOWN_DEPTH
-        );
-    }
-}
-
-fn markdown_entries(directory: &Path) -> Result<Vec<PathBuf>, PluginRuntimeError> {
+fn markdown_entries(directory: &Path) -> Vec<PathBuf> {
     // Like TS collectMarkdownFiles: unreadable directories contribute nothing.
     let Ok(entries) = std::fs::read_dir(directory) else {
-        return Ok(Vec::new());
+        return Vec::new();
     };
     let mut names = Vec::new();
     for entry in entries {
         let Ok(entry) = entry else {
-            return Ok(Vec::new());
+            return Vec::new();
         };
         names.push(entry.file_name());
     }
     names.sort();
-    Ok(names
+    names
         .into_iter()
         .map(|name| {
             // Preserve TS's lexical contribution path, including a trailing slash.
@@ -108,7 +83,7 @@ fn markdown_entries(directory: &Path) -> Result<Vec<PathBuf>, PluginRuntimeError
                 name.to_string_lossy()
             ))
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(unix)]
@@ -145,14 +120,10 @@ pub(super) fn load_plugin_commands_with_root(
     };
     let mut visited = HashSet::new();
     visited.insert(directory_identity(&metadata, &canonical));
-    let mut remaining = MAX_MARKDOWN_ENTRIES;
-    let mut pending: Vec<_> = markdown_entries(base)?
-        .into_iter()
-        .rev()
-        .map(|p| (p, 1))
-        .collect();
+    // Explicit DFS stack; each physical directory is expanded at most once.
+    let mut pending: Vec<_> = markdown_entries(base).into_iter().rev().collect();
     let mut output = Vec::new();
-    while let Some((path, depth)) = pending.pop() {
+    while let Some(path) = pending.pop() {
         let Ok(canonical) = path.canonicalize() else {
             continue;
         };
@@ -169,23 +140,11 @@ pub(super) fn load_plugin_commands_with_root(
             if !visited.insert(directory_identity(&metadata, &canonical)) {
                 continue;
             }
-            if depth > MAX_MARKDOWN_DEPTH {
-                return Err(traversal_limit());
-            }
-            pending.extend(
-                markdown_entries(&path)?
-                    .into_iter()
-                    .rev()
-                    .map(|p| (p, depth + 1)),
-            );
+            pending.extend(markdown_entries(&path).into_iter().rev());
         } else if path
             .file_name()
             .is_some_and(|s| s.to_string_lossy().to_ascii_lowercase().ends_with(".md"))
         {
-            if remaining == 0 {
-                return Err(traversal_limit());
-            }
-            remaining -= 1;
             output.push(load_markdown_source(
                 &canonical,
                 &path,

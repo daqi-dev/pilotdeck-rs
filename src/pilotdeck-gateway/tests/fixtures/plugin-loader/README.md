@@ -46,10 +46,14 @@ MCP/LSP 从 manifest 到 LoadedPlugin 及 runtime 合并保持现有协议类型
 
 修复轮 1 的独立金样 `traversal.json` 由 `generate-traversal.mts` 生成，原 `oracle.json` / `regressions.json` 字节保持不变。沿用上面的 Node / PDRS_BASELINE / LANG 设置，分别执行两次 `generate-traversal.mts <输出目录>`，比较两个 `traversal.json`。样本记录真实 TS 对 k=3/7/10/20 互链团的 1000ms 限时观察、目录/文件/链式越界链接、不可读条目、65 层目录、4097 条目、合法目录别名的完整贡献路径，以及含孤立代理的 MCP serverName。TS 的超时记录只声称在截止时仍未返回。
 
-Rust 明确应用本轮授权的安全差异：每次贡献目录遍历用全局 dev+ino 集合（Unix）只展开首次遇到的物理目录；非 Unix 使用规范化路径身份。无环别名也去重，保留首次访问的词法命名与路径；不再声称与 TS 的双别名重复贡献等价。预算为 4096 个 Markdown 候选（全局目录去重、根边界检查之后，技能过滤之前；目录与非 Markdown 资产不计数），目录深度为 64；超限返回 `Plugin markdown traversal limit exceeded.`，配置目录入口沿用错误转空贡献的 TS 处理边界，整目录丢弃，绝不发布截断结果。预算超限另向 stderr 输出被丢弃的目录、原因和两项限额；TS `PluginLoader.ts:93` 本身静默 catch→[]，其他读取错误仍按原边界处理。规范化后的条目必须位于规范化插件根内，否则跳过；直接调用两参数 `load_plugin_commands` 时以 base 本身为根。插件三个贡献族和 style-only 入口均传入实际插件根。旧金样的两条越界贡献由 `plugin_loader.rs::root_boundary_expected` 精确排除，仅用于兑现本轮安全期望，未改 TS 原始金样。
+Rust 每次贡献目录遍历用全局 dev+ino 集合（Unix）只展开首次遇到的物理目录；非 Unix 使用规范化路径身份。无环别名也去重，保留首次访问的词法命名与路径。遍历使用显式 DFS 栈，没有条目预算、Markdown 候选预算或深度上限，也没有超限错误与 stderr 诊断。规范化条目必须位于规范化插件根内，否则跳过；两参数 `load_plugin_commands` 以 base 为根。插件三个贡献族和 style-only 传入实际插件根。原有 ROOT-001 金样投影仍只排除那两条已知越界贡献。
 
-`plugin_traversal` 的四个独立子进程测试要求各自 1 秒内完成；Drop 在全部退出路径 kill + wait。负控 `markdown-cycle` 临时恢复祖先集合算法并撤去总预算，必须命中 k=10 的 1 秒超时；另有目录越界、文件越界、链接链越界、配置根、深度、条目、首次别名路径、serverName 保真的独立负控。`negative-controls.py` 给每个 case 配固定的预期失败文本，并同时要求选定测试的 FAILED 行；失败文本不匹配、编译错误、无测试执行与外部超时都不算击杀。
+`plugin_traversal` 的四个互链团测试各有 1 秒子进程期限，Drop 在全部退出路径 kill + wait。负控 `markdown-cycle` 只去掉全局目录去重，必须命中 k=10 超时。`markdown-alias`、根边界与 serverName 负控保持。原 entry/depth-budget 测试改名为 `plugin_markdown_entries_match_ts` / `plugin_markdown_deep_tree_matches_ts`，现在分别回放真实 TS 的 4097 个贡献和 65 层完整贡献；原超限诊断测试及对应负控已删除。
 
-修复轮 2 的独立金样 `budget.json` 由 `generate-budget.mts` 生成；沿用上述 Node 命令分别生成两次并逐字节比较。包含 3 个 skill、每个经 `node_modules` 链接访问 1600 个 `.js` 资产的插件（文件只写到临时 `assets-*` 目录，不通过任何 `node_modules` 路径写入）、12 层双别名 DAG、简单兄弟互链。全部期望来自真实 TS：资产场景完整回放 skills；图场景记录原始贡献数，并按唯一正文投影 TS 首次路径。DAG 每个物理目录正文唯一，投影可用于验证 Rust 保留首次词法路径；简单环的 TS 首次路径已含多次回边，只比较正文集合并单独披露路径/重复数差异。TS 在这个简单环中经 ELOOP 截止后成功返回，不能概括为「所有环都不返回」。Rust 另测 24 层 DAG：子进程内遍历限 1 秒，父进程含启动限 5 秒并在退出路径 kill + wait。
+修复轮 2 的 `budget.json` 保留原始字节，仍由 `generate-budget.mts` 生成，包含 4800 个非 Markdown 资产、12 层双别名 DAG 与简单兄弟互链。DAG 验证物理目录首次路径投影，24 层独立压力在子进程内限时；简单环比较唯一正文集合，TS 可以经 ELOOP 截止后成功返回重复贡献，不概括成所有环不返回。
 
-新增负控 `markdown-all-entry-budget` 原样恢复按全部枚举条目扣预算，资产回放必须红；`markdown-dag-no-dedup` / `markdown-simple-cycle-no-dedup` 去掉全局去重，分别命中 DAG 预算错误与简单环重复贡献断言；`markdown-limit-no-diagnostic` 关闭诊断后，commands / skills / output-styles / style-only 的 stderr 观测必须红。诊断正控同时覆盖候选数与深度超限、仅丢弃出错配置目录、保留同一数组里的正常目录。
+修复轮 3 的 `generate-unbounded.mts` → `unbounded.json` 与 `dependency-tree.json.gz` 同样带固定 TS 源树/导入闭包守卫，必须双跑逐字节相同。生成器只读基线实际安装的 node_modules，`dependency-tree.py capture` 跟随别名展开为独立逻辑目录，记录所有可 stat 的文件路径与 Markdown 正文（9010 个 .md）。压缩快照用正文驻留去掉重复存储；非 Markdown 内容未被 loader 读取，回放为空文件。输入不是手写 README 分布，也不把别名去重混入预算回归。快照哈希记录在金样，Rust 重放前核验。
+
+物化时每个逻辑目录对应插件根内 backing pool 中的一个物理目录，子目录以链接暴露，文件只写入 backing pool；不经任何 node_modules 路径写文件。真实树位于 `skills/s0/vendor/node_modules`，TS 实测结果完整回放；第二个输入含 5000 个 README.md、54000 个 .js、3 个 skill；第三个输入把 node_modules 放到 80 层无环路径后，完整比较 commands / skills / output-styles / style-only。运行方法同上，将生成器改成 `generate-unbounded.mts`，双跑比较两份输出中的两个文件。
+
+新负控恢复 4096 候选预算，分别使真实依赖树和 README/JS 回放转红；恢复 64 层上限，使深 node_modules 的四入口回放转红。宽树和 65 层回放各有恢复对应预算的负控，非 Markdown 资产仍有恢复全条目预算的负控。DAG/简单环负控只去掉去重。所有负控要求专属断言文本与选中测试的 FAILED 行；编译失败、未执行测试及外部超时不计击杀。最终双跑哈希、断言失败摘要和检查日志见指定 RESULT 的「修复轮 3」。

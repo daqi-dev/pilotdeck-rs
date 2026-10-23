@@ -85,66 +85,45 @@ CASES += [
     ('utf16-trim', CONTRIBUTIONS, 'char::from_u32(u32::from(unit)).is_some_and(crate::metadata::js_space)', 'char::from_u32(u32::from(unit)).is_some_and(char::is_whitespace)', 'regressions:plugin_mcp_utf16_oracle'),
     ('runtime-replay-generation', PLUGINS, 'self.generation += 1;', 'self.generation += 2;', 'runtime:runtime_empty_directories'),
 ]
-# Negative control: restore ancestry-only DFS (including its lack of a total
-# budget), so the k=10 parent must actually time out and reap its child.
+# Each mutation restores one removed limit, or removes global directory de-dup.
 markdown_source = (ROOT/MARKDOWN).read_text()
-start = markdown_source.index('pub(super) fn load_plugin_commands_with_root(')
-end = markdown_source.index('pub fn load_standalone_skill(', start)
-GLOBAL_TRAVERSAL = markdown_source[start:end]
-ANCESTOR_TRAVERSAL = r'''pub(super) fn load_plugin_commands_with_root(
-    plugin_name: &str, base: &Path, _plugin_root: &Path,
-) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
-    let mut ancestors = HashSet::new();
-    if let Ok(path) = base.canonicalize() { ancestors.insert(path); }
-    let mut pending: Vec<_> = markdown_entries(base)?.into_iter().rev().map(|p| (p, false)).collect();
-    let mut output = Vec::new();
-    while let Some((path, leaving)) = pending.pop() {
-        if leaving { ancestors.remove(&path); continue; }
-        let Ok(metadata) = std::fs::metadata(&path) else { continue; };
-        if metadata.is_dir() {
-            let Ok(canonical) = path.canonicalize() else { continue; };
-            if !ancestors.insert(canonical.clone()) { continue; }
-            pending.push((canonical, true));
-            pending.extend(markdown_entries(&path)?.into_iter().rev().map(|p| (p, false)));
-        } else if path.file_name().is_some_and(|s| s.to_string_lossy().to_ascii_lowercase().ends_with(".md")) {
-            output.push(load_markdown(&path, get_plugin_command_name(plugin_name, &path, base))?);
-        }
-    }
-    Ok(output)
-}
-
-'''
 ENTRY_GUARD = '        if !canonical.starts_with(&root) {\n            continue;\n        }'
-# Restore the old enumeration budget exactly: debit every enumerated entry,
-# including scripts/assets, instead of debiting Markdown candidates at load.
+DEDUP = 'if !visited.insert(directory_identity(&metadata, &canonical)) {'
 def replace_once(text, old, new):
-    assert text.count(old) == 1, f'unique repair-2 mutation anchor required: {old!r}'
+    assert text.count(old) == 1, f'unique repair-3 mutation anchor required: {old!r}'
     return text.replace(old, new)
 
-ALL_ENTRY_BUDGET = replace_once(markdown_source,
-    'fn markdown_entries(directory: &Path)',
-    'fn markdown_entries(directory: &Path, remaining: &mut usize)')
-ALL_ENTRY_BUDGET = replace_once(ALL_ENTRY_BUDGET,
-    '        names.push(entry.file_name());',
-    '        if *remaining == 0 { return Err(traversal_limit()); }\n        *remaining -= 1;\n        names.push(entry.file_name());')
-for old, new in [('markdown_entries(base)?', 'markdown_entries(base, &mut remaining)?'),
-                 ('markdown_entries(&path)?', 'markdown_entries(&path, &mut remaining)?'),
-                 ('            if remaining == 0 {\n                return Err(traversal_limit());\n            }\n            remaining -= 1;\n', '')]:
-    ALL_ENTRY_BUDGET = replace_once(ALL_ENTRY_BUDGET, old, new)
+ENTRY_LIMIT = replace_once(markdown_source, '    let mut output = Vec::new();',
+    '    let mut output = Vec::new();\n    let mut remaining = 4096usize;')
+ENTRY_LIMIT = replace_once(ENTRY_LIMIT, '            output.push(load_markdown_source(',
+    '            if remaining == 0 { return Err(PluginRuntimeError::new("negative-control candidate budget")); }\n            remaining -= 1;\n            output.push(load_markdown_source(')
+ALL_ENTRY_LIMIT = replace_once(markdown_source, '    let mut output = Vec::new();',
+    '    let mut output = Vec::new();\n    let mut remaining = 4096usize;')
+ALL_ENTRY_LIMIT = replace_once(ALL_ENTRY_LIMIT, '    while let Some(path) = pending.pop() {',
+    '    while let Some(path) = pending.pop() {\n        if remaining == 0 { return Err(PluginRuntimeError::new("negative-control enumeration budget")); }\n        remaining -= 1;')
+DEPTH_LIMIT = replace_once(markdown_source,
+    'let mut pending: Vec<_> = markdown_entries(base).into_iter().rev().collect();',
+    'let mut pending: Vec<_> = markdown_entries(base).into_iter().rev().map(|p| (p, 1usize)).collect();')
+DEPTH_LIMIT = replace_once(DEPTH_LIMIT, 'while let Some(path) = pending.pop() {',
+    'while let Some((path, depth)) = pending.pop() {')
+DEPTH_LIMIT = replace_once(DEPTH_LIMIT, '            pending.extend(markdown_entries(&path).into_iter().rev());',
+    '            if depth > 64 { return Err(PluginRuntimeError::new("negative-control depth budget")); }\n            pending.extend(markdown_entries(&path).into_iter().rev().map(|p| (p, depth + 1)));')
 CASES += [
-    ('markdown-cycle', MARKDOWN, GLOBAL_TRAVERSAL, ANCESTOR_TRAVERSAL, 'traversal:plugin_markdown_clique_10'),
+    ('markdown-cycle', MARKDOWN, DEDUP, 'if false && !visited.insert(directory_identity(&metadata, &canonical)) {', 'traversal:plugin_markdown_clique_10'),
     ('markdown-alias', MARKDOWN, 'path: path.into(),', 'path: source.into(),', 'traversal:plugin_markdown_alias_first_path'),
-    ('markdown-entry-budget', MARKDOWN, 'MAX_MARKDOWN_ENTRIES: usize = 4096', 'MAX_MARKDOWN_ENTRIES: usize = 8192', 'traversal:plugin_markdown_entry_budget'),
-    ('markdown-depth-budget', MARKDOWN, 'MAX_MARKDOWN_DEPTH: usize = 64', 'MAX_MARKDOWN_DEPTH: usize = 128', 'traversal:plugin_markdown_depth_budget'),
+    ('markdown-entry-budget', MARKDOWN, markdown_source, ENTRY_LIMIT, 'traversal:plugin_markdown_entries_match_ts'),
+    ('markdown-depth-budget', MARKDOWN, markdown_source, DEPTH_LIMIT, 'traversal:plugin_markdown_deep_tree_matches_ts'),
     ('markdown-directory-boundary', MARKDOWN, ENTRY_GUARD, '        if !canonical.starts_with(&root) && !path.components().any(|c| c.as_os_str() == "directory") { continue; }', 'traversal:plugin_markdown_root_boundary'),
     ('markdown-file-boundary', MARKDOWN, ENTRY_GUARD, '        if !canonical.starts_with(&root) && path.file_name().is_none_or(|n| n != "file.md") { continue; }', 'traversal:plugin_markdown_root_boundary'),
     ('markdown-chain-boundary', MARKDOWN, ENTRY_GUARD, '        if !canonical.starts_with(&root) && !path.components().any(|c| c.as_os_str() == "chain") { continue; }', 'traversal:plugin_markdown_root_boundary'),
     ('markdown-configured-root', MARKDOWN, '    if !canonical.starts_with(&root) {\n        return Ok(Vec::new());\n    }', '    let root = canonical.clone();', 'traversal:plugin_markdown_root_boundary'),
     ('mcp-server-name-lossy', CONTRIBUTIONS, '        for (server_name, raw) in obj.own_entries() {', '        for (server_name, raw) in obj.own_entries() {\n            let server_name = &JsString::from(String::from_utf16_lossy(server_name.units()));', 'traversal:plugin_mcp_server_names_utf16'),
-    ('markdown-all-entry-budget', MARKDOWN, markdown_source, ALL_ENTRY_BUDGET, 'traversal:plugin_markdown_non_markdown_assets'),
+    ('markdown-all-entry-budget', MARKDOWN, markdown_source, ALL_ENTRY_LIMIT, 'traversal:plugin_markdown_non_markdown_assets'),
     ('markdown-dag-no-dedup', MARKDOWN, 'if !visited.insert(directory_identity(&metadata, &canonical)) {', 'if false && !visited.insert(directory_identity(&metadata, &canonical)) {', 'traversal:plugin_markdown_alias_dag'),
     ('markdown-simple-cycle-no-dedup', MARKDOWN, 'if !visited.insert(directory_identity(&metadata, &canonical)) {', 'if false && !visited.insert(directory_identity(&metadata, &canonical)) {', 'traversal:plugin_markdown_simple_cycle'),
-    ('markdown-limit-no-diagnostic', MARKDOWN, 'if error.message == TRAVERSAL_LIMIT {', 'if false && error.message == TRAVERSAL_LIMIT {', 'traversal:plugin_markdown_limit_diagnostics'),
+    ('markdown-real-candidate-budget', MARKDOWN, markdown_source, ENTRY_LIMIT, 'traversal:plugin_markdown_real_node_modules'),
+    ('markdown-readme-candidate-budget', MARKDOWN, markdown_source, ENTRY_LIMIT, 'traversal:plugin_markdown_readme_and_js'),
+    ('markdown-node-modules-depth-budget', MARKDOWN, markdown_source, DEPTH_LIMIT, 'traversal:plugin_markdown_configured_deep_node_modules'),
 ]
 # Every kill needs its own expected panic text AND the selected test's failed
 # outcome. Generic failures, compiler errors, and external timeouts do not count.
@@ -277,8 +256,8 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
                       '2046..2049 of string)'],
  'utf16-lossy-surrogate': ['assertion `left == right` failed: Some("lone-high")'],
  'utf16-trim': ['assertion `left == right` failed: Some("trim-ecmascript")'],
- 'markdown-entry-budget': ['budget error'],
- 'markdown-depth-budget': ['budget error'],
+ 'markdown-entry-budget': ['wide tree succeeds like TS'],
+ 'markdown-depth-budget': ['deep tree succeeds like TS'],
  'markdown-directory-boundary': ['root boundary skips directory/file/chain leaks: commands',
                                  'String("p:directory:leak")'],
  'markdown-file-boundary': ['root boundary skips directory/file/chain leaks: commands',
@@ -287,10 +266,12 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
                              'String("p:chain:leak")'],
  'markdown-configured-root': ['configured base cannot escape root'],
  'mcp-server-name-lossy': ['server names retain UTF-16 identity and sort order'],
- 'markdown-all-entry-budget': ['non-Markdown assets do not consume Markdown budget'],
- 'markdown-dag-no-dedup': ['alias DAG must use linear physical-directory work'],
+ 'markdown-all-entry-budget': ['non-Markdown assets match TS'],
+ 'markdown-dag-no-dedup': ['alias DAG retains each physical contribution'],
  'markdown-simple-cycle-no-dedup': ['simple cycle removes TS ELOOP-truncated duplicates'],
- 'markdown-limit-no-diagnostic': ['budget rejection must be observable for all four configured loader paths']}
+ 'markdown-real-candidate-budget': ['real node_modules skills match TS'],
+ 'markdown-readme-candidate-budget': ['5000 README and 54000 JS preserve TS skills'],
+ 'markdown-node-modules-depth-budget': ['deep node_modules matches TS across configured loaders']}
 
 assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
 assert set(EXPECTED_FAILURES) == {c[0] for c in CASES}, "every case needs failure markers"
@@ -322,7 +303,7 @@ try:
                     target_args = ['--test', {'regressions':'plugin_regressions','runtime':'plugin_runtime','traversal':'plugin_traversal'}[target]]
             else:
                 target_args, test_name = ['--test','plugin_loader'], test
-            result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact'],cwd=ROOT,env=env,timeout=180)
+            result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact'],cwd=ROOT,env=env,timeout=600 if test_name == 'plugin_markdown_real_node_modules' else 180)
             (OUTPUT/(name+'.log')).write_text(result.stdout + result.stderr)
             output = (OUTPUT/(name+'.log')).read_text()
             markers = EXPECTED_FAILURES[name]

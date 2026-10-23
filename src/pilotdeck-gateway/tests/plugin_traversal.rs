@@ -39,6 +39,18 @@ fn budget_case(id: &str) -> Value {
         .unwrap()
         .clone()
 }
+fn unbounded_case(id: &str) -> Value {
+    let value = baseline::oracle(include_str!("fixtures/plugin-loader/unbounded.json"));
+    let value: Value = serde_json::from_str(&stringify_json(&value).unwrap().unwrap()).unwrap();
+    value["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == id)
+        .unwrap()
+        .clone()
+}
+
 fn commands(commands: &[loader::LoadedPluginCommand], root: &Path) -> Value {
     json!(commands.iter().map(|c| json!({"name":c.name,"path":c.path.to_string_lossy().replace(root.to_str().unwrap(),"<root>"),"content":c.content,"frontmatter":c.frontmatter,"isSkill":c.is_skill})).collect::<Vec<_>>())
 }
@@ -232,8 +244,8 @@ fn plugin_markdown_root_boundary() {
 }
 
 #[test]
-fn plugin_markdown_entry_budget() {
-    assert_eq!(case("entries-4097")["result"]["commandCount"], 4097);
+fn plugin_markdown_entries_match_ts() {
+    let observed = case("entries-4097");
     let scratch = Scratch::new("484-entries");
     let root = scratch.path().join("p");
     let base = root.join("commands");
@@ -242,40 +254,34 @@ fn plugin_markdown_entry_budget() {
     for i in 0..4097 {
         fs::write(base.join(format!("{i:05}.md")), "").unwrap();
     }
-    assert_eq!(
-        loader::load_plugin_commands("p", &base)
-            .err()
-            .expect("budget error")
-            .message,
-        "Plugin markdown traversal limit exceeded.",
-        "entry budget must fail, not truncate"
-    );
-    assert!(
+    for loaded in [
+        loader::load_plugin_commands("p", &base).expect("wide tree succeeds like TS"),
         loader::load_plugin_from_path(&root, PluginSource::Global)
             .unwrap()
-            .commands
-            .is_empty(),
-        "configured traversal error discards entire directory"
-    );
+            .commands,
+    ] {
+        assert_eq!(
+            loaded.len() as u64,
+            observed["result"]["commandCount"].as_u64().unwrap(),
+            "all Markdown candidates survive like TS"
+        );
+    }
 }
 #[test]
-fn plugin_markdown_depth_budget() {
-    assert_eq!(case("depth-65")["result"].as_array().unwrap().len(), 1);
+fn plugin_markdown_deep_tree_matches_ts() {
     let scratch = Scratch::new("484-depth");
-    let base = scratch.path().join("commands");
+    let base = scratch.path().join("depth");
     let mut leaf = base.clone();
     for _ in 0..65 {
         leaf = leaf.join("d");
     }
     fs::create_dir_all(&leaf).unwrap();
     fs::write(leaf.join("a.md"), "a").unwrap();
+    let loaded = loader::load_plugin_commands("p", &base).expect("deep tree succeeds like TS");
     assert_eq!(
-        loader::load_plugin_commands("p", &base)
-            .err()
-            .expect("budget error")
-            .message,
-        "Plugin markdown traversal limit exceeded.",
-        "depth budget must fail, not truncate"
+        commands(&loaded, scratch.path()),
+        case("depth-65")["result"],
+        "deep acyclic tree matches complete TS contribution"
     );
 }
 
@@ -305,7 +311,124 @@ fn plugin_markdown_non_markdown_assets() {
     assert_eq!(
         commands(&plugin.skills, scratch.path()),
         observed["result"],
-        "non-Markdown assets do not consume Markdown budget"
+        "non-Markdown assets match TS"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_configured_deep_node_modules() {
+    let observed = unbounded_case("configured-deep");
+    let scratch = Scratch::new("484-configured-deep");
+    let root = scratch.path().join("configured-deep");
+    let mut leaf = root.join("deep");
+    for _ in 0..observed["input"]["depth"].as_u64().unwrap() {
+        leaf = leaf.join("d");
+    }
+    fs::create_dir_all(&leaf).unwrap();
+    let data = root.join("deep-data");
+    fs::create_dir(&data).unwrap();
+    fs::write(data.join("SKILL.md"), "deep").unwrap();
+    std::os::unix::fs::symlink(&data, leaf.join("node_modules")).unwrap();
+    fs::write(
+        root.join("plugin.json"),
+        r#"{"name":"p","commands":"deep","skills":"deep","outputStyles":"deep"}"#,
+    )
+    .unwrap();
+    let plugin = loader::load_plugin_from_path(&root, PluginSource::Global).unwrap();
+    let styles = loader::load_plugin_output_styles_from_path(&root, PluginSource::Global).unwrap();
+    for (key, loaded) in [
+        ("commands", &plugin.commands),
+        ("skills", &plugin.skills),
+        ("outputStyles", &plugin.output_styles),
+        ("styleOnly", &styles.output_styles),
+    ] {
+        assert_eq!(
+            commands(loaded, scratch.path()),
+            observed["result"][key],
+            "deep node_modules matches TS across configured loaders: {key}"
+        );
+    }
+}
+
+// The captured inventory preserves real dependency paths and Markdown bytes.
+// See dependency-tree.py: no writes go through any node_modules path.
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_real_node_modules() {
+    use sha2::{Digest, Sha256};
+    let observed = unbounded_case("real-node-modules");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plugin-loader");
+    let snapshot = fixtures.join("dependency-tree.json.gz");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(fs::read(&snapshot).unwrap())),
+        observed["input"]["snapshotSha256"].as_str().unwrap(),
+        "real dependency inventory hash"
+    );
+    let scratch = Scratch::new("484-real-dependencies");
+    let root = scratch.path().join("real-plugin");
+    let vendor = root.join("skills/s0/vendor");
+    fs::create_dir_all(&vendor).unwrap();
+    fs::write(root.join("plugin.json"), r#"{"name":"real-plugin"}"#).unwrap();
+    fs::write(root.join("skills/s0/SKILL.md"), "s0").unwrap();
+    fs::create_dir(root.join("skills/s1")).unwrap();
+    fs::write(root.join("skills/s1/SKILL.md"), "s1").unwrap();
+    let output = Command::new("python3")
+        .arg(fixtures.join("dependency-tree.py"))
+        .arg("materialize")
+        .arg(snapshot)
+        .arg(root.join("dependency-data"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "real tree materialization: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::os::unix::fs::symlink(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        vendor.join("node_modules"),
+    )
+    .unwrap();
+    let plugin = loader::load_plugin_from_path(&root, PluginSource::Global).unwrap();
+    assert_eq!(
+        commands(&plugin.skills, scratch.path()),
+        observed["result"],
+        "real node_modules skills match TS"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_readme_and_js() {
+    let observed = unbounded_case("readme-and-js");
+    let scratch = Scratch::new("484-readme-js");
+    let root = scratch.path().join("mixed-plugin");
+    let assets = root.join("dependency-data");
+    fs::create_dir_all(&assets).unwrap();
+    fs::write(root.join("plugin.json"), r#"{"name":"mixed-plugin"}"#).unwrap();
+    let input = &observed["input"];
+    for i in 0..input["readmeCount"].as_u64().unwrap() {
+        let package = assets.join(format!("p{i:05}"));
+        fs::create_dir(&package).unwrap();
+        fs::write(package.join("README.md"), "readme").unwrap();
+    }
+    for i in 0..input["jsCount"].as_u64().unwrap() {
+        fs::write(assets.join(format!("asset-{i:05}.js")), "asset").unwrap();
+    }
+    for i in 0..input["skillCount"].as_u64().unwrap() {
+        let skill = root.join(format!("skills/s{i}"));
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), format!("s{i}")).unwrap();
+    }
+    // Only one lexical copy: no alias semantics participate in this budget test.
+    std::os::unix::fs::symlink("../../dependency-data", root.join("skills/s0/node_modules"))
+        .unwrap();
+    let plugin = loader::load_plugin_from_path(&root, PluginSource::Global).unwrap();
+    assert_eq!(
+        commands(&plugin.skills, scratch.path()),
+        observed["result"],
+        "5000 README and 54000 JS preserve TS skills"
     );
 }
 
@@ -412,87 +535,6 @@ fn plugin_markdown_simple_cycle() {
         actual, expected,
         "simple cycle removes TS ELOOP-truncated duplicates"
     );
-}
-
-#[test]
-fn plugin_markdown_limit_diagnostics() {
-    let scratch = Scratch::new("484-diagnostics");
-    for mode in ["entries", "depth"] {
-        let root = scratch.path().join(mode);
-        let oversized = root.join("oversized");
-        let good = root.join("good");
-        fs::create_dir_all(&oversized).unwrap();
-        fs::create_dir(&good).unwrap();
-        fs::write(good.join("SKILL.md"), "good").unwrap();
-        if mode == "entries" {
-            for i in 0..4097 {
-                fs::write(oversized.join(format!("{i:05}.md")), "partial").unwrap();
-            }
-        } else {
-            // A root contribution before the excessive depth must be discarded.
-            fs::write(oversized.join("a.md"), "partial").unwrap();
-            let mut leaf = oversized.clone();
-            for _ in 0..65 {
-                leaf = leaf.join("d");
-            }
-            fs::create_dir_all(leaf).unwrap();
-        }
-        fs::write(root.join("plugin.json"), r#"{"name":"p","commands":["oversized","good"],"skills":["oversized","good"],"outputStyles":["oversized","good"]}"#).unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "plugin_markdown_limit_diagnostics_child",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env("PDRS_PLUGIN_DIAGNOSTIC_ROOT", &root)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "diagnostic child failed: {}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        assert_eq!(
-            stderr.matches("[plugins] Markdown directory '").count(),
-            4,
-            "budget rejection must be observable for all four configured loader paths: {stderr}"
-        );
-        assert_eq!(
-            stderr
-                .matches(&format!("{}' discarded:", oversized.display()))
-                .count(),
-            4,
-            "diagnostic identifies rejected directory"
-        );
-        assert_eq!(stderr.matches("Plugin markdown traversal limit exceeded. (maxMarkdownCandidates=4096, maxDepth=64)").count(), 4, "diagnostic includes cause and limits");
-    }
-}
-
-#[test]
-#[ignore = "subprocess helper for configured-directory diagnostics"]
-fn plugin_markdown_limit_diagnostics_child() {
-    let root = std::env::var_os("PDRS_PLUGIN_DIAGNOSTIC_ROOT").expect("only invoked by parent");
-    let root = Path::new(&root);
-    let plugin = loader::load_plugin_from_path(root, PluginSource::Global).unwrap();
-    let styles = loader::load_plugin_output_styles_from_path(root, PluginSource::Global).unwrap();
-    for commands in [
-        &plugin.commands,
-        &plugin.skills,
-        &plugin.output_styles,
-        &styles.output_styles,
-    ] {
-        assert_eq!(
-            commands.len(),
-            1,
-            "only rejected configured directory is discarded"
-        );
-        assert_eq!(
-            commands[0].content, "good",
-            "partial results are never published"
-        );
-    }
 }
 
 #[tokio::test]
