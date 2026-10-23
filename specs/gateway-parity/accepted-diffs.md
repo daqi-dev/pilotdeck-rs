@@ -956,3 +956,13 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
   Rust（`runtime/memory/edgeclaw/file_memory.rs` 的 `within`）对读 / 写 / 删三种都报 `Memory entry not found: <id>`，不触碰链接与目标。故实际差异为：读（TS 空数组 vs Rust 报错）、写（TS 创建目标 vs Rust 报错）、删（TS 无操作的成功结果 vs Rust 报错）。方向仍为向安全偏离（主要是不经链接写盘）。
 - **机器判据**：`src/pilotdeck-gateway/tests/edgeclaw_dangling_links.rs` 的 `ts_golden_proves_the_link_is_followed`、`dangling_links_are_rejected_before_any_io`（逐一执行上述四个操作，断言 Rust 报错且全树与金样 `initialFiles` 逐字节一致）、`rust_follows_ts_write_through_the_link_once_the_target_exists`、`real_ts_generator_is_reproducible`（ignored，真实 TS 重生成）；金样 `tests/fixtures/edgeclaw-dangling-links/oracle.json`；负控放行悬挂链接转红。
 - **批准记录**：同上文（向安全偏离，AI 代批待人复核）；本条只更正描述并补判据，不改判分语义。
+
+### A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001 · 范围补充更正二（追加，不改上文；#563 修复轮 1）
+
+- **更正**：上一条「范围补充的更正与机器判据」把删写成「TS 无操作的成功结果」、把写只写成「创建 real.md」，均漏了落盘副作用（协调者只核 `:1303` 一行未读完整函数；PR #579 codex r1 指出）。协调者读完整函数后核实（`resources/PilotDeck/src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts`，@cc7c4e6）：
+  - 写 `upsertUserProfile` → `writeRecord`（`:693-700`）：`:697` `writeFileSync` 跟随链接创建 `real.md`，**`:698` 随后调用 `repairManifests()`（`:981-1008`），另创建根 `MEMORY.md`**；
+  - 删 `deleteEntries`（`:1298-1309`）：循环里 `:1303` 目标不存在即 `continue`（不删链接、不建 `real.md`），**循环后 `:1307` 无条件 `repairManifests()`，本夹具因此新增根 `MEMORY.md`**；返回 `{mutatedIds: [], deletedProjectIds: []}`；
+  - 读 `getMemoryRecordsByIds`：返回 `[]`，不调用 `repairManifests`，**无任何写入**；`editEntry`：抛 `Memory entry not found`，无写入（与 Rust 同文案）。
+  Rust 对读 / 写 / 删均报 `Memory entry not found: <id>`，整树不变（也不建 `MEMORY.md`）。差异因此包括写、删两种操作下 TS 的 `MEMORY.md` 落盘。
+- **机器判据**：`src/pilotdeck-gateway/tests/edgeclaw_dangling_links.rs` 的 `dangling_link_read_is_rejected_before_any_io`、`dangling_link_write_is_rejected_before_any_io`、`dangling_link_delete_is_rejected_before_any_io`、`dangling_link_edit_is_rejected_before_any_io`（各自独立），`ts_golden_proves_the_link_is_followed` 断言金样中写 / 删后的 `MEMORY.md`（`tests/fixtures/edgeclaw-dangling-links/oracle.json:141-143`、`:217-219`）；`negative.py` 对读 / 写 / 删各一条单操作放行变异，均只让目标测试转红。
+- **批准记录**：同上文（向安全偏离，AI 代批待人复核）。
