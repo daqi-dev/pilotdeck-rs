@@ -656,6 +656,7 @@
   "counts": {
     "clientRequests": 30,
     "clientResponses": 69,
+    "clientBodyFailures": 6,
     "handlerCases": 111,
     "socketRequests": 18,
     "flow": 16,
@@ -2972,6 +2973,80 @@
         "name": "Error",
         "thrown": "error",
         "message": "Gateway user-dialog store clear returned an invalid response."
+      }
+    }
+  ],
+  "clientBodyFailures": [
+    {
+      "name": "disconnect-200",
+      "status": 200,
+      "failure": "disconnect",
+      "timeoutMs": 30000,
+      "outcome": {
+        "kind": "error",
+        "name": "Error",
+        "thrown": "error",
+        "message": "Gateway user-dialog store clear returned an invalid response."
+      }
+    },
+    {
+      "name": "stall-200",
+      "status": 200,
+      "failure": "stall",
+      "timeoutMs": 250,
+      "outcome": {
+        "kind": "error",
+        "name": "Error",
+        "thrown": "error",
+        "message": "Gateway user-dialog store clear returned an invalid response."
+      }
+    },
+    {
+      "name": "oversized-200",
+      "status": 200,
+      "failure": "oversized",
+      "timeoutMs": 30000,
+      "outcome": {
+        "kind": "error",
+        "name": "Error",
+        "thrown": "error",
+        "message": "Gateway user-dialog store clear returned an invalid response."
+      }
+    },
+    {
+      "name": "disconnect-500",
+      "status": 500,
+      "failure": "disconnect",
+      "timeoutMs": 30000,
+      "outcome": {
+        "kind": "error",
+        "name": "Error",
+        "thrown": "error",
+        "message": "Gateway user-dialog store clear failed: HTTP 500"
+      }
+    },
+    {
+      "name": "stall-500",
+      "status": 500,
+      "failure": "stall",
+      "timeoutMs": 250,
+      "outcome": {
+        "kind": "error",
+        "name": "Error",
+        "thrown": "error",
+        "message": "Gateway user-dialog store clear failed: HTTP 500"
+      }
+    },
+    {
+      "name": "oversized-500",
+      "status": 500,
+      "failure": "oversized",
+      "timeoutMs": 30000,
+      "outcome": {
+        "kind": "error",
+        "name": "Error",
+        "thrown": "error",
+        "message": "Gateway user-dialog store clear failed: HTTP 500"
       }
     }
   ],

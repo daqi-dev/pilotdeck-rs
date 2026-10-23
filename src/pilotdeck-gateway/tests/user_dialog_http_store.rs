@@ -1134,6 +1134,7 @@ fn fixture_provenance_is_pinned() {
     for (name, count) in [
         ("clientRequests", 30),
         ("clientResponses", 69),
+        ("clientBodyFailures", 6),
         ("handlerCases", 111),
         ("socketRequests", 18),
         ("flow", 16),

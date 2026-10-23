@@ -350,20 +350,40 @@ async fn exchange_lenient(port: u16, request: &[u8]) -> Vec<u8> {
     response
 }
 
-async fn read_head(stream: &mut TcpStream) -> std::io::Result<String> {
+async fn exchange_within(port: u16, request: &[u8], limit: Duration) -> std::io::Result<Vec<u8>> {
+    tokio::time::timeout(limit, exchange(port, request))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "no response"))?
+}
+
+/// Reads exactly one HTTP message (head plus Content-Length body) so a
+/// keep-alive stream is left idle, not with unread response bytes.
+async fn read_response(stream: &mut TcpStream) -> Vec<u8> {
     let mut response = Vec::new();
-    let mut chunk = [0u8; 1024];
+    let mut byte = [0u8; 1];
     loop {
-        let read = stream.read(&mut chunk).await?;
+        let read = stream.read(&mut byte).await.expect("response head");
         if read == 0 {
-            break;
+            panic!(
+                "EOF before the response head completed: {:?}",
+                String::from_utf8_lossy(&response)
+            );
         }
-        response.extend_from_slice(&chunk[..read]);
-        if response.windows(4).any(|window| window == b"\r\n\r\n") {
+        response.push(byte[0]);
+        if response.ends_with(b"\r\n\r\n") {
             break;
         }
     }
-    Ok(String::from_utf8_lossy(&response).into_owned())
+    let head = String::from_utf8_lossy(&response).to_ascii_lowercase();
+    let length = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = vec![0u8; length];
+    stream.read_exact(&mut body).await.expect("response body");
+    response.extend_from_slice(&body);
+    response
 }
 
 /// Equal-length tokens must still be compared byte by byte. Last-byte and
@@ -435,6 +455,149 @@ async fn oversized_headers_are_rejected_like_node() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// Node v22.22.0's runtime `maxHeadersCount` default is `null` (unlimited); the
+/// documented 2000 is not applied. 2,400 one-byte fields fit the 16 KiB header
+/// budget and must not be rejected by a count cap. This pins that behaviour so
+/// a future "align to docs 2000" change goes red.
+#[tokio::test]
+async fn many_small_headers_are_not_capped_at_the_documented_two_thousand() {
+    let (store, directory) = file_store("many-headers");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let headers = "a:\r\n".repeat(2400);
+    let request = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n{headers}Connection: close\r\n\r\n"
+    );
+    // A count-cap regression makes hyper abort the parse before a response can
+    // be read, so tolerate a reset and assert on whatever status arrived.
+    let response = exchange_lenient(port, request.as_bytes()).await;
+    assert!(
+        !response.is_empty(),
+        "server closed without a response (a 2,000-field cap rejects the request before the handler)"
+    );
+    assert_eq!(
+        status(&response),
+        405,
+        "2,400 sub-16KiB fields must reach the handler, not 431"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Before the fix, `close()` only stopped the accept loop and left idle
+/// keep-alive connections (and their permits) alive for `headersTimeout`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_closes_idle_keep_alive_connections() {
+    let (store, directory) = file_store("close-idle");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut idle = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    idle.write_all(&http_get(false)).await.unwrap();
+    let response = read_response(&mut idle).await;
+    assert!(response.starts_with(b"HTTP/1.1 405"), "{response:?}");
+
+    let closing = tokio::spawn(async move { server.close().await });
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(2), idle.read(&mut byte))
+        .await
+        .expect("close() left an idle keep-alive connection open");
+    assert_eq!(read.unwrap(), 0, "expected EOF on the idle connection");
+    tokio::time::timeout(Duration::from_secs(2), closing)
+        .await
+        .expect("close() did not finish")
+        .unwrap();
+    assert!(
+        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
+        "the listener still accepts after close()"
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Node has no separate Rust-side keep-alive timer; the 60 s header timeout is
+/// the registered fallback that eventually releases an idle connection's
+/// permit. A short test timeout proves that fallback actually covers the gap
+/// between two requests, not just a half-written first head.
+#[tokio::test]
+async fn idle_keep_alive_connections_close_at_headers_timeout() {
+    let (store, directory) = file_store("idle-timeout");
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_millis(200),
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let mut idle = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    idle.write_all(&http_get(false)).await.unwrap();
+    let response = read_response(&mut idle).await;
+    assert!(response.starts_with(b"HTTP/1.1 405"), "{response:?}");
+
+    let started = Instant::now();
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(2), idle.read(&mut byte))
+        .await
+        .expect("an idle keep-alive connection outlived headersTimeout");
+    assert_eq!(read.unwrap(), 0, "expected EOF at headersTimeout");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the fallback did not fire promptly: {:?}",
+        started.elapsed()
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A mutation that changes the default host to `0.0.0.0` must be caught: every
+/// other test passes an explicit host.
+#[tokio::test]
+async fn default_host_listens_on_loopback() {
+    let (store, directory) = file_store("default-host");
+    let server = start_gateway_user_dialog_store_http_server(store, TOKEN, None, Some(0))
+        .await
+        .unwrap_or_else(|error| {
+            panic!(
+                "loopback listen failed ({error}); this sandbox blocks TcpListener::bind. \
+                 Outside the sandbox rerun: cargo test -p pilotdeck-gateway --lib \
+                 user_dialog::http_store -- --nocapture"
+            )
+        });
+    assert!(
+        server.url().starts_with("http://127.0.0.1:"),
+        "default host must be loopback: {}",
+        server.url()
+    );
+    let port = url::Url::parse(server.url()).unwrap().port().unwrap();
+    let response = exchange(port, &http_get(true)).await.unwrap();
+    assert_eq!(status(&response), 405);
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Auth is checked before a body byte is read. With a huge Content-Length and
+/// a 200 ms request timeout, reading first would answer 408 after the timeout;
+/// the correct order answers 401 immediately.
+#[tokio::test]
+async fn anonymous_oversized_body_is_rejected_before_reading() {
+    let (store, directory) = file_store("auth-before-body");
+    let limits = ServeLimits {
+        request_timeout: Duration::from_millis(200),
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let request = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\n\
+         Content-Length: 4294967296\r\nConnection: close\r\n\r\n"
+    );
+    let started = Instant::now();
+    let response = exchange_within(port, request.as_bytes(), Duration::from_secs(1))
+        .await
+        .expect("anonymous oversized request was not answered from the headers");
+    assert_eq!(status(&response), 401, "auth must run before the body");
+    assert!(
+        started.elapsed() < Duration::from_millis(150),
+        "the server waited for the body: {:?}",
+        started.elapsed()
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 #[tokio::test]
 async fn partial_headers_are_closed_after_headers_timeout() {
     let (store, directory) = file_store("headers-timeout");
@@ -499,7 +662,7 @@ async fn slow_request_bodies_are_closed_after_request_timeout() {
 }
 
 #[tokio::test]
-async fn connection_semaphore_caps_in_flight_connections() {
+async fn connection_cap_answers_overflow_with_503_and_recovers() {
     let (store, directory) = file_store("connections");
     let limits = ServeLimits {
         max_connections: 1,
@@ -508,24 +671,99 @@ async fn connection_semaphore_caps_in_flight_connections() {
     let (server, port) = start_limited(store, limits).await;
     let mut first = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     first.write_all(&http_get(false)).await.unwrap();
-    let first_head = read_head(&mut first).await.unwrap();
-    assert!(first_head.starts_with("HTTP/1.1 405"), "{first_head:?}");
-
-    let mut second = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-    second.write_all(&http_get(true)).await.unwrap();
+    let first_response = read_response(&mut first).await;
     assert!(
-        tokio::time::timeout(Duration::from_millis(300), read_head(&mut second))
-            .await
-            .is_err(),
-        "a second connection was served while the only permit was held"
+        first_response.starts_with(b"HTTP/1.1 405"),
+        "{}",
+        String::from_utf8_lossy(&first_response)
     );
 
-    drop(first);
-    let second_head = tokio::time::timeout(Duration::from_secs(3), read_head(&mut second))
+    let started = Instant::now();
+    let overflow = exchange_within(port, &http_get(true), Duration::from_secs(1))
         .await
-        .expect("the waiting connection was never served after a permit was released")
-        .unwrap();
-    assert!(second_head.starts_with("HTTP/1.1 405"), "{second_head:?}");
+        .expect("a full server must answer immediately, not block accept");
+    assert_eq!(status(&overflow), 503, "overflow must be an immediate 503");
+    assert!(started.elapsed() < Duration::from_secs(1));
+
+    drop(first);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let response = exchange_within(port, &http_get(true), Duration::from_secs(1))
+            .await
+            .expect("released permit did not wake the server");
+        if status(&response) == 405 {
+            break;
+        }
+        assert_eq!(status(&response), 503);
+        assert!(
+            Instant::now() < deadline,
+            "the released permit was never reused"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// 64 half-open requests (no terminating blank line) hold every connection
+/// permit. A legitimate request must still get an immediate answer; before
+/// this fix the accept loop waited on the semaphore and the request queued for
+/// `headersTimeout` (~60 s). A second assertion proves the server recovers as
+/// soon as one attacker connection closes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn overflow_connections_do_not_block_the_accept_loop() {
+    let (store, directory) = file_store("overflow");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut held = Vec::new();
+    for _ in 0..DEFAULT_MAX_CONNECTIONS {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stream
+            .write_all(b"POST /v1/gateway-user-dialog-store/list HTTP/1.1\r\nHost: h\r\n")
+            .await
+            .unwrap();
+        held.push(stream);
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let overflow = loop {
+        let started = Instant::now();
+        let response = exchange_within(port, &http_put(&put_body()), Duration::from_secs(1))
+            .await
+            .expect("accept loop stopped answering while the connection cap was full");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "an overflow request waited for a permit"
+        );
+        match status(&response) {
+            503 => break response,
+            200 => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the connection cap was never reached"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            other => panic!("unexpected status {other}"),
+        }
+    };
+    assert_eq!(status(&overflow), 503);
+
+    held.pop();
+    let mut served = false;
+    while Instant::now() < deadline + Duration::from_secs(1) {
+        let response = exchange_within(port, &http_put(&put_body()), Duration::from_secs(1))
+            .await
+            .expect("server stopped answering after a permit was released");
+        match status(&response) {
+            200 => {
+                served = true;
+                break;
+            }
+            503 => tokio::time::sleep(Duration::from_millis(10)).await,
+            other => panic!("unexpected status {other}"),
+        }
+    }
+    assert!(served, "a released permit never served a request again");
+    drop(held);
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -639,6 +877,172 @@ async fn client_maps_oversized_response_bodies_to_invalid_response() {
         "Gateway user-dialog store list returned an invalid response."
     );
     reply.await.unwrap();
+}
+
+/// A raw server that sends a complete response head and then fails the body in
+/// the requested way. The TS client swallows every body failure
+/// (`response.json().catch(() => undefined)`) and decides from the status; the
+/// Rust transport must produce the same observable outcome.
+async fn body_failure_server(
+    status: u16,
+    failure: &str,
+    limit: usize,
+) -> (u16, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("loopback listen failed; rerun outside the sandbox");
+    let port = listener.local_addr().unwrap().port();
+    let failure = failure.to_string();
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            match stream.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(read) => request.extend_from_slice(&chunk[..read]),
+            }
+        }
+        let declared = if failure == "oversized" {
+            limit + 1
+        } else {
+            100
+        };
+        let reason = if status == 200 {
+            "OK"
+        } else {
+            "Internal Server Error"
+        };
+        let head = format!(
+            "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n\
+             Content-Length: {declared}\r\nConnection: close\r\n\r\n"
+        );
+        if stream.write_all(head.as_bytes()).await.is_err() {
+            return;
+        }
+        let partial = br#"{"version":1"#;
+        match failure.as_str() {
+            "disconnect" => {
+                let _ = stream.write_all(partial).await;
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                let _ = stream.shutdown().await;
+            }
+            "stall" => {
+                let _ = stream.write_all(partial).await;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            "oversized" => {
+                let chunk = [b' '; 128];
+                let mut sent = 0;
+                while sent < declared {
+                    let take = (declared - sent).min(chunk.len());
+                    if stream.write_all(&chunk[..take]).await.is_err() {
+                        break;
+                    }
+                    sent += take;
+                }
+            }
+            other => panic!("unknown body failure {other}"),
+        }
+    });
+    (port, task)
+}
+
+/// The six real-TS body-failure recordings: {200, 500} x {disconnect, stall,
+/// oversized}. TS answers 2xx with "returned an invalid response." and non-2xx
+/// with `failed: HTTP n`, because the body error only makes the body undefined.
+#[tokio::test]
+async fn client_body_failures_follow_typescript_status_order() {
+    let oracle = oracle();
+    let cases = oracle["clientBodyFailures"]
+        .as_array()
+        .expect("clientBodyFailures fixture");
+    assert_eq!(cases.len(), 6, "all six body-failure recordings replay");
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let status = case["status"].as_u64().unwrap() as u16;
+        let failure = case["failure"].as_str().unwrap();
+        let limit = 64;
+        let (port, task) = body_failure_server(status, failure, limit).await;
+        let transport: Arc<dyn HttpStoreTransport> = if failure == "oversized" {
+            Arc::new(HyperHttpStoreTransport::with_max_body_bytes(limit))
+        } else {
+            Arc::new(HyperHttpStoreTransport::default())
+        };
+        let client = HttpGatewayUserDialogStore::with_transport(
+            options(
+                &format!("http://127.0.0.1:{port}/"),
+                TOKEN,
+                case["timeoutMs"].as_f64(),
+            ),
+            transport,
+        )
+        .unwrap();
+        let error = client
+            .clear(&test_key())
+            .await
+            .expect_err("a failed body must never yield a value");
+        assert_eq!(
+            error.to_string(),
+            case["outcome"]["message"].as_str().unwrap(),
+            "{name}: TS-compatible status-first message"
+        );
+        task.abort();
+        let _ = task.await;
+    }
+}
+
+/// Registered difference CLIENT-BODY-UNITS-001: the Rust bound counts UTF-8
+/// bytes while TS `Response.text()` is bounded by UTF-16 code units. This body
+/// is over 64 bytes but under 64 code units, so Rust rejects it as an invalid
+/// response where TS would parse it. The test pins the documented direction.
+#[tokio::test]
+async fn client_body_limit_counts_utf8_bytes_not_utf16_units() {
+    let text = format!(r#"{{"version":1,"result":null,"x":"{}"}}"#, "é".repeat(20));
+    assert!(text.len() > 64, "the fixture exceeds the byte bound");
+    assert!(
+        text.chars().count() < 64,
+        "the fixture stays under the 64 code-unit bound"
+    );
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("loopback listen failed; rerun outside the sandbox");
+    let port = listener.local_addr().unwrap().port();
+    let reply = text.clone();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            match stream.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(read) => request.extend_from_slice(&chunk[..read]),
+            }
+        }
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n",
+            reply.len()
+        );
+        let _ = stream.write_all(head.as_bytes()).await;
+        let _ = stream.write_all(reply.as_bytes()).await;
+        let _ = stream.shutdown().await;
+    });
+    let transport: Arc<dyn HttpStoreTransport> =
+        Arc::new(HyperHttpStoreTransport::with_max_body_bytes(64));
+    let client = HttpGatewayUserDialogStore::with_transport(
+        options(&format!("http://127.0.0.1:{port}/"), TOKEN, None),
+        transport,
+    )
+    .unwrap();
+    let error = client
+        .clear(&test_key())
+        .await
+        .expect_err("the byte bound must reject a body TS would accept");
+    assert_eq!(
+        error.to_string(),
+        "Gateway user-dialog store clear returned an invalid response."
+    );
 }
 
 /// `LiveGatewayUserDialogStore` is the same TS interface with every optional
@@ -843,5 +1247,63 @@ async fn concurrent_blocking_puts_do_not_stall_the_accept_loop() {
     assert_eq!(status(&first.await.unwrap().unwrap()), 200);
     assert_eq!(status(&second.await.unwrap().unwrap()), 200);
     server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Node `server.close()` closes idle connections but lets an in-flight request
+/// finish, and its callback runs only after every connection has ended. The
+/// old implementation returned as soon as the accept loop stopped while the
+/// request task kept running (and could still write to the store).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_waits_for_in_flight_requests() {
+    let directory = temp_dir("close-in-flight");
+    let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+    let store = Arc::new(BlockingStore {
+        inner: FileGatewayUserDialogStore::new(StoreOptions::new(directory.clone())).unwrap(),
+        entered: Mutex::new(0),
+        released: AtomicBool::new(false),
+        condvar: Condvar::new(),
+        entered_tx,
+    });
+    let (server, port) = start_limited(
+        store.clone() as Arc<dyn LiveGatewayUserDialogStore>,
+        ServeLimits::default(),
+    )
+    .await;
+    let request = http_put(&put_body());
+    let put = tokio::spawn(async move { exchange(port, &request).await });
+    tokio::time::timeout(Duration::from_secs(2), entered_rx.recv())
+        .await
+        .expect("the put never reached the store");
+
+    let finished = Arc::new(AtomicBool::new(false));
+    let flag = finished.clone();
+    let closing = tokio::spawn(async move {
+        server.close().await;
+        flag.store(true, Ordering::SeqCst);
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !finished.load(Ordering::SeqCst),
+        "close() returned while the in-flight request was still running"
+    );
+
+    store.released.store(true, Ordering::SeqCst);
+    store.condvar.notify_all();
+    let response = tokio::time::timeout(Duration::from_secs(3), put)
+        .await
+        .expect("the in-flight request was abandoned by close()")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        status(&response),
+        200,
+        "an in-flight request must complete before close() returns"
+    );
+    tokio::time::timeout(Duration::from_secs(3), closing)
+        .await
+        .expect("close() hung after the in-flight request finished")
+        .unwrap();
+    assert!(finished.load(Ordering::SeqCst));
     let _ = std::fs::remove_dir_all(directory);
 }
