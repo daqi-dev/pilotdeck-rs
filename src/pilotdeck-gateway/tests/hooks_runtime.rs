@@ -17,9 +17,9 @@ use pilotdeck_gateway::{
     runtime::hooks::{
         exec::{
             CallbackFuture, CallbackHookHandler, CallbackInput, CallbackResult, Cancellation,
-            CommandHookExecutor, CommandHookOptions, EvaluatorFuture, EvaluatorInput, HookOutcome,
-            HttpHookExecutor, HttpHookOptions, PromptEvaluator, PromptHookExecutor,
-            hook_output_to_value, parse_hook_output,
+            CommandHookExecutor, CommandHookOptions, EvaluatorFuture, EvaluatorInput,
+            ExecutionResult, HookOutcome, HttpHookExecutor, HttpHookOptions, LocalShellPort,
+            PromptEvaluator, PromptHookExecutor, hook_output_to_value, parse_hook_output,
         },
         pending::AsyncHookCompletion,
         runtime::{
@@ -280,6 +280,92 @@ async fn command_executor_matches_real_ts_subprocesses() {
             background.disarm();
         }
     }
+}
+
+/// #363-1: a command hook's stdout/stderr are capped like the bash tool's
+/// `StreamText` at V8 `MAX_STRING_LENGTH` UTF-16 units. TS's shell runner
+/// appends with `stdout += text` and throws `RangeError: Invalid string
+/// length` for a chunk that does not fit (`tool/builtin/bash/commandRunner.ts:132`,
+/// probe `_tmp/20261020-a65-pr7/probes/oom-rule.out`); the hook executor's
+/// catch turns that message into a `non_blocking_error`. The limit is injected
+/// small here; the product default is 0x1fffffe8 units.
+#[tokio::test]
+async fn command_output_over_string_limit_is_a_range_error() {
+    fn options(command: &str) -> CommandHookOptions {
+        CommandHookOptions {
+            command: command.into(),
+            hook_input: JsObject::new(),
+            cwd: "/tmp".into(),
+            env: None,
+            signal: None,
+            timeout_ms: Some(5_000.0),
+        }
+    }
+    fn project(result: &ExecutionResult) -> (HookOutcome, String, String, Option<i64>) {
+        (
+            result.outcome,
+            String::from_utf16_lossy(result.stdout.units()),
+            String::from_utf16_lossy(result.stderr.units()),
+            result.exit_code,
+        )
+    }
+    let executor = CommandHookExecutor::new(Arc::new(LocalShellPort::with_output_limit(10)));
+    // Exactly at the cap succeeds; one unit over fails with V8's message.
+    assert_eq!(
+        project(&executor.execute(options("printf 0123456789")).await),
+        (
+            HookOutcome::Success,
+            "0123456789".to_owned(),
+            String::new(),
+            Some(0)
+        )
+    );
+    for (stream, command) in [
+        ("stdout", "printf 0123456789a"),
+        ("stderr", "printf 0123456789a >&2"),
+    ] {
+        assert_eq!(
+            project(&executor.execute(options(command)).await),
+            (
+                HookOutcome::NonBlockingError,
+                String::new(),
+                "Invalid string length".to_owned(),
+                None
+            ),
+            "{stream} over the cap"
+        );
+    }
+    // The cap counts UTF-16 units, not bytes: U+1F600 is two units and its
+    // UTF-8 form is four bytes.
+    let emoji = CommandHookExecutor::new(Arc::new(LocalShellPort::with_output_limit(3)));
+    assert_eq!(
+        project(&emoji.execute(options("printf '😀a'")).await),
+        (
+            HookOutcome::Success,
+            "😀a".to_owned(),
+            String::new(),
+            Some(0)
+        )
+    );
+    assert_eq!(
+        project(&emoji.execute(options("printf '😀ab'")).await),
+        (
+            HookOutcome::NonBlockingError,
+            String::new(),
+            "Invalid string length".to_owned(),
+            None
+        )
+    );
+    // Exit 2 stays blocking: overflow must not turn a refusing policy hook
+    // into `non_blocking_error` (fail-open).
+    assert_eq!(
+        project(
+            &executor
+                .execute(options("printf 0123456789a; exit 2"))
+                .await
+        ),
+        (HookOutcome::Blocking, String::new(), String::new(), Some(2))
+    );
 }
 
 /// Negative control: a timeout must actually kill the owned process group and
