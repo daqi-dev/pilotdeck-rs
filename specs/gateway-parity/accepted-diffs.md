@@ -841,3 +841,18 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：legacy SSE 首连的证书失败；成功路径与 streamable（`strip_cause`）不受影响。
 - **机器判据**：`https-sse-certificate` 钉住自签文案；私有 CA 与主机名不匹配**无金样**（Rust 侧无法正确合成 Node 文案，未伪造期望值）。
 - **批准记录**：无；fixture README「已知未对齐」已如实写明。
+
+### A6.5-MCP-HTTPS-001 · 状态更正二（追加，不改上文；#361-3 修复轮 2 后 Grok r3）
+
+- **更正**：上一条「状态追加的更正」机器判据里的金样计数与哈希（12 场景、oracle sha256 `92e1759a…`）已被修复轮 2 重新生成的金样取代：现入库 `src/pilotdeck-gateway/tests/fixtures/mcp-https/oracle.json` sha256 `f30e5d63c1ca0f52db8812db3e52c142f4434279a03d10287c86b38764af4155`（README 记两次独立运行一致），新增 `https-sse-refused-ipv6` 场景后共 13 个场景（计数取自 PR #555 Grok r3）。判据测试名不变。
+- **批准记录**：同上文（人批 2026-10-23 要求修）；本条只更正判据引用，不改判分语义。
+
+### A6.5-MCP-CONNECT-HOSTNAME-001 · 拒连 / 超时详情里主机名与 TS 的「解析后地址」不同（已知未对齐）
+
+- **类别**：错误文本未对齐（仅失败路径）。
+- **TS 依据**：undici 对主机名 URL 报实际尝试连接的解析地址，多地址时按地址族用逗号拼接（PR #555 GLM r3 第 1 条，已实测）。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/mcp/http.rs` 的 `target_address`（约 :213-225）用 URL 里的主机名与端口拼接，主机名 URL 报 `localhost:P` 而非解析地址；IP 字面量（含 IPv6 去方括号）已与 TS 一致。单测 `:2562-2565` 对 `example.com:8443` 的期望值无 TS 依据，只是 Rust 自洽断言。
+- **范围**：MCP streamable_http / sse 连接失败时 cause 文本里的地址部分，仅当 URL 用主机名时；成功路径不受影响。
+- **机器判据**：暂无（回放金样只覆盖 IP 字面量；主机名分支变异下回放全绿，GLM r3 实测）。
+- **批准记录**：无；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义。
+
