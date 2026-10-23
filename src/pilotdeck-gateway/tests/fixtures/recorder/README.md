@@ -27,7 +27,16 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 | restore-*（11 组） | 原评审四种非法历史及 step/request/tool 边界；恢复失败后原 turn/call 仍可完成，序号/父链/域均未半发布 |
 | envelope-*（4 组） | 空 ID、自指父链、恢复后的历史 ID 重复、安全整数溢出；全部拒绝且不落盘 |
 
-共 28 个真实 TS 场景。Rust 默认测试 `real_ts_scenarios_match_outcomes_and_bytes` 逐场景重放，把步骤结果与整份 transcript 文件序列化后与 oracle 逐字节比较。归一化只有两条：场景目录 → `<dir>`；v4 UUID → `<id-N>`（按整份场景文本首次出现顺序）。
+共 **28** 个真实 TS 场景。生成器与 Rust 默认测试 `real_ts_scenarios_match_outcomes_and_bytes` 均断言场景数精确等于 28，防止金样再生或合并时静默缩水；新增或删除场景须同步更新两处计数与本 README。Rust 逐场景重放，把步骤结果与整份 transcript 文件序列化后与 oracle 逐字节比较。归一化只有两条：场景目录 → `<dir>`；v4 UUID → `<id-N>`（按整份场景文本首次出现顺序）。
+
+计数负控（仓库根执行）：
+
+```sh
+PDRS_BASELINE=/absolute/path/to/PilotDeck timeout 600 python3 \
+  src/pilotdeck-gateway/tests/fixtures/recorder/fix3-negative.py
+```
+
+脚本要求沿用启动器的本树 `CARGO_TARGET_DIR=.../src/target`，串行执行：先跑 Rust 正控，临时从 oracle 删除一条场景确认 Rust 以 27/28 转红；恢复 oracle 后，临时让真实 TS 生成器少发布一条场景，确认生成器以 27/28 拒绝写出 oracle；最后恢复源码并跑 Rust 正控。所有变异均在 `finally` 中逐字节恢复；子进程有期限并回收，日志在本树 `_tmp/20261023-issue-222-domain-log/fix3-negative/`。
 
 交叉测试 `real_ts_and_rust_continue_each_others_transcripts` 由 `generate.mts <dir> --cross-ts-write` / `--cross-ts-verify` 驱动：
 

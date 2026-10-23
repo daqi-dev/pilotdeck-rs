@@ -511,6 +511,8 @@ try {
     { op: 'startTurn' }, { op: 'state' }, { op: 'read' },
   ], ['ok', 'error:invalid_sequence', `state:${Number.MAX_SAFE_INTEGER}`, 'read:0/1@0'], { deterministicIds: true });
 
+  // Changing scenarios requires updating the exact Rust count and README too.
+  assert.equal(scenarios.length, 28, 'recorder oracle scenario count');
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, sessionId: SESSION, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
   assert.ok(!new RegExp(UUID.source).test(oracle), 'oracle.json contains an unnormalized UUID');
