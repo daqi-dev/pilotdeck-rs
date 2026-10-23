@@ -365,11 +365,20 @@ pub(crate) fn regular_files_at(root: &File, relative: &Path) -> io::Result<Vec<S
     let directory = if relative.as_os_str().is_empty() {
         root.try_clone()?
     } else {
-        let parent = walk_beneath(
+        let parent = match walk_beneath(
             root,
             relative.parent().ok_or(io::ErrorKind::InvalidInput)?,
             true,
-        )?;
+        ) {
+            Ok(parent) => parent,
+            // Match the existsSync probe used by memory directory reads.
+            // Only ancestor search failures mean absent; leaf scandir and
+            // NOFOLLOW failures retain their existing error semantics.
+            Err(e) if matches!(e.raw_os_error(), Some(libc::EACCES) | Some(libc::ENOTDIR)) => {
+                return Err(io::Error::from_raw_os_error(libc::ENOENT));
+            }
+            Err(e) => return Err(e),
+        };
         let name = relative.file_name().ok_or(io::ErrorKind::InvalidInput)?;
         File::from(
             openat(
@@ -421,62 +430,84 @@ fn descends_after_rmdir(error: &io::Error) -> bool {
 fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io::Result<()> {
     use rustix::fs::{AtFlags, Dir, Mode, OFlags, openat, unlinkat};
     use std::os::unix::ffi::OsStrExt;
-    let unlink = |flags, syscall| {
-        unlinkat(parent, name, flags)
-            .map_err(|e| crate::node_io::path_error(e.into(), syscall, display))
-    };
-    match unlink(AtFlags::REMOVEDIR, "rmdir") {
-        Ok(()) => return Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::NotADirectory => {
-            return unlink(AtFlags::empty(), "unlink");
-        }
-        Err(e) if descends_after_rmdir(&e) => {}
-        Err(e) => return Err(e),
-    }
-    // Open for reading only here: enumeration, unlike traversal, needs it.
-    // Enumeration failures keep Node's scandir syscall and this directory's
-    // display path, like the path-based node_fs::rm_sync they replace; a
-    // raced link stays NoFollowLoop instead of gaining a scandir stage.
-    let scandir = |error: io::Error| {
-        if nofollow_loop(&error) {
-            error
-        } else {
-            crate::node_io::path_error(error, "scandir", display)
-        }
-    };
-    let dir = File::from(
-        openat(
+    // Keep paths, not directory handles, across descent. Rewalking from the
+    // pinned anchor costs O(depth) per entry but uses a constant number of
+    // descriptors and checks every ancestor with NOFOLLOW on every visit.
+    let mut pending = vec![(PathBuf::from(name), display.to_path_buf(), false)];
+    while let Some((relative, display, visited)) = pending.pop() {
+        let directory = walk_beneath(
             parent,
-            name,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(io::Error::from)
-        .map_err(checked_open_error)
-        .map_err(scandir)?,
-    );
-    let mut children = Dir::read_from(&dir)
-        .map_err(io::Error::from)
-        .and_then(|entries| {
-            entries
-                .map(|entry| {
-                    entry
-                        .map(|entry| entry.file_name().to_owned())
-                        .map_err(io::Error::from)
-                })
-                .collect::<std::result::Result<Vec<_>, _>>()
-        })
-        .map_err(scandir)?;
-    children.sort();
-    for child in children {
-        let child = std::ffi::OsStr::from_bytes(child.to_bytes());
-        if child == std::ffi::OsStr::new(".") || child == std::ffi::OsStr::new("..") {
+            relative.parent().ok_or(io::ErrorKind::InvalidInput)?,
+            true,
+        )?;
+        let name = relative.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+        let unlink = |flags, syscall| {
+            unlinkat(&directory, name, flags)
+                .map_err(|e| crate::node_io::path_error(e.into(), syscall, &display))
+        };
+        if visited {
+            unlink(AtFlags::REMOVEDIR, "rmdir")?;
             continue;
         }
-        remove_child_at(&dir, child, &display.join(child))?;
+        match unlink(AtFlags::REMOVEDIR, "rmdir") {
+            Ok(()) => continue,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) if e.kind() == io::ErrorKind::NotADirectory => {
+                unlink(AtFlags::empty(), "unlink")?;
+                continue;
+            }
+            Err(e) if descends_after_rmdir(&e) => {}
+            Err(e) => return Err(e),
+        }
+        // Open for reading only here: enumeration, unlike traversal, needs it.
+        // Enumeration failures keep Node's scandir syscall and this directory's
+        // display path, like the path-based node_fs::rm_sync they replace; a
+        // raced link stays NoFollowLoop instead of gaining a scandir stage.
+        let scandir = |error: io::Error| {
+            if nofollow_loop(&error) {
+                error
+            } else {
+                crate::node_io::path_error(error, "scandir", &display)
+            }
+        };
+        let dir = File::from(
+            openat(
+                &directory,
+                name,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(io::Error::from)
+            .map_err(checked_open_error)
+            .map_err(scandir)?,
+        );
+        let mut children = Dir::read_from(&dir)
+            .map_err(io::Error::from)
+            .and_then(|entries| {
+                entries
+                    .map(|entry| {
+                        entry
+                            .map(|entry| entry.file_name().to_owned())
+                            .map_err(io::Error::from)
+                    })
+                    .collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .map_err(scandir)?;
+        children.sort();
+        // Release the enumeration descriptor and this entry's parent before
+        // processing children; no stack frame holds a descriptor for an ancestor.
+        drop(dir);
+        drop(directory);
+        pending.push((relative.clone(), display.clone(), true));
+        for child in children.into_iter().rev() {
+            let child = std::ffi::OsStr::from_bytes(child.to_bytes());
+            if child == std::ffi::OsStr::new(".") || child == std::ffi::OsStr::new("..") {
+                continue;
+            }
+            pending.push((relative.join(child), display.join(child), false));
+        }
     }
-    unlink(AtFlags::REMOVEDIR, "rmdir")
+    Ok(())
 }
 
 #[cfg(unix)]
