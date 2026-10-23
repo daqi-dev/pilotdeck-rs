@@ -195,6 +195,7 @@ fn options(value: &JsValue) -> McpClientOptions {
     McpClientOptions {
         call_timeout_ms: field(value, "callTimeoutMs").as_number(),
         handshake_timeout_ms: field(value, "handshakeTimeoutMs").as_number(),
+        ..McpClientOptions::default()
     }
 }
 

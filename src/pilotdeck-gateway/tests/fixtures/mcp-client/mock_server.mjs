@@ -115,7 +115,10 @@ async function serveHttp(dir) {
   };
   const server = tls ? http.createServer(tls, handler) : http.createServer(handler);
   // Held streams must not keep the recorder waiting on close.
-  server.listen(0, '127.0.0.1', () => {
+  // MOCK_HOST lets the proxy fixture put the target on 0.0.0.0, which the
+  // baseline's proxy installer does not add to NO_PROXY (127.0.0.1 and
+  // localhost always are); other fixtures keep the loopback default.
+  server.listen(0, process.env.MOCK_HOST || '127.0.0.1', () => {
     process.stdout.write(`PORT ${server.address().port}\n`);
   });
   process.stdin.on('end', () => process.exit(0));

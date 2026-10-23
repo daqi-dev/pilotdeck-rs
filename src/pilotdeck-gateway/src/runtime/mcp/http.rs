@@ -29,7 +29,10 @@ use super::client::{McpClientError, McpErrorCode};
 use super::protocol::{Inbound, parse_inbound_value};
 use super::wire::{Wire, frame_text, lock};
 use crate::runtime::{
-    model::http::{ConnectDeadline, https_connector, retry_after_header_ms},
+    model::http::{
+        ConnectDeadline, ProxyConfig, ProxyConnect, ProxyError, ProxySettings,
+        proxy_https_connector, retry_after_header_ms,
+    },
     network::{Exchange, ExchangeFuture, delay, exchange_continuing, node_timer_duration},
     tools::ToolCancellation,
 };
@@ -38,10 +41,7 @@ use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{Method, Request, StatusCode, body::Incoming, header};
 use hyper_rustls::HttpsConnector;
-use hyper_util::{
-    client::legacy::{Client, connect::HttpConnector},
-    rt::TokioExecutor,
-};
+use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use pilotdeck_protocol::{JsValue, json_syntax, parse_json};
 use std::{
     sync::{Arc, Mutex, Weak},
@@ -50,12 +50,12 @@ use std::{
 use tokio::sync::oneshot;
 use url::Url;
 
-type HttpClient = Client<ConnectDeadline<HttpsConnector<HttpConnector>>, Full<Bytes>>;
+type HttpClient = Client<ConnectDeadline<HttpsConnector<ProxyConnect>>, Full<Bytes>>;
 
 /// undici's `connectTimeout` default (10 000 ms) spans socket establishment
-/// including the TLS handshake; hyper's `HttpConnector::set_connect_timeout`
-/// inside the shared connector only bounds the TCP phase. Wrapping the shared
-/// connector keeps `https_connector` itself unchanged.
+/// including the TLS handshake (and a proxy CONNECT when configured); the
+/// shared `HttpConnector` only bounds its own TCP phase, so the MCP-local
+/// deadline wraps the whole proxy/TLS connect.
 const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `DEFAULT_STREAMABLE_HTTP_RECONNECTION_OPTIONS`.
@@ -262,6 +262,15 @@ fn error_chain<'a>(
 fn failure_cause(target: &hyper::Uri, error: &hyper_util::client::legacy::Error) -> Option<String> {
     let source = error as &(dyn std::error::Error + 'static);
     let chain = error_chain(source);
+    // A proxy CONNECT rejection already carries the cause text the TS fetch /
+    // EventSource stack reports; its socket error (if any) would otherwise be
+    // attributed to the MCP target instead of the proxy.
+    if let Some(proxy) = chain
+        .iter()
+        .find_map(|source| source.downcast_ref::<ProxyError>())
+    {
+        return Some(proxy.cause.clone());
+    }
     let refused = chain.iter().any(|source| {
         source
             .downcast_ref::<std::io::Error>()
@@ -913,13 +922,15 @@ impl HttpLink {
             post_timeout_ms,
             get_timeout_ms,
             crate::runtime::model::http::webpki_client_config(),
+            None,
         )
     }
 
     /// Trust exactly `config` (the `McpClient` test seam passes the fixture
     /// CA in through `rooted_client_config`). The shared connector keeps its
     /// own TCP timeout; the MCP-local deadline adds undici's whole-connect
-    /// bound around it.
+    /// bound around it. `proxy` is the `pilotdeck.yaml` source; env-only
+    /// behavior is `None`.
     pub(super) fn with_config(
         kind: HttpKind,
         url: Url,
@@ -927,8 +938,11 @@ impl HttpLink {
         post_timeout_ms: f64,
         get_timeout_ms: f64,
         config: rustls::ClientConfig,
+        proxy: Option<&ProxySettings>,
     ) -> Self {
-        let connector = ConnectDeadline::new(https_connector(config), MCP_CONNECT_TIMEOUT);
+        let proxy = ProxyConfig::from_settings(proxy);
+        let connector =
+            ConnectDeadline::new(proxy_https_connector(config, proxy), MCP_CONNECT_TIMEOUT);
         Self {
             kind,
             url,
