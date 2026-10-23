@@ -897,3 +897,5 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：换目录失败后的恢复路径，含上述并发与单线程复制回退失败两种情形；成功路径、导出内容与 import 校验错误的对拍不受影响。
 - **机器判据**：`storage::bundle` 单测 `failed_swap_restores_live_root_even_when_recreated`（macOS，用 chflags 制造失败，本身不含并发线程）；集成测试 `tests/edgeclaw_export.rs` 的 `import_locking::import_waits_for_workspace_store_writer` 与 `import_locking::import_waits_for_global_store_writer`（负控：移除 `import_memory_bundle` 的两处 `operation_scope()` 后两条均转红）。单线程 copy 回退中途失败的场景尚无 Rust 测试。
 - **批准记录**：无；实现方在修复轮 1 自述，协调者改写为六字段登记（实现方误写入 `specs/parity/accepted-diffs.md`，已撤回，原文见 `_tmp/20261023-a66-pr10f-export/worker-wrong-ledger.diff`）；PR #531 codex r2 指出原登记「TS 条件恒真、单线程两侧可观察相同」不准确，协调者按其实测更正；**已知未对齐（未批准，待人批）**。
+
+- **A6.6-EDGECLAW-IMPORT-SWAP-ROLLBACK-001 机器判据补充（追加，不改原条目；PR #531 修复轮 3）**：上方条目「单线程 copy 回退中途失败的场景尚无 Rust 测试」已过期——修复轮 3 新增 `src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/bundle.rs` 的 `#[cfg(unix)]` 单测 `failed_copy_fallback_restores_live_root`，在 Linux 与 macOS 上都覆盖单线程 rename 回退 copy 中途失败后的恢复；macOS 另有 `failed_swap_restores_live_root_even_when_recreated`（chflags）。（PR #531 gate3 concurrency P1 指出。）
