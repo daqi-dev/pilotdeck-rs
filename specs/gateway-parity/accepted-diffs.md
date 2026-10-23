@@ -792,3 +792,10 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - 范围：commands / skills / output-styles / style-only 的每配置目录；适用于规范化根外叶文件/目录及配置 base symlink。插件根自身为 symlink 时仍保留合法词法贡献；绝对配置遵守 TS Node join，不扩大插件根。并发替换链接的 TOCTOU 不由这些静态测试证明。
 - 机器判据：四个新边界回归全字段回放、真实 TS 双跑和上述专属负控；ROOT-001 未扩大为整个 loader 的安全沙箱承诺。
 - 批准/登记状态：无人批。实现行为沿用 ROOT-001 既有状态（AI 代批，待人复核）；本条只补错误路径的范围与判据，依据协调者修复任务书（不是人类授权），不新增豁免、不改判分语义。
+
+### A6.3-PLUGIN-MARKDOWN-CYCLE-001-R4 · 机器判据更正：互链团有界测试不再用 1 s 墙钟（首版与 R1–R3 原文保留在上方；PR #544 gate6 sibling P1）
+
+- **更正**：R1 机器判据所写「互链团各为 1 s 上限的子进程」已不成立。修复轮 4（提交 `91ad75bc`）起，`src/pilotdeck-gateway/tests/plugin_traversal.rs` 的 `wait_for_traversal`（:85）只施加 20 s 父进程可终止期限、仅用于防挂起；有界性改由 `assert_directory_expansions`（:101）以确定性计数断言（每个物理目录恰展开一次，展开数 = 唯一目录数），不依赖墙钟。四个互链团用例 `plugin_markdown_clique_03/07/10/20` 照此判定；协调者沙箱外 4×4 并行压测 clique_03、clique_20 各 16/16。
+- **TS 依据不变**：TS 探针里的 1000 ms 只是截断未返回的 TS 探针的预算，不是 Rust 通过上界（fixture README 已写明）。
+- **批准记录**：无；判据更正，不改判分语义、不新增豁免；R1–R3 的状态（AI 代批，待人复核）不变。
+

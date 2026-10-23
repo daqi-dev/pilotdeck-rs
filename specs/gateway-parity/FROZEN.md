@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（PR #544 gate6）**：accepted-diffs.md 末尾只追加 A6.3-PLUGIN-MARKDOWN-CYCLE-001-R4（机器判据更正：1 s 墙钟改为 20 s 防挂起 + 确定性展开计数），原文保留；不改判分语义；只重登记 accepted-diffs.md 哈希。
+
 > **2026-10-23 重登记（PR #544 修复轮 4）**：accepted-diffs.md 末尾只追加 A6.3-PLUGIN-MARKDOWN-ROOT-001-R1（根外不可读 Markdown 的错误路径范围与判据），首版保留；不改判分语义、不新增豁免；只重登记 accepted-diffs.md 哈希。
 
 > **2026-10-23 重登记（PR #544 修复轮 3）**：accepted-diffs.md 末尾只追加 A6.3-PLUGIN-MARKDOWN-CYCLE-001-R3（去掉 Markdown 候选预算与 64 层深度上限、R2 ② 的差异消除），首版、R1、R2 原文保留；不改判分语义、不新增豁免；只重登记 accepted-diffs.md 哈希。
@@ -85,7 +87,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-1ccf3800894218322075f2862f44abb6b84ba351e6d7699666a90d122d185b23  accepted-diffs.md
+84fa1203966721ee204baaaed51f1819118c644377f3ba5c848829176e8cc187  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
