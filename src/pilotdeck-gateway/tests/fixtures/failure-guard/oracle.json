@@ -1,0 +1,1775 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/policy/FailureGuard.ts": "d7b88a788134c51dd7138a3641f6dab0348656bcc7343c9400397eaededc6f0c",
+    "src/agent/policy/classify.ts": "601d433550ac58452e86611e35942c97e899f1eaf2ce081658afc7ac16196a95"
+  },
+  "config": {
+    "enabled": true,
+    "modelFailureLimit": 3,
+    "toolFailureLimits": {
+      "read_file": 3,
+      "mcp__": 4,
+      "mcp__db__": 2,
+      "mcp__db__exact": 1,
+      "disabled": 0,
+      "negative": -1,
+      "__proto__": 2
+    },
+    "toolLabels": {
+      "mcp__db__": "数据库𝄞",
+      "read_file": "",
+      "mcp__db__exact": "\ud800"
+    }
+  },
+  "cases": [
+    {
+      "name": "accumulate-success-does-not-reset-and-trip-latches",
+      "config": {
+        "enabled": true,
+        "modelFailureLimit": 3,
+        "toolFailureLimits": {
+          "read_file": 3,
+          "mcp__": 4,
+          "mcp__db__": 2,
+          "mcp__db__exact": 1,
+          "disabled": 0,
+          "negative": -1,
+          "__proto__": 2
+        },
+        "toolLabels": {
+          "mcp__db__": "数据库𝄞",
+          "read_file": "",
+          "mcp__db__exact": "\ud800"
+        }
+      },
+      "actions": [
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "read_file",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "success",
+              "toolName": "read_file"
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "read_file",
+              "error": {
+                "code": "tool_unavailable",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "agent_status",
+            "event": "other"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "read_file",
+              "error": {
+                "code": "setup_required",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "mcp__db__exact",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "reset"
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "read_file",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        }
+      ],
+      "results": [
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": {
+            "kind": "tool",
+            "unit": "read_file",
+            "label": "",
+            "failures": 3,
+            "limit": 3
+          },
+          "isTripped": true,
+          "messages": [
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            }
+          ]
+        },
+        {
+          "trip": null,
+          "isTripped": true,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": true,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        }
+      ]
+    },
+    {
+      "name": "model-window-and-reset",
+      "config": {
+        "enabled": true,
+        "modelFailureLimit": 3,
+        "toolFailureLimits": {
+          "read_file": 3,
+          "mcp__": 4,
+          "mcp__db__": 2,
+          "mcp__db__exact": 1,
+          "disabled": 0,
+          "negative": -1,
+          "__proto__": 2
+        },
+        "toolLabels": {
+          "mcp__db__": "数据库𝄞",
+          "read_file": "",
+          "mcp__db__exact": "\ud800"
+        }
+      },
+      "actions": [
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "tool_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "model"
+        },
+        {
+          "op": "reset"
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        }
+      ],
+      "results": [
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": {
+            "kind": "model",
+            "failures": 3,
+            "limit": 3
+          },
+          "isTripped": true,
+          "messages": [
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3,
+                "provider": "p",
+                "model": "m"
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3,
+                "provider": "p"
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3,
+                "model": "\ud800"
+              }
+            }
+          ]
+        },
+        {
+          "trip": null,
+          "isTripped": true,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        }
+      ]
+    },
+    {
+      "name": "longest-prefix-shared-across-subagent",
+      "config": {
+        "enabled": true,
+        "modelFailureLimit": 3,
+        "toolFailureLimits": {
+          "read_file": 3,
+          "mcp__": 4,
+          "mcp__db__": 2,
+          "mcp__db__exact": 1,
+          "disabled": 0,
+          "negative": -1,
+          "__proto__": 2
+        },
+        "toolLabels": {
+          "mcp__db__": "数据库𝄞",
+          "read_file": "",
+          "mcp__db__exact": "\ud800"
+        }
+      },
+      "actions": [
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "mcp__db__one",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "mcp__other",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "subagent_tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "mcp__db__two",
+              "error": {
+                "code": "setup_required",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "mcp__db__one",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        }
+      ],
+      "results": [
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": {
+            "kind": "tool",
+            "unit": "mcp__db__",
+            "label": "数据库𝄞",
+            "failures": 2,
+            "limit": 2
+          },
+          "isTripped": true,
+          "messages": [
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "数据库𝄞 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__",
+                "toolLabel": "数据库𝄞",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "数据库𝄞 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__",
+                "toolLabel": "数据库𝄞",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "数据库𝄞 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__",
+                "toolLabel": "数据库𝄞",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "数据库𝄞 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__",
+                "toolLabel": "数据库𝄞",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "数据库𝄞 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__",
+                "toolLabel": "数据库𝄞",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "数据库𝄞 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__",
+                "toolLabel": "数据库𝄞",
+                "failures": 2,
+                "limit": 2
+              }
+            }
+          ]
+        },
+        {
+          "trip": null,
+          "isTripped": true,
+          "messages": []
+        }
+      ]
+    },
+    {
+      "name": "exact-wins-and-utf16-label",
+      "config": {
+        "enabled": true,
+        "modelFailureLimit": 3,
+        "toolFailureLimits": {
+          "read_file": 3,
+          "mcp__": 4,
+          "mcp__db__": 2,
+          "mcp__db__exact": 1,
+          "disabled": 0,
+          "negative": -1,
+          "__proto__": 2
+        },
+        "toolLabels": {
+          "mcp__db__": "数据库𝄞",
+          "read_file": "",
+          "mcp__db__exact": "\ud800"
+        }
+      },
+      "actions": [
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "mcp__db__exact",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        }
+      ],
+      "results": [
+        {
+          "trip": {
+            "kind": "tool",
+            "unit": "mcp__db__exact",
+            "label": "\ud800",
+            "failures": 1,
+            "limit": 1
+          },
+          "isTripped": true,
+          "messages": [
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "\ud800 服务本次任务已失败 1 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__exact",
+                "toolLabel": "\ud800",
+                "failures": 1,
+                "limit": 1
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "\ud800 服务本次任务已失败 1 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__exact",
+                "toolLabel": "\ud800",
+                "failures": 1,
+                "limit": 1
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "\ud800 服务本次任务已失败 1 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__exact",
+                "toolLabel": "\ud800",
+                "failures": 1,
+                "limit": 1
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "\ud800 服务本次任务已失败 1 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__exact",
+                "toolLabel": "\ud800",
+                "failures": 1,
+                "limit": 1
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "\ud800 服务本次任务已失败 1 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__exact",
+                "toolLabel": "\ud800",
+                "failures": 1,
+                "limit": 1
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "\ud800 服务本次任务已失败 1 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "mcp__db__exact",
+                "toolLabel": "\ud800",
+                "failures": 1,
+                "limit": 1
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "disabled-limits-and-missing-unit",
+      "config": {
+        "enabled": true,
+        "modelFailureLimit": 3,
+        "toolFailureLimits": {
+          "read_file": 3,
+          "mcp__": 4,
+          "mcp__db__": 2,
+          "mcp__db__exact": 1,
+          "disabled": 0,
+          "negative": -1,
+          "__proto__": 2
+        },
+        "toolLabels": {
+          "mcp__db__": "数据库𝄞",
+          "read_file": "",
+          "mcp__db__exact": "\ud800"
+        }
+      },
+      "actions": [
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "disabled",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "negative",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "unknown",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "disabled",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "negative",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "unknown",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "disabled",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "negative",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "unknown",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "disabled",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "negative",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "unknown",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "disabled",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "negative",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "unknown",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        }
+      ],
+      "results": [
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        }
+      ]
+    },
+    {
+      "name": "tool-call-boundaries",
+      "config": {
+        "enabled": true,
+        "modelFailureLimit": 3,
+        "toolFailureLimits": {
+          "read_file": 3,
+          "mcp__": 4,
+          "mcp__db__": 2,
+          "mcp__db__exact": 1,
+          "disabled": 0,
+          "negative": -1,
+          "__proto__": 2
+        },
+        "toolLabels": {
+          "mcp__db__": "数据库𝄞",
+          "read_file": "",
+          "mcp__db__exact": "\ud800"
+        }
+      },
+      "actions": [
+        {
+          "op": "tool",
+          "name": "read_file",
+          "ok": true,
+          "code": "setup_required"
+        },
+        {
+          "op": "tool",
+          "name": "read_file",
+          "ok": false
+        },
+        {
+          "op": "tool",
+          "name": "read_file",
+          "ok": false,
+          "code": ""
+        },
+        {
+          "op": "tool",
+          "name": "read_file",
+          "ok": false,
+          "code": "TOOL_EXECUTION_FAILED"
+        },
+        {
+          "op": "tool",
+          "name": "read_file",
+          "ok": false,
+          "code": "permission_denied"
+        },
+        {
+          "op": "tool",
+          "name": "read_file",
+          "ok": false,
+          "code": "tool_execution_failed"
+        },
+        {
+          "op": "tool",
+          "name": "read_file",
+          "ok": false,
+          "code": "tool_unavailable"
+        },
+        {
+          "op": "tool",
+          "name": "read_file",
+          "ok": false,
+          "code": "setup_required"
+        }
+      ],
+      "results": [
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": {
+            "kind": "tool",
+            "unit": "read_file",
+            "label": "",
+            "failures": 3,
+            "limit": 3
+          },
+          "isTripped": true,
+          "messages": [
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": " 服务本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "read_file",
+                "toolLabel": "",
+                "failures": 3,
+                "limit": 3
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "own-prototype-key",
+      "config": {
+        "enabled": true,
+        "modelFailureLimit": 3,
+        "toolFailureLimits": {
+          "read_file": 3,
+          "mcp__": 4,
+          "mcp__db__": 2,
+          "mcp__db__exact": 1,
+          "disabled": 0,
+          "negative": -1,
+          "__proto__": 2
+        },
+        "toolLabels": {
+          "mcp__db__": "数据库𝄞",
+          "read_file": "",
+          "mcp__db__exact": "\ud800"
+        }
+      },
+      "actions": [
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "__proto__",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "__proto__",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        }
+      ],
+      "results": [
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": {
+            "kind": "tool",
+            "unit": "__proto__",
+            "label": "__proto__",
+            "failures": 2,
+            "limit": 2
+          },
+          "isTripped": true,
+          "messages": [
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "__proto__ 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "__proto__",
+                "toolLabel": "__proto__",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "__proto__ 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "__proto__",
+                "toolLabel": "__proto__",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "__proto__ 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "__proto__",
+                "toolLabel": "__proto__",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "__proto__ 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "__proto__",
+                "toolLabel": "__proto__",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "__proto__ 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "__proto__",
+                "toolLabel": "__proto__",
+                "failures": 2,
+                "limit": 2
+              }
+            },
+            {
+              "code": "tool_failure_limit_reached",
+              "message": "__proto__ 服务本次任务已失败 2 次，已自动停止，请稍后重试",
+              "detail": {
+                "unit": "__proto__",
+                "toolLabel": "__proto__",
+                "failures": 2,
+                "limit": 2
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "model-limit-disabled",
+      "config": {
+        "enabled": true,
+        "modelFailureLimit": 0,
+        "toolFailureLimits": {
+          "read_file": 3,
+          "mcp__": 4,
+          "mcp__db__": 2,
+          "mcp__db__exact": 1,
+          "disabled": 0,
+          "negative": -1,
+          "__proto__": 2
+        },
+        "toolLabels": {
+          "mcp__db__": "数据库𝄞",
+          "read_file": "",
+          "mcp__db__exact": "\ud800"
+        }
+      },
+      "actions": [
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        }
+      ],
+      "results": [
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        }
+      ]
+    },
+    {
+      "name": "independent-model-tool-counters",
+      "config": {
+        "enabled": true,
+        "modelFailureLimit": 3,
+        "toolFailureLimits": {
+          "read_file": 3,
+          "mcp__": 4,
+          "mcp__db__": 2,
+          "mcp__db__exact": 1,
+          "disabled": 0,
+          "negative": -1,
+          "__proto__": 2
+        },
+        "toolLabels": {
+          "mcp__db__": "数据库𝄞",
+          "read_file": "",
+          "mcp__db__exact": "\ud800"
+        }
+      },
+      "actions": [
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "read_file",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "tool_result",
+            "result": {
+              "type": "error",
+              "toolName": "read_file",
+              "error": {
+                "code": "tool_execution_failed",
+                "message": "failure"
+              }
+            }
+          }
+        },
+        {
+          "op": "observe",
+          "event": {
+            "type": "turn_continued",
+            "reason": "model_error"
+          }
+        }
+      ],
+      "results": [
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": null,
+          "isTripped": false,
+          "messages": []
+        },
+        {
+          "trip": {
+            "kind": "model",
+            "failures": 3,
+            "limit": 3
+          },
+          "isTripped": true,
+          "messages": [
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3,
+                "provider": "p",
+                "model": "m"
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3,
+                "provider": "p"
+              }
+            },
+            {
+              "code": "model_failure_limit_reached",
+              "message": "模型调用本次任务已失败 3 次，已自动停止，请稍后重试",
+              "detail": {
+                "failures": 3,
+                "limit": 3,
+                "model": "\ud800"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "classify": [
+    {
+      "name": "read_file",
+      "resolved": {
+        "unit": "read_file",
+        "limit": 3
+      },
+      "label": ""
+    },
+    {
+      "name": "mcp__db__exact",
+      "resolved": {
+        "unit": "mcp__db__exact",
+        "limit": 1
+      },
+      "label": "\ud800"
+    },
+    {
+      "name": "mcp__db__one",
+      "resolved": {
+        "unit": "mcp__db__",
+        "limit": 2
+      },
+      "label": "mcp__db__one"
+    },
+    {
+      "name": "mcp__other",
+      "resolved": {
+        "unit": "mcp__",
+        "limit": 4
+      },
+      "label": "mcp__other"
+    },
+    {
+      "name": "mcp_",
+      "resolved": null,
+      "label": "mcp_"
+    },
+    {
+      "name": "unknown",
+      "resolved": null,
+      "label": "unknown"
+    },
+    {
+      "name": "__proto__",
+      "resolved": {
+        "unit": "__proto__",
+        "limit": 2
+      },
+      "label": "__proto__"
+    },
+    {
+      "name": "toString",
+      "resolved": null,
+      "label": "toString"
+    },
+    {
+      "name": "disabled",
+      "resolved": {
+        "unit": "disabled",
+        "limit": 0
+      },
+      "label": "disabled"
+    }
+  ],
+  "counted": [
+    {
+      "result": {
+        "type": "error",
+        "error": {
+          "code": "tool_execution_failed"
+        }
+      },
+      "counted": true
+    },
+    {
+      "result": {
+        "type": "success",
+        "error": {
+          "code": "tool_execution_failed"
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "error",
+        "error": {
+          "code": "tool_unavailable"
+        }
+      },
+      "counted": true
+    },
+    {
+      "result": {
+        "type": "success",
+        "error": {
+          "code": "tool_unavailable"
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "error",
+        "error": {
+          "code": "setup_required"
+        }
+      },
+      "counted": true
+    },
+    {
+      "result": {
+        "type": "success",
+        "error": {
+          "code": "setup_required"
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "error",
+        "error": {
+          "code": ""
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "success",
+        "error": {
+          "code": ""
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "error",
+        "error": {
+          "code": "permission_denied"
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "success",
+        "error": {
+          "code": "permission_denied"
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "error",
+        "error": {
+          "code": "tool_execution_failed "
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "success",
+        "error": {
+          "code": "tool_execution_failed "
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "error",
+        "error": {
+          "code": "TOOL_UNAVAILABLE"
+        }
+      },
+      "counted": false
+    },
+    {
+      "result": {
+        "type": "success",
+        "error": {
+          "code": "TOOL_UNAVAILABLE"
+        }
+      },
+      "counted": false
+    }
+  ]
+}

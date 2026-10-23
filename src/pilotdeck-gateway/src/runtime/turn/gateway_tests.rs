@@ -138,8 +138,8 @@ impl SubmitHost for Host {
             recorder: None,
         })
     }
-    fn failure_guard_enabled(&self) -> bool {
-        false
+    fn failure_guard_config(&self) -> Option<JsValue> {
+        None
     }
     fn set_session_cwd(&self, _: &JsString, _: &JsString) -> Result<(), SubmitError> {
         Ok(())

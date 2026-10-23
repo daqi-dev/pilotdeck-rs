@@ -36,6 +36,7 @@ struct Log {
     durable: Mutex<Vec<Value>>,
     registry: Mutex<Vec<Value>>,
     visible: Mutex<Vec<Value>>,
+    guard_wire: Mutex<Vec<String>>,
     ended: AtomicBool,
     thrown: Mutex<Option<String>>,
     consumer_hold: Mutex<Option<Arc<Gate>>>,
@@ -79,11 +80,21 @@ impl LiveSession for Arc<Session> {
             ])
         }
     }
-    fn abort(&self, _: &JsString) -> RuntimeResult {
+    fn abort(&self, reason: &JsString) -> RuntimeResult {
         self.log.host("session_abort");
+        if self.setup["failureGuard"].is_object() {
+            self.log
+                .durable
+                .lock()
+                .unwrap()
+                .push(json!({"op":"abort", "reason":json(&JsValue::String(reason.clone()))}));
+        }
         self.accepted.open();
         self.terminal.open();
         self.end.open();
+        if self.setup["sessionAbortFailure"] == true {
+            return Err(RuntimeError::new("injected abort failure"));
+        }
         Ok(())
     }
     fn dispose(&self) -> DisposeFuture<'_> {
@@ -221,6 +232,7 @@ impl SubmitSnapshots for TestSnapshots {
 }
 struct Host {
     session: Arc<Session>,
+    refreshed: AtomicBool,
     prepare: Gate,
     sdk: Gate,
     recovery: Gate,
@@ -241,8 +253,16 @@ impl SubmitHost for Host {
             },
         })
     }
-    fn failure_guard_enabled(&self) -> bool {
-        self.session.setup["failureGuard"] == true
+    fn failure_guard_config(&self) -> Option<JsValue> {
+        let config = if self.refreshed.load(Ordering::SeqCst) {
+            self.session
+                .setup
+                .get("guardAfterRefresh")
+                .or_else(|| self.session.setup.get("failureGuard"))
+        } else {
+            self.session.setup.get("failureGuard")
+        };
+        config.map(js)
     }
     fn set_session_cwd(&self, _: &JsString, _: &JsString) -> Result<(), SubmitError> {
         if self.session.setup["cwdUnavailable"] == true {
@@ -367,6 +387,7 @@ impl SubmitHost for Host {
     fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
         Box::pin(async {
             self.session.log.host("refresh");
+            self.refreshed.store(true, Ordering::SeqCst);
             if self.session.setup["refreshFailure"] == true {
                 Err(SubmitError::new("CONFIG", "transient config error"))
             } else {
@@ -426,9 +447,17 @@ impl SubmitHost for Host {
     fn record_failure<'a>(
         &'a self,
         _: &'a RunRef,
-        _: &'a JsValue,
+        status: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         Box::pin(async {
+            if self.session.setup["failureGuard"].is_object() {
+                self.session
+                    .log
+                    .durable
+                    .lock()
+                    .unwrap()
+                    .push(json!({"op":"status", "status":json(status), "wire":stringify_json(status).unwrap().unwrap()}));
+            }
             if self.session.setup["statusRecordFailure"] == true {
                 Err(SubmitError::new("RECORD", "injected status record failure"))
             } else {
@@ -536,6 +565,10 @@ async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
             Ok(Some(event)) => {
                 let timeout_error =
                     is(&event, "type", "error") && is(&event, "code", "turn_timeout");
+                log.guard_wire
+                    .lock()
+                    .unwrap()
+                    .push(stringify_json(&event).unwrap().unwrap());
                 log.visible.lock().unwrap().push(json(&event));
                 let hold = if timeout_error {
                     log.consumer_hold.lock().unwrap().clone()
@@ -604,6 +637,7 @@ async fn replay_case(case: &Value) {
     });
     let host = Arc::new(Host {
         session: session.clone(),
+        refreshed: AtomicBool::new(false),
         prepare: Gate::new(),
         sdk: Gate::new(),
         recovery: Gate::new(),
@@ -676,6 +710,10 @@ async fn replay_case(case: &Value) {
                 second["runId"] = "r2".into();
                 let mut stream = submitter.submit(js(&second));
                 while let Some(event) = stream.next().await.unwrap() {
+                    log.guard_wire
+                        .lock()
+                        .unwrap()
+                        .push(stringify_json(&event).unwrap().unwrap());
                     log.visible.lock().unwrap().push(json(&event));
                 }
             }
@@ -690,7 +728,10 @@ async fn replay_case(case: &Value) {
             .as_array_mut()
             .unwrap()
             .retain(|v| v != "sdk_dirty");
-        let actual = json!({"visible":*log.visible.lock().unwrap(), "hostCalls":*log.host.lock().unwrap(), "durableCalls":*log.durable.lock().unwrap(), "registryCalls":*log.registry.lock().unwrap(), "active":owner.has_active_turn(&"s".into()), "ended":log.ended.load(Ordering::SeqCst), "thrown":*log.thrown.lock().unwrap()});
+        let mut actual = json!({"visible":*log.visible.lock().unwrap(), "hostCalls":*log.host.lock().unwrap(), "durableCalls":*log.durable.lock().unwrap(), "registryCalls":*log.registry.lock().unwrap(), "active":owner.has_active_turn(&"s".into()), "ended":log.ended.load(Ordering::SeqCst), "thrown":*log.thrown.lock().unwrap()});
+        if setup["failureGuard"].is_object() {
+            actual["guardWire"] = json!(*log.guard_wire.lock().unwrap());
+        }
         if case["capabilityOnly"] == true {
             assert!(
                 actual["visible"]
@@ -809,7 +850,6 @@ async fn unavailable_capabilities_are_explicitly_refused() {
     let base = &oracle["cases"][0];
     let mut selected = 0;
     for (name, setup) in [
-        ("failure-guard-unavailable", json!({"failureGuard":true})),
         (
             "snapshot-recorder-unavailable",
             json!({"workspace":"w", "snapshots":true, "snapshotsUnavailable":true}),
