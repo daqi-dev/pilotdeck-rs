@@ -693,7 +693,7 @@ fn validate_goal(revision: &mut f64, entry: &JsValue) -> RecorderResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pilotdeck_protocol::{JsObject, parse_json, stringify_json};
+    use pilotdeck_protocol::{JsObject, stringify_json};
     fn outcome(result: RecorderResult<DomainState>) -> JsValue {
         let mut value = JsObject::new();
         match result {
@@ -726,7 +726,7 @@ mod tests {
             Some(path) => std::fs::read_to_string(path).unwrap(),
             None => include_str!("../../tests/fixtures/session-domain/oracle.json").to_owned(),
         };
-        let oracle = parse_json(&text).unwrap();
+        let oracle = crate::test_baseline::oracle(&text);
         let JsValue::Array(cases) = field(&oracle, "scenarios") else {
             panic!("cases")
         };

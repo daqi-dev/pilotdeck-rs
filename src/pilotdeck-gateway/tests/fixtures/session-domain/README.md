@@ -21,3 +21,5 @@ cargo test -p pilotdeck-gateway --lib storage::transcript_adapter_tests::
 修复轮 2（#562）：生成器与 Rust 测试均精确断言 304 场景；增删场景时须同步修改两处计数与本 README，防止金样再生或合并时覆盖静默缩水。每个场景还先断言 entries 与 outcomes 等长，再逐条比较，避免 zip 截断。
 
 修复轮 2 负控：从仓根执行 `CARGO_TARGET_DIR="$PWD/src/target" timeout 600 python3 src/pilotdeck-gateway/tests/fixtures/session-domain/fix2-negative.py`，仍只使用启动器的本树 target。两份 oracle 复制到 `/tmp`，分别通过仅测试可见的 `PDRS_TRANSCRIPT_ADAPTER_ORACLE`、`PDRS_SESSION_DOMAIN_ORACLE` 加载。依次删去各 10 个场景、截短单例 outcomes；状态安装退回 hydrate 之后的源码变异也只写 `/tmp` 的源码副本；副本使用独有包版本 `0.1.0-pdrs222-negative`，在共用 target 时隔离变异产物与原树构建身份。各项必须运行对应测试且因预期断言失败，前后完整金样测试必须全绿。脚本不改工作树、不在本树 `_tmp` 建目录；正常结束、异常和 SIGTERM 均删除临时目录，SIGKILL 只可能留下 `/tmp` 副本。每个子进程限时 240 s、整套父进程限时 580 s，串行运行且最多 4 个测试线程，原始输出打印至 stdout。
+
+修复轮 6：Rust 金样消费统一经 `test_baseline::oracle` 校验固定 commit 与 sourceSha256；`PDRS_SESSION_DOMAIN_ORACLE` 副本也走同一入口。运行时设置 `PDRS_BASELINE` 才会将合法格式的哈希与固定基线源码逐字节核对（未设置时仍检查 commit、路径和哈希格式）。`fix2-negative.py` 新增副本 sourceSha256 / sourceCommit 篡改负控，必须设置 `PDRS_BASELINE`；`negative_oracle_guard.py` 同步登记 session-domain、transcript-adapter、run-registry。轻量 `negative.py` 包含真实共享校验模块，保持与 gateway 消费路径一致。

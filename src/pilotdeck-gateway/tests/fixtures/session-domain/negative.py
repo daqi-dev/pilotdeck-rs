@@ -65,6 +65,8 @@ def harness():
     types_end = adapter.index('];', types_start) + 2
     code = 'mod metadata {\n' + function(metadata, 'fn js_space') + '\n' + function(metadata, 'pub(crate) fn js_trim(') + '\n}\n'
     code += 'mod js_value {\n' + js + '\n}\n'
+    baseline = SRC / 'pilotdeck-gateway/tests/common/baseline.rs'
+    code += '#[path = ' + repr(str(baseline)).replace("'", '"') + '] mod test_baseline;\n'
     code += 'mod storage {\ntype LedgerError = std::io::Error;\n'
     code += 'mod ledger {use pilotdeck_protocol::JsValue;\n' + function(ledger, 'pub(super) fn field') + '\n}\n'
     code += 'mod recorder {use pilotdeck_protocol::JsValue; use super::ledger::field;\n'
@@ -75,10 +77,13 @@ def harness():
     path = OUT / 'harness.rs'
     path.write_text(code)
     deps = TARGET / 'debug/deps'
-    candidates = list(deps.glob('libpilotdeck_protocol-*.rlib'))
-    assert candidates, 'build pilotdeck-protocol in the launcher target first'
-    candidates.sort(key=lambda path: path.stat().st_mtime_ns)
-    return ['rustc', '--edition=2024', '--test', str(path), '--extern', f'pilotdeck_protocol={candidates[-1]}', '-L', f'dependency={deps}', '-A', 'dead_code', '-A', 'unused_variables', '-o', str(TARGET / 'pdrs222-negative')]
+    externs = []
+    for crate in ('pilotdeck_protocol', 'sha2', 'uuid'):
+        candidates = sorted(deps.glob(f'lib{crate}-*.rlib'), key=lambda path: path.stat().st_mtime_ns)
+        assert candidates, f'build {crate} in the launcher target first'
+        externs += ['--extern', f'{crate}={candidates[-1]}']
+    os.environ['CARGO_MANIFEST_DIR'] = str(SRC / 'pilotdeck-gateway')
+    return ['rustc', '--edition=2024', '--test', str(path), *externs, '-L', f'dependency={deps}', '-A', 'dead_code', '-A', 'unused_variables', '-o', str(TARGET / 'pdrs222-negative')]
 
 def run(name, red):
     assert bounded(harness(), name + '-build') == 0, f'{name}: compile failure is not a killed mutant'
