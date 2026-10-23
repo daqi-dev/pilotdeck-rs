@@ -869,3 +869,13 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **当前状态**：本地 watchdog 部分已消除——`HostLimits::execution_timeout` 默认不限时（与 TS 一致，TS 无本地执行超时），显式配置时照旧生效；队列上限（满时报 Limit）不变，按人批接受为已知差异。
 - **机器判据**：`src/pilotdeck-gateway/src/host/tests.rs` 的 `default_execution_timeout_is_unbounded_past_former_watchdog`（暂停 Tokio 时钟推进 301 s，默认配置不截断）、`default_limits_disable_execution_watchdog`、`timeout_and_frame_limits_close_owned_processes`（显式超时仍生效）。
 - **批准记录**：人批 2026-10-23「A7-HOST-RESOURCE-001（默认 300 秒超时）修 … host 队列上限按已知差异接受」；本条为修复完成的状态追加。
+
+### A7-HOST-POST-CANCEL-EXIT-001 · 取消后的有界退出期限（向安全偏离；#554）
+
+- **类别**：向安全偏离——TS 取消后无限等待，Rust 有界。
+- **TS 依据**：`agent/modules/transport/agentLoopSidecarClient.ts:931-941` 的 `linkCancellation` 只置 `cancelRequested`，`:943-958` 只发送一次 cancel 帧，`:534,543-556` 的 execute 循环继续 `await iterator.next()`，无 post-cancel 计时器；`transport/stdioAgentLoopSidecarConnection.ts:10` 的 `DEFAULT_KILL_TIMEOUT_MS = 5_000` 与 `:123-139` 只约束关闭子进程（stdin EOF / SIGTERM / SIGKILL）。
+- **Rust 行为**：取消被观察到后（acceptance 前后均可），`host/execution.rs` 用独立常量 `POST_CANCEL_EXIT_TIMEOUT = 5 s`（`host/mod.rs:82-91`，与 TS 关闭宽限同值，不复用 `close_timeout`）作退出期限；期限内到达的有效终态仍然胜出，超期返回 `Timeout` 并保留 `accepted` / `stream_id` / `last_applied_sequence` 的进度未知语义，随后进入既有回调清理与连接关闭。普通执行默认仍无本地期限（`execution_timeout: None`）。
+- **范围**：仅取消后的等待与退出；不是 operationDeadline 等价实现，不改变 cancel 尽力而为语义，也不改变事件队列/字节预算。TS 取消后无限等待、Rust 必须有界；取 TS 自己的 5 s 关闭宽限，而不是更短的 1 s——更短的期限会丢弃 TS 仍会接收的迟到合法终态。
+- **机器判据**：`src/pilotdeck-gateway/src/host/tests.rs` 的 `cancellation_without_terminal_exits_within_post_cancel_deadline`（三种静默 peer，4.9 s 未返回、5 s + 1 ms 返回 `Timeout` 且 `disposed == 1`）、`late_terminal_after_cancel_wins_over_post_cancel_deadline`（3 s 终态胜出）、`post_cancel_exit_timeout_matches_ts_close_grace`（5 s 与真实 TS 金样 `defaultKillTimeoutMs` 相等）；负控：常量改 1 s 时后两者转红，去掉期限时静默用例转红。
+- **批准记录**：无人批。取值 5 s 为协调者判断（**自决·待复核，AI 代批待人复核**）：TS 取消后无限等待，Rust 必须有界；期限越短，越多 TS 能收到的迟到合法终态被丢，故取 TS 关闭子进程的宽限而非更短的 close_timeout。不新增豁免、不改判分语义。
+- **附带更正（追加，不改上文）**：本 PR 前一次追加的「A7-HOST-RESOURCE-001 · 当前状态」写的 `HostLimits::execution_timeout` 类型名不存在，仓内实际为 `host::Limits::execution_timeout`（`src/pilotdeck-gateway/src/host/mod.rs`）；该段其余内容不变。
