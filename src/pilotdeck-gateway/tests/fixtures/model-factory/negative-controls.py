@@ -79,7 +79,16 @@ controls = [
      'empty_registry_router_staging_and_missing_judge_match_ts'),
     ('complete-ignores-requested-provider', registry,
      'let lease = self.acquire_request(&request);',
-     'let mut request_copy = request.as_object().unwrap().clone(); request_copy.insert("provider".into(), JsValue::String("a".into())); let lease = self.acquire_request(&JsValue::Object(request_copy));',
+     # generate.mts constructs the mixed fixture request as an object with
+     # provider=b. Only misroute objects to a; leave other values on the normal
+     # error path so a type-assumption panic cannot count as semantic failure.
+     '''let lease = if let Some(object) = request.as_object() {
+            let mut request_copy = object.clone();
+            request_copy.insert("provider".into(), JsValue::String("a".into()));
+            self.acquire_request(&JsValue::Object(request_copy))
+        } else {
+            self.acquire_request(&request)
+        };''',
      'mixed_registry_router_staging_and_judge_dispatch_match_ts'),
     ('model-family-panics-outside-tokio', family,
      '''tokio::runtime::Handle::try_current().map_err(|_| {
