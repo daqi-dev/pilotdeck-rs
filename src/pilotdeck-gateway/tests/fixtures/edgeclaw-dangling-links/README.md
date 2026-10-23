@@ -60,7 +60,9 @@ Node v22.22.0，固定时钟 `2026-10-22T00:00:00.000Z`。两次独立执行逐�
 python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-dangling-links/negative.py /tmp/dangling-negative
 ```
 
-`negative.py` 先跑正控，再分别施加三个只放行单一操作的变异（read / write / delete），
-每个变异要求对应操作的测试转红，并断言其余三个操作测试仍绿；最后在 `finally`
+`negative.py` 先跑正控，再分别施加四个只放行单一操作的变异（read / write / delete / edit），
+每个变异要求对应操作的测试转红，并断言其余三个操作测试仍绿；edit 变异让 `editEntry`
+沿悬挂链接改写其目标（绕过 `within`），只应转红
+`dangling_link_edit_is_rejected_before_any_io`。最后在 `finally`
 恢复原文并重跑正控；记录前后 SHA-256 与日志。要求独占本工作树，不要与其它编译或写入
 同时执行。

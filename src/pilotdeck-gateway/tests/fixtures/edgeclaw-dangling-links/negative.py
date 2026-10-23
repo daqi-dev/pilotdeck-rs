@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#563 negative control: each dangling-link operation needs its own red test.
 
-Three mutants each permit exactly one of read / write / delete through a
+Four mutants each permit exactly one of read / write / delete / edit through a
 root-internal dangling link.  For every mutant the matching rejection test must
 fail while the other operation tests stay green; that proves no operation is
 only covered by an earlier panic in a shared loop.  Product source is restored
@@ -61,6 +61,50 @@ DELETE_AFTER = '''            "deleteEntries" => {
                 let _ = self.repair();
 '''
 
+EDIT_LOOKUP_BEFORE = '''            "editEntry" => {
+                let path = text(input, "relativePath");
+                let old = self
+                    .records(std::slice::from_ref(&path), 5000.0)?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        input_error("Memory entry not found: ", input, "relativePath")
+                    })?;
+'''
+EDIT_LOOKUP_AFTER = '''            "editEntry" => {
+                let path = text(input, "relativePath");
+                let old = self
+                    .records(std::slice::from_ref(&path), 5000.0)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| obj(&[("type", s("user")), ("scope", s("global"))]));
+'''
+EDIT_WRITE_BEFORE = '                JsValue::Object(self.write(&path, &fm, &body(&candidate))?)\n'
+EDIT_WRITE_AFTER = '''                let relative = match self.within(&path) {
+                    Ok(true) => path.clone(),
+                    _ => {
+                        let absolute = absolute(&self.root.join(&path))?;
+                        let target = fs::read_link(&absolute)
+                            .map_err(|e| crate::node_io::path_error(e, "readlink", &absolute))?;
+                        let target = if target.is_relative() {
+                            absolute
+                                .parent()
+                                .unwrap_or(self.root.as_path())
+                                .join(target)
+                        } else {
+                            target
+                        };
+                        target
+                            .strip_prefix(&self.root)
+                            .unwrap_or(target.as_path())
+                            .to_string_lossy()
+                            .into_owned()
+                    }
+                };
+                JsValue::Object(self.write(&relative, &fm, &body(&candidate))?)
+'''
+
 MUTANTS = [
     dict(
         name='allow-read-dangling',
@@ -82,6 +126,15 @@ MUTANTS = [
         scenario='delete',
         test='dangling_link_delete_is_rejected_before_any_io',
         replacements=[(DELETE_BEFORE, DELETE_AFTER)],
+    ),
+    dict(
+        name='allow-edit-dangling',
+        scenario='edit-anchor',
+        test='dangling_link_edit_is_rejected_before_any_io',
+        replacements=[
+            (EDIT_LOOKUP_BEFORE, EDIT_LOOKUP_AFTER),
+            (EDIT_WRITE_BEFORE, EDIT_WRITE_AFTER),
+        ],
     ),
 ]
 OPERATION_TESTS = [
