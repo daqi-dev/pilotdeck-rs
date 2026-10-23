@@ -1043,13 +1043,32 @@ impl StreamOptions {
     /// response body (`streamModel.ts`'s `cancelReader`), so cancellation
     /// tears the request down even while the generator is suspended at a
     /// yield; the transport's next read observes the flag and unwinds, which
-    /// drops the connection like a cancelled reader.
+    /// drops the connection like a cancelled reader. The post-termination
+    /// side effects of the Router must not follow that release: they use
+    /// [`Self::terminal_yield_boundary`], which only a pull opens.
     pub async fn yield_boundary(&self) {
         if let Some(gate) = &self.yield_gate {
             tokio::select! {
                 () = gate.demand() => {}
                 () = wait_abort(&self.abort) => {}
             }
+        }
+    }
+
+    /// The Router's terminal boundary: like [`Self::yield_boundary`] it holds
+    /// the code after the yield behind the pulls that consume the already
+    /// delivered events, but a turn cancel does not release it. TS's
+    /// `execute_failed`, `observeRequest` and the terminal error event run
+    /// only when the generator resumes on a pull (`RouterRuntime.ts:962-998`
+    /// sits behind the per-event yields of `:873-877`); a cancel only tears
+    /// the provider connection down (`streamModel.ts`'s `cancelReader`) — it
+    /// never advances a suspended generator past its yield, so publishing the
+    /// failure without the consuming pulls would diverge from TS. The body
+    /// task stays suspended here until the consumer pulls again or closes
+    /// the stream, like a TS generator nobody pulls.
+    pub async fn terminal_yield_boundary(&self) {
+        if let Some(gate) = &self.yield_gate {
+            gate.demand().await;
         }
     }
 }

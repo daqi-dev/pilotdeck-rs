@@ -28,8 +28,9 @@ use pilotdeck_gateway::{
         http::{HyperModelTransport, ModelStreamError, StreamOptions, StreamOutput},
         router::{
             AbortFlag, ManagedModelPolicy, RouterConfig, RouterDeps, RouterModelInvocation,
-            RouterRuntime,
+            RouterRuntime, StatsConfig,
         },
+        stats::TokenStatsCollector,
     },
     storage::recorder::Recorder,
     storage::{JsonlTranscriptStore, TranscriptKey},
@@ -712,7 +713,7 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
 async fn port_sequences_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let cases = items(get(&oracle, "cases"));
-    assert_eq!(cases.len(), 24);
+    assert_eq!(cases.len(), 25);
     for case in cases {
         replay_case(case, &oracle).await.unwrap();
     }
@@ -1239,6 +1240,19 @@ fn session_context(turn_id: &str) -> JsObject {
 /// The replay harness's router wiring: the `a/m` scenario, no fallback, the
 /// given invoker, router events collected into `trace`.
 fn test_router(invoker: Arc<dyn RouterModelInvocation>, trace: &Trace) -> Arc<RouterRuntime> {
+    test_router_with(
+        invoker, trace, None, // no injected stats collector: `observeRequest` is a no-op
+    )
+}
+
+/// Like [`test_router`], with an injected stats collector when the test needs
+/// to observe `observeRequest` (`TokenStatsCollector` over a per-test file,
+/// never the default `~/.pilotdeck` location).
+fn test_router_with(
+    invoker: Arc<dyn RouterModelInvocation>,
+    trace: &Trace,
+    stats: Option<Arc<Mutex<TokenStatsCollector>>>,
+) -> Arc<RouterRuntime> {
     let mut deps = RouterDeps::new(invoker);
     let events = trace.clone();
     deps.events = Arc::new(move |value| {
@@ -1248,6 +1262,7 @@ fn test_router(invoker: Arc<dyn RouterModelInvocation>, trace: &Trace) -> Arc<Ro
             .push(obj(&[("kind", "router".into()), ("value", value)]));
     });
     deps.clock = Arc::new(|| 0.0);
+    deps.stats = stats;
     let snapshot = obj(&[(
         "config",
         obj(&[(
@@ -1271,7 +1286,37 @@ fn test_router(invoker: Arc<dyn RouterModelInvocation>, trace: &Trace) -> Arc<Ro
 }
 
 /// The replay harness's HTTP wiring for the focused tests: provider `a` at
-/// the loopback mock origin, the durable recorder.
+/// the loopback mock origin, the durable recorder, a test-built router.
+fn http_ports_with(
+    providers: &JsValue,
+    origin: &str,
+    recorder: Arc<Recorder>,
+    router: Arc<RouterRuntime>,
+) -> model_port::ComposedPorts {
+    let mut configured = providers.as_object().cloned().unwrap();
+    let mut provider = configured
+        .get_key(&"a".into())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    provider.insert("url".into(), format!("{origin}/a/v1").as_str().into());
+    configured.insert("a".into(), JsValue::Object(provider));
+    let model_config = obj(&[("providers", JsValue::Object(configured))]);
+    let session: JsString = SESSION.into();
+    model_port::ports(
+        router,
+        model_config,
+        Some(DurableRecorder {
+            recorder,
+            recording_session_id: None,
+        }),
+        RouterModelPortOptions::main_agent(),
+        &session,
+    )
+}
+
+/// [`http_ports_with`] around the replay harness's default router.
 fn http_ports(
     providers: &JsValue,
     origin: &str,
@@ -1297,17 +1342,7 @@ fn http_ports(
         Arc::new(HyperModelTransport::new()),
         model_config.clone(),
     ));
-    let session: JsString = SESSION.into();
-    model_port::ports(
-        test_router(invoker, trace),
-        model_config,
-        Some(DurableRecorder {
-            recorder,
-            recording_session_id: None,
-        }),
-        RouterModelPortOptions::main_agent(),
-        &session,
-    )
+    http_ports_with(providers, origin, recorder, test_router(invoker, trace))
 }
 
 async fn wait_client_closed(exchange: &Arc<Mutex<model_mock::Exchange>>, message: &str) {
@@ -1882,5 +1917,414 @@ async fn cancelled_pull_replays_the_held_event() {
             "model_stream_event",
         ],
         "the two pulled events are on disk in pull order"
+    );
+}
+
+/// An enabled `TokenStatsCollector` over a per-test file (never the default
+/// `~/.pilotdeck` location), so `observeRequest` is observable.
+fn stats_collector(path: &Path) -> Arc<Mutex<TokenStatsCollector>> {
+    Arc::new(Mutex::new(TokenStatsCollector::new(
+        Some(&StatsConfig {
+            enabled: true,
+            model_pricing: None,
+            file_path: Some(path.to_path_buf()),
+            retention_ms: None,
+            baseline_model: None,
+        }),
+        None,
+    )))
+}
+
+/// The scope of the session usage snapshot: "session" once `observeRequest`
+/// recorded the session's first request, "project" while it never ran.
+fn stats_scope(router: &RouterRuntime) -> String {
+    let session: JsString = SESSION.into();
+    text(get(&router.usage_snapshot(Some(&session)), "scope"))
+}
+
+/// Fix round 3 (codex #1): the turn cancel must not cross the Router's
+/// terminal boundary. The contentless failing attempt already drained its
+/// pending events; the consumer pulled both and cancelled the turn. TS keeps
+/// the generator suspended at its yield — the cancel only tears the provider
+/// connection down (`streamModel.ts`'s `cancelReader`), `execute_failed` and
+/// `observeRequest` stay behind the pulls that never come
+/// (`RouterRuntime.ts:962` behind the yields of `:873-877`), and the later
+/// close discards the rest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn turn_cancel_keeps_terminal_failure_behind_the_pulls() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let scratch = Scratch::new("terminal-abort");
+    let http_case = items(get(&oracle, "cases"))
+        .iter()
+        .find(|case| case_name(case) == "http-text-stream")
+        .unwrap()
+        .clone();
+    let wire_start = items(get(
+        &items(get(get(&http_case, "spec"), "replies"))[0],
+        "chunks",
+    ))[0]
+        .clone();
+    // `event: error` with a non-retryable `error.type`: the anthropic
+    // normalizer keeps `retryable: false`, so the attempt fails terminally
+    // without fallback eligibility.
+    let wire_error = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"provider_error\",\"message\":\"boom\"}}\n\n";
+    let exchange = Arc::new(Mutex::new(model_mock::Exchange {
+        replies: vec![obj(&[(
+            "chunks",
+            JsValue::Array(vec![
+                obj(&[("text", wire_start)]),
+                obj(&[("text", wire_error.into())]),
+            ]),
+        )])],
+        ..Default::default()
+    }));
+    let excluded = items(get(&oracle, "transportHeaders"))
+        .iter()
+        .map(text)
+        .collect();
+    let server = model_mock::start_mock(exchange.clone(), excluded, None);
+    let (recorder, transcript_path) = recorder_at(
+        Arc::new(JsonlTranscriptStore::new()),
+        &scratch.0,
+        "terminal-abort",
+    );
+    let trace: Trace = Arc::default();
+    let mut configured = providers.as_object().cloned().unwrap();
+    let mut provider = configured
+        .get_key(&"a".into())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    provider.insert(
+        "url".into(),
+        format!("{}/a/v1", server.origin).as_str().into(),
+    );
+    configured.insert("a".into(), JsValue::Object(provider));
+    let model_config = obj(&[("providers", JsValue::Object(configured))]);
+    let invoker: Arc<dyn RouterModelInvocation> = Arc::new(HttpRouterInvocation::new(
+        Arc::new(ScriptedInvoker {
+            providers: providers.clone(),
+            spec: obj(&[("scripts", JsValue::Array(vec![]))]),
+            calls: Arc::default(),
+        }),
+        Arc::new(HyperModelTransport::new()),
+        model_config.clone(),
+    ));
+    let router = test_router_with(
+        invoker,
+        &trace,
+        Some(stats_collector(&scratch.0.join("stats.jsonl"))),
+    );
+    let model_port::ComposedPorts { execution, .. } =
+        http_ports_with(&providers, &server.origin, recorder.clone(), router.clone());
+    let session: JsString = SESSION.into();
+    let turn_id: JsString = "t1".into();
+    recorder.start_turn(&session, &turn_id).unwrap();
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: session_context("t1"),
+        })
+        .await
+        .expect("prepare");
+    let abort = AbortFlag::new();
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context: session_context("t1"),
+            abort: Some(abort.clone()),
+        })
+        .await
+        .expect("stream");
+    let first = stream.next().await.expect("pull").expect("event");
+    assert_eq!(text(get(&first, "type")), "request_started");
+    let second = stream.next().await.expect("pull").expect("event");
+    assert_eq!(text(get(&second, "type")), "message_start");
+    // No further pull and no close: the cancelled turn alone must not
+    // publish the terminal failure or the request stats.
+    abort.abort();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_no_execute_failed(&trace);
+    assert_eq!(
+        stats_scope(&router),
+        "project",
+        "observeRequest must not run without the consuming pulls"
+    );
+    assert_eq!(
+        exchange.lock().unwrap().requests.len(),
+        1,
+        "one provider request for the failed attempt"
+    );
+    assert_eq!(
+        transcript_types(&transcript_path),
+        vec![
+            "turn_started",
+            "step_started",
+            "model_request",
+            "model_stream_event",
+            "model_stream_event",
+        ],
+        "only the two pulled events are on disk"
+    );
+    stream.close().await.expect("close");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_no_execute_failed(&trace);
+    assert_eq!(stats_scope(&router), "project", "close discards the rest");
+    assert_eq!(
+        transcript_types(&transcript_path),
+        vec![
+            "turn_started",
+            "step_started",
+            "model_request",
+            "model_stream_event",
+            "model_stream_event",
+        ],
+        "close records nothing new"
+    );
+}
+
+/// Fix round 3 (codex #1, record window): the same contentless terminal
+/// failure, with the first pulled event's record still in flight when the
+/// turn is cancelled. The record is what the durable wrapper writes inside
+/// the pull (`durableModelInvokerPort.ts`); the failure publication must not
+/// overtake it — it stays behind the pull that is still parked on the record,
+/// and the later close discards it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn turn_cancel_during_first_record_keeps_terminal_failure_gated() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let scratch = Scratch::new("terminal-record");
+    let http_case = items(get(&oracle, "cases"))
+        .iter()
+        .find(|case| case_name(case) == "http-text-stream")
+        .unwrap()
+        .clone();
+    let wire_start = items(get(
+        &items(get(get(&http_case, "spec"), "replies"))[0],
+        "chunks",
+    ))[0]
+        .clone();
+    let wire_error = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"provider_error\",\"message\":\"boom\"}}\n\n";
+    let exchange = Arc::new(Mutex::new(model_mock::Exchange {
+        replies: vec![obj(&[(
+            "chunks",
+            JsValue::Array(vec![
+                obj(&[("text", wire_start)]),
+                obj(&[("text", wire_error.into())]),
+            ]),
+        )])],
+        ..Default::default()
+    }));
+    let excluded = items(get(&oracle, "transportHeaders"))
+        .iter()
+        .map(text)
+        .collect();
+    let server = model_mock::start_mock(exchange.clone(), excluded, None);
+    let (arrived, gate_rx) = tokio::sync::mpsc::unbounded_channel();
+    let store = Arc::new(GatedStore {
+        inner: Arc::new(JsonlTranscriptStore::new()),
+        log: Arc::default(),
+        tag: "main".into(),
+        arrived,
+        gates: Mutex::new(Vec::new()),
+    });
+    let release = store.gate("model_stream_event");
+    let mut gate = Gate { arrived: gate_rx };
+    let (recorder, transcript_path) = recorder_at(store.clone(), &scratch.0, "terminal-record");
+    let trace: Trace = Arc::default();
+    let mut configured = providers.as_object().cloned().unwrap();
+    let mut provider = configured
+        .get_key(&"a".into())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    provider.insert(
+        "url".into(),
+        format!("{}/a/v1", server.origin).as_str().into(),
+    );
+    configured.insert("a".into(), JsValue::Object(provider));
+    let model_config = obj(&[("providers", JsValue::Object(configured))]);
+    let invoker: Arc<dyn RouterModelInvocation> = Arc::new(HttpRouterInvocation::new(
+        Arc::new(ScriptedInvoker {
+            providers: providers.clone(),
+            spec: obj(&[("scripts", JsValue::Array(vec![]))]),
+            calls: Arc::default(),
+        }),
+        Arc::new(HyperModelTransport::new()),
+        model_config.clone(),
+    ));
+    let router = test_router_with(
+        invoker,
+        &trace,
+        Some(stats_collector(&scratch.0.join("stats.jsonl"))),
+    );
+    let model_port::ComposedPorts { execution, .. } =
+        http_ports_with(&providers, &server.origin, recorder.clone(), router.clone());
+    let session: JsString = SESSION.into();
+    let turn_id: JsString = "t1".into();
+    recorder.start_turn(&session, &turn_id).unwrap();
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: session_context("t1"),
+        })
+        .await
+        .expect("prepare");
+    let abort = AbortFlag::new();
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context: session_context("t1"),
+            abort: Some(abort.clone()),
+        })
+        .await
+        .expect("stream");
+    // Pull 1 parks on the gated record of the first pulled event.
+    let mut first = stream.next();
+    tokio::select! {
+        result = &mut first => panic!("pull 1 must park at its record gate, got {result:?}"),
+        () = gate.wait_for("main", "model_stream_event") => {}
+    }
+    // The turn cancels while that record is still in flight: no further
+    // pull, no close, and the failure publication must not overtake the
+    // record window.
+    abort.abort();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_no_execute_failed(&trace);
+    assert_eq!(stats_scope(&router), "project");
+    // Let the parked record complete: the pull still delivers its event.
+    release.send(()).unwrap();
+    let first_event = first.await.expect("pull").expect("event");
+    assert_eq!(text(get(&first_event, "type")), "request_started");
+    stream.close().await.expect("close");
+    assert_no_execute_failed(&trace);
+    assert_eq!(stats_scope(&router), "project");
+    assert_eq!(
+        transcript_types(&transcript_path),
+        vec![
+            "turn_started",
+            "step_started",
+            "model_request",
+            "model_stream_event",
+        ],
+        "the parked record landed exactly once, TS order"
+    );
+}
+
+/// Fix round 3 (the other side of the boundary): the terminal boundary still
+/// opens on pulls after the cancel — the suspended generator resumes where it
+/// stopped, and the terminal publication follows the pull that consumed the
+/// queued events (`RouterRuntime.ts:962` behind the yields of `:873-877`;
+/// TS also re-yields the non-error buffered events, `:993-998`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pulls_after_the_cancel_still_publish_the_terminal_failure() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let scratch = Scratch::new("terminal-pull");
+    let (recorder, transcript_path) = recorder_at(
+        Arc::new(JsonlTranscriptStore::new()),
+        &scratch.0,
+        "terminal-pull",
+    );
+    let trace: Trace = Arc::default();
+    let script = obj(&[(
+        "scripts",
+        JsValue::Array(vec![obj(&[(
+            "events",
+            JsValue::Array(vec![
+                parsed(r#"{"type":"message_start","messageId":"id"}"#),
+                parsed(
+                    r#"{"type":"error","error":{"provider":"a","protocol":"anthropic","code":"server_error","message":"failed","retryable":false}}"#,
+                ),
+            ]),
+        )])]),
+    )]);
+    let router = test_router_with(
+        Arc::new(ScriptedInvoker {
+            providers: providers.clone(),
+            spec: script,
+            calls: Arc::default(),
+        }),
+        &trace,
+        Some(stats_collector(&scratch.0.join("stats.jsonl"))),
+    );
+    let session: JsString = SESSION.into();
+    let turn_id: JsString = "t1".into();
+    recorder.start_turn(&session, &turn_id).unwrap();
+    let model_port::ComposedPorts { execution, .. } = model_port::ports(
+        router.clone(),
+        obj(&[("providers", providers.clone())]),
+        Some(DurableRecorder {
+            recorder: recorder.clone(),
+            recording_session_id: None,
+        }),
+        RouterModelPortOptions::main_agent(),
+        &session,
+    );
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: session_context("t1"),
+        })
+        .await
+        .expect("prepare");
+    let abort = AbortFlag::new();
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context: session_context("t1"),
+            abort: Some(abort.clone()),
+        })
+        .await
+        .expect("stream");
+    let first = stream.next().await.expect("pull").expect("event");
+    assert_eq!(text(get(&first, "type")), "message_start");
+    // The cancelled turn publishes nothing on its own.
+    abort.abort();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_no_execute_failed(&trace);
+    assert_eq!(stats_scope(&router), "project");
+    // The pull that consumes the second queued event still does not publish
+    // (the generator resumes on the next pull past that yield).
+    let second = stream.next().await.expect("pull").expect("event");
+    assert_eq!(text(get(&second, "type")), "error");
+    assert_no_execute_failed(&trace);
+    // The following pull resumes the generator: execute_failed and
+    // observeRequest run before the re-yielded buffered event arrives.
+    let third = stream.next().await.expect("pull").expect("event");
+    assert_eq!(text(get(&third, "type")), "message_start");
+    let failures = trace
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|entry| json(entry).contains("pilotdeck_router_execute_failed"))
+        .count();
+    assert_eq!(failures, 1, "execute_failed published exactly once");
+    let fourth = stream.next().await.expect("pull").expect("event");
+    assert_eq!(text(get(&fourth, "type")), "error");
+    assert!(stream.next().await.expect("pull").is_none(), "done");
+    assert_eq!(
+        stats_scope(&router),
+        "session",
+        "observeRequest ran behind the pulls"
+    );
+    let snapshot = router.usage_snapshot(Some(&session));
+    let requests = items(get(&snapshot, "requests"));
+    assert_eq!(requests.len(), 1, "one request stat record");
+    assert_eq!(
+        transcript_types(&transcript_path),
+        vec![
+            "turn_started",
+            "step_started",
+            "model_request",
+            "model_stream_event",
+            "model_stream_event",
+            "model_stream_event",
+            "model_stream_event",
+        ],
+        "every pulled event is on disk in pull order"
     );
 }
