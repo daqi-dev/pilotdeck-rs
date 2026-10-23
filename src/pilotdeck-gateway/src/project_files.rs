@@ -64,6 +64,7 @@ impl std::fmt::Display for NoFollowLoop {
     }
 }
 impl std::error::Error for NoFollowLoop {}
+#[cfg(unix)]
 fn checked_open_error(error: io::Error) -> io::Error {
     if error.raw_os_error() == Some(libc::ELOOP) {
         io::Error::new(error.kind(), NoFollowLoop)
@@ -190,6 +191,9 @@ fn directory_flags() -> rustix::fs::OFlags {
     access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
 }
 
+// The Unix walk is the hardening behind A4-FILE-TOCTOU-001 and the memory
+// mutations; non-Unix keeps the measured Node behavior below.
+#[cfg(unix)]
 fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Result<File> {
     let relative = canonical
         .strip_prefix(root)
@@ -221,6 +225,22 @@ pub(crate) fn open_directory_beneath(root: &Path, path: &Path) -> io::Result<Fil
     open_checked(root, path, true)
 }
 
+/// A NOFOLLOW leaf open reports ELOOP, but a platform may report ENOTDIR
+/// instead; confirm with a NOFOLLOW stat on the pinned parent before
+/// deciding the leaf is a raced-in link. The stat stays on that parent,
+/// even in a race.
+#[cfg(unix)]
+fn leaf_open_error(parent: &File, name: &std::ffi::OsStr, error: io::Error) -> io::Error {
+    use rustix::fs::{AtFlags, FileType, statat};
+    if error.raw_os_error() == Some(libc::ENOTDIR)
+        && let Ok(stat) = statat(parent, name, AtFlags::SYMLINK_NOFOLLOW)
+        && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+    {
+        return io::Error::new(io::ErrorKind::PermissionDenied, NoFollowLoop);
+    }
+    checked_open_error(error)
+}
+
 #[cfg(unix)]
 fn walk_beneath(root: &File, relative: &Path, search_directory: bool) -> io::Result<File> {
     use rustix::fs::{Mode, OFlags, openat};
@@ -238,19 +258,7 @@ fn walk_beneath(root: &File, relative: &Path, search_directory: bool) -> io::Res
         file = File::from(
             openat(&file, *name, flags, Mode::empty())
                 .map_err(io::Error::from)
-                .map_err(|e| {
-                    use rustix::fs::{AtFlags, FileType, statat};
-                    // Defensive only: NOFOLLOW|DIRECTORY on a symlink reports
-                    // ELOOP, so ENOTDIR denotes a plain non-directory. This
-                    // branch would catch a platform reporting ENOTDIR instead.
-                    if e.raw_os_error() == Some(libc::ENOTDIR)
-                        && let Ok(stat) = statat(&file, *name, AtFlags::SYMLINK_NOFOLLOW)
-                        && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
-                    {
-                        return io::Error::new(io::ErrorKind::PermissionDenied, NoFollowLoop);
-                    }
-                    checked_open_error(e)
-                })?,
+                .map_err(|e| leaf_open_error(&file, name, e))?,
         );
     }
     Ok(file)
@@ -301,6 +309,82 @@ pub(crate) fn unlink_at(root: &File, relative: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Read a file below a pinned root without following a raced-in link. The
+/// leaf keeps NONBLOCK so a raced FIFO cannot hang the open or the read.
+/// A search failure above the leaf is reported as missing: the file may
+/// merely sit beneath an unsearchable or non-directory ancestor, which
+/// Node's existsSync swallows to false (and the read then yields no record,
+/// not a permission error). The leaf's own open errors stay errors.
+#[cfg(unix)]
+pub(crate) fn read_at(root: &File, relative: &Path) -> io::Result<Vec<u8>> {
+    use rustix::fs::{Mode, OFlags, openat};
+    let mut file = if relative.as_os_str().is_empty() {
+        root.try_clone()?
+    } else {
+        let parent = match walk_beneath(
+            root,
+            relative.parent().ok_or(io::ErrorKind::InvalidInput)?,
+            true,
+        ) {
+            Ok(parent) => parent,
+            Err(e) if matches!(e.raw_os_error(), Some(libc::EACCES) | Some(libc::ENOTDIR)) => {
+                return Err(io::Error::from_raw_os_error(libc::ENOENT));
+            }
+            Err(e) => return Err(e),
+        };
+        let name = relative.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+        File::from(
+            openat(
+                &parent,
+                name,
+                OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+                Mode::empty(),
+            )
+            .map_err(io::Error::from)
+            .map_err(|e| leaf_open_error(&parent, name, e))?,
+        )
+    };
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// List the regular files of a directory below a pinned root, without
+/// following a raced-in link. Enumeration needs read permission on the
+/// descriptor, unlike the search-only walk (cf. remove_child_at).
+#[cfg(unix)]
+pub(crate) fn regular_files_at(root: &File, relative: &Path) -> io::Result<Vec<String>> {
+    use rustix::fs::{Dir, Mode, OFlags, openat};
+    let directory = if relative.as_os_str().is_empty() {
+        root.try_clone()?
+    } else {
+        let parent = walk_beneath(
+            root,
+            relative.parent().ok_or(io::ErrorKind::InvalidInput)?,
+            true,
+        )?;
+        let name = relative.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+        File::from(
+            openat(
+                &parent,
+                name,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+                Mode::empty(),
+            )
+            .map_err(io::Error::from)
+            .map_err(|e| leaf_open_error(&parent, name, e))?,
+        )
+    };
+    let mut names = Vec::new();
+    for entry in Dir::read_from(&directory).map_err(io::Error::from)? {
+        let entry = entry.map_err(io::Error::from)?;
+        if entry.file_type() == rustix::fs::FileType::RegularFile {
+            names.push(node_dirent_name(entry.file_name()));
+        }
+    }
+    Ok(names)
+}
+
 /// Recursive removal never follows a link, including one installed after stat.
 /// Diagnostics retain Node's syscall and the original display path.
 #[cfg(unix)]
@@ -316,6 +400,16 @@ pub(crate) fn remove_tree_at(root: &File, relative: &Path, display: &Path) -> io
         display,
     )
 }
+/// Node's rimraf descends on a non-empty rmdir however it is reported:
+/// ENOTEMPTY, EEXIST, or a sticky directory's EPERM (node_fs::rm_sync,
+/// measured from libuv: EACCES is never a reason to descend).
+#[cfg(unix)]
+fn descends_after_rmdir(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::DirectoryNotEmpty
+        || error.kind() == io::ErrorKind::AlreadyExists
+        || crate::node_io::lookup(error).is_some_and(|(code, _)| code == "EPERM")
+}
+
 #[cfg(unix)]
 fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io::Result<()> {
     use rustix::fs::{AtFlags, Dir, Mode, OFlags, openat, unlinkat};
@@ -330,13 +424,7 @@ fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io:
         Err(e) if e.kind() == io::ErrorKind::NotADirectory => {
             return unlink(AtFlags::empty(), "unlink");
         }
-        // Node's rimraf descends on a non-empty rmdir however it is reported:
-        // ENOTEMPTY, EEXIST, or a sticky directory's EPERM (node_fs::rm_sync,
-        // measured from libuv: EACCES is never a reason to descend).
-        Err(e)
-            if e.kind() == io::ErrorKind::DirectoryNotEmpty
-                || e.kind() == io::ErrorKind::AlreadyExists
-                || crate::node_io::lookup(&e).is_some_and(|(code, _)| code == "EPERM") => {}
+        Err(e) if descends_after_rmdir(&e) => {}
         Err(e) => return Err(e),
     }
     // Open for reading only here: enumeration, unlike traversal, needs it.
@@ -384,6 +472,7 @@ fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io:
     unlink(AtFlags::REMOVEDIR, "rmdir")
 }
 
+#[cfg(unix)]
 pub(crate) fn native_stat(root: &Path, path: &Path) -> io::Result<(Stat, bool)> {
     use rustix::fs::{AtFlags, FileType, fstat, statat};
     let stat = if root == path {
@@ -410,6 +499,29 @@ pub(crate) fn native_stat(root: &Path, path: &Path) -> io::Result<(Stat, bool)> 
             mtime_ms: stat.st_mtime as f64 * 1000.0 + stat.st_mtime_nsec as f64 / 1_000_000.0,
         },
         kind == FileType::RegularFile,
+    ))
+}
+
+/// Non-Unix keeps the measured Node behavior: lstat semantics on the
+/// realpath-checked path, like the descriptor walk it mirrors.
+#[cfg(not(unix))]
+pub(crate) fn native_stat(root: &Path, path: &Path) -> io::Result<(Stat, bool)> {
+    let _ = root;
+    let stat = std::fs::symlink_metadata(path)?;
+    let mtime_ms = stat
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0.0, |elapsed| elapsed.as_millis() as f64);
+    Ok((
+        Stat {
+            directory: stat.is_dir(),
+            size: stat.len(),
+            birth_ms: 0.0,
+            ctime_ms: 0.0,
+            mtime_ms,
+        },
+        stat.is_file(),
     ))
 }
 
@@ -527,6 +639,7 @@ pub(crate) fn node_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>
         })
 }
 
+#[cfg(unix)]
 pub(crate) fn native_entries(root: &Path, path: &Path) -> io::Result<Vec<(String, bool)>> {
     let file = open_beneath(root, path)?;
     let dir = rustix::fs::Dir::read_from(&file)?;
@@ -538,6 +651,27 @@ pub(crate) fn native_entries(root: &Path, path: &Path) -> io::Result<Vec<(String
             continue;
         }
         entries.push((name, entry.file_type() == rustix::fs::FileType::Directory));
+        // Enough entries to force the method's existing FILE_INDEX_LIMIT.
+        if entries.len() > 100_000 {
+            break;
+        }
+    }
+    entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    Ok(entries)
+}
+
+/// Non-Unix keeps the measured Node behavior: scandir on the realpath-checked
+/// path; std's directory iterator already yields d_type without following links.
+#[cfg(not(unix))]
+pub(crate) fn native_entries(root: &Path, path: &Path) -> io::Result<Vec<(String, bool)>> {
+    let _ = root;
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        entries.push((
+            entry.file_name().to_string_lossy().into_owned(),
+            entry.file_type()?.is_dir(),
+        ));
         // Enough entries to force the method's existing FILE_INDEX_LIMIT.
         if entries.len() > 100_000 {
             break;

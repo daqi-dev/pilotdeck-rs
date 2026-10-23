@@ -578,6 +578,71 @@ impl Core {
         mutation_test_hook::notify(relative);
         Ok((directory, target))
     }
+    /// The read leg of [`Self::mutation_target`]: pin the same root below the
+    /// boundary check, then read the canonical target without following a
+    /// link raced in after that check. The pin is opened for reading (not
+    /// only search) so an empty relative can enumerate the root itself.
+    #[cfg(unix)]
+    fn read_target(&self, relative: &str) -> Result<(fs::File, PathBuf)> {
+        let (root, target) = self.checked_path(relative)?;
+        // The memory root itself may be missing, a dangling symlink, or a
+        // symlink to a non-directory, e.g. a scenario replacing it before a
+        // clear. The exists/read pair this replaces saw "no file" for every
+        // descendant then, so surface that instead of pinning through the
+        // link. A root swapped after this probe still fails the NOFOLLOW pin.
+        if !fs::metadata(&self.root).is_ok_and(|m| m.is_dir()) {
+            return Err(FileMemoryError::Io(std::io::Error::from_raw_os_error(
+                libc::ENOENT,
+            )));
+        }
+        let directory = crate::project_files::open_beneath(&root, &root)
+            .map_err(|e| self.mutation_error(relative, "open", e))?;
+        let target = target
+            .strip_prefix(root)
+            .expect("checked boundary")
+            .to_path_buf();
+        #[cfg(test)]
+        read_test_hook::notify(relative);
+        Ok((directory, target))
+    }
+    /// Read a memory file below the pinned root. A missing file is `None`,
+    /// like the exists/read pair it replaces; every other failure keeps the
+    /// measured Node open/read diagnostics for the display path.
+    fn read_file(&self, relative: &str) -> Result<Option<String>> {
+        #[cfg(unix)]
+        {
+            let (root, target) = match self.read_target(relative) {
+                Ok(pinned) => pinned,
+                // Includes the missing or dangling memory root from the probe.
+                Err(FileMemoryError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(None);
+                }
+                Err(e) => return Err(e),
+            };
+            let bytes = match crate::project_files::read_at(&root, &target) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                // Opening a directory succeeds on POSIX, like TS readFile.
+                Err(e) if e.kind() == std::io::ErrorKind::IsADirectory => {
+                    return Err(crate::node_io::descriptor_error(e, "read").into());
+                }
+                Err(e) => return Err(self.mutation_error(relative, "open", e)),
+                Ok(bytes) => bytes,
+            };
+            Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+        }
+        // Non-Unix keeps the origin/main exists/read pair on the checked path.
+        #[cfg(not(unix))]
+        {
+            if !self.within(relative)? {
+                return Ok(None);
+            }
+            let path = self.path(relative)?;
+            if !path.exists() {
+                return Ok(None);
+            }
+            Ok(Some(read(&path)?))
+        }
+    }
     fn mkdir(&self, relative: &str) -> Result<()> {
         #[cfg(unix)]
         {
@@ -591,7 +656,10 @@ impl Core {
         }
         // Non-Unix keeps the origin/main path-based behavior.
         #[cfg(not(unix))]
-        io_mkdir(self.path(relative)?)
+        {
+            io_mkdir(self.path(relative)?)?;
+            Ok(())
+        }
     }
     fn write_bytes(&self, relative: &str, content: impl AsRef<[u8]>) -> Result<()> {
         #[cfg(unix)]
@@ -621,7 +689,8 @@ impl Core {
         {
             let target = self.path(relative)?;
             io_mkdir(target.parent().expect("absolute parent"))?;
-            io_write(target, content)
+            io_write(target, content)?;
+            Ok(())
         }
     }
     fn unlink(&self, relative: &str) -> Result<()> {
@@ -656,7 +725,9 @@ impl Core {
         {
             self.within(relative)?;
             let target = self.path(relative)?;
-            fs::remove_file(&target).map_err(|e| crate::node_io::path_error(e, "unlink", &target))
+            fs::remove_file(&target)
+                .map_err(|e| crate::node_io::path_error(e, "unlink", &target))?;
+            Ok(())
         }
     }
     /// The display path of a mutation's parent directory, used by
@@ -766,19 +837,18 @@ impl Core {
         }
         // Non-Unix keeps the origin/main node_fs::rm_sync removal.
         #[cfg(not(unix))]
-        super::node_fs::rm_sync(&self.root)
+        {
+            super::node_fs::rm_sync(&self.root)?;
+            Ok(())
+        }
     }
     fn parsed(&self, path: &str) -> Result<Option<(JsObject, String)>> {
-        if !self.within(path)? {
+        let Some(raw) = self.read_file(path)? else {
             return Ok(None);
-        }
-        let path = self.path(path)?;
-        if !path.exists() {
-            return Ok(None);
-        }
+        };
         // The clock is read only for the `updated_at` fallback, like TS's
         // lazy `??` operand, so a progressing clock advances identically.
-        Ok(parse(&read(&path)?, || self.now()))
+        Ok(parse(&raw, || self.now()))
     }
     fn entry(&self, path: &str) -> Result<Option<JsObject>> {
         let Some((mut fm, _)) = self.parsed(path)? else {
@@ -796,27 +866,13 @@ impl Core {
         Ok(Some(fm))
     }
     fn directory(&self, dir: &str) -> Result<Vec<JsObject>> {
-        let path = self.root.join(dir);
-        if !path.exists() {
-            return Ok(vec![]);
-        }
-        let mut paths = vec![];
-        for entry in
-            fs::read_dir(&path).map_err(|e| crate::node_io::path_error(e, "scandir", &path))?
-        {
-            let entry = entry.map_err(|e| crate::node_io::path_error(e, "scandir", &path))?;
-            let file = entry.file_name().to_string_lossy().into_owned();
-            if entry
-                .file_type()
-                .map_err(|e| crate::node_io::path_error(e, "scandir", &path))?
-                .is_file()
-                && file.ends_with(".md")
-                && file != "MEMORY.md"
-                && file != "project.meta.md"
-            {
-                paths.push(file);
-            }
-        }
+        let mut paths: Vec<String> = self
+            .read_dir_files(dir)?
+            .into_iter()
+            .filter(|file| {
+                file.ends_with(".md") && file != "MEMORY.md" && file != "project.meta.md"
+            })
+            .collect();
         paths.sort_by_key(|p| p.encode_utf16().collect::<Vec<_>>());
         let mut records = vec![];
         for file in paths {
@@ -825,6 +881,49 @@ impl Core {
             }
         }
         Ok(records)
+    }
+    /// The regular files directly below a memory directory, in readdir order.
+    /// Unix walks from the pinned root without following a raced-in link and
+    /// reports the directory itself on failures, like the scandir it replaces.
+    fn read_dir_files(&self, dir: &str) -> Result<Vec<String>> {
+        #[cfg(unix)]
+        {
+            let (root, target) = match self.read_target(dir) {
+                Ok(pinned) => pinned,
+                // Includes the missing or dangling memory root from the probe.
+                Err(FileMemoryError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(vec![]);
+                }
+                Err(e) => return Err(e),
+            };
+            match crate::project_files::regular_files_at(&root, &target) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+                Err(e) => Err(self.mutation_error(dir, "scandir", e)),
+                Ok(files) => Ok(files),
+            }
+        }
+        // Non-Unix keeps the origin/main exists/read_dir pair.
+        #[cfg(not(unix))]
+        {
+            let path = self.root.join(dir);
+            if !path.exists() {
+                return Ok(vec![]);
+            }
+            let mut paths = vec![];
+            for entry in
+                fs::read_dir(&path).map_err(|e| crate::node_io::path_error(e, "scandir", &path))?
+            {
+                let entry = entry.map_err(|e| crate::node_io::path_error(e, "scandir", &path))?;
+                if entry
+                    .file_type()
+                    .map_err(|e| crate::node_io::path_error(e, "scandir", &path))?
+                    .is_file()
+                {
+                    paths.push(entry.file_name().to_string_lossy().into_owned());
+                }
+            }
+            Ok(paths)
+        }
     }
     fn sort(&self, entries: &mut [JsObject]) -> Result<()> {
         sort_manifest_entries(entries, |e| text(e, "updatedAt"), "relativePath")
@@ -953,11 +1052,9 @@ impl Core {
         if !self.options.manage_project_meta || self.general() {
             return Ok(None);
         }
-        let path = self.path("project.meta.md")?;
-        if !path.exists() {
+        let Some(raw) = self.read_file("project.meta.md")? else {
             return Ok(None);
-        }
-        let raw = read(&path)?;
+        };
         let header = raw
             .strip_prefix("---\n")
             .and_then(|r| r.find("\n---\n").map(|i| &r[..i]))
@@ -993,7 +1090,10 @@ impl Core {
             ("createdAt", s(&created_at)),
             ("updatedAt", s(&updated_at)),
             ("relativePath", s("project.meta.md")),
-            ("absolutePath", s(path.to_string_lossy())),
+            (
+                "absolutePath",
+                s(self.path("project.meta.md")?.to_string_lossy()),
+            ),
         ]);
         if !text(&header, "dream_updated_at").is_empty() {
             meta.insert(
@@ -1391,12 +1491,7 @@ impl Core {
             (0, "Manifest management is disabled for this store.")
         } else {
             let next = self.manifest()?;
-            let path = self.path("MEMORY.md")?;
-            let prev = if path.exists() {
-                read(&path)?
-            } else {
-                String::new()
-            };
+            let prev = self.read_file("MEMORY.md")?.unwrap_or_default();
             if next != prev {
                 self.write_bytes("MEMORY.md", next)?;
                 (1, "Rebuilt workspace memory manifest.")
@@ -2092,10 +2187,16 @@ impl Core {
         paths
             .iter()
             .map(|path| {
-                Ok(obj(&[
-                    ("relativePath", s(path)),
-                    ("content", s(read(&self.path(path)?)?)),
-                ]))
+                // A listed entry that vanishes before the read keeps Node's
+                // own open diagnostics, like the read it replaces.
+                let raw = self.read_file(path)?.ok_or_else(|| {
+                    self.mutation_error(
+                        path,
+                        "open",
+                        std::io::Error::from_raw_os_error(libc::ENOENT),
+                    )
+                })?;
+                Ok(obj(&[("relativePath", s(path)), ("content", s(raw))]))
             })
             .collect()
     }
@@ -2142,6 +2243,36 @@ mod mutation_test_hook {
     }
 }
 
+/// The read leg of `mutation_test_hook`: the same per-thread, path-filtered
+/// seam after validation and root pinning, for reads and scandirs. A separate
+/// slot keeps mutation races and read races independently reproducible.
+#[cfg(test)]
+mod read_test_hook {
+    use super::*;
+    type Hook = Box<dyn Fn(&str)>;
+    thread_local! { static HOOK: RefCell<Option<Hook>> = RefCell::default(); }
+    pub struct Guard;
+    pub fn set(hook: impl Fn(&str) + 'static) -> Guard {
+        HOOK.with(|slot| {
+            assert!(slot.borrow().is_none());
+            *slot.borrow_mut() = Some(Box::new(hook));
+        });
+        Guard
+    }
+    pub fn notify(path: &str) {
+        HOOK.with(|slot| {
+            if let Some(hook) = slot.borrow().as_ref() {
+                hook(path);
+            }
+        });
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            HOOK.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+}
+
 #[cfg(all(test, unix))]
 mod mutation_security_tests {
     use super::*;
@@ -2156,6 +2287,22 @@ mod mutation_security_tests {
     }
     impl Drop for Scratch {
         fn drop(&mut self) {
+            // A failing assertion (negative control) can leave 0300
+            // directories remove_dir_all cannot remove; restore first,
+            // like the io_replay fixture's Scratch.
+            fn restore(path: &Path) {
+                use std::os::unix::fs::PermissionsExt;
+                if path.is_symlink() {
+                    return;
+                }
+                let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+                if let Ok(entries) = fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        restore(&entry.path());
+                    }
+                }
+            }
+            restore(&self.0);
             let _ = fs::remove_dir_all(&self.0);
         }
     }
@@ -2184,6 +2331,31 @@ mod mutation_security_tests {
         );
         let flag = fired.clone();
         let guard = mutation_test_hook::set(move |path| {
+            if path != target || flag.replace(true) {
+                return;
+            }
+            fs::rename(root.join(&component), root.join("saved")).unwrap();
+            symlink(&outside, root.join(&component)).unwrap();
+        });
+        (guard, fired)
+    }
+    /// The read-seam twin of [`install`]: the same component swap, fired from
+    /// `read_test_hook` so read races stay independently reproducible.
+    fn install_read(
+        root: &Path,
+        outside: &Path,
+        target: &str,
+        component: &str,
+    ) -> (read_test_hook::Guard, Rc<Cell<bool>>) {
+        let fired = Rc::new(Cell::new(false));
+        let (root, outside, target, component) = (
+            root.to_owned(),
+            outside.to_owned(),
+            target.to_owned(),
+            component.to_owned(),
+        );
+        let flag = fired.clone();
+        let guard = read_test_hook::set(move |path| {
             if path != target || flag.replace(true) {
                 return;
             }
@@ -2575,6 +2747,122 @@ mod mutation_security_tests {
         assert!(
             !outside.join("Project").exists(),
             "write escaped through the raced root link"
+        );
+    }
+    #[test]
+    fn mutation_race_read_leaf() {
+        // The read leg pins the same root the write leg does: a leaf swapped
+        // for an outside symlink after the boundary check is not followed.
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside.md");
+        fs::write(&outside, "outside sentinel").unwrap();
+        fs::write(store.core.root.join("Project/note.md"), "inside body").unwrap();
+        let (_hook, fired) = install_read(
+            &store.core.root,
+            &outside,
+            "Project/note.md",
+            "Project/note.md",
+        );
+        let result = store.get_memory_records_by_ids(&obj(&[
+            ("ids", strings(&["Project/note.md".into()])),
+            ("maxLines", num(5000)),
+        ]));
+        assert!(fired.get(), "target-filtered hook did not fire");
+        denied(result.unwrap_err(), "Project/note.md");
+    }
+    #[test]
+    fn mutation_race_read_component() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(store.core.root.join("Project/note.md"), "inside body").unwrap();
+        fs::write(outside.join("note.md"), "outside sentinel").unwrap();
+        let (_hook, fired) = install_read(&store.core.root, &outside, "Project/note.md", "Project");
+        let result = store.get_memory_records_by_ids(&obj(&[
+            ("ids", strings(&["Project/note.md".into()])),
+            ("maxLines", num(5000)),
+        ]));
+        assert!(fired.get(), "target-filtered hook did not fire");
+        denied(result.unwrap_err(), "Project/note.md");
+    }
+    #[test]
+    fn mutation_race_scandir() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(store.core.root.join("Project/a.md"), "a").unwrap();
+        fs::write(outside.join("b.md"), "outside sentinel").unwrap();
+        let (_hook, fired) = install_read(&store.core.root, &outside, "Project", "Project");
+        let result = store.list_memory_entries(&JsObject::new());
+        assert!(fired.get(), "target-filtered hook did not fire");
+        denied(result.unwrap_err(), "Project");
+    }
+    #[test]
+    fn mutation_read_pin_precedes_hook() {
+        // The read's root handle is pinned before the test seam fires, so
+        // replacing the root itself afterwards redirects nothing: the read
+        // returns the renamed directory's bytes and the raced link target
+        // stays unread.
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(
+            store.core.root.join("Project/pinned.md"),
+            "---\nname: Pinned\ntype: project\nscope: project\n---\npinned body",
+        )
+        .unwrap();
+        let root = store.core.root.clone();
+        let moved = scratch.0.join("saved");
+        let renamed = moved.clone();
+        let linked = outside.clone();
+        let fired = Rc::new(Cell::new(false));
+        let flag = fired.clone();
+        let _hook = read_test_hook::set(move |path| {
+            if path == "Project/pinned.md" && !flag.replace(true) {
+                fs::rename(&root, &renamed).unwrap();
+                symlink(&linked, &root).unwrap();
+            }
+        });
+        let (_, body) = store
+            .core
+            .parsed("Project/pinned.md")
+            .unwrap()
+            .expect("entry read from the pinned root");
+        assert!(fired.get(), "target-filtered hook did not fire");
+        assert_eq!(body, "pinned body");
+        assert!(
+            !outside.join("Project").exists(),
+            "read escaped through the raced root link"
+        );
+    }
+    #[test]
+    fn mutation_fifo_write_without_reader_reports_enxio() {
+        // A no-reader FIFO cannot be opened for writing at all (POSIX
+        // O_NONBLOCK): the write refuses at open with Node's ENXIO
+        // diagnostics instead of hanging like TS writeFileSync (real-TS
+        // probe, round 1). With a held reader, mutation_race_fifo_write
+        // proves the fstat recheck refuses the inode itself.
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let fifo = store.core.root.join("Project/fifo.md");
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        let error = store
+            .core
+            .write_bytes("Project/fifo.md", "changed")
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "ENXIO: no such device or address, open '{}'",
+                fifo.display()
+            )
         );
     }
     #[test]
