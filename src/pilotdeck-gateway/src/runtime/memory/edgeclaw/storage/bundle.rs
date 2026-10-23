@@ -187,12 +187,14 @@ fn robust_rename(source: &Path, destination: &Path) -> std::io::Result<()> {
 /// `replaceDirectoryWithStaged` (`sqlite.ts:1265-1290`): swap the staged
 /// directory in for the live one through a backup, restoring the live
 /// directory when the swap fails partway. Registered deviation from the TS
-/// restore condition (`!existsSync(liveRoot)`, which its single-threaded host
-/// can never observe as false): the backup is restored on every swap failure,
-/// because a partially-installed live root — recreated by a concurrent writer
-/// between the two renames, or left by a failed copy fallback — must not
-/// strand the pre-import tree in the hidden backup directory
-/// (`specs/parity/accepted-diffs.md` #6).
+/// restore condition (`!existsSync(liveRoot)`, which stays false whenever a
+/// partially-installed live root sits at the path — recreated by a concurrent
+/// writer between the two renames, or left by a copy fallback that failed
+/// mid-copy or at its source removal, single-threaded included): the backup
+/// is restored on every swap failure so the pre-import tree is never
+/// stranded in the hidden backup directory
+/// (`specs/gateway-parity/accepted-diffs.md`,
+/// A6.6-EDGECLAW-IMPORT-SWAP-ROLLBACK-001, unapproved).
 fn replace_directory_with_staged(
     live_root: &Path,
     staged_root: &Path,
@@ -795,5 +797,89 @@ mod tests {
             "no orphaned backup directories may remain: {backups:?}"
         );
         fs::remove_dir_all(&parent).unwrap();
+    }
+
+    /// A6.6-EDGECLAW-IMPORT-SWAP-ROLLBACK-001, single-threaded half: a swap
+    /// whose copy fallback fails mid-copy. The staged root lives in a
+    /// read-only parent, so after the live root moved to the backup the
+    /// second rename fails with EACCES and `robust_rename` falls back to a
+    /// copy that dies at the unreadable file — leaving a partially-installed
+    /// live root, exactly the state whose restore the TS `!existsSync`
+    /// condition skips. This is the rollback path's only coverage on Linux
+    /// (no `chflags` there).
+    #[test]
+    #[cfg(unix)]
+    fn failed_copy_fallback_restores_live_root() {
+        use std::os::unix::fs::PermissionsExt;
+        fn set_mode(path: &Path, mode: u32) {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let parent = std::env::temp_dir().join(format!(
+            "pdrs-bundle-copy-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&parent).unwrap();
+        // Restore permissions and remove the scratch tree even when an
+        // assertion fails: the read-only staged parent would otherwise
+        // survive the cleanup.
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new("chmod")
+                    .arg("-R")
+                    .arg("u+rwx")
+                    .arg(&self.0)
+                    .status();
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(parent.clone());
+        let live_root = parent.join("live");
+        let staged_parent = parent.join("staged-parent");
+        let staged_root = staged_parent.join("staged");
+        fs::create_dir_all(&live_root).unwrap();
+        fs::create_dir_all(&staged_root).unwrap();
+        fs::write(live_root.join("original.md"), "original").unwrap();
+        fs::write(staged_root.join("copied.md"), "copied").unwrap();
+        fs::write(staged_root.join("unreadable.md"), "unreadable").unwrap();
+        // The read-only staged parent fails the second rename with EACCES
+        // (and the fallback's source removal); the unreadable file kills the
+        // fallback copy after `copied.md` already landed at the live root.
+        set_mode(&staged_root.join("unreadable.md"), 0o000);
+        set_mode(&staged_parent, 0o555);
+        let clock: FileMemoryClock = std::sync::Arc::new(|| "unit-test".into());
+        let swap = replace_directory_with_staged(&live_root, &staged_root, &clock);
+        set_mode(&staged_parent, 0o755);
+        assert!(
+            swap.is_err(),
+            "the unreadable staged file must fail the swap: {:?}",
+            swap.err()
+        );
+        assert_eq!(
+            fs::read_to_string(live_root.join("original.md")).unwrap(),
+            "original",
+            "the pre-import tree must be restored at the live root"
+        );
+        assert!(
+            !live_root.join("copied.md").exists(),
+            "the partially-installed copy must not survive the rollback"
+        );
+        // The staged root survives its best-effort removal (its parent is
+        // still read-only), but the pre-import backup must not be left
+        // behind as an orphan.
+        let backups: Vec<String> = fs::read_dir(&parent)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".live.backup"))
+            .collect();
+        assert!(
+            backups.is_empty(),
+            "no orphaned backup directories may remain: {backups:?}"
+        );
     }
 }

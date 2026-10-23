@@ -1540,6 +1540,40 @@
       "method": "overview"
     },
     {
+      "repo": "empty",
+      "method": "raw",
+      "input": {
+        "path": "workspaces/empty/memory/project.meta.md",
+        "content": "---\nproject_name: Dates Only\n---\n\n## Summary\nDates Only\n"
+      }
+    },
+    {
+      "repo": "empty",
+      "method": "workspace",
+      "action": "listProjectMetas",
+      "input": {}
+    },
+    {
+      "repo": "empty",
+      "method": "import",
+      "input": {
+        "bundle": {
+          "formatVersion": "clawxmemory-memory-snapshot.v4",
+          "scope": "current_project",
+          "files": [
+            {
+              "relativePath": "project.meta.md",
+              "content": "---\nproject_name: Imported Dates\n---\n\n## Summary\nImported Dates\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "repo": "empty",
+      "method": "overview"
+    },
+    {
       "repo": "beta",
       "method": "close"
     },
@@ -2778,6 +2812,45 @@
       "recentDreamTraceCount": 0
     },
     null,
+    [
+      {
+        "projectId": "current_project",
+        "projectName": "Dates Only",
+        "description": "Dates Only",
+        "status": "in_progress",
+        "createdAt": "2026-10-22T00:00:00.058Z",
+        "updatedAt": "2026-10-22T00:00:00.059Z",
+        "relativePath": "project.meta.md",
+        "absolutePath": "$ROOT/workspaces/empty/memory/project.meta.md"
+      }
+    ],
+    {
+      "formatVersion": "clawxmemory-memory-snapshot.v4",
+      "scope": "current_project",
+      "imported": {
+        "managedFiles": 2,
+        "memoryFiles": 0,
+        "project": 0,
+        "feedback": 0,
+        "user": 0,
+        "tmp": 0,
+        "projectMetas": 1
+      },
+      "importedAt": "2026-10-22T00:00:00.077Z"
+    },
+    {
+      "pendingSessions": 0,
+      "workspaceMode": "single",
+      "currentProjectCount": 1,
+      "projectMetaPresent": true,
+      "projectMemoryCount": 0,
+      "feedbackMemoryCount": 0,
+      "userProfileCount": 1,
+      "recentRecallTraceCount": 0,
+      "recentIndexTraceCount": 0,
+      "recentDreamTraceCount": 0
+    },
+    null,
     {
       "error": "ERR_INVALID_STATE",
       "message": "database is not open"
@@ -2824,7 +2897,7 @@
     },
     {
       "relativePath": "workspaces/beta/memory/MEMORY.md",
-      "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.063Z\n\n## Current Project Meta\n- [target project memory](project.meta.md) — target project memory description\n\n## Project Memory\n- [target project memory](Project/target-project-memory-8f001869cb.md) — target project memory description\n\n## Feedback Memory\n- [target feedback memory](Feedback/target-feedback-memory-0fa914bfa1.md) — target feedback memory description\n\n## User Memory\n- [Global profile](../../../global/UserIdentity/user-profile.md) — Global profile description\n- [Global user](../../../global/UserIdentityNotes/global-user-8d46a02888.md) — Global user description\n- [Second user](../../../global/UserIdentityNotes/second-user-166ca824c2.md) — Second user description\n\n## Deprecated\n- [deprecated target](Feedback/deprecated-target-729b5595a1.md) — deprecated target description\n"
+      "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.085Z\n\n## Current Project Meta\n- [target project memory](project.meta.md) — target project memory description\n\n## Project Memory\n- [target project memory](Project/target-project-memory-8f001869cb.md) — target project memory description\n\n## Feedback Memory\n- [target feedback memory](Feedback/target-feedback-memory-0fa914bfa1.md) — target feedback memory description\n\n## User Memory\n- [Global profile](../../../global/UserIdentity/user-profile.md) — Global profile description\n- [Global user](../../../global/UserIdentityNotes/global-user-8d46a02888.md) — Global user description\n- [Second user](../../../global/UserIdentityNotes/second-user-166ca824c2.md) — Second user description\n\n## Deprecated\n- [deprecated target](Feedback/deprecated-target-729b5595a1.md) — deprecated target description\n"
     },
     {
       "relativePath": "workspaces/beta/memory/Project/target-project-memory-8f001869cb.md",
@@ -2835,12 +2908,12 @@
       "content": "---\nproject_id: current_project\nproject_name: target project memory\ndescription: target project memory description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\ntarget project memory description\n"
     },
     {
-      "relativePath": "workspaces/empty/memory/Imported/marker.md",
-      "content": "# imported marker\n"
+      "relativePath": "workspaces/empty/memory/MEMORY.md",
+      "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.076Z\n\n## Current Project Meta\n- [Imported Dates](project.meta.md) — Imported Dates\n\n## User Memory\n- [Global profile](../../../global/UserIdentity/user-profile.md) — Global profile description\n- [Global user](../../../global/UserIdentityNotes/global-user-8d46a02888.md) — Global user description\n- [Second user](../../../global/UserIdentityNotes/second-user-166ca824c2.md) — Second user description\n"
     },
     {
-      "relativePath": "workspaces/empty/memory/MEMORY.md",
-      "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.043Z\n\n## User Memory\n- [Global profile](../../../global/UserIdentity/user-profile.md) — Global profile description\n- [Global user](../../../global/UserIdentityNotes/global-user-8d46a02888.md) — Global user description\n- [Second user](../../../global/UserIdentityNotes/second-user-166ca824c2.md) — Second user description\n"
+      "relativePath": "workspaces/empty/memory/project.meta.md",
+      "content": "---\nproject_name: Imported Dates\n---\n\n## Summary\nImported Dates\n"
     },
     {
       "relativePath": "workspaces/general/memory/GeneralProjects/alpha-g1.md",

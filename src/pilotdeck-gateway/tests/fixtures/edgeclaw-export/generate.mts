@@ -173,6 +173,16 @@ const ops:any[]=[
   {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'a.md',content:'1'},{relativePath:'a.md',content:'2'},42]})}},
   {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'projects/x.md',content:''},{relativePath:'b.md'}]})}},
   {repo:'empty',method:'overview'},
+  // rv-codex-r2 #1: a root-level project.meta.md whose header carries only
+  // project_name — no type/scope (so parseFrontmatterBlock returns undefined)
+  // and neither date — falls back to the terminal nowIso() once per field:
+  // the stepping clock must observe two distinct createdAt/updatedAt values,
+  // both in the direct listing and in the staged manifest build and counts
+  // during import (whose importedAt then reads that much later).
+  {repo:'empty',method:'raw',input:{path:'workspaces/empty/memory/project.meta.md',content:'---\nproject_name: Dates Only\n---\n\n## Summary\nDates Only\n'}},
+  {repo:'empty',method:'workspace',action:'listProjectMetas',input:{}},
+  {repo:'empty',method:'import',input:{bundle:bundle({files:[{relativePath:'project.meta.md',content:'---\nproject_name: Imported Dates\n---\n\n## Summary\nImported Dates\n'}]})}},
+  {repo:'empty',method:'overview'},
   // Partial failure: the swap and manifest repair land, then the closed
   // database fails the runtime reset, leaving the imported files behind.
   {repo:'beta',method:'close'},
