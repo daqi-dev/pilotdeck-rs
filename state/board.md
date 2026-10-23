@@ -10,20 +10,22 @@ updated: 2026-10-23 11:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - regress | coord | blocked | 等 regress 发布带 UTF-16 回溯预算的稳定版；金样在 codex/regress-pr1-output-schema@2c2e4f87
-- #454 | coord | human | web_fetch 大页内存；决策卡 _tmp/20261023-loop/decision-454-webfetch-memory.md（建议 C 内存加权并发）
-- accepted-diffs-502 | coord | human | #505 的 32 条；分档卡 _tmp/20261023-loop/decision-505-diffs.md（26 接受 / 5 修 / 1 已修，5 条请人看）
 - accepted-diffs-1023 | coord | human | 10-23 新登记未批准约 22 条 + AI 代批待复核（pr10g 路径穿越、#541、#484 防环与根边界、V8 栈深判据）
-- state-files | coord | human | 状态文件精简提案 _tmp/20261023-loop/proposal-state-files.md（改 CLAUDE.md 两条规则，待人批）
+- state-files | coord | human | 状态文件精简提案 _tmp/20261023-loop/proposal-state-files.md（人：先不动，待人读后再定）
 - #536 | impl | doing | A7.2-pr7 读面 gate5 P1（账本范围句）+ P2a 负控进仓；GLM 修复轮 5
 - #537 | impl | doing | A6.6-pr10g gate5 P1（edit 缺 id 的错误类）；codex 修复轮 5
 - #531 | impl | doing | A6.6-pr10f gate5 P1×2（scope 真值、limit/offset 强转）；GLM 修复轮 5
-- #539 | impl | doing | #495 合并队列
 - #544 | impl | doing | #484 修复轮 3 已交付，核验中；codex
 - #547 | impl | doing | p2-sweep-13 修复轮 2；GLM
 - #549 | impl | doing | A7.2-pr5 Grok r2 P1（fence 单槽语义）+ Linux CI 时序失败；codex 修复轮 2
 - #361-3 | impl | doing | https MCP 已交付，核验中；DeepSeek
 - #508 | impl | doing | 人定 A（realpath + cwd 子树 + 白名单）已交付，核验中；codex
 - #543 | impl | ready | 插件 dispose 顺序与 TS 相反（P1）；等 #544 合入（同模块串行）
+- #454 | impl | ready | 人定 C：web_fetch 全局内存预算排队；先补跑真实 TS 10 MiB 两形状
+- #551 | impl | blocked | MCP HTTP 走代理（人批修）；等 #361-3 合入
+- #552 | impl | ready | bash 子进程 setsid（人批修）
+- #553 | impl | ready | 后台任务输出落盘与重启恢复（人批修，中-大）
+- #554 | impl | ready | 宿主默认 300 s 超时（人批修，小）
 <!-- READY:END -->
 
 > ## 2026-10-23 05:00 → 13:20 · /loop 协调轮与两小时交接（逾期约 1.5 小时补上）
@@ -763,3 +765,4 @@ updated: 2026-10-23 11:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 > **18:40**：#535（A7.4-pr2 HTTP store）入队第 1 位；#537（pr10g）gate4 后结果块已贴，merge-when-green 等 CI。#536 codex r4：同意 V8 栈深差异按登记处理（不再追常数），剩一条 P1——2 s tokio::time::timeout 约束不了不让出执行权的同步转换，所以「有界」判据仍无效；另指出登记范围应写明文件 registry 的 structuredClone 约 2000 层已先失败 → GLM 修复轮 4（子进程 + 父进程可终止期限，补同步自旋负控），账本范围待修后追加。#549 修复轮 1（codex：abort 在 await 后取最新 fence、空匹配护栏、5 个真实 TS 交错金样）交付，核验排队并补跑空匹配负控；新负控脚本断言 CARGO_TARGET_DIR 必须是本树 src/target。#531 #547 #549 因 #546 合入已 DIRTY，交付后统一 rebase。磁盘 141.6 GiB。
 > **19:00**：#535（A7.4-pr2）合入，树回收。#537 被 #535 挤出队列（第 6 次以上的账本同队冲突）→ 再 rebase 推送、gate5 后入队；**入队脚本改为同一时刻只放一个改 specs/gateway-parity/ 的 PR 进合并队列**（merge-when-green.sh 的 ledger_busy / enqueue，GraphQL 查队列已验证可用）。#544 Grok r3 P1：只计 .md 仍把 node_modules 里的 README 算进去（真实依赖树 TS 14 个 skill、Rust 0 个）——是我上一轮给错方向；全局去重后遍历必然终止且线性，条目预算与 64 层上限不再保护任何东西 → codex 修复轮 3 去掉两者。#531 修复轮 4（只改夹具：#525 合入后 projectId 已不转发，差异消除）rebase 后 export / accessors / snapshots 全过，gate5。#549 修复轮 1 核验通过（空匹配负控正确失败；lib 唯一失败为 resume 负载假红、单跑 24/24），rebase 推送，GLM+Grok r2。**#508 人定 A**（向安全偏离：realpath、只允许 cwd 及子目录 + 可配白名单、拒绝符号链接越界）→ 卡与 `_tmp/20261023-loop/decisions-1023-human.md` 记录，派 codex（只改 mcp/bridge.rs，与 #361-3 不重叠）。另注意：#361-3 的树改了 runtime/model/http.rs（共享连接器，任务书要求不改），评审时核。
 > **11:05 CST 交接（持有人：协调者本会话）**：#454、#505 的人用说明此前只在 _tmp，用户找不到——已写决策卡（路径见 READY），并给出状态文件精简提案待批。#508 人定 A 记录见 `state/decisions-20261023.md`。本轮：#549 Grok r2 P1（fence 选「id 最大」而 TS 是单槽覆盖）+ Linux CI `error-before-success` observe 时序假红 → codex 修复轮 2；#536 gate5 唯一 P1 是我写的账本范围句（文件 registry 上同样可观察），GLM 修复轮 5 把两条有界负控补进 negative.py，账本「判据更正四」等它交付后由我追加；#537 #531 被挤出队列后 gate5 各报边界 P1 → 原实现方修复轮 5（限定各改各的文件）；#508、#361-3、#544 修复轮 3 交付，沙箱外核验在跑。#361-3 改了 model/http.rs，核过是把 hook 的 ConnectDeadline 原样搬去共享，模型连接器行为不变。worktree 11/12、cargo 名额排队、磁盘约 145 GiB / 160。下一个交接点约 13:05 CST。
+> **11:20 CST**：#539（#495）合入，树回收。**人定**：#454 选 C；#505 32 条批复（1 关闭、5 修、26 接受，接受不豁免判分）——账本追加人批记录（只追加、check_frozen PASS），开 #551–#554 四张修复单；状态文件提案暂不动。原话记 `state/decisions-20261023.md`。
