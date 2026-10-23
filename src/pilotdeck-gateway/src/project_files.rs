@@ -522,9 +522,7 @@ fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io:
                 }
                 // Directory + EACCES: return immediately (Node does not descend
                 // on EACCES, only on ENOTEMPTY/EEXIST/EPERM per descends_after_rmdir).
-                if crate::node_io::lookup(&e)
-                    .is_some_and(|(code, _)| code == "EACCES")
-                {
+                if crate::node_io::lookup(&e).is_some_and(|(code, _)| code == "EACCES") {
                     return Err(e);
                 }
                 // Directory + EPERM (sticky dir or immutable): fall through to
