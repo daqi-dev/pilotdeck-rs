@@ -1110,7 +1110,38 @@ cases.push({ name: 'cache-tool-name-non-ascii', steps: [
   { clockMs: baseClock, input: cacheInput({ tools: [{ name: 'b' }, { name: '' }, { name: '�' }, { name: '😀' }, { name: 'k', inputSchema: { '\ud800': 1, '😀': 2, a: 3 } }] }) },
 ] });
 cases.push({ name: 'cache-memory-user-surface', setup: { surface: 'user_message', memory: { context: 'cache memory' } }, steps: [{ clockMs: baseClock, input: cacheInput({ messages: [user(text('old')), assistant(text('reply')), user(text('new'))] }) }] });
-assert.equal(cases.length, 68, 'case count');
+// JS `Array.prototype.sort` moves `undefined` elements to the end without
+// passing them to the comparator, so these all succeed (a `null` element
+// still fails at the `name` read when the comparator does run).
+const U = () => ({ $undefined: true });
+cases.push({ name: 'cache-tool-undefined-element', steps: [
+  [U(), { name: 'a' }],
+  [{ name: 'a' }, U()],
+  [U(), U()],
+  [U(), null],
+  [null, U()],
+  [{ name: 'z' }, U(), { name: 'a' }],
+  [U(), null, { name: 42 }],
+].map(tools => ({ clockMs: baseClock, input: cacheInput({ tools }) })) });
+// `left.name.localeCompare(right.name)` evaluates the `right.name` argument
+// before the call check, so a nullish element reports the `name` read even
+// when the other side's name is a non-string, and the non-string reports
+// `localeCompare` only when the right side is readable.
+cases.push({ name: 'cache-tool-eval-order', steps: [
+  [null, { name: 42 }],
+  [{ name: 42 }, null],
+  [{ name: null }, { name: 42 }],
+  [{ name: 42 }, { name: null }],
+  [{ name: 'a' }, { name: 42 }, { name: null }],
+].map(tools => ({ clockMs: baseClock, input: cacheInput({ tools }) })) });
+// A single tool's deeply nested inputSchema (1998/2001 levels; 2001/2004
+// containers with the identity/tools/tool envelope) succeeds in real TS and
+// must reach the fingerprint. JSON cannot hold the nesting readably, so the
+// spec marks it and both sides rebuild the same arrays.
+for (const depth of [1998, 2001]) {
+  cases.push({ name: `cache-tool-schema-depth-${depth}`, steps: [{ clockMs: baseClock, input: cacheInput({ tools: [{ name: 't', inputSchema: { $deepArray: depth } }] }) }] });
+}
+assert.equal(cases.length, 72, 'case count');
 
 // ---------------------------------------------------------------- execute
 // JSON cannot carry NaN/Infinity/-0. Inputs use {$number: "..."} markers and
@@ -1126,6 +1157,15 @@ function decodeNumbers(value: any): any {
         case '-Infinity': return -Infinity;
         case '-0': return -0;
       }
+    }
+    // JSON also cannot carry `undefined` array elements or (at a readable
+    // oracle size) container nesting in the thousands; the spec marks both
+    // and the runtime call gets the rebuilt value.
+    if (Object.keys(value).length === 1 && value.$undefined === true) return undefined;
+    if (Object.keys(value).length === 1 && typeof value.$deepArray === 'number') {
+      let deep: any = 0;
+      for (let i = 0; i < value.$deepArray; i++) deep = [deep];
+      return deep;
     }
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [key, decodeNumbers(item)]),
@@ -1290,15 +1330,16 @@ for (const spec of cases) {
     } else {
       delete process.env.PILOTDECK_MANAGED_CONFIG;
     }
-    const input = decodeNumbers(
-      substitute(
-        step.messagesFromPrevious
-          ? { ...step.input, messages: previousOutput.messages }
-          : step.input,
-        output,
-      ),
+    const specInput = substitute(
+      step.messagesFromPrevious
+        ? { ...step.input, messages: previousOutput.messages }
+        : step.input,
+      output,
     );
-    const normalizedInput = normalize(encodeNumbers(input), output);
+    const input = decodeNumbers(specInput);
+    // Record the spec shape (markers intact): decoded `undefined` elements
+    // and deep-array markers must survive the oracle JSON for the replay.
+    const normalizedInput = normalize(encodeNumbers(specInput), output);
     if (step.compact) { compactResult = step.compact; await runtime.tryAutoCompact({ sessionId: input.sessionId } as any); }
     if (step.cacheAction === 'dispose') runtime.dispose();
     else if (step.cacheAction) coordinator[step.cacheAction](input.sessionId);
@@ -1309,13 +1350,22 @@ for (const spec of cases) {
     const prepareInput = step.abort ? { ...input, abortSignal: controller.signal } : input;
     try {
       const result = await runtime.prepareForModel(prepareInput);
+      // The path-substitution walk recurses in JS (~2 frames per container)
+      // and dies around 2000 containers unless the JIT is warm; the deep
+      // inputSchema cases must not pay for a substitution they do not need.
+      // JSON.stringify's C++ walk handles those depths, so only walk when
+      // the serialized text actually mentions the fixture root.
+      const serialized = JSON.stringify(result);
+      const outputText = serialized.includes(output)
+        ? JSON.stringify(normalize(result, output))
+        : serialized;
       recordedSteps.push({
         clockMs,
         ...(step.abort ? { abort: step.abort } : {}),
         ...(step.cacheAction ? { cacheAction: step.cacheAction } : {}),
         ...(step.compact ? { compact: step.compact } : {}),
         input: normalizedInput,
-        output: JSON.stringify(normalize(result, output)),
+        output: outputText,
       });
       previousOutput = result;
     } catch (error) {

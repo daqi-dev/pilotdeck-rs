@@ -3,6 +3,7 @@
 //! The assembler only depends on a read-only extension projection plus the
 //! caller's resolved prompt timestamp. Store-backed instruction discovery is a
 //! separate concern in `instructions`.
+use crate::host::{HostError, ModuleError};
 use crate::metadata::js_trim;
 use crate::project_files::{node_collator, node_locale};
 use icu_locale_core::Locale;
@@ -116,7 +117,7 @@ impl PromptAssembler {
         include_extensions_with_custom_system_prompt: bool,
         include_user_context_in_system_prompt: bool,
         timestamp_ms: f64,
-    ) -> PromptResult {
+    ) -> Result<PromptResult, HostError> {
         let sections = self.build_sections(
             cwd,
             provider,
@@ -126,7 +127,7 @@ impl PromptAssembler {
             additional_working_directories,
             tools,
             timestamp_ms,
-        );
+        )?;
         let mut parts = Vec::new();
         let use_custom = use_custom_system_prompt;
         if use_custom {
@@ -152,11 +153,11 @@ impl PromptAssembler {
             }
         }
         let joined = parts.join("\n\n");
-        PromptResult {
+        Ok(PromptResult {
             parts,
             joined,
             sections,
-        }
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -170,14 +171,14 @@ impl PromptAssembler {
         additional_working_directories: &[String],
         tools: &[pilotdeck_protocol::JsValue],
         timestamp_ms: f64,
-    ) -> PromptSections {
-        PromptSections {
+    ) -> Result<PromptSections, HostError> {
+        Ok(PromptSections {
             default_system_prompt: self.build_default_system_prompt(
                 permission_mode,
                 run_mode,
                 additional_working_directories,
                 tools,
-            ),
+            )?,
             user_context: build_user_context(
                 cwd,
                 provider,
@@ -188,7 +189,7 @@ impl PromptAssembler {
                 &self.node_version,
             ),
             system_context: self.build_system_context(timestamp_ms),
-        }
+        })
     }
 
     fn build_default_system_prompt(
@@ -197,9 +198,9 @@ impl PromptAssembler {
         run_mode: Option<&str>,
         additional_working_directories: &[String],
         tools: &[pilotdeck_protocol::JsValue],
-    ) -> Vec<String> {
-        let has_web_search = has_tool(tools, "web_search");
-        let has_web_fetch = has_tool(tools, "web_fetch");
+    ) -> Result<Vec<String>, HostError> {
+        let has_web_search = has_tool(tools, "web_search")?;
+        let has_web_fetch = has_tool(tools, "web_fetch")?;
         let documentation_lookup_policy = if has_web_search {
             "When implementing code against an API, SDK, framework, CLI, config schema, or file format whose usage is not clear from local source, installed types, examples, or project docs, search for official documentation before writing or changing code. Prefer versioned official docs and existing in-repo call sites. Use web_search for discovery and web_fetch for the relevant docs page. Do not guess unfamiliar signatures, options, or output shapes when a quick lookup can resolve them. If network tools are unavailable or denied, state the uncertainty and proceed conservatively."
         } else if has_web_fetch {
@@ -241,7 +242,7 @@ impl PromptAssembler {
             lines.push("Connected MCP server instructions:".into());
             lines.push(mcp_block);
         }
-        vec![lines.join("\n")]
+        Ok(vec![lines.join("\n")])
     }
 
     fn build_system_context(&self, timestamp_ms: f64) -> Vec<String> {
@@ -296,13 +297,33 @@ impl PromptAssembler {
     }
 }
 
-fn has_tool(tools: &[pilotdeck_protocol::JsValue], name: &str) -> bool {
-    tools.iter().any(|tool| {
-        tool.as_object()
-            .and_then(|tool| tool.get("name"))
-            .and_then(pilotdeck_protocol::JsValue::as_string)
+fn has_tool(tools: &[pilotdeck_protocol::JsValue], name: &str) -> Result<bool, HostError> {
+    for tool in tools {
+        // `tools.some((tool) => tool.name === name)`: the `name` read fails on
+        // a nullish element, any other non-object reads as `undefined`, and a
+        // hit short-circuits the scan before later elements are read.
+        let tool_name = match tool {
+            JsValue::Undefined | JsValue::Null => {
+                return Err(ModuleError::new(format!(
+                    "Cannot read properties of {} (reading 'name')",
+                    if tool.is_undefined() {
+                        "undefined"
+                    } else {
+                        "null"
+                    }
+                ))
+                .into());
+            }
+            _ => tool.get("name").cloned().unwrap_or(JsValue::Undefined),
+        };
+        if tool_name
+            .as_string()
             .is_some_and(|value| value.equals_str(name))
-    })
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 fn build_user_context(
     cwd: &str,
