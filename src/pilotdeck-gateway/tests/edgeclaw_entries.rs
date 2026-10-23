@@ -438,9 +438,7 @@ fn replay(root: &Path, c: &Value) -> Value {
             "ensureProjectMeta" => repo.ensure_project_meta(&input),
             "editProjectMeta" => repo.edit_project_meta(&input),
             "archiveTmpEntries" => repo.archive_tmp_entries(&input),
-            "countMemoryEntries" => repo
-                .count_memory_entries(&input)
-                .map(|n| JsValue::Number(n as f64)),
+            "countMemoryEntries" => repo.count_memory_entries(&input),
             "getSnapshotVersion" => repo
                 .get_snapshot_version()
                 .map(|s| JsValue::from(s.as_str())),
