@@ -35,7 +35,6 @@
 //! events, so a closed stream answers `done` like an exhausted generator.
 //!
 //! Out of scope by design (composition gaps, not silently accepted here):
-//! per-generation provider registry/leases (`ModelInvocationProviderRegistry`),
 //! invocation audit staging / `PILOTDECK_DUMP_REQUEST` / proxy dispatchers,
 //! and plugin custom routers — those stay with `NoopCustomRouters` and the
 //! plain HTTP transport until their own packages land.

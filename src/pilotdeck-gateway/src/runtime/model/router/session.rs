@@ -70,6 +70,10 @@ impl SessionRouterStore {
         set_slot(&mut map, self.capacity, state, expires_at);
     }
 
+    pub fn clear(&self) {
+        self.lock().clear();
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Slot>> {
         self.map.lock().expect("session router store")
     }

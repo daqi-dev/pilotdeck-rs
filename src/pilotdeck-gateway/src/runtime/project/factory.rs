@@ -423,6 +423,14 @@ pub struct Families {
     pub memory: Arc<dyn ResourceFamilySource>,
 }
 impl Families {
+    /// Wire the native model/provider/router families; other families retain
+    /// their existing constructors (A6.9-pr3c..3e).
+    pub fn with_native_models(mut self) -> Self {
+        self.model_runtime = Arc::new(super::model::ModelFamilySource::default());
+        self.router_runtime = Arc::new(super::model::RouterFamilySource::default());
+        self
+    }
+
     /// Every family not yet wired into the native runtime (A6.9-pr3b..3e).
     /// Staging reports each one explicitly instead of succeeding silently.
     pub fn unwired() -> Self {
@@ -535,6 +543,9 @@ impl StageContext {
     }
     pub fn profile(&self) -> RuntimeProfile {
         lock(&self.slots).profile
+    }
+    pub fn clock(&self) -> Now {
+        lock(&self.slots).now.clone()
     }
     pub fn now(&self) -> SystemTime {
         (lock(&self.slots).now)()
