@@ -103,6 +103,16 @@ pub trait ProjectRuntimeFactory: Send + Sync {
     /// follows the TS buildRuntime contract and must not reenter the registry.
     fn stage(&self, project_root: &Path, resources: &mut ResourceBundle) -> RuntimeResult;
 }
+
+/// The production factory (`buildRuntime`): config read and resource-family
+/// staging with the baseline's rollback order.
+mod factory;
+pub use factory::{
+    ConfigSource, Families, Family, FamilyResource, InteractionProfile, InteractionProfileName,
+    NativeConfigSource, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,
+    Resource, ResourceFamilySource, RuntimeContextSurface, RuntimeProfile, RuntimeProfileOverrides,
+    SandboxMode, StageContext, StageSink, UnsupportedFamily,
+};
 impl<F> ProjectRuntimeFactory for F
 where
     F: Fn(&Path, &mut ResourceBundle) -> RuntimeResult + Send + Sync,
