@@ -549,6 +549,9 @@ fn standalone_leaf_hardlink_raced_after_check_is_refused() {
             let outside = dir.parent().unwrap().join("outside/secret.md");
             fs::remove_file(&leaf).unwrap();
             fs::hard_link(&outside, &leaf).unwrap();
+            // Leave a single name so the independent nlink guard cannot mask
+            // a broken checked-identity comparison.
+            fs::remove_file(&outside).unwrap();
         },
         false,
     );
@@ -580,4 +583,189 @@ fn standalone_deleted_after_check_rejects_like_ts() {
     assert!(result.is_err(), "deletion after check must reject");
     let err = result.err().unwrap().to_string();
     assert!(err.contains(code), "error matches TS code {code}: {err}");
+}
+
+#[test]
+fn standalone_dangling_symlink_preserves_enoent() {
+    let (_scratch, dir) = standalone_layout("dangling");
+    let leaf = dir.join("SKILL.md");
+    fs::remove_file(&leaf).unwrap();
+    symlink("missing.md", &leaf).unwrap();
+    let expected = super::super::io_error("open", &leaf, &fs::read(&leaf).err().unwrap());
+    let error = load_standalone_skill("skill", &dir).err().unwrap();
+    assert_eq!(
+        error.to_string(),
+        expected.to_string(),
+        "dangling link keeps ENOENT and lexical path"
+    );
+}
+
+#[test]
+fn standalone_resolution_errors_keep_non_refusal_codes() {
+    let file = Path::new("skill/SKILL.md");
+    for (input, output) in [
+        (libc::ENOENT, libc::ENOENT),
+        (libc::ENOTDIR, libc::ENOTDIR),
+        (libc::EIO, libc::EIO),
+        (libc::ELOOP, libc::EACCES),
+        (libc::EACCES, libc::EACCES),
+        (libc::EXDEV, libc::EACCES),
+    ] {
+        let expected =
+            super::super::io_error("open", file, &std::io::Error::from_raw_os_error(output));
+        assert_eq!(
+            skill_io_error(file, std::io::Error::from_raw_os_error(input)).to_string(),
+            expected.to_string(),
+            "resolution errno {input} classification"
+        );
+    }
+}
+
+#[test]
+fn standalone_self_symlink_is_refused() {
+    let (_scratch, dir) = standalone_layout("self-link");
+    let leaf = dir.join("SKILL.md");
+    fs::remove_file(&leaf).unwrap();
+    symlink("SKILL.md", &leaf).unwrap();
+    assert_eq!(
+        fs::canonicalize(&leaf).err().unwrap().raw_os_error(),
+        Some(libc::ELOOP)
+    );
+    let expected = super::super::io_error(
+        "open",
+        &leaf,
+        &std::io::Error::from_raw_os_error(libc::EACCES),
+    );
+    assert_eq!(
+        load_standalone_skill("skill", &dir)
+            .err()
+            .unwrap()
+            .to_string(),
+        expected.to_string(),
+        "ELOOP is a refused resolution"
+    );
+}
+
+#[test]
+fn standalone_unresolvable_root_preserves_enoent() {
+    let (_scratch, dir) = standalone_layout("missing-root");
+    let leaf = dir.join("SKILL.md");
+    fs::remove_dir_all(&dir).unwrap();
+    let expected = super::super::io_error(
+        "open",
+        &leaf,
+        &std::io::Error::from_raw_os_error(libc::ENOENT),
+    );
+    assert_eq!(
+        read_checked_skill(&dir, &leaf).err().unwrap().to_string(),
+        expected.to_string(),
+        "missing root keeps ENOENT"
+    );
+}
+
+#[test]
+fn standalone_in_root_symlink_read_failure_keeps_lexical_path() {
+    let (_scratch, dir) = standalone_layout("link-deleted");
+    let leaf = dir.join("SKILL.md");
+    fs::remove_file(&leaf).unwrap();
+    symlink("real.md", &leaf).unwrap();
+    for before_lstat in [true, false] {
+        fs::write(dir.join("real.md"), "safe").unwrap();
+        let error = raced_standalone(
+            &dir,
+            |dir| fs::remove_file(dir.join("real.md")).unwrap(),
+            before_lstat,
+        )
+        .err()
+        .unwrap();
+        let expected = super::super::io_error(
+            "open",
+            &leaf,
+            &std::io::Error::from_raw_os_error(libc::ENOENT),
+        );
+        assert_eq!(
+            error.to_string(),
+            expected.to_string(),
+            "in-root link error uses lexical SKILL.md"
+        );
+    }
+}
+
+#[test]
+fn standalone_static_outside_hardlink_is_refused() {
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(
+        standalone_case("leaf-hardlink")["observed"]["skill"]["content"],
+        "SECRET",
+        "TS reads the static external hardlink"
+    );
+    let (_scratch, dir) = standalone_layout("static-hardlink");
+    let leaf = dir.join("SKILL.md");
+    let outside = dir.parent().unwrap().join("outside/secret.md");
+    fs::remove_file(&leaf).unwrap();
+    fs::hard_link(&outside, &leaf).unwrap();
+    let stat = fs::metadata(&outside).unwrap();
+    let entry = fs::read_dir(&dir)
+        .unwrap()
+        .map(Result::unwrap)
+        .find(|e| e.path() == leaf)
+        .unwrap()
+        .metadata()
+        .unwrap();
+    assert_eq!(
+        (entry.dev(), entry.ino()),
+        (stat.dev(), stat.ino()),
+        "external inode is already in root dirents"
+    );
+    assert_eq!(entry.nlink(), 2);
+    let expected = super::super::io_error(
+        "open",
+        &leaf,
+        &std::io::Error::from_raw_os_error(libc::EACCES),
+    );
+    assert_eq!(
+        load_standalone_skill("skill", &dir)
+            .err()
+            .unwrap()
+            .to_string(),
+        expected.to_string(),
+        "static outside hardlink must be refused before reading SECRET"
+    );
+}
+
+#[test]
+fn standalone_in_root_hardlink_is_conservatively_refused() {
+    let (_scratch, dir) = standalone_layout("inside-hardlink");
+    fs::hard_link(dir.join("SKILL.md"), dir.join("alias.md")).unwrap();
+    assert!(
+        load_standalone_skill("skill", &dir).is_err(),
+        "all multiply linked skills are refused regardless of alias location"
+    );
+    fs::remove_file(dir.join("alias.md")).unwrap();
+    assert!(
+        load_standalone_skill("skill", &dir).is_ok(),
+        "single-name regular file remains readable"
+    );
+}
+
+#[test]
+fn standalone_hardlink_added_after_check_is_refused() {
+    let (_scratch, dir) = standalone_layout("added-hardlink");
+    let error = raced_standalone(
+        &dir,
+        |dir| {
+            fs::hard_link(
+                dir.join("SKILL.md"),
+                dir.parent().unwrap().join("outside/alias.md"),
+            )
+            .unwrap();
+        },
+        false,
+    )
+    .err()
+    .unwrap();
+    assert!(
+        error.to_string().contains("EACCES"),
+        "post-open nlink catches unchanged inode with a newly added alias"
+    );
 }

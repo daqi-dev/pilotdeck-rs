@@ -160,7 +160,8 @@ pub(super) fn load_plugin_commands_with_root(
             // re-verified handle so a leaf/ancestor replaced after that check
             // cannot redirect the read outside the plugin root (ROOT-001).
             let checked_identity = file_identity(&metadata);
-            let Some(raw) = read_markdown(&root, &canonical, checked_identity)? else {
+            let Some(raw) = read_markdown(&root, &canonical, &canonical, checked_identity, false)?
+            else {
                 continue;
             };
             output.push(load_markdown_source(
@@ -208,16 +209,12 @@ fn read_checked_skill(directory: &Path, file: &Path) -> Result<String, PluginRun
             &std::io::Error::from_raw_os_error(libc::EACCES),
         )
     };
-    // The boundary check resolves the skill root and the leaf; a leaf whose
-    // realpath already escapes the root (static out-of-root link) fails the
-    // checked open with EACCES below. Values that no longer resolve were raced
-    // away after discovery; a path read could not trust them either.
-    let (Ok(root), Ok(canonical)) = (directory.canonicalize(), file.canonicalize()) else {
-        return Err(refused());
-    };
-    let Ok(metadata) = std::fs::metadata(&canonical) else {
-        return Err(refused());
-    };
+    // Resolve only for containment and the checked open. All diagnostics keep
+    // the caller's lexical SKILL.md path, just like TS readFile.
+    let error = |e| skill_io_error(file, e);
+    let root = directory.canonicalize().map_err(error)?;
+    let canonical = file.canonicalize().map_err(error)?;
+    let metadata = std::fs::metadata(&canonical).map_err(error)?;
     // A SKILL.md that resolves to a directory (or a link to one) cannot leak
     // out-of-root bytes through a read, so keep TS readFile's EISDIR rather than
     // the generic refusal. FIFOs, sockets, raced-in links and replaced inodes
@@ -229,7 +226,25 @@ fn read_checked_skill(directory: &Path, file: &Path) -> Result<String, PluginRun
             &std::io::Error::from_raw_os_error(libc::EISDIR),
         ));
     }
-    read_markdown(&root, &canonical, file_identity(&metadata))?.ok_or_else(refused)
+    read_markdown(&root, &canonical, file, file_identity(&metadata), true)?.ok_or_else(refused)
+}
+
+// Resolution failures are not all evidence of a refused link. In particular,
+// a dangling link or concurrent deletion must retain readFile's ENOENT.
+#[cfg(unix)]
+fn skill_io_error(file: &Path, error: std::io::Error) -> PluginRuntimeError {
+    let error = match error.kind() {
+        std::io::ErrorKind::NotFound => error,
+        _ if matches!(
+            error.raw_os_error(),
+            Some(libc::ELOOP | libc::EACCES | libc::EXDEV)
+        ) =>
+        {
+            std::io::Error::from_raw_os_error(libc::EACCES)
+        }
+        _ => error,
+    };
+    super::io_error("open", file, &error)
 }
 
 /// Non-Unix keeps the pre-#564 path read: no openat + O_NOFOLLOW (unverified).
@@ -261,10 +276,12 @@ thread_local!(static BEFORE_LSTAT: std::cell::RefCell<Option<BeforeOpen>> = cons
 fn read_markdown(
     root: &Path,
     canonical: &Path,
+    lexical: &Path,
     checked_identity: (u64, u64),
+    require_single_link: bool,
 ) -> Result<Option<String>, PluginRuntimeError> {
     use std::{io::Read, os::unix::fs::MetadataExt};
-    let error = |e: std::io::Error| super::io_error("open", canonical, &e);
+    let error = |e: std::io::Error| super::io_error("open", lexical, &e);
     // Pre-open lstat: a FIFO/socket/device `.md` is skipped before any open.
     // If the checked entry no longer exists, propagate ENOENT like TS readFile
     // (PluginLoader.ts:93 `.catch(() => [])` fails the whole configured dir).
@@ -313,6 +330,13 @@ fn read_markdown(
     if !after.is_file() || (after.dev(), after.ino()) != checked_identity {
         return Ok(None);
     }
+    // Hardlinks have no distinguished original name: canonicalization and a
+    // directory-entry identity check cannot prove where the other names live.
+    // Standalone skills conservatively refuse multiply linked inodes before
+    // reading any bytes (including links whose other names are inside root).
+    if require_single_link && after.nlink() > 1 {
+        return Ok(None);
+    }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(error)?;
     Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
@@ -340,7 +364,9 @@ fn has_symlink_ancestor(path: &Path) -> bool {
 fn read_markdown(
     _root: &Path,
     canonical: &Path,
+    _lexical: &Path,
     _checked_identity: (),
+    _require_single_link: bool,
 ) -> Result<Option<String>, PluginRuntimeError> {
     super::read_text(canonical).map(Some)
 }
