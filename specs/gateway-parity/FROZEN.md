@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（A7.2-pr5 PR，状态更新）**：accepted-diffs.md 末尾追加「A7.2 turn replay 条目状态更新」：A7.2-REPLAY-RETENTION-TIMER-001 在生产 TurnGateway 宿主内已消除（追加说明，不改原条目；裸 TurnReplayStore 仍保持原行为）。不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
+
 > **2026-10-23 重登记（#508 PR）**：accepted-diffs.md 末尾只追加 A6.5-MCP-IMAGE-READ-SANDBOX-001（MCP 工具结果自动读图向安全偏离，人批 2026-10-23 采纳建议 A）；不改其他条目、不改判分语义；只重登记 accepted-diffs.md 哈希。
 
 > **2026-10-23 重登记（PR #536 修复轮 5）**：accepted-diffs.md 末尾只追加 A7.2-READ-LASTSEQ-DEPTH-001 判据更正四（更正三的范围句不成立：文件 registry 路径同样可观察；两条有界负控已进仓），原文保留；不改判分语义、不新增豁免；只重登记 accepted-diffs.md 哈希。
@@ -65,7 +67,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-1e6b99b7f9679b483830a81ce89547e9779bc6835efa225c32de82edf18e73c2  accepted-diffs.md
+a8b20e1e6e0f8b8aacd3509e3fd869cb8a7da5d07d8c4049c810934a76266569  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py

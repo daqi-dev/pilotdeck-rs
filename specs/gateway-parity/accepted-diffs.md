@@ -694,3 +694,7 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：仅 stdio 有非空 cwd、无 inline image 的工具结果本地图片自动投影；保留既有点开头正则、后缀 MIME/base64 规则。白名单配置位于 bridge 的 `CreateToolDefinitionsOptions.image_read_allowed_roots` 宿主 API，默认空；不新增 mcp.json 字段，不修改 MCP client/http、inline image 或其他附件处理。
 - **机器判据**：`bridge/tests.rs` 覆盖正常内链/链式链接/符号链接 cwd、`../`、绝对目标、前缀碰撞、根外链接及链接链、白名单内外及无效项、目录/FIFO/设备、超限与恰好上限、打开前替换叶/祖先、打开后身份/类型/大小、fstat 后增长与实际读取上界；打开/读取探针断言不安全候选零打开/零读取。`tests/mcp_runtime.rs` 对完整正常 TS 输出逐字节比较，并验证宿主白名单接线和安全拒绝的文本/data/metadata；各类负控输出见本目录验证记录。
 - **批准记录**：人批 2026-10-23，用户本人采纳建议 A；原话“按照建议 A 向安全偏离 TS。读图前先规范化真实路径（realpath），只允许 cwd 及其子目录（另可配置白名单）；拒绝符号链接越界”。决策卡主仓 `_tmp/20261023-loop/card-mcp-image-read.md`；实现 issue #508。交协调者登记，本树未修改 accepted-diffs.md / FROZEN.md。 补注（协调者）：5 MiB 大小上限与只读普通文件属卡中建议 A 原文所列（卡第 7 行），人原话未逐项复述；取值 5 MiB 为实现方按 TS 图片附件上限所定，AI 判断，待人复核。
+
+## A7.2 turn replay 条目状态更新（A7.2-pr5，10-23）
+
+- **A7.2-REPLAY-RETENTION-TIMER-001 当前状态（追加，不改原条目）**：在新的生产 TurnGateway 宿主内**已消除**。`src/pilotdeck-gateway/src/runtime/turn/gateway.rs` 实现宿主串行计时器：终态回收到期只排队，宿主处理完当前步骤后再回收（人批 10-22 选 B）。机器判据：`src/pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:631` `serial_retention_matches_real_ts_host_steps_and_dispose`、`:741` `serial_timer_cancels_queued_callbacks_and_replacements`（对真实 TS 宿主步骤金样）；负控 `expiry-runs-on-clock-thread`（让到期在时钟线程直接回收）转红，见 `tests/fixtures/turn-gateway/`。**适用范围**：仅经 TurnGateway 宿主的回收；裸 `TurnReplayStore` 默认 `ThreadTimer` 保持原库级行为，脱离宿主时原条目描述的差异仍在，不能宣称库本身已有 JS 步骤边界。
