@@ -690,26 +690,21 @@ impl Core {
             .and_then(|r| r.find("\n---\n").map(|i| &r[..i]))
             .map(header)
             .unwrap_or_default();
+        // `const parsed = parseFrontmatterBlock(raw)` (TS 548) runs before the
+        // project-name check, and only its result is shared by the two date
+        // fields: each terminal `nowIso()` fallback reads the clock on its own
+        // (TS 568-569), so a header without either date observes two distinct
+        // timestamps, one clock read per field.
+        let parsed_updated_at = parse(&raw, || self.now()).map(|(p, _)| text(&p, "updatedAt"));
         let name = n(&header, "project_name");
         if name.is_empty() {
             return Ok(None);
         }
-        // `values.get(key) ?? parsed?.frontmatter.updatedAt ?? nowIso()`: the
-        // parse and the clock are only consulted when the raw header lacks
-        // the date (TS `??` short-circuit), and shared between the two fields
-        // like the single `parsed` value the TS function computes once.
-        let mut parsed_updated_at: Option<String> = None;
-        let mut date_of = |key: &str| -> String {
+        let date_of = |key: &str| -> String {
             if header.contains_key(key) {
                 text(&header, key)
             } else {
-                parsed_updated_at
-                    .get_or_insert_with(|| {
-                        parse(&raw, || self.now())
-                            .map(|(p, _)| text(&p, "updatedAt"))
-                            .unwrap_or_else(|| self.now())
-                    })
-                    .clone()
+                parsed_updated_at.clone().unwrap_or_else(|| self.now())
             }
         };
         let created_at = date_of("created_at");
@@ -1013,13 +1008,42 @@ impl Core {
         self.upsert_meta(input, false)
     }
     fn manifest(&self) -> Result<String> {
+        // `buildManifest` (file-memory.ts:941-974) computes the project meta,
+        // the general metas, every entry and the user-entry provider before
+        // the `Updated: ${nowIso()}` line, so that timestamp observes those
+        // clock reads — a dateless project.meta.md ticks twice ahead of it.
+        let project_meta = self.single_meta()?;
+        let general_metas = if self.general() {
+            self.metas()?
+        } else {
+            vec![]
+        };
+        let all = self.all()?;
+        let user_entries = if !self.options.manage_user_profile {
+            match &self.options.manifest_user_entries_provider {
+                Some(p) => {
+                    let mut entries: Vec<JsObject> = p()?
+                        .into_iter()
+                        .filter(|e| !flag(e, "deprecated"))
+                        .collect();
+                    self.sort(&mut entries)?;
+                    entries
+                }
+                None => vec![],
+            }
+        } else {
+            all.iter()
+                .filter(|e| !flag(e, "deprecated") && text(e, "type") == "user")
+                .cloned()
+                .collect()
+        };
         let mut lines = vec![
             "# EdgeClaw Memory".into(),
             "".into(),
             format!("Updated: {}", self.now()),
             "".into(),
         ];
-        if let Some(meta) = self.single_meta()? {
+        if let Some(meta) = project_meta {
             lines.extend([
                 "## Current Project Meta".into(),
                 format!(
@@ -1030,49 +1054,38 @@ impl Core {
                 "".into(),
             ]);
         }
-        if self.general() {
-            let metas = self.metas()?;
-            if !metas.is_empty() {
-                lines.push("## General Projects".into());
-                for m in metas {
-                    lines.push(format!(
-                        "- [{}]({}) — {}",
-                        text(&m, "projectName"),
-                        text(&m, "relativePath"),
-                        text(&m, "description")
-                    ));
-                }
-                lines.push("".into());
+        if self.general() && !general_metas.is_empty() {
+            lines.push("## General Projects".into());
+            for m in general_metas {
+                lines.push(format!(
+                    "- [{}]({}) — {}",
+                    text(&m, "projectName"),
+                    text(&m, "relativePath"),
+                    text(&m, "description")
+                ));
             }
+            lines.push("".into());
         }
-        let all = self.all()?;
         for (title, kind) in [
             ("Project Memory", "project"),
             ("Feedback Memory", "feedback"),
             ("User Memory", "user"),
             ("Deprecated", ""),
         ] {
-            let mut entries = all
-                .iter()
-                .filter(|e| {
-                    if kind.is_empty() {
-                        flag(e, "deprecated")
-                    } else {
-                        !flag(e, "deprecated") && text(e, "type") == kind
-                    }
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            if kind == "user" && !self.options.manage_user_profile {
-                entries = match &self.options.manifest_user_entries_provider {
-                    Some(p) => p()?
-                        .into_iter()
-                        .filter(|e| !flag(e, "deprecated"))
-                        .collect(),
-                    None => vec![],
-                };
-                self.sort(&mut entries)?;
-            }
+            let entries = if kind == "user" && !self.options.manage_user_profile {
+                user_entries.clone()
+            } else {
+                all.iter()
+                    .filter(|e| {
+                        if kind.is_empty() {
+                            flag(e, "deprecated")
+                        } else {
+                            !flag(e, "deprecated") && text(e, "type") == kind
+                        }
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
             if entries.is_empty() {
                 continue;
             }
