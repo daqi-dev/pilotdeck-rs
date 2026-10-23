@@ -60,4 +60,6 @@ Rust 每次贡献目录遍历用全局 dev+ino 集合（Unix）只展开首次�
 
 修复轮 4 的 `generate-boundary.mts` → `boundary.json` 沿用固定 TS 源树、clean tree 与完整导入闭包守卫。按上方命令双跑并逐字节比较，所有写入均在新建的 `/private/tmp` scratch 目录内。四个回归完整比较 commands / skills / output-styles / style-only：配置 base 越界符号链接（按 ROOT-001 从 TS 投影剔除外部贡献）、插件根符号链接（保留词法路径）、`/private/tmp/...` 绝对配置路径（Node join 仍追加在插件内）、外部不可读 Markdown。最后一种真实 TS 因 readFile 的 EACCES 丢弃整个配置目录，而 ROOT-001 在读取前跳过越界文件、保留根内安全贡献；保留值由去掉外部链接后再次运行真实 TS 的 control 提供。两侧均独立验证 chmod 000 确实拒绝原生读取，不把 stat 成功说成 EACCES。对应四项负控为 `markdown-base-symlink` / `markdown-root-symlink` / `markdown-absolute-configured` / `markdown-outside-unreadable`，记录在 RESULT「修复轮 4」。
 
+#564 的 `generate-toctou.mts` → `toctou.json` 沿用同一守卫，按上方命令双跑并逐字节比较。每个竞态 case 记录真实 TS 的 `checked`（未竞态）、`replaced`（竞态终态下 TS 读到的内容）与 `control`（去掉被竞态条目后的保留集合）；另有 FIFO（子进程 1000 ms 截止）与 socket（TS readFile 的 open 失败使整次加载被拒）两种静态特殊文件。`markdown/tests.rs` 的单元测试用只在 `sub/b.md` 上触发的 `cfg(test)` 钩子在「根检查与 lstat 之后、打开之前」执行同样的替换，并断言 Rust 结果等于 `control`。负控 `markdown-path-read*`、`markdown-nofollow-leaf` / `-ancestor`、`markdown-identity-recheck`、`markdown-race-error`、`markdown-open-error-skip`、`markdown-file-type-skip` 各自只去掉一层防护，必须由对应测试转红。
+
 `markdown-expansion-identity` 保持贡献数量但把所有贡献路径改成第一个目录的路径，必须由子进程内的物理目录身份断言确定性转红（1 ≠ k），验证身份断言本身生效；不依赖防挂起期限。另复跑 `markdown-cycle` 和 `markdown-dag-no-dedup`，检查移除全局去重时仍会被期限/贡献断言抓住。

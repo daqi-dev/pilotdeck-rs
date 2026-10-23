@@ -59,9 +59,10 @@ CASES += [
     ('node-json-diagnostic', LOADER, 'json_syntax::parse_error(&text).unwrap_or(e.message)', 'e.message', 'plugin_loader_invalid'),
     ('configured-trailing-slash', CONFIG, 'out.push("");', 'let _ = path;', 'plugin_loader_contributions'),
     ('server-depth', 'src/pilotdeck-gateway/src/runtime/plugins/loader/server_value.rs', 'Ok(raw.clone())', 'Ok(JsValue::Null)', 'plugin_loader_server_values_oracle'),
+    # #564 fix 1: the read moved into read_markdown(...)?; swallow its error here.
     ('configured-directory-read-error', MARKDOWN,
-     'output.push(load_markdown_source(\n                &canonical,\n                &path,\n                get_plugin_command_name(plugin_name, &path, base),\n            )?);',
-     'if let Ok(command) = load_markdown(&path, get_plugin_command_name(plugin_name, &path, base)) { output.push(command); }',
+     'let Some(raw) = read_markdown(&root, &canonical)? else {\n                continue;\n            };',
+     'let Ok(Some(raw)) = read_markdown(&root, &canonical) else {\n                continue;\n            };',
      'plugin_loader_hooks_paths'),
 ]
 PLUGINS = 'src/pilotdeck-gateway/src/runtime/plugins.rs'
@@ -84,8 +85,26 @@ CASES += [
     ('utf16-lossy-surrogate', CONTRIBUTIONS, 'let mut trimmed = value.units();', 'let decoded = JsString::from(String::from_utf16_lossy(value.units())); let mut trimmed = decoded.units();', 'regressions:plugin_mcp_utf16_oracle'),
     ('utf16-trim', CONTRIBUTIONS, 'char::from_u32(u32::from(unit)).is_some_and(crate::metadata::js_space)', 'char::from_u32(u32::from(unit)).is_some_and(char::is_whitespace)', 'regressions:plugin_mcp_utf16_oracle'),
     ('runtime-replay-generation', PLUGINS, 'self.generation += 1;', 'self.generation += 2;', 'runtime:runtime_empty_directories'),
-    # #564 ROOT-001 negative control: pre-open file type check (post-open identity check is defense-in-depth, symlink races fail earlier at NOFOLLOW open).
-    ('markdown-file-type-skip', MARKDOWN, '    let Some(before) = std::fs::symlink_metadata(canonical)\n        .ok()\n        .filter(|m| m.is_file())', '    let Some(before) = std::fs::symlink_metadata(canonical)\n        .ok()\n        .filter(|_m| true)', 'lib:runtime::plugins::loader::markdown::tests::leaf_replaced_with_symlink_after_check_is_skipped'),
+]
+# #564 ROOT-001 checked read. Each race test fires on sub/b.md itself and
+# compares with the real TS control; each layer has a case only it rejects.
+PROJECT_FILES = 'src/pilotdeck-gateway/src/project_files.rs'
+TOCTOU = 'lib:runtime::plugins::loader::markdown::tests::'
+CASES += [
+    # Pre-open regular-file filter: a socket .md would fail the open and the load.
+    ('markdown-file-type-skip', MARKDOWN, '        .filter(|m| m.is_file())', '        .filter(|_m| true)', TOCTOU + 'socket_markdown_is_skipped'),
+    # A: the pre-#564 path read (follows any raced-in link).
+    ('markdown-path-read', MARKDOWN, '    let mut file = match crate::project_files::open_beneath(root, canonical) {', '    if true {\n        return read_text(canonical).map(Some);\n    }\n    let mut file = match crate::project_files::open_beneath(root, canonical) {', TOCTOU + 'leaf_symlink_raced_after_check_is_skipped'),
+    ('markdown-path-read-ancestor', MARKDOWN, '    let mut file = match crate::project_files::open_beneath(root, canonical) {', '    if true {\n        return read_text(canonical).map(Some);\n    }\n    let mut file = match crate::project_files::open_beneath(root, canonical) {', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
+    # B: NOFOLLOW removed from the leaf / the ancestors (shared #508 helper).
+    ('markdown-nofollow-leaf', PROJECT_FILES, 'OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK', 'OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK', TOCTOU + 'leaf_moved_outside_behind_symlink_is_skipped'),
+    ('markdown-nofollow-ancestor', PROJECT_FILES, 'access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW', 'access | OFlags::DIRECTORY | OFlags::CLOEXEC', TOCTOU + 'ancestor_moved_outside_behind_symlink_is_skipped'),
+    # C: post-open (dev, ino) recheck removed.
+    ('markdown-identity-recheck', MARKDOWN, 'if !after.is_file() || (before.dev(), before.ino()) != (after.dev(), after.ino()) {', 'if !after.is_file() {', TOCTOU + 'leaf_replaced_by_other_inode_is_skipped'),
+    # Race errors are skipped, not turned into a failed load.
+    ('markdown-race-error', MARKDOWN, '        {\n            return Ok(None);\n        }\n        Err(e) => return Err(error(e)),', '        {\n            return Err(error(e));\n        }\n        Err(e) => return Err(error(e)),', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
+    # Ordinary open errors on the unchanged file still propagate like TS readFile.
+    ('markdown-open-error-skip', MARKDOWN, '        Err(e) => return Err(error(e)),\n    };', '        Err(_) => return Ok(None),\n    };', 'plugin_loader_hooks_paths'),
 ]
 # Each mutation restores one removed limit, or removes global directory de-dup.
 markdown_source = (ROOT/MARKDOWN).read_text()
@@ -117,7 +136,8 @@ CASES += [
     ('markdown-root-symlink', MARKDOWN, 'plugin_root.canonicalize()', 'Ok::<_, std::io::Error>(plugin_root.to_path_buf())', 'traversal:plugin_markdown_plugin_root_symlink'),
     ('markdown-absolute-configured', CONFIG, 'PathBuf::from(format!("{}/{}", base.display(), part))', 'base.join(part)', 'traversal:plugin_markdown_absolute_configured_path'),
     ('markdown-outside-unreadable', MARKDOWN, ENTRY_GUARD, '', 'traversal:plugin_markdown_outside_unreadable_file'),
-    ('markdown-alias', MARKDOWN, 'path: path.into(),', 'path: source.into(),', 'traversal:plugin_markdown_alias_first_path'),
+    # #564 fix 1: the canonical source is no longer a parameter; pass it as the contribution path.
+    ('markdown-alias', MARKDOWN, '                &raw,\n                &path,\n', '                &raw,\n                &canonical,\n', 'traversal:plugin_markdown_alias_first_path'),
     ('markdown-entry-budget', MARKDOWN, markdown_source, ENTRY_LIMIT, 'traversal:plugin_markdown_entries_match_ts'),
     ('markdown-depth-budget', MARKDOWN, markdown_source, DEPTH_LIMIT, 'traversal:plugin_markdown_deep_tree_matches_ts'),
     ('markdown-directory-boundary', MARKDOWN, ENTRY_GUARD, '        if !canonical.starts_with(&root) && !path.components().any(|c| c.as_os_str() == "directory") { continue; }', 'traversal:plugin_markdown_root_boundary'),
@@ -270,12 +290,15 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'utf16-trim': ['assertion `left == right` failed: Some("trim-ecmascript")'],
  'markdown-entry-budget': ['wide tree succeeds like TS'],
  'markdown-depth-budget': ['deep tree succeeds like TS'],
+ # #564: an entry let past the traversal guard now hits the checked open's own
+ # root containment (EACCES), which fails the configured directory instead of
+ # leaking; the safe sibling is lost, so the boundary replay still turns red.
  'markdown-directory-boundary': ['root boundary skips directory/file/chain leaks: commands',
-                                 'String("p:directory:leak")'],
+                                 '  left: Array []'],
  'markdown-file-boundary': ['root boundary skips directory/file/chain leaks: commands',
-                            'String("p:file")'],
+                            '  left: Array []'],
  'markdown-chain-boundary': ['root boundary skips directory/file/chain leaks: commands',
-                             'String("p:chain:leak")'],
+                             '  left: Array []'],
  'markdown-configured-root': ['configured base cannot escape root'],
  'mcp-server-name-lossy': ['server names retain UTF-16 identity and sort order'],
  'markdown-all-entry-budget': ['non-Markdown assets match TS'],
@@ -284,7 +307,14 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'markdown-real-candidate-budget': ['real node_modules skills match TS'],
  'markdown-readme-candidate-budget': ['5000 README and 54000 JS preserve TS skills'],
  'markdown-node-modules-depth-budget': ['deep node_modules matches TS across configured loaders'],
- 'markdown-file-type-skip': ['expected only safe sibling']}
+ 'markdown-file-type-skip': ['socket must be skipped, not fail'],
+ 'markdown-path-read': ['leaf-symlink: raced load keeps only the TS control', 'String("SECRET")'],
+ 'markdown-path-read-ancestor': ['ancestor-symlink: raced load keeps only the TS control', 'String("SECRET")'],
+ 'markdown-nofollow-leaf': ['leaf-moved-symlink: raced load keeps only the TS control', 'String("inside")'],
+ 'markdown-nofollow-ancestor': ['ancestor-moved-symlink: raced load keeps only the TS control', 'String("inside")'],
+ 'markdown-identity-recheck': ['leaf-hardlink: raced load keeps only the TS control', 'String("SECRET")'],
+ 'markdown-race-error': ['ancestor-symlink: raced entry must be skipped, not fail'],
+ 'markdown-open-error-skip': ['assertion `left == right` failed: hook-files-and-configured-paths: load attempt 2']}
 
 assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
 assert set(EXPECTED_FAILURES) == {c[0] for c in CASES}, "every case needs failure markers"

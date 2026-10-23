@@ -436,54 +436,32 @@ fn plugin_markdown_outside_unreadable_file() {
 #[test]
 #[cfg(unix)]
 fn plugin_markdown_toctou_races_skip_replaced_entries() {
-    for id in ["leaf-symlink", "ancestor-symlink"] {
+    // The raced Rust loads are replayed against `control` by the deterministic
+    // unit tests in `loader/markdown/tests.rs` (hook fires on sub/b.md itself).
+    // Here: the recorded TS facts that make each race a divergence at all.
+    for (id, read) in [
+        ("leaf-symlink", "SECRET"),
+        ("leaf-hardlink", "SECRET"),
+        ("ancestor-symlink", "SECRET"),
+        ("leaf-moved-symlink", "inside"),
+        ("ancestor-moved-symlink", "inside"),
+    ] {
         let case = toctou_case(id);
-        let checked = &case["checked"];
-        let replaced = &case["replaced"];
-        // TS observations: checked state has 2 files, replaced state reads SECRET
-        assert_eq!(
-            checked.as_array().unwrap().len(),
-            2,
-            "{id}: TS checked state has safe + inside"
-        );
-        assert!(
-            checked
+        let contents = |key: &str| -> Vec<Value> {
+            case[key]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|c| c["content"] == "inside"),
-            "{id}: TS checked has inside"
-        );
+                .map(|c| c["content"].clone())
+                .collect()
+        };
         assert_eq!(
-            replaced.as_array().unwrap().len(),
-            2,
-            "{id}: TS replaced state has 2 files"
+            contents("checked"),
+            [json!("safe"), json!("inside")],
+            "{id}"
         );
-        assert!(
-            replaced
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|c| c["content"] == "SECRET"),
-            "{id}: TS reads replaced SECRET"
-        );
-        // Rust static check: no race, both normal files are readable
-        let scratch = Scratch::new("564-toctou");
-        let base = scratch.path().join("p/commands");
-        let sub = base.join("sub");
-        fs::create_dir_all(&sub).unwrap();
-        fs::write(base.join("a.md"), "safe").unwrap();
-        fs::write(sub.join("b.md"), "inside").unwrap();
-        let result = loader::load_plugin_commands("p", &base).unwrap();
-        assert_eq!(result.len(), 2, "{id}: Rust static reads both normal files");
-        assert!(
-            result.iter().any(|c| c.content == "safe"),
-            "{id}: safe read"
-        );
-        assert!(
-            result.iter().any(|c| c.content == "inside"),
-            "{id}: inside read"
-        );
+        assert_eq!(contents("replaced"), [json!("safe"), json!(read)], "{id}");
+        assert_eq!(contents("control"), [json!("safe")], "{id}");
     }
 }
 

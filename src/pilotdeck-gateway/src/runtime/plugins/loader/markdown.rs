@@ -179,21 +179,26 @@ fn load_markdown(path: &Path, name: String) -> Result<LoadedPluginCommand, Plugi
     load_markdown_source(&read_text(path)?, path, name)
 }
 
-// Test-only race point between the pre-open check and the checked open (#564).
-#[cfg(test)]
-type BeforeOpen = Box<dyn FnOnce(&Path)>;
-#[cfg(test)]
+// Test-only race point between the pre-open lstat and the checked open (#564).
+// Keyed by the canonical path it must fire on, so an earlier sibling read in
+// the same traversal cannot consume it.
+#[cfg(all(test, unix))]
+type BeforeOpen = (PathBuf, Box<dyn FnOnce(&Path)>);
+#[cfg(all(test, unix))]
 thread_local!(static BEFORE_OPEN: std::cell::RefCell<Option<BeforeOpen>> = const { std::cell::RefCell::new(None) });
 
 /// #564 / ROOT-001: never trust the checked path twice. Open it from `/` with
 /// NOFOLLOW at every component (`project_files::open_beneath`, shared with the
 /// #508 image sandbox), then require the handle to be the same regular file
 /// (dev, ino) that was checked. A replacement after the check is skipped like
-/// any out-of-root entry; I/O errors on the unchanged file still propagate.
+/// any out-of-root entry; any other open/read error propagates like the
+/// pre-#564 path read and TS `readFile` (PluginCommandLoader.ts:68).
 #[cfg(unix)]
 fn read_markdown(root: &Path, canonical: &Path) -> Result<Option<String>, PluginRuntimeError> {
     use std::{io::Read, os::unix::fs::MetadataExt};
     let error = |e: std::io::Error| super::io_error("open", canonical, &e);
+    // Only a regular file is read: a FIFO/socket/device `.md`, or an entry
+    // removed since the containment check, is skipped before any open.
     let Some(before) = std::fs::symlink_metadata(canonical)
         .ok()
         .filter(|m| m.is_file())
@@ -201,19 +206,30 @@ fn read_markdown(root: &Path, canonical: &Path) -> Result<Option<String>, Plugin
         return Ok(None);
     };
     #[cfg(test)]
-    if let Some(hook) = BEFORE_OPEN.with(|h| h.borrow_mut().take()) {
+    if let Some((_, hook)) = BEFORE_OPEN.with(|h| {
+        h.borrow_mut()
+            .take_if(|(target, _)| target.as_path() == canonical)
+    }) {
         hook(canonical);
     }
     let mut file = match crate::project_files::open_beneath(root, canonical) {
         Ok(file) => file,
-        // A raced-in link fails NOFOLLOW (ELOOP, or ENOTDIR for a Linux O_PATH
-        // ancestor); only a path that still resolves to itself reports an error.
-        Err(e) if canonical.canonicalize().is_ok_and(|now| now == canonical) => {
-            return Err(error(e));
+        // `canonical` had no links and only directories above the leaf, so
+        // NOFOLLOW's ELOOP or a non-directory ancestor (ENOTDIR, also a link
+        // under Linux O_PATH) proves a link raced in after the check. Every
+        // other error (ENOENT, EACCES, EMFILE, a socket's EOPNOTSUPP/ENXIO)
+        // propagates like TS readFile; it is never guessed to be a race.
+        Err(e)
+            if crate::project_files::nofollow_loop(&e)
+                || e.raw_os_error() == Some(libc::ENOTDIR) =>
+        {
+            return Ok(None);
         }
-        Err(_) => return Ok(None),
+        Err(e) => return Err(error(e)),
     };
     let after = file.metadata().map_err(error)?;
+    // A FIFO/device (opened NONBLOCK) or another inode renamed or hard-linked
+    // over the checked name is not the checked regular file.
     if !after.is_file() || (before.dev(), before.ino()) != (after.dev(), after.ino()) {
         return Ok(None);
     }
@@ -228,7 +244,8 @@ fn read_markdown(_root: &Path, canonical: &Path) -> Result<Option<String>, Plugi
     read_text(canonical).map(Some)
 }
 
-#[cfg(test)]
+// Symlink/socket races and the openat path exist only on Unix.
+#[cfg(all(test, unix))]
 mod tests;
 
 fn load_markdown_source(

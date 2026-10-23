@@ -144,6 +144,102 @@
       ]
     },
     {
+      "id": "leaf-moved-symlink",
+      "checked": [
+        {
+          "name": "p:a",
+          "path": "<root>/leaf-moved-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/leaf-moved-symlink/p/commands/sub/b.md",
+          "content": "inside",
+          "frontmatter": {
+            "kind": "inside"
+          },
+          "isSkill": false
+        }
+      ],
+      "replaced": [
+        {
+          "name": "p:a",
+          "path": "<root>/leaf-moved-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/leaf-moved-symlink/p/commands/sub/b.md",
+          "content": "inside",
+          "frontmatter": {
+            "kind": "inside"
+          },
+          "isSkill": false
+        }
+      ],
+      "control": [
+        {
+          "name": "p:a",
+          "path": "<root>/leaf-moved-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ]
+    },
+    {
+      "id": "ancestor-moved-symlink",
+      "checked": [
+        {
+          "name": "p:a",
+          "path": "<root>/ancestor-moved-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/ancestor-moved-symlink/p/commands/sub/b.md",
+          "content": "inside",
+          "frontmatter": {
+            "kind": "inside"
+          },
+          "isSkill": false
+        }
+      ],
+      "replaced": [
+        {
+          "name": "p:a",
+          "path": "<root>/ancestor-moved-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/ancestor-moved-symlink/p/commands/sub/b.md",
+          "content": "inside",
+          "frontmatter": {
+            "kind": "inside"
+          },
+          "isSkill": false
+        }
+      ],
+      "control": [
+        {
+          "name": "p:a",
+          "path": "<root>/ancestor-moved-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ]
+    },
+    {
       "id": "static-fifo",
       "fifo": {
         "timeoutMs": 1000,
@@ -153,6 +249,23 @@
         {
           "name": "p:a",
           "path": "<root>/static-fifo/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ]
+    },
+    {
+      "id": "static-socket",
+      "socket": {
+        "rejected": true,
+        "code": "Unknown system error -102",
+        "syscall": "open"
+      },
+      "control": [
+        {
+          "name": "p:a",
+          "path": "<root>/static-socket/p/commands/a.md",
           "content": "safe",
           "frontmatter": {},
           "isSkill": false
