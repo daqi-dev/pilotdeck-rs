@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（#484 PR #544 修复轮 1，更正与新增）**：改写 A6.3-PLUGIN-MARKDOWN-CYCLE-001（首版只按祖先防环、引用已移走的测试、误称别名与 TS 一致，按 Grok r1 与真实 TS 实测更正为全局去重 + 总预算并列出三处可观察差异），新增 A6.3-PLUGIN-MARKDOWN-ROOT-001（不经符号链接读插件根外文件）；均向安全偏离、AI 代批待人复核、未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
+
 > **2026-10-23 重登记（#484 PR，透明披露）**：accepted-diffs.md 末尾新增「已知未对齐（未批准，待人批）· A6.3 插件 loader」一节，登记 A6.3-PLUGIN-MARKDOWN-CYCLE-001（markdown 遍历跳过符号链接祖先回边，向安全偏离，AI 代批待人复核），状态未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
 
 > **2026-10-23 重登记（PR #537 r6）**：accepted-diffs.md 末尾只追加 A6.6-EDGECLAW-SNAPSHOT-CPSYNC-ERROR-001（快照 cpSync 回退失败时错误形状，已知未对齐、未批准）；不改其他条目、不改判分语义；只重登记 accepted-diffs.md 哈希。
@@ -77,7 +79,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-e90b8df76a7c8bd3d33064cfe08bc278457d0a1c6361c8f831b8e6e016223fb5  accepted-diffs.md
+07e47b5a5a36a07c41bdea39bffebf0dc5dec8eb781691a93e1eb63f627d0741  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py

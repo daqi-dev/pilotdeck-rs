@@ -739,11 +739,21 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 
 ## 已知未对齐（未批准，待人批）· A6.3 插件 loader
 
-### A6.3-PLUGIN-MARKDOWN-CYCLE-001 · markdown 目录遍历跳过指向祖先目录的符号链接回边（向安全偏离）
+### A6.3-PLUGIN-MARKDOWN-CYCLE-001 · markdown 遍历全局目录去重与总遍历预算（向安全偏离）
 
-- **类别**：向安全偏离（基线继承性挂起与资源放大 → 有界遍历）。
-- **TS 依据**（cc7c4e6）：插件 commands / skills / output-styles 的 Markdown 目录遍历跟随符号链接、无防环。PR #484 实现方实测：单条 `commands/link0 -> ..` 由系统 ELOOP 截止，返回 32 个重复路径的命令；两条 `link0 / link1 -> ..` 的分叉回边连续两次在 3000 ms 探针截止时仍未返回（限时观察，不等于已证明无限）。证据：`src/pilotdeck-gateway/tests/fixtures/plugin-loader/regressions.json` 的 cycleCases、`_tmp/20261023-issue-484-plugins/ts-cycle-initial.log`。
-- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/plugins/loader/markdown.rs` 记录 DFS 祖先目录，遇指向祖先的符号链接回边时跳过该子树，保留已加载与其他非循环贡献、保留非循环别名各自的贡献。可观察差异：循环路径产生的重复贡献不再返回，分叉回边在有限时间内返回。
-- **范围**：仅符号链接构成祖先回边的目录；无环目录与非循环别名的结果与 TS 一致。
-- **机器判据**：`src/pilotdeck-gateway/tests/plugin_regressions.rs:132` `plugin_markdown_cycle_is_bounded`（子进程运行、带超时）、`:193` `plugin_markdown_acyclic_aliases_are_preserved`；负控见 `tests/fixtures/plugin-loader/negative-controls.py`。
-- **批准记录**：无；依据人批先例 #496（TS 有挂起 / 越权缺陷时 Rust 向安全偏离并登记）由协调者在 #484 任务书中授权实现，**AI 代批，待人复核**；**已知未对齐（未批准）**。同类：#541（skills import tree_files）。
+- **类别**：向安全偏离（目录互链 / 别名图的路径放大，以全局目录去重与总遍历预算限制）。
+- **TS 依据**（cc7c4e6）：`src/extension/plugins/loading/PluginCommandLoader.ts:79-102` 跟随目录链接、不去重、不核插件根。真实 TS 金样 `src/pilotdeck-gateway/tests/fixtures/plugin-loader/traversal.json`：兄弟目录两两互链 k=3/7/10/20 均在 1000 ms 截止时未返回（只登记观测，不声称证明永久挂起）；无环的物理目录别名 left / right 返回两条；depth-65 与 entries-4097 成功。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/plugins/loader/markdown.rs` 对每个配置贡献目录独立使用全局 `(dev, ino)` 访问集，已访问的物理目录不再展开；最多枚举 4096 条目、进入 64 层，超限报 `Plugin markdown traversal limit exceeded.`，配置入口沿用 TS 的每目录 error → [] 边界（丢弃该目录全部结果）。命名与路径保留首次词法访问。
+- **范围**：插件 commands / skills / output-styles 与 style-only 的每个配置目录遍历，含祖先回边、兄弟互链、重复物理目录别名、超出预算的无环树。**可观察差异**：① 无环的物理目录别名 TS 两条、Rust 一条（首次路径）；② 4097 条目以上或 65 层以上的无环树 TS 成功、Rust 该目录为空；③ 成环 / 互链目录 TS 不返回、Rust 有界返回。Unix 用 dev+ino，非 Unix 回退规范化路径（未验证）。不同配置目录之间不共享访问集与预算。
+- **机器判据**：`src/pilotdeck-gateway/tests/plugin_traversal.rs` 的 `plugin_markdown_clique_03/07/10/20`（各为 1 s 上限的子进程）、`plugin_markdown_alias_first_path`、`plugin_markdown_entry_budget`、`plugin_markdown_depth_budget`；负控（恢复只查祖先的算法实际超时，alias / entry / depth 各自命中）见 `tests/fixtures/plugin-loader/negative-controls.py`，协调者 rebase 后沙箱外整跑 58/58 检出（`_tmp/20261023-issue-484-plugins/coord-negative-postrebase/summary.json`）。
+- **批准记录**：无；依据人批先例 #496 由协调者在 #484 任务书中授权实现，**AI 代批，待人复核**；**已知未对齐（未批准）**。更正（PR #544 修复轮 1）：本条首版只按 DFS 祖先防环、引用 `plugin_regressions.rs` 中已移走的测试，并写有「非循环别名各自贡献、与 TS 一致」——Grok r1 实测互链按阶乘增长，codex 修复轮 1 真实 TS 实测别名 TS 两条、Rust 一条，均已按上文改正。同类：A6.8-SKILLS-TREEFILES-001（#541）。
+
+### A6.3-PLUGIN-MARKDOWN-ROOT-001 · 插件 markdown 不经符号链接读取插件根外文件（向安全偏离）
+
+- **类别**：向安全偏离（阻止插件贡献经目录 / 文件符号链接读取插件根外 Markdown）。
+- **TS 依据**（cc7c4e6）：`PluginCommandLoader.ts:89-99` stat 跟随链接，`:68` 按词法路径 readFile，不核插件根。真实 TS `traversal.json` 的 boundary-commands / skills / output-styles、boundary-plugin、boundary-style-only 均读到根外 SECRET（PR #544 Grok r1 同样实测读到 `outside/secret/leak.md`）；不可读的 stat / readdir 条目在 `:82-95` 跳过。
+- **Rust 行为**：`markdown.rs` 规范化插件根、配置根和每个条目，要求按路径组件仍位于规范化插件根内；越界、断链或无法规范化的条目跳过，不读根外内容，也不因一个越界条目丢掉安全的兄弟条目；配置 base 的 `..` 或越界符号链接同样不能绕过。首次词法命名保留，读取经核准的规范化文件。
+- **范围**：上述三类插件贡献与 style-only；`load_plugin_commands(plugin, base)` 直接入口以 base 为安全根，配置入口以实际插件根为界；插件根本身可以是合法的符号链接（以其物理根为界）。只覆盖本次加载时解析的链接，不提供对抗并发改写、特殊文件或整个进程磁盘读取的沙箱。
+- **机器判据**：`src/pilotdeck-gateway/tests/plugin_traversal.rs` 的 `plugin_markdown_root_boundary`（相似文本前缀、目录链接、文件链接、链接链、SKILL.md 链接、三个贡献族、style-only、越界配置 base、安全兄弟保留）；目录 / 文件 / 链接链 / 配置根四条独立负控实际读到越界内容并命中断言。原 oracle 中两条已知根外贡献只在测试中精确排除，原金样未改。
+- **批准记录**：无；依据人批先例 #496 由协调者在 #484 修复轮 1 任务书中授权，**AI 代批，待人复核**；**已知未对齐（未批准）**。同类：#508（MCP 读图越出 cwd，仍待人定）、A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001。
+
