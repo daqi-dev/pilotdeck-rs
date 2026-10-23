@@ -7,7 +7,7 @@ use crate::runtime::memory::edgeclaw::file_memory::{
     absolute,
     helpers::{extract_objects, hash, map_global, objects, s, sort_manifest_entries, text},
 };
-use pilotdeck_protocol::{JsObject, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use rusqlite::{Connection, OptionalExtension};
 use std::{
     collections::HashMap,
@@ -758,7 +758,7 @@ impl EdgeClawFileStores {
             let mut input = JsObject::new();
             put(&mut input, "ids", JsValue::Array(paths));
             put(&mut input, "maxLines", JsValue::Number(max_lines));
-            for mut record in objects(snapshot.store.get_memory_records_by_ids(&input)?) {
+            for mut record in extract_objects(&snapshot.store.get_memory_records_by_ids(&input)?) {
                 let mut path = format!("external:{key}:")
                     .encode_utf16()
                     .collect::<Vec<_>>();
@@ -787,7 +787,7 @@ pub(super) fn sort_entry_values(entries: &mut Vec<JsValue>) -> Result<()> {
         .iter()
         .filter_map(|v| v.as_object().cloned())
         .collect::<Vec<_>>();
-    sort(&mut records, |o| text(o, "updatedAt"), "relativePath")?;
+    sort_manifest_entries(&mut records, |o| text(o, "updatedAt"), "relativePath")?;
     *entries = records.into_iter().map(JsValue::Object).collect();
     Ok(())
 }
