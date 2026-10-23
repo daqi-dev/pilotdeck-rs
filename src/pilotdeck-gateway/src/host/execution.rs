@@ -84,7 +84,16 @@ pub(super) async fn run(
         return Ok(ExecuteResult::Aborted { terminal: None });
     }
     let limits = client.limits;
-    let execution_deadline = Instant::now().checked_add(limits.execution_timeout);
+    let execution_deadline = limits
+        .execution_timeout
+        .map(|timeout| {
+            Instant::now().checked_add(timeout).ok_or_else(|| {
+                HostError::protocol(
+                    "Sidecar execution_timeout is not representable by the monotonic clock.",
+                )
+            })
+        })
+        .transpose()?;
     let mut cancel_changes = cancellation.0.subscribe();
     let mut cancel_sent = false;
     let execute_id = JsString::from("execute");
@@ -386,8 +395,8 @@ pub(super) async fn run(
     }
     // TurnScope joins unfinished callbacks before disposing turn-owned state.
 }
-// An unrepresentable deadline is effectively unbounded, like Tokio timeout's
-// checked-add path. Keep execution and terminal drain independently optional.
+// Execution and terminal drain are independently optional; None parks that
+// branch forever, so "no deadline" is modeled instead of using a sentinel.
 async fn wait_for_deadline(deadline: Option<Instant>) {
     match deadline {
         Some(deadline) => sleep_until(deadline).await,
