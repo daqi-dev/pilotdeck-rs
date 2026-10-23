@@ -97,6 +97,17 @@ fn directory_identity(_metadata: &std::fs::Metadata, canonical: &Path) -> PathBu
     canonical.to_path_buf()
 }
 
+#[cfg(unix)]
+fn file_identity(metadata: &std::fs::Metadata) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    (metadata.dev(), metadata.ino())
+}
+
+#[cfg(not(unix))]
+fn file_identity(_metadata: &std::fs::Metadata) -> () {
+    ()
+}
+
 pub fn load_plugin_commands(
     plugin_name: &str,
     base: &Path,
@@ -148,7 +159,8 @@ pub(super) fn load_plugin_commands_with_root(
             // The containment check above resolved `canonical`; read through a
             // re-verified handle so a leaf/ancestor replaced after that check
             // cannot redirect the read outside the plugin root (ROOT-001).
-            let Some(raw) = read_markdown(&root, &canonical)? else {
+            let checked_identity = file_identity(&metadata);
+            let Some(raw) = read_markdown(&root, &canonical, checked_identity)? else {
                 continue;
             };
             output.push(load_markdown_source(
@@ -186,6 +198,11 @@ fn load_markdown(path: &Path, name: String) -> Result<LoadedPluginCommand, Plugi
 type BeforeOpen = (PathBuf, Box<dyn FnOnce(&Path)>);
 #[cfg(all(test, unix))]
 thread_local!(static BEFORE_OPEN: std::cell::RefCell<Option<BeforeOpen>> = const { std::cell::RefCell::new(None) });
+// Separate race window after the traversal's metadata identity was captured,
+// before read_markdown observes the name with lstat. Keep BEFORE_OPEN for
+// races after lstat so NOFOLLOW and the handle recheck stay independently tested.
+#[cfg(all(test, unix))]
+thread_local!(static BEFORE_LSTAT: std::cell::RefCell<Option<BeforeOpen>> = const { std::cell::RefCell::new(None) });
 
 /// #564 / ROOT-001: never trust the checked path twice. Open it from `/` with
 /// NOFOLLOW at every component (`project_files::open_beneath`, shared with the
@@ -194,16 +211,29 @@ thread_local!(static BEFORE_OPEN: std::cell::RefCell<Option<BeforeOpen>> = const
 /// any out-of-root entry; any other open/read error propagates like the
 /// pre-#564 path read and TS `readFile` (PluginCommandLoader.ts:68).
 #[cfg(unix)]
-fn read_markdown(root: &Path, canonical: &Path) -> Result<Option<String>, PluginRuntimeError> {
+fn read_markdown(
+    root: &Path,
+    canonical: &Path,
+    checked_identity: (u64, u64),
+) -> Result<Option<String>, PluginRuntimeError> {
     use std::{io::Read, os::unix::fs::MetadataExt};
     let error = |e: std::io::Error| super::io_error("open", canonical, &e);
-    // Only a regular file is read: a FIFO/socket/device `.md`, or an entry
-    // removed since the containment check, is skipped before any open.
-    let Some(before) = std::fs::symlink_metadata(canonical)
-        .ok()
-        .filter(|m| m.is_file())
-    else {
-        return Ok(None);
+    // Pre-open lstat: a FIFO/socket/device `.md` is skipped before any open.
+    // If the checked entry no longer exists, propagate ENOENT like TS readFile
+    // (PluginLoader.ts:93 `.catch(() => [])` fails the whole configured dir).
+    // Other lstat errors also propagate: we only skip when it exists but isn't
+    // a regular file (races are caught by identity recheck or NOFOLLOW open).
+    #[cfg(test)]
+    if let Some((_, hook)) = BEFORE_LSTAT.with(|h| {
+        h.borrow_mut()
+            .take_if(|(target, _)| target.as_path() == canonical)
+    }) {
+        hook(canonical);
+    }
+    let _before = match std::fs::symlink_metadata(canonical) {
+        Ok(m) if m.is_file() => m,
+        Ok(_) => return Ok(None),       // exists but not a file: skip
+        Err(e) => return Err(error(e)), // doesn't exist or other error: propagate
     };
     #[cfg(test)]
     if let Some((_, hook)) = BEFORE_OPEN.with(|h| {
@@ -229,8 +259,11 @@ fn read_markdown(root: &Path, canonical: &Path) -> Result<Option<String>, Plugin
     };
     let after = file.metadata().map_err(error)?;
     // A FIFO/device (opened NONBLOCK) or another inode renamed or hard-linked
-    // over the checked name is not the checked regular file.
-    if !after.is_file() || (before.dev(), before.ino()) != (after.dev(), after.ino()) {
+    // over the checked name is not the checked regular file. Compare against
+    // the identity captured at the root boundary check, not the pre-open lstat:
+    // a hardlink raced in between the check and lstat has the same (dev, ino)
+    // as the lstat, but differs from the original checked file.
+    if !after.is_file() || (after.dev(), after.ino()) != checked_identity {
         return Ok(None);
     }
     let mut bytes = Vec::new();
@@ -240,7 +273,11 @@ fn read_markdown(root: &Path, canonical: &Path) -> Result<Option<String>, Plugin
 
 /// Non-Unix keeps the pre-#564 path read: no openat + O_NOFOLLOW (unverified).
 #[cfg(not(unix))]
-fn read_markdown(_root: &Path, canonical: &Path) -> Result<Option<String>, PluginRuntimeError> {
+fn read_markdown(
+    _root: &Path,
+    canonical: &Path,
+    _checked_identity: (),
+) -> Result<Option<String>, PluginRuntimeError> {
     read_text(canonical).map(Some)
 }
 

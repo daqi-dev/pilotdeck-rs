@@ -61,8 +61,8 @@ CASES += [
     ('server-depth', 'src/pilotdeck-gateway/src/runtime/plugins/loader/server_value.rs', 'Ok(raw.clone())', 'Ok(JsValue::Null)', 'plugin_loader_server_values_oracle'),
     # #564 fix 1: the read moved into read_markdown(...)?; swallow its error here.
     ('configured-directory-read-error', MARKDOWN,
-     'let Some(raw) = read_markdown(&root, &canonical)? else {\n                continue;\n            };',
-     'let Ok(Some(raw)) = read_markdown(&root, &canonical) else {\n                continue;\n            };',
+     'let Some(raw) = read_markdown(&root, &canonical, checked_identity)? else {\n                continue;\n            };',
+     'let Ok(Some(raw)) = read_markdown(&root, &canonical, checked_identity) else {\n                continue;\n            };',
      'plugin_loader_hooks_paths'),
 ]
 PLUGINS = 'src/pilotdeck-gateway/src/runtime/plugins.rs'
@@ -92,7 +92,7 @@ PROJECT_FILES = 'src/pilotdeck-gateway/src/project_files.rs'
 TOCTOU = 'lib:runtime::plugins::loader::markdown::tests::'
 CASES += [
     # Pre-open regular-file filter: a socket .md would fail the open and the load.
-    ('markdown-file-type-skip', MARKDOWN, '        .filter(|m| m.is_file())', '        .filter(|_m| true)', TOCTOU + 'socket_markdown_is_skipped'),
+    ('markdown-file-type-skip', MARKDOWN, '        Ok(m) if m.is_file() => m,', '        Ok(m) if true => m,', TOCTOU + 'socket_markdown_is_skipped'),
     # A: the pre-#564 path read (follows any raced-in link).
     ('markdown-path-read', MARKDOWN, '    let mut file = match crate::project_files::open_beneath(root, canonical) {', '    if true {\n        return read_text(canonical).map(Some);\n    }\n    let mut file = match crate::project_files::open_beneath(root, canonical) {', TOCTOU + 'leaf_symlink_raced_after_check_is_skipped'),
     ('markdown-path-read-ancestor', MARKDOWN, '    let mut file = match crate::project_files::open_beneath(root, canonical) {', '    if true {\n        return read_text(canonical).map(Some);\n    }\n    let mut file = match crate::project_files::open_beneath(root, canonical) {', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
@@ -100,7 +100,11 @@ CASES += [
     ('markdown-nofollow-leaf', PROJECT_FILES, 'OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK', 'OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK', TOCTOU + 'leaf_moved_outside_behind_symlink_is_skipped'),
     ('markdown-nofollow-ancestor', PROJECT_FILES, 'access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW', 'access | OFlags::DIRECTORY | OFlags::CLOEXEC', TOCTOU + 'ancestor_moved_outside_behind_symlink_is_skipped'),
     # C: post-open (dev, ino) recheck removed.
-    ('markdown-identity-recheck', MARKDOWN, 'if !after.is_file() || (before.dev(), before.ino()) != (after.dev(), after.ino()) {', 'if !after.is_file() {', TOCTOU + 'leaf_replaced_by_other_inode_is_skipped'),
+    ('markdown-identity-recheck', MARKDOWN, 'if !after.is_file() || (after.dev(), after.ino()) != checked_identity {', 'if !after.is_file() {', TOCTOU + 'leaf_replaced_by_other_inode_is_skipped'),
+    # Fix round 2: identity anchor moved to check point; revert to lstat identity.
+    ('markdown-identity-anchor', MARKDOWN, 'if !after.is_file() || (after.dev(), after.ino()) != checked_identity {', 'let lstat_identity = (_before.dev(), _before.ino());\n    if !after.is_file() || (after.dev(), after.ino()) != lstat_identity {', TOCTOU + 'hardlink_with_different_checked_identity_is_skipped'),
+    # Fix round 2: deletion after check now propagates; revert to skip.
+    ('markdown-deletion-skip', MARKDOWN, "        Err(e) => return Err(error(e)), // doesn't exist or other error: propagate", '        Err(_) => return Ok(None), // negative control: deletion silently skipped', TOCTOU + 'deleted_after_check_propagates_error'),
     # Race errors are skipped, not turned into a failed load.
     ('markdown-race-error', MARKDOWN, '        {\n            return Ok(None);\n        }\n        Err(e) => return Err(error(e)),', '        {\n            return Err(error(e));\n        }\n        Err(e) => return Err(error(e)),', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
     # Ordinary open errors on the unchanged file still propagate like TS readFile.
@@ -314,7 +318,9 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'markdown-nofollow-ancestor': ['ancestor-moved-symlink: raced load keeps only the TS control', 'String("inside")'],
  'markdown-identity-recheck': ['leaf-hardlink: raced load keeps only the TS control', 'String("SECRET")'],
  'markdown-race-error': ['ancestor-symlink: raced entry must be skipped, not fail'],
- 'markdown-open-error-skip': ['assertion `left == right` failed: hook-files-and-configured-paths: load attempt 2']}
+ 'markdown-open-error-skip': ['assertion `left == right` failed: hook-files-and-configured-paths: load attempt 2'],
+ 'markdown-identity-anchor': ['leaf-hardlink: raced load keeps only the TS control', 'String("SECRET")'],
+ 'markdown-deletion-skip': ['deletion after check must propagate error']}
 
 assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
 assert set(EXPECTED_FAILURES) == {c[0] for c in CASES}, "every case needs failure markers"
@@ -348,7 +354,7 @@ try:
                     target_args = ['--test', {'regressions':'plugin_regressions','runtime':'plugin_runtime','traversal':'plugin_traversal'}[target]]
             else:
                 target_args, test_name = ['--test','plugin_loader'], test
-            result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact'],cwd=ROOT,env=env,timeout=600 if test_name == 'plugin_markdown_real_node_modules' else 180)
+            result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact','--test-threads=4'],cwd=ROOT,env=env,timeout=600 if test_name == 'plugin_markdown_real_node_modules' else 180)
             (OUTPUT/(name+'.log')).write_text(result.stdout + result.stderr)
             output = (OUTPUT/(name+'.log')).read_text()
             markers = EXPECTED_FAILURES[name]
@@ -358,9 +364,14 @@ try:
             row = {'mutation':name,'test':test,'exit':result.returncode,'killed':killed,'expectedMarkers':markers,'matchedMarkers':matched_markers,'targetFailed':target_failed,'failure':next((line for line in output.splitlines() if 'failed:' in line or "panicked at" in line),''),'summary':next((line for line in output.splitlines() if line.startswith('test result:')), '')}
             summary.append(row)
             print(json.dumps(row), flush=True)
-            assert killed, f'{name}: negative control did not cause an assertion/test failure; inspect log'
+            # Finish the suite even if a case is not killed; report all failures
+            # together below, without counting infrastructure failures as kills.
         finally:
             path.write_bytes(originals[relative])
 finally:
     assert all((ROOT/p).read_bytes() == b for p,b in originals.items()), 'implementation bytes not restored'
-    (OUTPUT/'summary.json').write_text(json.dumps({'results':summary,'restoredSha256':{p:hashlib.sha256(b).hexdigest() for p,b in originals.items()}},indent=2)+'\n')
+    counts = {'configured':len(CASES), 'attempted':len(summary), 'killed':sum(row['killed'] for row in summary)}
+    print(json.dumps({'counts':counts}), flush=True)
+    (OUTPUT/'summary.json').write_text(json.dumps({'counts':counts,'results':summary,'restoredSha256':{p:hashlib.sha256(b).hexdigest() for p,b in originals.items()}},indent=2)+'\n')
+
+assert len(summary) == len(CASES) and all(row['killed'] for row in summary), 'negative controls not all killed; inspect summary.json and individual logs'
