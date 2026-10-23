@@ -127,7 +127,7 @@ try:
     assert status != 0 and 'assertion `left == right` failed' in log, log
     print('unordered-provider: FAIL (constructor/provider root order assertion)', flush=True)
     reset()
-    ac = original['storage/accessors.rs', 'storage/snapshots.rs'].decode()
+    ac = original['storage/accessors.rs'].decode()
     ac = once(ac, '''        let cache = self
             .repository
             .external
