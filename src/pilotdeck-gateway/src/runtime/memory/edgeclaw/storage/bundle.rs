@@ -147,7 +147,10 @@ fn is_path_within_root(root_dir: &Path, target_path: &Path) -> bool {
 /// target directory. TS mixes `Date.now()` and `Math.random()`; the exact name
 /// is never observable, only its uniqueness within the parent directory. The
 /// `Date.now()` half comes from the injected clock so replays observe the
-/// same clock reads as TS.
+/// same clock reads as TS; the process id and counter halves must survive
+/// separately, because combining them with XOR cancels bits (pid 1000 with
+/// counter 0 collides with pid 1001 with counter 1) and lets two processes
+/// staging in the same millisecond land on the same name.
 fn create_sibling_temp_path(target_dir: &Path, label: &str, clock: &FileMemoryClock) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let base = target_dir
@@ -156,8 +159,19 @@ fn create_sibling_temp_path(target_dir: &Path, label: &str, clock: &FileMemoryCl
         .unwrap_or_default();
     let parent = target_dir.parent().unwrap_or_else(|| Path::new("/"));
     let now = hash(&(clock)());
-    let unique = COUNTER.fetch_add(1, Ordering::Relaxed) ^ u64::from(std::process::id());
-    parent.join(format!(".{base}.{label}-{now}-{unique:016x}"))
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    parent.join(sibling_name(
+        &base,
+        label,
+        &now,
+        std::process::id(),
+        counter,
+    ))
+}
+/// The name layout of [`create_sibling_temp_path`], split out so the
+/// cross-process uniqueness of the pid/counter pair is testable.
+fn sibling_name(base: &str, label: &str, now: &str, pid: u32, counter: u64) -> PathBuf {
+    PathBuf::from(format!(".{base}.{label}-{now}-{pid:x}-{counter:016x}"))
 }
 fn copy_dir_all(source: &Path, destination: &Path) -> std::io::Result<()> {
     fs::create_dir_all(destination)?;
@@ -301,6 +315,10 @@ fn normalize_memory_bundle(value: &JsValue, clock: &FileMemoryClock) -> Result<J
     // undefined)` (sqlite.ts:301-303): the typeof guard runs before the
     // truthiness check, so every non-string scope — truthy or falsy — is
     // treated like a missing one, exactly what `text()` yields for those.
+    // `normalizeString` does NOT trim (sqlite.ts:141-143 — unlike the
+    // `.trim()` call sites for the timestamps below), so a padded
+    // " current_project " stays unequal to "current_project" and is
+    // rejected, on both sides.
     let scope = text(record, "scope");
     if !scope.is_empty() && scope != "current_project" {
         return Err(bundle_error(
@@ -595,8 +613,14 @@ impl EdgeClawFileStores {
     // -- export / import (`sqlite.ts:1599-1658`) ----------------------------
 
     /// `exportMemoryBundle` (`sqlite.ts:1599-1625`). `MEMORY.md` is a derived
-    /// manifest regenerated on import, so it is excluded.
+    /// manifest regenerated on import, so it is excluded. TS is single
+    /// threaded, so nothing can interleave between the pipeline-state reads
+    /// and the file listing; both live stores' per-root operation locks
+    /// (workspace first, like the import critical section) hold concurrent
+    /// imports and store writers out for the whole read instead.
     pub fn export_memory_bundle(&self) -> Result<JsValue> {
+        let _workspace_lock = self.workspace_memory.operation_scope()?;
+        let _global_lock = self.global_user_memory.operation_scope()?;
         let string_state = |key: &str| -> Result<Option<JsString>> {
             Ok(
                 match self
@@ -739,6 +763,101 @@ impl EdgeClawStorage {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// TS `createSiblingTempPath` leans on `Date.now()` + `Math.random()` for
+    /// cross-process uniqueness; the port replaces the time half with the
+    /// injected clock, so the pid and counter halves must stay distinguishable.
+    /// XOR folds them into one number whose bits can cancel across processes
+    /// (pid 1000/counter 0 vs pid 1001/counter 1), so two processes staging in
+    /// the same millisecond could land on the same staged directory — the
+    /// review round-6 collision pairs must keep distinct names.
+    #[test]
+    fn sibling_temp_names_stay_unique_across_processes() {
+        assert_ne!(
+            sibling_name("memory", "import", "now", 1000, 0),
+            sibling_name("memory", "import", "now", 1001, 1),
+            "the XOR collision pair from the review must differ"
+        );
+        let mut names = std::collections::HashSet::new();
+        for pid in [0u32, 1, 999, 1000, 1001, u32::MAX] {
+            for counter in [0u64, 1, 2, 1 << 32, u64::MAX] {
+                assert!(
+                    names.insert(sibling_name("memory", "import", "now", pid, counter)),
+                    "pid {pid} / counter {counter} collides with an earlier name"
+                );
+            }
+        }
+        // Same process, frozen clock: the counter alone still separates calls.
+        let clock: FileMemoryClock = std::sync::Arc::new(|| "unit-test".into());
+        let first = create_sibling_temp_path(Path::new("/tmp/x/memory"), "import", &clock);
+        let second = create_sibling_temp_path(Path::new("/tmp/x/memory"), "import", &clock);
+        assert_ne!(first, second);
+    }
+
+    /// The export's pipeline-state reads and file listing form one window: a
+    /// writer holding the workspace store's operation lock while flipping the
+    /// `lastIndexedAt` state must not be able to land between them. Without
+    /// the export-side lock the thread reads the old state before blocking on
+    /// the store lock and returns a bundle with stale state next to fresh
+    /// files; with it, the export observes the writer's state.
+    #[test]
+    fn export_reads_state_and_files_in_one_window() {
+        let parent = std::env::temp_dir().join(format!(
+            "pdrs-bundle-export-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&parent).unwrap();
+        let clock: FileMemoryClock = std::sync::Arc::new(|| "unit-test".into());
+        let stores = EdgeClawFileStores::with_workspace_clock(
+            parent.join("control.sqlite"),
+            parent.join("memory"),
+            parent.join("global"),
+            "/fixture/Unit",
+            parent.join("home/.pilotdeck"),
+            clock,
+        )
+        .unwrap();
+        stores
+            .storage
+            .set_pipeline_state(LAST_INDEXED_AT_STATE_KEY, &s("pre-writer"))
+            .unwrap();
+        // Hold the workspace store's operation lock like a mid-flight writer.
+        let writer_lock = stores.workspace_memory.operation_scope().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let bundle = std::thread::scope(|scope| {
+            let exporter = scope.spawn({
+                let stores = &stores;
+                move || {
+                    let _ = tx.send(());
+                    stores.export_memory_bundle()
+                }
+            });
+            // Wait until the export is blocked on the store lock, then flip
+            // the state and release, exactly like a writer whose store
+            // operation runs while the export is between its reads.
+            rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            assert!(
+                rx.recv_timeout(std::time::Duration::from_secs(1)).is_err(),
+                "the export must block while a writer holds the store's operation lock"
+            );
+            stores
+                .storage
+                .set_pipeline_state(LAST_INDEXED_AT_STATE_KEY, &s("post-writer"))
+                .unwrap();
+            drop(writer_lock);
+            exporter.join().unwrap().unwrap()
+        });
+        assert_eq!(
+            text(bundle.as_object().unwrap(), "lastIndexedAt"),
+            "post-writer"
+        );
+        stores.close().unwrap();
+        fs::remove_dir_all(&parent).unwrap();
+    }
 
     /// Fix rv-codex-r1 P0 / rv-grok-r1 #1: when the staged swap fails after
     /// the live root was moved to the backup, the pre-import tree must be

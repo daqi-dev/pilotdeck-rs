@@ -5,9 +5,10 @@
 //! read from `super::bundle`; list/count merge both stores' manifest entries
 //! and re-sort with `localeCompare`, matching the TS ordering.
 use super::{EdgeClawStorage, IndexingSettings, StorageError};
-use crate::project_files::{node_collator, node_compare_utf16, node_locale};
-use crate::runtime::memory::edgeclaw::file_memory::{EdgeClawFileStores, FileMemoryError};
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use crate::runtime::memory::edgeclaw::file_memory::{
+    EdgeClawFileStores, FileMemoryError, OperationGuard, helpers::sort_manifest_entries,
+};
+use pilotdeck_protocol::{JsObject, JsValue};
 type Result<T> = std::result::Result<T, FileMemoryError>;
 
 const LAST_INDEXED_AT_STATE_KEY: &str = "lastIndexedAt";
@@ -46,41 +47,37 @@ fn objects(value: JsValue) -> Vec<JsObject> {
 fn values(items: Vec<JsObject>) -> JsValue {
     JsValue::Array(items.into_iter().map(JsValue::Object).collect())
 }
-/// JS `Number(value)` — the shared ECMAScript ToNumber port
-/// ([`crate::js_value::to_number`]), reused for the `Math.max` coercions in
-/// `listMemoryEntries` instead of a local copy. Only a pathologically nested
-/// array can fail, and TS throws the same "Maximum call stack size exceeded"
-/// `RangeError` there.
+/// JS `Number(value)` for the `Math.max` coercions in `listMemoryEntries`,
+/// on top of the shared ECMAScript ports in [`crate::js_value`]. Only objects
+/// and arrays can fail: ToPrimitive on a wire object with an own `toString`
+/// property throws `TypeError: Cannot convert object to primitive value`
+/// (JSON cannot hold a callable, so it shadows the prototype method with a
+/// non-callable, and `valueOf` never yields a primitive) — directly and inside
+/// arrays, whose join converts their elements; a too-deep array joins with
+/// the same "Maximum call stack size exceeded" `RangeError` as TS.
 fn to_number(value: &JsValue) -> Result<f64> {
-    crate::js_value::to_number(value)
-        .map_err(|_| FileMemoryError::Type(crate::js_value::StackOverflow::MESSAGE.into()))
-}
-/// `sortManifestEntries` (`sqlite.ts:385-391`): `updatedAt` descending, ties
-/// broken by `relativePath` ascending, both with `localeCompare`.
-fn sort_manifest_entries(entries: &mut [JsObject]) -> Result<()> {
-    if entries.len() < 2 {
-        return Ok(());
-    }
-    let collator = node_collator(&node_locale(|key| std::env::var(key).ok()))
-        .map_err(|error| FileMemoryError::Invalid(format!("{error:?}")))?;
-    entries.sort_by(|a, b| {
-        let updated_a = text(a, "updatedAt");
-        let updated_b = text(b, "updatedAt");
-        if updated_a != updated_b {
-            node_compare_utf16(
-                &collator,
-                &JsString::from(updated_b),
-                &JsString::from(updated_a),
-            )
-        } else {
-            node_compare_utf16(
-                &collator,
-                &JsString::from(text(a, "relativePath")),
-                &JsString::from(text(b, "relativePath")),
-            )
+    match value {
+        JsValue::Object(_) | JsValue::Array(_) => {
+            let units = crate::js_value::to_string_units_checked(value).map_err(|error| {
+                FileMemoryError::Type(
+                    match error {
+                        crate::js_value::ToStringError::NotPrimitive => {
+                            crate::js_value::ToStringError::NOT_PRIMITIVE
+                        }
+                        crate::js_value::ToStringError::StackOverflow => {
+                            crate::js_value::StackOverflow::MESSAGE
+                        }
+                    }
+                    .into(),
+                )
+            })?;
+            Ok(crate::js_value::string_to_number(
+                &String::from_utf16_lossy(&units),
+            ))
         }
-    });
-    Ok(())
+        _ => crate::js_value::to_number(value)
+            .map_err(|_| FileMemoryError::Type(crate::js_value::StackOverflow::MESSAGE.into())),
+    }
 }
 impl EdgeClawStorage {
     /// `sqlite.ts:1662` — `COUNT(DISTINCT session_key) ... WHERE indexed = 0`.
@@ -96,8 +93,26 @@ impl EdgeClawStorage {
     }
 }
 impl EdgeClawFileStores {
+    /// TS repository-level reads (`getOverview`, `getUiSnapshot`,
+    /// `listMemoryEntries`, `countMemoryEntries`) are single synchronous
+    /// functions on a single thread, so no writer can interleave between
+    /// their storage, workspace-store and global-store reads. Both live
+    /// stores' per-root operation locks (workspace first, the import
+    /// critical section's order) open that consistency window here too.
+    /// The locks are reentrant per thread, so the store-level `execute`
+    /// calls and `getUiSnapshot`'s inner overview/list keep working; the
+    /// general-mode catalog scan inside takes sibling roots' locks while
+    /// these are held, so sibling roots must not scan back (only general
+    /// mode scans, and mutual general-to-general cataloging is not a
+    /// supported layout).
+    fn read_scope(&self) -> Result<(OperationGuard<'_>, OperationGuard<'_>)> {
+        let workspace = self.workspace_memory.operation_scope()?;
+        let global = self.global_user_memory.operation_scope()?;
+        Ok((workspace, global))
+    }
     /// `getOverview` (`sqlite.ts:1660-1706`).
     pub fn get_overview(&self) -> Result<JsValue> {
+        let (_workspace_lock, _global_lock) = self.read_scope()?;
         let pending_sessions = self.storage.count_pending_sessions()?;
         let last_dream_at = self.storage.get_pipeline_state(LAST_DREAM_AT_STATE_KEY)?;
         let mut file_input = JsObject::new();
@@ -216,6 +231,7 @@ impl EdgeClawFileStores {
     /// value reaches `listMemoryEntries` untouched, whose `Math.max` coerces
     /// it (`getUiSnapshot(null)` lists everything, `'abc'` lists nothing).
     pub fn get_ui_snapshot(&self, limit: Option<&JsValue>) -> Result<JsValue> {
+        let (_workspace_lock, _global_lock) = self.read_scope()?;
         let limit = match limit {
             None | Some(JsValue::Undefined) => JsValue::Number(50.0),
             Some(value) => value.clone(),
@@ -234,6 +250,7 @@ impl EdgeClawFileStores {
     }
     /// `listMemoryEntries` (`sqlite.ts:1720-1750`).
     pub fn list_memory_entries(&self, options: &JsObject) -> Result<JsValue> {
+        let (_workspace_lock, _global_lock) = self.read_scope()?;
         let scope = text(options, "scope");
         let mut filtered = vec![];
         if scope != "global" {
@@ -248,7 +265,14 @@ impl EdgeClawFileStores {
             input.insert("offset".into(), JsValue::Number(0.0));
             filtered.extend(objects(self.list_global_memory_entries(&input)?));
         }
-        sort_manifest_entries(&mut filtered)?;
+        // `sortManifestEntries` (`sqlite.ts:385-391`): the shared helper the
+        // store-level listing uses, so both ports of the TS function keep one
+        // collation and tie-break implementation.
+        sort_manifest_entries(
+            &mut filtered,
+            |entry| text(entry, "updatedAt"),
+            "relativePath",
+        )?;
         // `Math.max(0, options.offset ?? 0)` / `Math.max(1, options.limit ?? …)`:
         // `??` only treats null/undefined as missing, and `Math.max` coerces its
         // arguments with JS ToNumber, so `'3'` → 3, `true` → 1 and `'abc'` →
@@ -276,6 +300,7 @@ impl EdgeClawFileStores {
     }
     /// `countMemoryEntries` (`sqlite.ts:1752-1775`).
     pub fn count_memory_entries(&self, options: &JsObject) -> Result<JsValue> {
+        let (_workspace_lock, _global_lock) = self.read_scope()?;
         let scope = text(options, "scope");
         let mut input = options.clone();
         input.insert("limit".into(), JsValue::Number(5000.0));
@@ -288,5 +313,71 @@ impl EdgeClawFileStores {
             count += objects(self.list_global_memory_entries(&input)?).len() as f64;
         }
         Ok(JsValue::Number(count))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The overview's pipeline-state reads and store reads form one window: a
+    /// writer holding the workspace store's operation lock while flipping the
+    /// `lastDreamAt` state must not be able to land between them. Without the
+    /// overview-side locks the thread reads the old state before blocking on
+    /// the store's own lock; with them, it observes the writer's state.
+    #[test]
+    fn overview_reads_state_and_files_in_one_window() {
+        let parent = std::env::temp_dir().join(format!(
+            "pdrs-overview-window-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&parent).unwrap();
+        let clock: crate::runtime::memory::edgeclaw::file_memory::FileMemoryClock =
+            std::sync::Arc::new(|| "unit-test".into());
+        let stores = EdgeClawFileStores::with_workspace_clock(
+            parent.join("control.sqlite"),
+            parent.join("memory"),
+            parent.join("global"),
+            "/fixture/Unit",
+            parent.join("home/.pilotdeck"),
+            clock,
+        )
+        .unwrap();
+        stores
+            .storage
+            .set_pipeline_state(LAST_DREAM_AT_STATE_KEY, &s("pre-writer"))
+            .unwrap();
+        let writer_lock = stores.workspace_memory.operation_scope().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let overview = std::thread::scope(|scope| {
+            let reader = scope.spawn({
+                let stores = &stores;
+                move || {
+                    let _ = tx.send(());
+                    stores.get_overview()
+                }
+            });
+            rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            assert!(
+                rx.recv_timeout(std::time::Duration::from_secs(1)).is_err(),
+                "the overview must block while a writer holds the store's operation lock"
+            );
+            stores
+                .storage
+                .set_pipeline_state(LAST_DREAM_AT_STATE_KEY, &s("post-writer"))
+                .unwrap();
+            drop(writer_lock);
+            reader.join().unwrap().unwrap()
+        });
+        assert_eq!(
+            text(overview.as_object().unwrap(), "lastDreamAt"),
+            "post-writer"
+        );
+        stores.close().unwrap();
+        std::fs::remove_dir_all(&parent).unwrap();
     }
 }

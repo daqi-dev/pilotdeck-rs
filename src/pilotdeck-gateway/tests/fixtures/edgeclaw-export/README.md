@@ -51,6 +51,17 @@ list/count (`core/storage/sqlite.ts:1495-1775` and its helpers), built like
   `Math.max(0/1, … ?? …)` — only `null`/`undefined` fall back to the
   defaults, and the UI snapshot's `limit = 50` default applies only to a
   missing argument, so `null` lists everything.
+- Review round 6 pins ToNumber's ToPrimitive exceptions and the untrimmed
+  scope check: `limit`/`offset` wire objects with an own `toString`
+  property (`{toString:null}`, `{toString:null,valueOf:null}` — JSON cannot
+  hold a callable, so it shadows the prototype method with a non-callable)
+  throw `TypeError: Cannot convert object to primitive value`, directly and
+  inside arrays, while `{valueOf:null}` and `{}` convert to NaN like any
+  other object. Callables (`{valueOf:()=>3}` → 3, `{toString:()=>"4"}` → 4,
+  probed against real TS) cannot cross the JSON wire, so they are unreachable
+  through the gateway and not in the oracle. Bundle scopes `' current_project '`,
+  `'  '` and `'current_project '` stay rejected: `normalizeString` does not
+  trim (sqlite.ts:141-143, unlike the timestamp `.trim()` call sites).
 
 Regenerate: `node --import <baseline>/node_modules/tsx/dist/loader.mjs generate.mts <out-dir>`
 with `PDRS_BASELINE` set (see `tests/common/baseline.rs`; the ignored
