@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Real-ledger regressions in bounded, disposable git repositories (no Cargo)."""
+import hashlib
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = Path('specs/gateway-parity')
+CHECKER = Path('scripts/gateway-parity/check_frozen.py')
+ENTRY = 'A7.2-LEDGER-TEST-001'
+FIELDS = ('类别', '基线依据', 'Rust 行为', '范围', '机器判据', '批准记录')
+
+
+def entry_text(name=ENTRY, original=None):
+    # Synthetic validation input, never a TS behavior golden or accepted diff.
+    header = f'---\nid: {name}\n'
+    if original is not None:
+        header += f'original: {original}\n'
+    return header + '---\n\n' + '\n\n'.join(
+        f'## {field}\n\nsynthetic validation input ({field})' for field in FIELDS) + '\n'
+
+
+class Ledger(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-ledger-581-')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.folder = self.root / SPEC
+        self.diffs = self.folder / 'diffs'
+        self.diffs.mkdir(parents=True)
+        registered = ['acceptance.md', 'normalization.md', 'accepted-diffs.md',
+                      '../../scripts/gateway-parity/check_frozen.py',
+                      '../../scripts/gateway-parity/common.py']
+        lines = []
+        for name in registered:
+            data = (ROOT / SPEC / name).read_bytes()
+            target = self.folder / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            lines.append(f'{hashlib.sha256(data).hexdigest()}  {name}\n')
+        (self.folder / 'FROZEN.md').write_text(''.join(lines))
+        self.git('init', '-b', 'main')
+        self.commit('base with real historical ledger')
+        self.base = self.git('rev-parse', 'HEAD').stdout.decode().strip()
+
+    def git(self, *args):
+        return subprocess.run(['git', '-C', str(self.root), *args], check=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+
+    def commit(self, message):
+        self.git('add', '.')
+        self.git('-c', 'user.name=Ledger Test', '-c', 'user.email=ledger@example.invalid',
+                 '-c', 'core.hooksPath=/dev/null', 'commit', '-m', message)
+
+    def add(self, name=ENTRY, original=None):
+        self.diffs.mkdir(parents=True, exist_ok=True)
+        path = self.diffs / f'{name}.md'
+        path.write_text(entry_text(name, original))
+        return path
+
+    def check(self, *args, ok=True, reason=None):
+        result = subprocess.run([sys.executable, str(self.root / CHECKER), *args],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        self.assertEqual(result.returncode, 0 if ok else 1,
+                         result.stdout.decode(errors='replace') + result.stderr.decode())
+        if reason:
+            self.assertIn(reason, result.stdout.decode())
+        return result.stdout
+
+    def freeze_entry(self):
+        path = self.add()
+        self.commit('freeze existing diff')
+        return path, self.git('rev-parse', 'HEAD').stdout.decode().strip()
+
+    def test_empty_union_preserves_real_bytes_and_check_output(self):
+        self.assertEqual(self.check('--print-ledger'),
+                         (ROOT / SPEC / 'accepted-diffs.md').read_bytes())
+        self.assertEqual(self.check(), self.check('--base', self.base))
+
+    def test_new_files_sorted_and_readme_excluded_without_shared_edits(self):
+        later = self.add('A7.2-LEDGER-TEST-002')
+        earlier = self.add()
+        (self.diffs / 'README.md').write_text('documentation, not ledger data')
+        self.check('--base', self.base)
+        self.assertEqual(self.check('--print-ledger'), b'\n\n'.join([
+            (self.folder / 'accepted-diffs.md').read_bytes(),
+            earlier.read_bytes(), later.read_bytes()]))
+        self.assertEqual(self.git('diff', '--name-only').stdout, b'')
+
+    def test_correction_of_real_historical_title(self):
+        self.add('A4-FILE-TOCTOU-001-R1', 'A4-FILE-TOCTOU-001')
+        self.check('--base', self.base)
+
+    def test_correction_of_new_file_even_when_sorted_before_original(self):
+        self.add()
+        self.add(ENTRY + '-R1', ENTRY)
+        self.check('--base', self.base)
+
+    def test_missing_each_of_six_fields(self):
+        for field in FIELDS:
+            with self.subTest(field=field):
+                self.add().write_text(entry_text().replace(f'## {field}\n', '## omitted\n'))
+                self.check(ok=False, reason=f'missing/empty field {field}')
+
+    def test_empty_and_duplicate_sections(self):
+        self.add().write_text(entry_text().replace('synthetic validation input (类别)', ''))
+        self.check(ok=False, reason='missing/empty field 类别')
+        self.add().write_text(entry_text() + '\n## 类别\n\nextra\n')
+        self.check(ok=False, reason='duplicate section 类别')
+
+    def test_ts_basis_alias(self):
+        self.add().write_text(entry_text().replace('## 基线依据', '## TS 依据'))
+        self.check()
+
+    def test_bad_names(self):
+        for name in ('a7-TEST-001', 'A7-TEST-001-R0', 'A7-TEST-001-R01',
+                     'A7-TEST-1', 'A7_TEST_001', 'A7-TEST-001.txt'):
+            with self.subTest(name=name):
+                path = self.diffs / (name if name.endswith('.txt') else name + '.md')
+                path.write_text(entry_text(name))
+                self.check(ok=False, reason='invalid entry filename')
+                path.unlink()
+
+    def test_bad_or_duplicate_frontmatter_id(self):
+        for text in (entry_text().replace(f'id: {ENTRY}', 'id: A7-OTHER-001'),
+                     entry_text().replace('---\nid:', '---\nid: duplicate\nid:'),
+                     entry_text().split('---\n', 2)[-1]):
+            self.add().write_text(text)
+            self.check(ok=False, reason='frontmatter')
+
+    def test_correction_missing_wrong_or_nonexistent_original(self):
+        for original in (None, 'A7-MISSING-001', ENTRY):
+            with self.subTest(original=original):
+                self.add(ENTRY + '-R1', original)
+                self.check(ok=False, reason='original must name the existing base ID')
+
+    def test_wrong_original_even_when_target_exists(self):
+        self.add()
+        self.add(ENTRY + '-R1', 'A4-FILE-TOCTOU-001')
+        self.check(ok=False, reason='original must name the existing base ID')
+
+    def test_original_forbidden_on_noncorrection(self):
+        self.add(original='A4-FILE-TOCTOU-001')
+        self.check(ok=False, reason='original is only valid for corrections')
+
+    def test_duplicate_historical_id(self):
+        self.add('A4-FILE-TOCTOU-001')
+        self.check(ok=False, reason='ID already exists in historical ledger')
+
+    def test_approval_decision_pointer(self):
+        path = self.add()
+        pointer = 'state/decisions-20261023.md'
+        path.write_text(entry_text() + f'\nDecision: `{pointer}:25`\n')
+        self.check(ok=False, reason='missing approval file ' + pointer)
+        (self.root / 'state').mkdir()
+        (self.root / pointer).write_text('synthetic decision file, not an approval')
+        self.check()
+
+    def test_edit_existing_file(self):
+        path, base = self.freeze_entry()
+        data = path.read_bytes()
+        path.write_bytes(data.replace(b'synthetic', b'Synthetic', 1))
+        self.check('--base', base, ok=False, reason='append-only')
+        self.check()  # Static-only mode intentionally has no historical comparison.
+
+    def test_delete_existing_file(self):
+        path, base = self.freeze_entry()
+        path.unlink()
+        self.check('--base', base, ok=False, reason='append-only')
+
+    def test_rename_existing_file(self):
+        path, base = self.freeze_entry()
+        path.unlink()
+        self.add('A7.2-LEDGER-TEST-002')
+        self.check('--base', base, ok=False, reason='append-only')
+
+    def test_readme_is_also_append_only(self):
+        path = self.diffs / 'README.md'
+        path.write_text('base rules')
+        self.commit('freeze README')
+        path.write_text('altered rules')
+        self.check('--base', 'HEAD', ok=False, reason='append-only')
+
+    def test_merge_base_instead_of_base_tip(self):
+        self.git('switch', '-c', 'other')
+        self.add('A7.2-LEDGER-OTHER-001')
+        self.commit('independent entry on advanced base')
+        self.git('switch', 'main')
+        self.add()
+        self.check('--base', 'other')
+
+    def test_invalid_base_fails_closed(self):
+        self.check('--base', 'nonexistent-ref', ok=False, reason='cannot verify append-only')
+
+    def test_static_mode_does_not_require_git_history(self):
+        (self.root / '.git').rename(self.root / 'saved-git')
+        self.check()
+        self.check('--base', self.base, ok=False, reason='cannot verify append-only')
+
+    def test_legacy_hash_still_rejects_one_byte_change(self):
+        path = self.folder / 'accepted-diffs.md'
+        data = path.read_bytes()
+        path.write_bytes(b'!' + data[1:])
+        self.check(ok=False, reason='accepted-diffs.md')
+
+    def test_file_types_and_mode_changes(self):
+        path, base = self.freeze_entry()
+        path.chmod(0o755)
+        self.check('--base', base, ok=False, reason='append-only')
+        path.unlink()
+        path.symlink_to(self.folder / 'accepted-diffs.md')
+        self.check(ok=False, reason='invalid entry filename or file type')
+        self.check('--base', base, ok=False, reason='append-only')
+
+    def test_parallel_additions_merge_without_conflicts(self):
+        self.git('switch', '-c', 'left')
+        self.add()
+        self.commit('left adds one entry')
+        self.git('switch', '-c', 'right', self.base)
+        self.add('A7.2-LEDGER-TEST-002')
+        self.commit('right adds a distinct entry')
+        result = self.git('-c', 'user.name=Ledger Test',
+                          '-c', 'user.email=ledger@example.invalid',
+                          '-c', 'core.hooksPath=/dev/null', 'merge', '--no-edit', 'left')
+        self.assertNotIn(b'CONFLICT', result.stdout)
+        print('\nParallel branch merge transcript:\n' + result.stdout.decode(), flush=True)
+        self.check('--base', self.base)
+        self.assertEqual(len(list(self.diffs.glob('*.md'))), 2)
+        self.assertEqual(self.git('diff', '--name-only', self.base).stdout.decode().splitlines(),
+                         [str(SPEC / 'diffs' / f'{ENTRY}.md'),
+                          str(SPEC / 'diffs' / 'A7.2-LEDGER-TEST-002.md')])
+
+
+if __name__ == '__main__':
+    unittest.main()
