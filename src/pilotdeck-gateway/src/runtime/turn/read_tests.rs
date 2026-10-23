@@ -609,6 +609,63 @@ fn real_ts_turn_read_regenerates_identically() {
     crate::test_baseline::regenerates_identically("turn-read");
 }
 
+/// A7.2-READ-LASTSEQ-DEPTH-001: the pathological-depth criterion of the
+/// decision card — at 100,000 nesting layers the ungated iterative join (see
+/// [`last_seq_to_number`]) returns bounded instead of overflowing the Rust
+/// stack. TS already threw its V8 `RangeError` around 2,540 layers (measured,
+/// caller-stack dependent), and this side deliberately does not replicate
+/// that cliff, so there is no TS golden past the depths the oracle pins; the
+/// result keeps the 2001-layer scenario's shape (`gap:true`, the stored deep
+/// `lastSeq` preserved as `nextSeq`). The deep value is built, cloned, and
+/// compared without recursion: construction wraps bottom-up in a loop, and
+/// `JsValue`'s Clone / Drop / PartialEq are already iterative.
+#[tokio::test]
+async fn run_events_pathological_depth_last_seq_is_bounded() {
+    fn deep_array(layers: usize) -> JsValue {
+        let mut value = JsValue::Array(vec![JsValue::Number(1.0)]);
+        for _ in 1..layers {
+            value = JsValue::Array(vec![value]);
+        }
+        value
+    }
+    let record = {
+        let mut record = JsObject::new();
+        record.insert("sessionKey".into(), "s".into());
+        record.insert("projectKey".into(), "p".into());
+        record.insert("runId".into(), "r1".into());
+        record.insert("state".into(), "running".into());
+        record.insert("revision".into(), JsValue::Number(0.0));
+        record.insert("lastSeq".into(), deep_array(100_000));
+        record.insert("acceptedAt".into(), JsValue::Number(0.0));
+        record.insert("updatedAt".into(), JsValue::Number(0.0));
+        JsValue::Object(record)
+    };
+    let reader = InMemoryReader {
+        records: Mutex::new(vec![record].into()),
+    };
+    let input = RunEventsInput {
+        run: RunRef {
+            session_key: "s".into(),
+            run_id: "r1".into(),
+            project_key: Some("p".into()),
+        },
+        after_seq: Some(JsValue::Number(6.0)),
+        limit: None,
+    };
+    let result = tokio::time::timeout(Duration::from_secs(2), run_events(Some(&reader), &input))
+        .await
+        .expect("100,000-layer lastSeq join must not recurse the Rust stack (2 s)")
+        .expect("deep lastSeq gap result");
+    let expected = {
+        let mut gap = JsObject::new();
+        gap.insert("events".into(), JsValue::Array(vec![]));
+        gap.insert("nextSeq".into(), deep_array(100_000));
+        gap.insert("gap".into(), JsValue::Bool(true));
+        JsValue::Object(gap)
+    };
+    assert_eq!(result, expected);
+}
+
 // ─────────────────────────────── concurrency
 // The golden corpus is a single-threaded replay; these pin the two port-only
 // promises of the module note: a read holds no lock across the history await
