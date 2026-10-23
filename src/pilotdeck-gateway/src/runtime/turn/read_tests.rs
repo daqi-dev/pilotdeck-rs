@@ -359,6 +359,34 @@ fn apply_call_snapshot_surgery(path: &std::path::Path, call: &JsValue) {
     }
 }
 
+/// The generator's in-memory records port (`setup.inMemory`): `get` serves
+/// each call's `record` in call order, `events` returns none — the gap
+/// results it exists for return before `events` is reached. The deep-array
+/// case rides it because the file registry's own V8 clone recursion cannot
+/// survive the depths under test.
+struct InMemoryReader {
+    records: Mutex<VecDeque<JsValue>>,
+}
+impl TurnRunReader for InMemoryReader {
+    fn get(&self, _run: &RunRef) -> RegistryFuture<Option<RunRecord>> {
+        let record = self
+            .records
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("in-memory record was not set");
+        Box::pin(async move { Ok(Some(RunRecord::from_json(record))) })
+    }
+    fn events(
+        &self,
+        _run: &RunRef,
+        _after_seq: Option<f64>,
+        _limit: Option<f64>,
+    ) -> RegistryFuture<Vec<JsValue>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+}
+
 async fn replay_run_case(case: &JsValue) -> Result<(), String> {
     let root = std::env::temp_dir().join(format!("pdrs-turn-read-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
@@ -384,6 +412,22 @@ async fn replay_run_case(case: &JsValue) -> Result<(), String> {
         Some(Arc::new(FailingReader {
             code: text(failure, "code").unwrap().to_utf8().unwrap(),
             message: text(failure, "message").unwrap().to_utf8().unwrap(),
+        }))
+    } else if matches!(
+        sub(case, "setup").get("inMemory"),
+        Some(JsValue::Bool(true))
+    ) {
+        Some(Arc::new(InMemoryReader {
+            records: Mutex::new(
+                array(case, "calls")
+                    .iter()
+                    .map(|call| {
+                        call.get("record")
+                            .cloned()
+                            .expect("in-memory call needs a record")
+                    })
+                    .collect(),
+            ),
         }))
     } else {
         Some(Arc::new(FileRegistry::new(file).unwrap()))
@@ -548,6 +592,16 @@ scenario!(
     run_not_found_lone_surrogate_runid,
     "runCases",
     "run-not-found-lone-surrogate-runid"
+);
+scenario!(
+    run_events_toprimitive_throw_last_seq,
+    "runCases",
+    "run-events-toprimitive-throw-last-seq"
+);
+scenario!(
+    run_events_deep_array_last_seq,
+    "runCases",
+    "run-events-deep-array-last-seq"
 );
 #[test]
 #[ignore = "requires fixed TS baseline and its existing tsx installation"]

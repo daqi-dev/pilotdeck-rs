@@ -176,15 +176,26 @@ async function runCase(name: string, setup: any, calls: any[]) {
     for (const event of seed.events ?? []) await registry.append({ ...ref, event });
   }
   let port: any = registry;
+  let currentRecord: any;
   if (setup.registryFailure) {
     const failure = new registryModule.RunRegistryError(setup.registryFailure.code, setup.registryFailure.message);
     port = { get: async () => { throw failure; }, events: async () => { throw failure; } };
+  } else if (setup.inMemory) {
+    // The read face's port seam: `get` serves the current call's `record`.
+    // Used where the value under test outlives the file registry's own V8
+    // recursion (its structuredClone of the record), so the case pins the
+    // gateway comparison, not the registry's clone depth.
+    port = {
+      get: async () => { assert.ok(currentRecord !== undefined, 'in-memory record was not set'); return clone(currentRecord); },
+      events: async () => [],
+    };
   }
   const gateway = Object.create(InProcessGateway.prototype);
   gateway.turnEventCoordinator = new coordinatorModule.GatewayTurnEventCoordinator();
   gateway.options = setup.noRegistry ? {} : { runRegistry: port };
   const outcomes: any[] = [];
   for (const call of calls) {
+    if (call.record !== undefined) currentRecord = call.record;
     // Per-call snapshot surgery: `snapshot` writes raw file bytes (a corrupt
     // registry), `recordPatch` assigns fields onto a parsed record in place
     // (a non-numeric `lastSeq`). Both registries reload from disk on every
@@ -309,11 +320,70 @@ await runCase('run-not-found-lone-surrogate-runid', { seed: [
   { method: 'runGet', input: { sessionKey: 's', projectKey: 'p', runId: 'x\ud800y' } },
   { method: 'runReattach', input: { sessionKey: 's', projectKey: 'p', runId: 'x\ud800y' } },
 ]);
+// ToPrimitive failures of the stored `lastSeq`: JSON data cannot hold
+// callables, so an own `toString` property — null or any data value —
+// shadows the inherited method and leaves ToPrimitive without a primitive;
+// the relational `>` throws V8's TypeError verbatim. An own `valueOf` alone
+// changes nothing (the inherited `Object.prototype.toString` still answers
+// `[object Object]` → NaN → no gap).
+await runCase('run-events-toprimitive-throw-last-seq', { seed: [
+  { sessionKey: 's', projectKey: 'p', runId: 'r1', material: 'm',
+    events: [status(1), status(2), status(3)] },
+] }, [
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: { toString: null } } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: [{ toString: null }] } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: { toString: 5 } } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: {} } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: { valueOf: 5 } } } },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, recordPatch: { record: 0, set: { lastSeq: [{}] } } },
+]);
+// Deep-array `lastSeq` through the in-memory port: V8's join recursion
+// converts arrays thousands of layers deep inside runEvents (measured,
+// node 22: 2530 layers convert, 2540 throw; caller-stack dependent), far
+// past the 2000-layer bound the Rust read face used to inherit from the
+// shared converter, and the gap result keeps the stored value as `nextSeq`.
+// The file registry cannot serve these depths (its own structuredClone
+// throws near 2000 layers), so the port seam supplies the records instead.
+const deepArray = (depth: number) => { let value: any = 1; for (let i = 0; i < depth; i += 1) value = [value]; return value; };
+const deepRecord = (depth: number) => ({ sessionKey: 's', projectKey: 'p', runId: 'r1',
+  state: 'running', revision: 0, lastSeq: deepArray(depth), acceptedAt: 0, updatedAt: 0 });
+await runCase('run-events-deep-array-last-seq', { inMemory: true }, [
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, record: deepRecord(2000) },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, record: deepRecord(2001) },
+  { method: 'runEvents', input: { ...ref('r1'), afterSeq: 6 }, record: deepRecord(2400) },
+]);
 
 assertBaseline(baseline);
 assert.deepEqual(await baselineSourceHashes(baseline, sources), sourceSha256);
 await mkdir(resolve(process.argv[2]), { recursive: true });
-await writeFile(join(resolve(process.argv[2]), 'oracle.json'), JSON.stringify({
+// `JSON.stringify(value, null, 2)` reproduced byte-for-byte, except that
+// nesting at or beyond SERIALIZATION_DEPTH_LIMIT collapses to compact form:
+// a 2400-layer `lastSeq` array would otherwise pretty-print its indentation
+// into tens of megabytes of spaces (the values are a few kilobytes compact).
+// Normal case objects never nest anywhere near the limit, so their bytes are
+// exactly what `JSON.stringify` produced before.
+const SERIALIZATION_DEPTH_LIMIT = 50;
+const compact = (value: any): string => Array.isArray(value)
+  ? `[${value.map(compact).join(',')}]`
+  : value !== null && typeof value === 'object'
+    ? `{${Object.entries(value).map(([k, v]) => `${JSON.stringify(k)}:${compact(v)}`).join(',')}}`
+    : String(JSON.stringify(value));
+const pretty = (value: any, indent: string, depth: number): string => {
+  if (depth >= SERIALIZATION_DEPTH_LIMIT && value !== null && typeof value === 'object') return compact(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '[]';
+    const inner = `${indent}  `;
+    return `[\n${value.map((item) => `${inner}${pretty(item, inner, depth + 1)}`).join(',\n')}\n${indent}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value).filter(([, item]) => item !== undefined);
+    if (entries.length === 0) return '{}';
+    const inner = `${indent}  `;
+    return `{\n${entries.map(([key, item]) => `${inner}${JSON.stringify(key)}: ${pretty(item, inner, depth + 1)}`).join(',\n')}\n${indent}}`;
+  }
+  return String(JSON.stringify(value));
+};
+await writeFile(join(resolve(process.argv[2]), 'oracle.json'), pretty({
   sourceCommit, sourceSha256, readCases, snapshotCases, runCases,
-}, null, 2) + '\n');
+}, '', 0) + '\n');
 console.log(`recorded ${readCases.length} read, ${snapshotCases.length} snapshot, ${runCases.length} run cases from real TS`);
