@@ -397,6 +397,7 @@ fn live_op<'a>(state: &'a Live, op: JsValue) -> LocalFuture<'a, Fields> {
                     port,
                     CreateToolDefinitionsOptions {
                         call_timeout_ms: state.call_timeout_ms,
+                        ..Default::default()
                     },
                 )
                 .await
@@ -766,6 +767,7 @@ async fn replays_ts_bridge_projection() {
         port.clone(),
         CreateToolDefinitionsOptions {
             call_timeout_ms: Some(1234.0),
+            ..Default::default()
         },
     )
     .await
@@ -2088,9 +2090,9 @@ fn lease_dropped_after_origin_runtime_shutdown_is_safe() {
 }
 
 // Harmless scratch files verify the previously reported parent/symlink escape.
-// This test records parity only; authorization policy is outside #394's scope.
+// #508: human-approved security divergence preserves text/data/metadata.
 #[tokio::test]
-async fn bridge_file_projection_matches_ts_including_outside_cwd() {
+async fn bridge_file_projection_rejects_outside_cwd_preserving_ts_text() {
     let oracle = baseline::oracle(include_str!("fixtures/mcp-worker-boundary/oracle.json"));
     let scratch = Scratch::new("mcp-file-boundary");
     let cwd = scratch.path().join("cwd");
@@ -2127,18 +2129,23 @@ async fn bridge_file_projection_matches_ts_including_outside_cwd() {
         let actual = object(execute(&tool, &object(vec![]), &JsValue::Undefined).await);
         assert_eq!(
             text(field(&actual, "ok")),
-            text(field(row, "observed")),
+            text(&object(vec![
+                ("content", field(row, "raw").clone()),
+                ("data", field(row, "raw").clone()),
+                (
+                    "metadata",
+                    field(field(row, "observed"), "metadata").clone()
+                ),
+            ])),
             "{}",
             text(field(row, "id"))
         );
     }
 }
 
-// Polling the call must return before a writer releases the FIFO. The native
-// writer's timeout only lets a broken implementation fail instead of hanging.
+// #508: a FIFO is skipped without opening it; no writer is necessary.
 #[tokio::test]
-async fn bridge_fifo_read_does_not_block_async_worker() {
-    use std::io::Write;
+async fn bridge_fifo_is_rejected_without_waiting_for_a_writer() {
     let oracle = baseline::oracle(include_str!("fixtures/mcp-worker-boundary/oracle.json"));
     let row = array(field(&oracle, "cases"), "cases")
         .iter()
@@ -2153,17 +2160,6 @@ async fn bridge_fifo_read_does_not_block_async_worker() {
             .unwrap()
             .success()
     );
-    let (release, wait) = std::sync::mpsc::channel();
-    let writer = std::thread::spawn(move || {
-        let released = wait.recv_timeout(Duration::from_secs(5)).is_ok();
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(fifo)
-            .unwrap()
-            .write_all(b"fixture image")
-            .unwrap();
-        released
-    });
     let port = Arc::new(FakePort {
         specs: Vec::new(),
         cwd: scratch.path().to_string_lossy().into_owned(),
@@ -2188,14 +2184,125 @@ async fn bridge_fifo_read_does_not_block_async_worker() {
         CreateToolDefinitionsOptions::default(),
     );
     let input = object(vec![]);
-    let mut call = Box::pin(execute(&tool, &input, &UNDEFINED));
-    poll_pending(call.as_mut()).await;
-    // This point runs on the same single async worker that polled the call.
-    release.send(()).unwrap();
-    let actual = object(call.await);
-    assert!(
-        writer.join().unwrap(),
-        "worker must run before FIFO writer fallback"
+    let actual = object(
+        tokio::time::timeout(Duration::from_secs(2), execute(&tool, &input, &UNDEFINED))
+            .await
+            .expect("FIFO must be skipped without a writer"),
     );
+    assert_eq!(
+        text(field(&actual, "ok")),
+        text(&object(vec![
+            ("content", field(row, "raw").clone()),
+            ("data", field(row, "raw").clone()),
+            (
+                "metadata",
+                field(field(row, "observed"), "metadata").clone()
+            ),
+        ])),
+    );
+}
+
+#[tokio::test]
+async fn bridge_safe_images_match_real_ts_bytes_and_host_whitelist_is_applied() {
+    let oracle = baseline::oracle(include_str!("fixtures/mcp-image-sandbox/oracle.json"));
+    assert_eq!(
+        field(&oracle, "maxImageBytes"),
+        &JsValue::Number(pilotdeck_gateway::runtime::mcp::bridge::MCP_FILE_IMAGE_MAX_BYTES as f64),
+        "use the real TS attachment image cap",
+    );
+    let scratch = Scratch::new("mcp-image-sandbox");
+    let cwd = scratch.path().join("cwd");
+    std::fs::create_dir(&cwd).unwrap();
+    for file in array(field(&oracle, "files"), "files") {
+        let hex = string(field(file, "hex"), "hex");
+        let bytes: Vec<u8> = hex
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect();
+        std::fs::write(cwd.join(string(field(file, "path"), "path")), bytes).unwrap();
+    }
+    std::os::unix::fs::symlink("pixel.png", cwd.join("link.png")).unwrap();
+    let port = Arc::new(FakePort {
+        specs: Vec::new(),
+        cwd: cwd.to_string_lossy().into_owned(),
+        next: Mutex::new(JsValue::Null),
+        calls: Mutex::new(Vec::new()),
+    });
+    let spec = McpToolSpec {
+        server_id: "s".into(),
+        tool_name: "t".into(),
+        wire_name: "mcp__s__t".into(),
+        description: "".into(),
+        input_schema: object(vec![("type", s("object"))]),
+        annotations: None,
+        meta: None,
+    };
+    let tool = pilotdeck_gateway::runtime::mcp::bridge::McpBridgeTool::new(
+        spec.clone(),
+        port.clone(),
+        CreateToolDefinitionsOptions::default(),
+    );
+    for row in array(field(&oracle, "cases"), "cases") {
+        *port.next.lock().unwrap() = object(vec![(
+            "result",
+            object(vec![("content", field(row, "raw").clone())]),
+        )]);
+        let actual = object(execute(&tool, &object(vec![]), &UNDEFINED).await);
+        assert_eq!(
+            text(field(&actual, "ok")),
+            text(field(row, "observed")),
+            "{}",
+            text(field(row, "id"))
+        );
+    }
+    // Move the same golden image outside cwd and authorize it via host options.
+    let allowed = scratch.path().join("allowed");
+    std::fs::create_dir(&allowed).unwrap();
+    std::fs::rename(cwd.join("pixel.png"), allowed.join("pixel.png")).unwrap();
+    std::fs::remove_file(cwd.join("link.png")).unwrap();
+    std::os::unix::fs::symlink("../allowed/pixel.png", cwd.join("link.png")).unwrap();
+    let row = &array(field(&oracle, "cases"), "cases")[1];
+    *port.next.lock().unwrap() = object(vec![(
+        "result",
+        object(vec![("content", field(row, "raw").clone())]),
+    )]);
+    let denied = object(execute(&tool, &object(vec![]), &UNDEFINED).await);
+    assert_eq!(field(field(&denied, "ok"), "content"), field(row, "raw"));
+    let tool = pilotdeck_gateway::runtime::mcp::bridge::McpBridgeTool::new(
+        spec,
+        port,
+        CreateToolDefinitionsOptions {
+            image_read_allowed_roots: vec![allowed],
+            ..Default::default()
+        },
+    );
+    let actual = object(execute(&tool, &object(vec![]), &UNDEFINED).await);
     assert_eq!(text(field(&actual, "ok")), text(field(row, "observed")));
+}
+
+#[test]
+#[ignore = "requires fixed TS baseline and Node/tsx; run with PDRS_BASELINE"]
+fn image_sandbox_generator_reproduces_committed_oracle_twice() {
+    let baseline = std::env::var("PDRS_BASELINE").expect("set fixed baseline path");
+    let generator =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mcp-image-sandbox/generate.mts");
+    let committed = include_bytes!("fixtures/mcp-image-sandbox/oracle.json");
+    for run in 0..2 {
+        let scratch = Scratch::new("mcp-image-generate");
+        let status = std::process::Command::new("node")
+            .arg("--import")
+            .arg(format!("{baseline}/node_modules/tsx/dist/loader.mjs"))
+            .arg(&generator)
+            .arg(scratch.path())
+            .status()
+            .expect("run node");
+        assert!(status.success(), "generator run {run}");
+        assert_eq!(
+            std::fs::read(scratch.path().join("oracle.json")).unwrap(),
+            committed
+        );
+    }
 }
