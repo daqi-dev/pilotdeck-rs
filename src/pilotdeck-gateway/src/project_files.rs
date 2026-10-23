@@ -88,6 +88,38 @@ fn measured(method: &str, error: &io::Error) -> Result<()> {
 pub(crate) fn open_beneath(root: &Path, canonical: &Path) -> io::Result<File> {
     open_checked(root, canonical, false)
 }
+/// Create a private file without following any component, preserving Node's
+/// `wx` semantics. Reuse the same directory walk as reads; only the final open
+/// gains write/create flags. Check the opened inode before callers write bytes.
+#[cfg(unix)]
+pub(crate) fn create_new_beneath(root: &Path, canonical: &Path) -> io::Result<File> {
+    use rustix::fs::{FileType, Mode, OFlags, fstat, openat};
+    let parent = open_checked(
+        root,
+        canonical.parent().ok_or(io::ErrorKind::InvalidInput)?,
+        true,
+    )?;
+    let file = File::from(
+        openat(
+            &parent,
+            canonical.file_name().ok_or(io::ErrorKind::InvalidInput)?,
+            OFlags::WRONLY
+                | OFlags::CREATE
+                | OFlags::EXCL
+                | OFlags::CLOEXEC
+                | OFlags::NOFOLLOW
+                | OFlags::NONBLOCK,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(io::Error::from)
+        .map_err(checked_open_error)?,
+    );
+    let stat = fstat(&file)?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile || stat.st_nlink != 1 {
+        return Err(io::Error::from_raw_os_error(libc::EACCES));
+    }
+    Ok(file)
+}
 fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Result<File> {
     use rustix::fs::{Mode, OFlags, openat};
     let relative = canonical

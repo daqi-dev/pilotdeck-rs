@@ -835,7 +835,10 @@ fn create_directories(path: &Path) -> io::Result<()> {
 }
 
 /// Confine every spill write to `root` and reject symlinked components below it.
-fn ensure_directory(root: &JsString, target: &JsString) -> Result<(), ToolBudgetError> {
+fn ensure_directory(
+    root: &JsString,
+    target: &JsString,
+) -> Result<(PathBuf, PathBuf), ToolBudgetError> {
     if !within(root, target) {
         return Err(permission_denied("mkdir", target));
     }
@@ -901,7 +904,59 @@ fn ensure_directory(root: &JsString, target: &JsString) -> Result<(), ToolBudget
     if !canonical_target.starts_with(&canonical_root) {
         return Err(permission_denied("mkdir", target));
     }
-    Ok(())
+    Ok((canonical_root, canonical_target))
+}
+
+// Keep the canonical paths captured by containment validation: resolving again
+// after the test hook (or a real replacement) would trust the attacker's link.
+fn create_spill_file(checked: &(PathBuf, PathBuf), path: &JsString) -> io::Result<fs::File> {
+    #[cfg(all(test, unix))]
+    BEFORE_SPILL_OPEN.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().as_mut() {
+            hook(path);
+        }
+    });
+    #[cfg(unix)]
+    let opened = crate::project_files::create_new_beneath(
+        &checked.0,
+        &checked.1.join(
+            os_path(path)
+                .file_name()
+                .ok_or(io::ErrorKind::InvalidInput)?,
+        ),
+    );
+    // Non-Unix retains the previous path-based exclusive create behavior.
+    #[cfg(not(unix))]
+    let opened = {
+        let _ = checked;
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(os_path(path))
+    };
+    opened
+}
+
+fn spill_open_error(
+    error: io::Error,
+    path: &JsString,
+    syscall: &str,
+    io_path: &str,
+) -> ToolBudgetError {
+    #[cfg(unix)]
+    if crate::project_files::nofollow_loop(&error) || error.raw_os_error() == Some(libc::ENOTDIR) {
+        return permission_denied("mkdir", &dirname(path));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    io_error(error, syscall, Some(io_path))
+}
+
+#[cfg(all(test, unix))]
+type BeforeSpillOpen = Box<dyn FnMut(&JsString)>;
+#[cfg(all(test, unix))]
+thread_local! {
+    static BEFORE_SPILL_OPEN: std::cell::RefCell<Option<BeforeSpillOpen>> = const { std::cell::RefCell::new(None) };
 }
 
 fn write_text_if_absent(
@@ -910,24 +965,16 @@ fn write_text_if_absent(
     content: &JsString,
 ) -> Result<bool, ToolBudgetError> {
     let parent = dirname(path);
-    ensure_directory(root, &parent)?;
+    let checked = ensure_directory(root, &parent)?;
     let bytes = utf8_bytes(content);
-    let path_buf = os_path(path);
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    match options.open(&path_buf) {
+    match create_spill_file(&checked, path) {
         Ok(mut file) => {
             file.write_all(&bytes)
                 .map_err(|error| io_error(error, "write", Some(&path_text(path))))?;
             Ok(true)
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(io_error(error, "open", Some(&path_text(path)))),
+        Err(error) => Err(spill_open_error(error, path, "open", &path_text(path))),
     }
 }
 
@@ -936,7 +983,7 @@ fn copy_file_if_absent(
     source: &JsString,
     destination: &JsString,
 ) -> Result<bool, ToolBudgetError> {
-    ensure_directory(root, &dirname(destination))?;
+    let checked = ensure_directory(root, &dirname(destination))?;
     let pair = format!("{}' -> '{}", path_text(source), path_text(destination));
     let source_path = os_path(source);
     // `create_new` protects the destination; the source needs the same check
@@ -976,28 +1023,98 @@ fn copy_file_if_absent(
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
-    let destination_path = os_path(destination);
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    match options.open(&destination_path) {
+    match create_spill_file(&checked, destination) {
         Ok(mut file) => {
             file.write_all(&bytes)
                 .map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
             Ok(true)
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(io_error(error, "copyfile", Some(&pair))),
+        Err(error) => Err(spill_open_error(error, destination, "copyfile", &pair)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    struct ResetSpillHook;
+    #[cfg(unix)]
+    impl Drop for ResetSpillHook {
+        fn drop(&mut self) {
+            BEFORE_SPILL_OPEN.with(|hook| *hook.borrow_mut() = None);
+        }
+    }
+
+    #[cfg(unix)]
+    fn raced_destination(copy: bool) {
+        use crate::test_scratch::Scratch;
+        use std::{cell::Cell, os::unix::fs::symlink, rc::Rc};
+        let scratch = Scratch::new("spill-toctou");
+        let outside = Scratch::new("spill-toctou-outside");
+        let root_path = scratch.path().join("spill");
+        let intermediate = root_path.join("middle");
+        let parent = intermediate.join("leaf");
+        fs::create_dir_all(&parent).unwrap();
+        fs::create_dir(outside.path().join("leaf")).unwrap();
+        let source = root_path.join("source.txt");
+        fs::write(&source, b"payload").unwrap();
+        let root = JsString::from(root_path.to_str().unwrap());
+        let path = JsString::from(parent.join("payload.txt").to_str().unwrap());
+        let fired = Rc::new(Cell::new(false));
+        let fired_hook = fired.clone();
+        let target = path.clone();
+        let outside_path = outside.path().to_owned();
+        BEFORE_SPILL_OPEN.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |path| {
+                if path != &target {
+                    return;
+                }
+                assert!(!fired_hook.replace(true), "hook must fire exactly once");
+                fs::rename(&intermediate, intermediate.with_extension("saved")).unwrap();
+                symlink(&outside_path, &intermediate).unwrap();
+            }));
+        });
+        let _reset = ResetSpillHook;
+        write_text_if_absent(
+            &root,
+            &JsString::from(root_path.join("unrelated.txt").to_str().unwrap()),
+            &JsString::from("unrelated"),
+        )
+        .unwrap();
+        assert!(!fired.get(), "hook must ignore unrelated target paths");
+        let result = if copy {
+            copy_file_if_absent(&root, &JsString::from(source.to_str().unwrap()), &path)
+        } else {
+            write_text_if_absent(&root, &path, &JsString::from("payload"))
+        };
+        assert!(fired.get(), "target-filtered hook did not run");
+        assert!(
+            !outside.path().join("leaf/payload.txt").exists(),
+            "raced open wrote outside the spill root"
+        );
+        assert_eq!(
+            fs::read_dir(outside.path().join("leaf")).unwrap().count(),
+            0
+        );
+        // The same symlink presented before containment must have exactly the
+        // same public diagnostic as the replacement between check and open.
+        let preexisting_error = ensure_directory(&root, &dirname(&path)).unwrap_err();
+        assert_eq!(result.unwrap_err().message, preexisting_error.message);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spill_write_rejects_directory_swap_after_check() {
+        raced_destination(false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spill_alias_rejects_directory_swap_after_check() {
+        raced_destination(true);
+    }
 
     #[test]
     fn byte_and_preview_helpers_follow_node() {

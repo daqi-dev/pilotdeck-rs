@@ -728,6 +728,21 @@ await runCase({
   ],
 });
 
+// The native spill port uses `wx`: a resumed artifact keeps its old bytes,
+// while the model-visible preview still describes the current tool result.
+await runCase({
+  name: 'existing-artifact',
+  budget: { maxResultSizeChars: 1, maxResultSizeTokens: 1_000 },
+  files: [{ path: 'tool-results/session/turn-1-call-existing.txt', text: 'original artifact\n' }],
+  steps: [
+    {
+      input: {
+        toolResultMessage: user([toolResult('call-existing', [text('new tool result')])]),
+      },
+    },
+  ],
+});
+
 await runCase({
   name: 'existing-alias',
   budget: { maxResultSizeChars: 5, maxResultSizeTokens: 1_000 },

@@ -18,8 +18,8 @@ use std::{
     sync::Arc,
 };
 const ORACLE: &str = include_str!("fixtures/tool-budget/oracle.json");
-const CASES: usize = 37;
-const STEPS: usize = 40;
+const CASES: usize = 38;
+const STEPS: usize = 41;
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
