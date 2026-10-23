@@ -657,8 +657,8 @@
     "src/web/client/protocol.ts": "d36eb220a30c04a58a77116a6ba0f1b54d250b5cf204b155ed065c4a52ef38f9",
     "src/web/client/webMessage.ts": "ada604e1438867fc15907e2dcd45daf3339c09c31e07d0cf595cd30fa9eb54a4"
   },
-  "count": 20,
-  "steps": 184,
+  "count": 24,
+  "steps": 246,
   "scenarios": [
     {
       "id": "empty-directories",
@@ -4471,6 +4471,989 @@
           "error": {
             "name": "Error",
             "message": "Cannot refresh plugins; plugin runtime is draining."
+          },
+          "calls": []
+        }
+      ],
+      "teardown": []
+    },
+    {
+      "id": "dispose-active-order-and-parallel",
+      "builtins": [
+        {
+          "name": "z-first",
+          "dir": "builtin/z",
+          "dispose": "ok",
+          "gate": "first"
+        },
+        {
+          "name": "a-second",
+          "dir": "builtin/a",
+          "dispose": "ok"
+        },
+        {
+          "name": "m-third",
+          "dir": "builtin/m",
+          "dispose": "third failed"
+        }
+      ],
+      "enabled": {},
+      "builtinSkills": false,
+      "steps": [
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "start",
+          "what": "dispose",
+          "slot": "d"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "calls"
+        },
+        {
+          "op": "pending",
+          "slot": "d"
+        },
+        {
+          "op": "open",
+          "gate": "first"
+        },
+        {
+          "op": "await",
+          "slot": "d"
+        },
+        {
+          "op": "state"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "generation": 1,
+            "previous": [],
+            "next": [
+              "z-first@builtin:<ROOT>/builtin/z",
+              "a-second@builtin:<ROOT>/builtin/a",
+              "m-third@builtin:<ROOT>/builtin/m"
+            ],
+            "added": [
+              "z-first@builtin:<ROOT>/builtin/z",
+              "a-second@builtin:<ROOT>/builtin/a",
+              "m-third@builtin:<ROOT>/builtin/m"
+            ],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": [
+            {
+              "event": "dispose",
+              "plugin": "z-first"
+            },
+            {
+              "event": "dispose",
+              "plugin": "a-second"
+            },
+            {
+              "event": "dispose",
+              "plugin": "m-third"
+            }
+          ]
+        },
+        {
+          "result": [
+            {
+              "event": "dispose",
+              "plugin": "z-first"
+            },
+            {
+              "event": "dispose",
+              "plugin": "a-second"
+            },
+            {
+              "event": "dispose",
+              "plugin": "m-third"
+            }
+          ],
+          "calls": []
+        },
+        {
+          "result": true,
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "error": {
+            "name": "AggregateError",
+            "message": "Failed to dispose plugins.",
+            "errors": [
+              {
+                "name": "Error",
+                "message": "third failed"
+              },
+              {
+                "name": "Error",
+                "message": "third failed"
+              }
+            ]
+          },
+          "calls": [
+            {
+              "event": "disposeFinished",
+              "plugin": "z-first"
+            }
+          ]
+        },
+        {
+          "result": {
+            "generation": 1,
+            "lifecycleState": "disposed",
+            "snapshot": [],
+            "view": [],
+            "commands": [],
+            "skills": [],
+            "mcpServers": {},
+            "lspServers": {},
+            "mcpInstructions": []
+          },
+          "calls": []
+        }
+      ],
+      "teardown": []
+    },
+    {
+      "id": "dispose-retired-generations",
+      "builtins": [
+        {
+          "name": "z-old",
+          "dir": "builtin/z-old",
+          "dispose": "ok"
+        },
+        {
+          "name": "a-old",
+          "dir": "builtin/a-old",
+          "dispose": "ok"
+        },
+        {
+          "name": "z-next",
+          "dir": "builtin/z-next",
+          "dispose": "ok"
+        },
+        {
+          "name": "a-next",
+          "dir": "builtin/a-next",
+          "dispose": "ok"
+        }
+      ],
+      "enabled": {},
+      "builtinSkills": false,
+      "steps": [
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "acquire",
+          "kind": "catalog",
+          "id": "g1"
+        },
+        {
+          "op": "write",
+          "file": "builtin/z-old/plugin.json",
+          "text": "{\"name\":\"z-old\"}"
+        },
+        {
+          "op": "write",
+          "file": "builtin/a-old/plugin.json",
+          "text": "{\"name\":\"a-old\"}"
+        },
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "acquire",
+          "kind": "catalog",
+          "id": "g2"
+        },
+        {
+          "op": "write",
+          "file": "builtin/z-next/plugin.json",
+          "text": "{\"name\":\"z-next\"}"
+        },
+        {
+          "op": "write",
+          "file": "builtin/a-next/plugin.json",
+          "text": "{\"name\":\"a-next\"}"
+        },
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "start",
+          "what": "dispose",
+          "slot": "d"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "calls"
+        },
+        {
+          "op": "pending",
+          "slot": "d"
+        },
+        {
+          "op": "start",
+          "what": "release",
+          "id": "g1",
+          "slot": "r"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "calls"
+        },
+        {
+          "op": "pending",
+          "slot": "d"
+        },
+        {
+          "op": "release",
+          "id": "g2"
+        },
+        {
+          "op": "await",
+          "slot": "r"
+        },
+        {
+          "op": "await",
+          "slot": "d"
+        },
+        {
+          "op": "state"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "generation": 1,
+            "previous": [],
+            "next": [
+              "z-old@builtin:<ROOT>/builtin/z-old",
+              "a-old@builtin:<ROOT>/builtin/a-old",
+              "z-next@builtin:<ROOT>/builtin/z-next",
+              "a-next@builtin:<ROOT>/builtin/a-next"
+            ],
+            "added": [
+              "z-old@builtin:<ROOT>/builtin/z-old",
+              "a-old@builtin:<ROOT>/builtin/a-old",
+              "z-next@builtin:<ROOT>/builtin/z-next",
+              "a-next@builtin:<ROOT>/builtin/a-next"
+            ],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 1,
+            "frozen": true,
+            "contributions": {
+              "generation": 1,
+              "commands": []
+            }
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 2,
+            "previous": [
+              "z-old@builtin:<ROOT>/builtin/z-old",
+              "a-old@builtin:<ROOT>/builtin/a-old",
+              "z-next@builtin:<ROOT>/builtin/z-next",
+              "a-next@builtin:<ROOT>/builtin/a-next"
+            ],
+            "next": [
+              "z-old@builtin:<ROOT>/builtin/z-old",
+              "a-old@builtin:<ROOT>/builtin/a-old",
+              "z-next@builtin:<ROOT>/builtin/z-next",
+              "a-next@builtin:<ROOT>/builtin/a-next"
+            ],
+            "added": [],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 2,
+            "frozen": true,
+            "contributions": {
+              "generation": 2,
+              "commands": []
+            }
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 3,
+            "previous": [
+              "z-old@builtin:<ROOT>/builtin/z-old",
+              "a-old@builtin:<ROOT>/builtin/a-old",
+              "z-next@builtin:<ROOT>/builtin/z-next",
+              "a-next@builtin:<ROOT>/builtin/a-next"
+            ],
+            "next": [
+              "z-old@builtin:<ROOT>/builtin/z-old",
+              "a-old@builtin:<ROOT>/builtin/a-old",
+              "z-next@builtin:<ROOT>/builtin/z-next",
+              "a-next@builtin:<ROOT>/builtin/a-next"
+            ],
+            "added": [],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": [],
+          "calls": []
+        },
+        {
+          "result": true,
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": [
+            {
+              "event": "dispose",
+              "plugin": "z-old"
+            },
+            {
+              "event": "dispose",
+              "plugin": "a-old"
+            }
+          ]
+        },
+        {
+          "result": [
+            {
+              "event": "dispose",
+              "plugin": "z-old"
+            },
+            {
+              "event": "dispose",
+              "plugin": "a-old"
+            }
+          ],
+          "calls": []
+        },
+        {
+          "result": true,
+          "calls": []
+        },
+        {
+          "result": "released",
+          "calls": [
+            {
+              "event": "dispose",
+              "plugin": "z-next"
+            },
+            {
+              "event": "dispose",
+              "plugin": "a-next"
+            }
+          ]
+        },
+        {
+          "result": "done",
+          "calls": []
+        },
+        {
+          "result": "done",
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 3,
+            "lifecycleState": "disposed",
+            "snapshot": [],
+            "view": [],
+            "commands": [],
+            "skills": [],
+            "mcpServers": {},
+            "lspServers": {},
+            "mcpInstructions": []
+          },
+          "calls": []
+        }
+      ],
+      "teardown": []
+    },
+    {
+      "id": "dispose-mixed-errors-and-pending-callback",
+      "builtins": [
+        {
+          "name": "z-retired",
+          "dir": "builtin/z-retired",
+          "dispose": "retired failed",
+          "gate": "retired"
+        },
+        {
+          "name": "z-active",
+          "dir": "builtin/z-active",
+          "dispose": "active failed"
+        },
+        {
+          "name": "a-active",
+          "dir": "builtin/a-active",
+          "dispose": "ok"
+        }
+      ],
+      "enabled": {},
+      "builtinSkills": false,
+      "steps": [
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "acquire",
+          "kind": "catalog",
+          "id": "g1"
+        },
+        {
+          "op": "write",
+          "file": "builtin/z-retired/plugin.json",
+          "text": "{\"name\":\"z-retired\"}"
+        },
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "start",
+          "what": "release",
+          "id": "g1",
+          "slot": "r"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "calls"
+        },
+        {
+          "op": "pending",
+          "slot": "r"
+        },
+        {
+          "op": "start",
+          "what": "dispose",
+          "slot": "d"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "calls"
+        },
+        {
+          "op": "pending",
+          "slot": "d"
+        },
+        {
+          "op": "open",
+          "gate": "retired"
+        },
+        {
+          "op": "await",
+          "slot": "r"
+        },
+        {
+          "op": "await",
+          "slot": "d"
+        },
+        {
+          "op": "state"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "generation": 1,
+            "previous": [],
+            "next": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "z-active@builtin:<ROOT>/builtin/z-active",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "added": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "z-active@builtin:<ROOT>/builtin/z-active",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 1,
+            "frozen": true,
+            "contributions": {
+              "generation": 1,
+              "commands": []
+            }
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 2,
+            "previous": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "z-active@builtin:<ROOT>/builtin/z-active",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "next": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "z-active@builtin:<ROOT>/builtin/z-active",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "added": [],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": [
+            {
+              "event": "dispose",
+              "plugin": "z-retired"
+            }
+          ]
+        },
+        {
+          "result": [
+            {
+              "event": "dispose",
+              "plugin": "z-retired"
+            }
+          ],
+          "calls": []
+        },
+        {
+          "result": true,
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": [
+            {
+              "event": "dispose",
+              "plugin": "z-active"
+            },
+            {
+              "event": "dispose",
+              "plugin": "a-active"
+            }
+          ]
+        },
+        {
+          "result": [
+            {
+              "event": "dispose",
+              "plugin": "z-retired"
+            },
+            {
+              "event": "dispose",
+              "plugin": "z-active"
+            },
+            {
+              "event": "dispose",
+              "plugin": "a-active"
+            }
+          ],
+          "calls": []
+        },
+        {
+          "result": true,
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "error": {
+            "name": "Error",
+            "message": "retired failed"
+          },
+          "calls": [
+            {
+              "event": "disposeFinished",
+              "plugin": "z-retired"
+            }
+          ]
+        },
+        {
+          "error": {
+            "name": "AggregateError",
+            "message": "Failed to dispose plugins.",
+            "errors": [
+              {
+                "name": "Error",
+                "message": "retired failed"
+              },
+              {
+                "name": "Error",
+                "message": "active failed"
+              },
+              {
+                "name": "AggregateError",
+                "message": "Failed to dispose retired plugins.",
+                "errors": [
+                  {
+                    "name": "Error",
+                    "message": "retired failed"
+                  },
+                  {
+                    "name": "Error",
+                    "message": "active failed"
+                  }
+                ]
+              }
+            ]
+          },
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 2,
+            "lifecycleState": "disposed",
+            "snapshot": [],
+            "view": [],
+            "commands": [],
+            "skills": [],
+            "mcpServers": {},
+            "lspServers": {},
+            "mcpInstructions": []
+          },
+          "calls": []
+        }
+      ],
+      "teardown": []
+    },
+    {
+      "id": "dispose-reactivated-retiree",
+      "builtins": [
+        {
+          "name": "z-retired",
+          "dir": "builtin/z-retired",
+          "dispose": "retired failed"
+        },
+        {
+          "name": "a-active",
+          "dir": "builtin/a-active",
+          "dispose": "active failed"
+        }
+      ],
+      "enabled": {},
+      "builtinSkills": false,
+      "steps": [
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "acquire",
+          "kind": "catalog",
+          "id": "g1"
+        },
+        {
+          "op": "write",
+          "file": "builtin/z-retired/plugin.json",
+          "text": "{\"name\":\"z-retired\"}"
+        },
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "rm",
+          "file": "builtin/z-retired/plugin.json"
+        },
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "write",
+          "file": "builtin/z-retired/plugin.json",
+          "text": "{\"name\":\"z-retired\"}"
+        },
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "rm",
+          "file": "builtin/z-retired/plugin.json"
+        },
+        {
+          "op": "refresh"
+        },
+        {
+          "op": "start",
+          "what": "release",
+          "id": "g1",
+          "slot": "r"
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "pending",
+          "slot": "r"
+        },
+        {
+          "op": "start",
+          "what": "dispose",
+          "slot": "d"
+        },
+        {
+          "op": "await",
+          "slot": "r"
+        },
+        {
+          "op": "await",
+          "slot": "d"
+        },
+        {
+          "op": "state"
+        }
+      ],
+      "results": [
+        {
+          "result": {
+            "generation": 1,
+            "previous": [],
+            "next": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "added": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 1,
+            "frozen": true,
+            "contributions": {
+              "generation": 1,
+              "commands": []
+            }
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 2,
+            "previous": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "next": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "added": [],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 3,
+            "previous": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "next": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "added": [],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 4,
+            "previous": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "next": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "added": [],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 5,
+            "previous": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "next": [
+              "z-retired@builtin:<ROOT>/builtin/z-retired",
+              "a-active@builtin:<ROOT>/builtin/a-active"
+            ],
+            "added": [],
+            "removed": [],
+            "stagedFailures": []
+          },
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "result": true,
+          "calls": []
+        },
+        {
+          "calls": []
+        },
+        {
+          "error": {
+            "name": "Error",
+            "message": "retired failed"
+          },
+          "calls": [
+            {
+              "event": "dispose",
+              "plugin": "a-active"
+            },
+            {
+              "event": "dispose",
+              "plugin": "z-retired"
+            }
+          ]
+        },
+        {
+          "error": {
+            "name": "AggregateError",
+            "message": "Failed to dispose plugins.",
+            "errors": [
+              {
+                "name": "Error",
+                "message": "retired failed"
+              },
+              {
+                "name": "Error",
+                "message": "active failed"
+              },
+              {
+                "name": "AggregateError",
+                "message": "Failed to dispose retired plugins.",
+                "errors": [
+                  {
+                    "name": "Error",
+                    "message": "retired failed"
+                  },
+                  {
+                    "name": "Error",
+                    "message": "active failed"
+                  }
+                ]
+              }
+            ]
+          },
+          "calls": []
+        },
+        {
+          "result": {
+            "generation": 5,
+            "lifecycleState": "disposed",
+            "snapshot": [],
+            "view": [],
+            "commands": [],
+            "skills": [],
+            "mcpServers": {},
+            "lspServers": {},
+            "mcpInstructions": []
           },
           "calls": []
         }

@@ -117,7 +117,9 @@ pub(super) struct PluginRegistry {
     /// Stable insertion order for list() (JS Map preserves it).
     order: Vec<String>,
     retired_plugins: Vec<Arc<LoadedPlugin>>,
-    pending_disposals: HashMap<usize, watch::Receiver<Option<Result<(), PluginRuntimeError>>>>,
+    // JS Map order also determines the outer AggregateError cause order.
+    pending_disposals: Vec<PendingDisposal>,
+    disposal_waiters: Vec<Arc<LoadedPlugin>>,
     lease_counts: HashMap<usize, usize>,
     waiters: Arc<Notify>,
     state: RegistryState,
@@ -152,7 +154,8 @@ impl PluginRegistry {
             plugins: HashMap::new(),
             order: Vec::new(),
             retired_plugins: Vec::new(),
-            pending_disposals: HashMap::new(),
+            pending_disposals: Vec::new(),
+            disposal_waiters: Vec::new(),
             lease_counts: HashMap::new(),
             waiters: Arc::new(Notify::new()),
             state: RegistryState::Active,
@@ -245,7 +248,11 @@ impl PluginRegistry {
         }
         self.waiters.notify_waiters();
         for p in &retired {
-            self.retired_plugins.push(Arc::clone(p));
+            // TS retiredPlugins is a Set of instances, including reactivated
+            // builtins that retire again while their original lease is held.
+            if !self.retired_plugins.iter().any(|old| Arc::ptr_eq(old, p)) {
+                self.retired_plugins.push(Arc::clone(p));
+            }
         }
         self.generation += 1;
 
@@ -459,7 +466,7 @@ impl PluginRuntime {
                     if let Some(prx) = pending_refresh_rx {
                         let _ = wait_watch(prx).await;
                     }
-                    let pending = {
+                    let (pending, group) = {
                         let mut s = state_clone.lock().await;
                         s.registry.state = RegistryState::Draining;
                         let mut plugins = s.registry.retired_plugins.clone();
@@ -471,7 +478,14 @@ impl PluginRuntime {
                         s.registry.plugins.clear();
                         s.registry.order.clear();
                         s.registry.waiters.notify_waiters();
-                        start_disposals(&mut s.registry, plugins, &state_clone)
+                        let group = start_disposals(&mut s.registry, plugins, &state_clone);
+                        let pending = s
+                            .registry
+                            .pending_disposals
+                            .iter()
+                            .map(|pending| pending.receiver.clone())
+                            .collect();
+                        (pending, group)
                     };
                     let mut errors = settle_disposals(pending).await;
                     // PluginRegistry.ts:106-114 settles both the individual
@@ -479,7 +493,7 @@ impl PluginRuntime {
                     // rejection is included even when it shares those causes.
                     if let Err(group) = PluginRuntimeError::aggregate(
                         "Failed to dispose retired plugins.",
-                        errors.clone(),
+                        settle_disposals(group).await,
                     ) {
                         errors.push(group);
                     }
@@ -576,36 +590,97 @@ async fn perform_refresh(
 
 type DisposalReceiver = watch::Receiver<Option<Result<(), PluginRuntimeError>>>;
 
-// Register every promise under the registry lock before releasing it. A lease
-// release and runtime shutdown must observe the same disposal, even if its
-// callback has not started yet (PluginRegistry.ts:143-161).
+struct PendingDisposal {
+    plugin: Arc<LoadedPlugin>,
+    receiver: DisposalReceiver,
+    // Taken exactly once when the instance becomes unreferenced.
+    sender: Option<watch::Sender<Option<Result<(), PluginRuntimeError>>>>,
+}
+
+// Register every promise before starting callbacks. Keep JS Map insertion order
+// even when a retired callback is still waiting for its lease (Registry:138-161).
 fn start_disposals(
     registry: &mut PluginRegistry,
     plugins: Vec<Arc<LoadedPlugin>>,
     state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
 ) -> Vec<DisposalReceiver> {
-    plugins
+    let woken = std::mem::take(&mut registry.disposal_waiters);
+    let pending = plugins
         .into_iter()
         .map(|plugin| {
-            let key = Arc::as_ptr(&plugin) as usize;
-            if let Some(rx) = registry.pending_disposals.get(&key) {
-                return rx.clone();
+            if let Some(pending) = registry
+                .pending_disposals
+                .iter()
+                .find(|pending| Arc::ptr_eq(&pending.plugin, &plugin))
+            {
+                return pending.receiver.clone();
             }
             let (tx, rx) = watch::channel(None);
-            registry.pending_disposals.insert(key, rx.clone());
-            let state = Arc::clone(state_mutex);
-            tokio::spawn(async move {
-                let result = drain_one_plugin(Arc::clone(&plugin), &state).await;
-                let mut st = state.lock().await;
-                let _ = tx.send(Some(result));
-                st.registry.pending_disposals.remove(&key);
-                st.registry
-                    .retired_plugins
-                    .retain(|p| !Arc::ptr_eq(p, &plugin));
+            registry.disposal_waiters.push(Arc::clone(&plugin));
+            registry.pending_disposals.push(PendingDisposal {
+                plugin,
+                receiver: rx.clone(),
+                sender: Some(tx),
             });
             rx
         })
-        .collect()
+        .collect();
+    registry.disposal_waiters.extend(woken);
+    start_ready_disposals(registry, state_mutex);
+    pending
+}
+
+// JS invokes each eligible callback synchronously up to its first await, while
+// leased instances wait independently. Preserve synchronous starts and lease
+// waiter order under the lock so Tokio scheduling cannot reorder callbacks or
+// start the same instance twice.
+fn start_ready_disposals(
+    registry: &mut PluginRegistry,
+    state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
+) {
+    // New callbacks run before continuations woken by the preceding lease
+    // notification. Still-referenced continuations rejoin the end of the wait
+    // queue, matching PluginRegistry.ts:148-150 and 169-175. Promise insertion
+    // order is separate: it must not change the AggregateError cause order.
+    for plugin in std::mem::take(&mut registry.disposal_waiters) {
+        if registry.is_plugin_referenced(&plugin) {
+            registry.disposal_waiters.push(plugin);
+            continue;
+        }
+        let pending = registry
+            .pending_disposals
+            .iter_mut()
+            .find(|pending| Arc::ptr_eq(&pending.plugin, &plugin))
+            .unwrap();
+        let tx = pending.sender.take().unwrap();
+        let callback_plugin = Arc::clone(&plugin);
+        let mut callback = Box::pin(async move {
+            if let Some(dispose) = &callback_plugin.dispose {
+                dispose().await.map_err(PluginRuntimeError::new)?;
+            }
+            Ok(())
+        });
+        let first = callback
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        let state = Arc::clone(state_mutex);
+        tokio::spawn(async move {
+            // Finish the synchronous start batch before resuming any callback.
+            drop(state.lock().await);
+            let result = match first {
+                std::task::Poll::Ready(result) => result,
+                std::task::Poll::Pending => callback.await,
+            };
+            let mut st = state.lock().await;
+            let _ = tx.send(Some(result));
+            st.registry
+                .pending_disposals
+                .retain(|pending| !Arc::ptr_eq(&pending.plugin, &plugin));
+            st.registry
+                .retired_plugins
+                .retain(|p| !Arc::ptr_eq(p, &plugin));
+        });
+    }
 }
 
 async fn settle_disposals(pending: Vec<DisposalReceiver>) -> Vec<PluginRuntimeError> {
@@ -616,39 +691,6 @@ async fn settle_disposals(pending: Vec<DisposalReceiver>) -> Vec<PluginRuntimeEr
         }
     }
     errors
-}
-
-async fn drain_one_plugin(
-    plugin: Arc<LoadedPlugin>,
-    state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
-) -> Result<(), PluginRuntimeError> {
-    loop {
-        // `Notify::notified()` only registers the waiter when the future is
-        // first polled, not when it is created.  We must call `.enable()` while
-        // still holding the lock so the waiter is registered before we release
-        // the guard.  This closes the race with `release_lease_plugins`
-        // calling `notify_waiters()` between the lock release and the .await.
-        // Pattern mirrors config/store.rs `wait_done` / `run_or_wait`.
-        //
-        // Clone the Arc<Notify> first so the Notified future borrows from the
-        // local `waiters`, not from the MutexGuard — the guard can then drop
-        // while the pinned future stays valid.
-        let st = state_mutex.lock().await;
-        if !st.registry.is_plugin_referenced(&plugin) {
-            drop(st);
-            break;
-        }
-        let waiters = Arc::clone(&st.registry.waiters);
-        let notified = waiters.notified();
-        tokio::pin!(notified);
-        notified.as_mut().enable();
-        drop(st);
-        notified.await;
-    }
-    if let Some(dispose) = &plugin.dispose {
-        dispose().await.map_err(PluginRuntimeError::new)?;
-    }
-    Ok(())
 }
 
 #[allow(clippy::collapsible_if)]
@@ -690,13 +732,15 @@ pub(super) async fn release_lease_plugins(
                 }
             }
         }
+        start_ready_disposals(&mut st.registry, state_mutex);
         plugins
             .iter()
             .filter_map(|p| {
                 st.registry
                     .pending_disposals
-                    .get(&(Arc::as_ptr(p) as usize))
-                    .cloned()
+                    .iter()
+                    .find(|pending| Arc::ptr_eq(&pending.plugin, p))
+                    .map(|pending| pending.receiver.clone())
             })
             .collect()
     };

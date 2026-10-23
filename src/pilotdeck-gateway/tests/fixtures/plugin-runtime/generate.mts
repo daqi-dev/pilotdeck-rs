@@ -42,7 +42,7 @@ const { PluginRuntime } = await import(pathToFileURL(join(baseline, RUNTIME)).hr
 const { GatewayCommandCatalogBundle } = await import(pathToFileURL(join(baseline, CATALOG)).href);
 
 type Step = Record<string, any> & { op: string };
-type Builtin = { name: string; dir: string; dispose?: string; mcpServers?: Record<string, unknown> };
+type Builtin = { name: string; dir: string; dispose?: string; gate?: string; mcpServers?: Record<string, unknown> };
 type Scenario = {
   id: string;
   builtins?: Builtin[];
@@ -297,6 +297,68 @@ add('dispose-before-any-refresh', {}, [
   { op: 'state' },
   { op: 'refresh' },
 ]);
+// #543: gates expose invocation order, parallelism, and completion without clocks.
+add('dispose-active-order-and-parallel', { builtins: [
+  { name: 'z-first', dir: 'builtin/z', dispose: 'ok', gate: 'first' },
+  { name: 'a-second', dir: 'builtin/a', dispose: 'ok' },
+  { name: 'm-third', dir: 'builtin/m', dispose: 'third failed' },
+] }, [
+  { op: 'refresh' },
+  { op: 'start', what: 'dispose', slot: 'd' },
+  { op: 'flush' }, { op: 'calls' }, { op: 'pending', slot: 'd' },
+  { op: 'open', gate: 'first' },
+  { op: 'await', slot: 'd' }, { op: 'state' },
+]);
+add('dispose-retired-generations', { builtins: [
+  { name: 'z-old', dir: 'builtin/z-old', dispose: 'ok' },
+  { name: 'a-old', dir: 'builtin/a-old', dispose: 'ok' },
+  { name: 'z-next', dir: 'builtin/z-next', dispose: 'ok' },
+  { name: 'a-next', dir: 'builtin/a-next', dispose: 'ok' },
+] }, [
+  { op: 'refresh' }, { op: 'acquire', kind: 'catalog', id: 'g1' },
+  w('builtin/z-old/plugin.json', manifest({ name: 'z-old' })),
+  w('builtin/a-old/plugin.json', manifest({ name: 'a-old' })),
+  { op: 'refresh' }, { op: 'acquire', kind: 'catalog', id: 'g2' },
+  w('builtin/z-next/plugin.json', manifest({ name: 'z-next' })),
+  w('builtin/a-next/plugin.json', manifest({ name: 'a-next' })),
+  { op: 'refresh' }, { op: 'start', what: 'dispose', slot: 'd' },
+  { op: 'flush' }, { op: 'calls' }, { op: 'pending', slot: 'd' },
+  { op: 'start', what: 'release', id: 'g1', slot: 'r' },
+  { op: 'flush' }, { op: 'calls' }, { op: 'pending', slot: 'd' },
+  { op: 'release', id: 'g2' }, { op: 'await', slot: 'r' }, { op: 'await', slot: 'd' }, { op: 'state' },
+]);
+add('dispose-mixed-errors-and-pending-callback', { builtins: [
+  { name: 'z-retired', dir: 'builtin/z-retired', dispose: 'retired failed', gate: 'retired' },
+  { name: 'z-active', dir: 'builtin/z-active', dispose: 'active failed' },
+  { name: 'a-active', dir: 'builtin/a-active', dispose: 'ok' },
+] }, [
+  { op: 'refresh' }, { op: 'acquire', kind: 'catalog', id: 'g1' },
+  w('builtin/z-retired/plugin.json', manifest({ name: 'z-retired' })),
+  { op: 'refresh' },
+  { op: 'start', what: 'release', id: 'g1', slot: 'r' },
+  { op: 'flush' }, { op: 'calls' }, { op: 'pending', slot: 'r' },
+  { op: 'start', what: 'dispose', slot: 'd' },
+  { op: 'flush' }, { op: 'calls' }, { op: 'pending', slot: 'd' },
+  { op: 'open', gate: 'retired' },
+  { op: 'await', slot: 'r' }, { op: 'await', slot: 'd' }, { op: 'state' },
+]);
+add('dispose-reactivated-retiree', { builtins: [
+  { name: 'z-retired', dir: 'builtin/z-retired', dispose: 'retired failed' },
+  { name: 'a-active', dir: 'builtin/a-active', dispose: 'active failed' },
+] }, [
+  { op: 'refresh' }, { op: 'acquire', kind: 'catalog', id: 'g1' },
+  w('builtin/z-retired/plugin.json', manifest({ name: 'z-retired' })),
+  { op: 'refresh' },
+  { op: 'rm', file: 'builtin/z-retired/plugin.json' }, { op: 'refresh' },
+  // Re-retire the same builtin instance before its original disposal completes.
+  w('builtin/z-retired/plugin.json', manifest({ name: 'z-retired' })),
+  { op: 'refresh' },
+  { op: 'rm', file: 'builtin/z-retired/plugin.json' }, { op: 'refresh' },
+  { op: 'start', what: 'release', id: 'g1', slot: 'r' },
+  { op: 'flush' }, { op: 'pending', slot: 'r' },
+  { op: 'start', what: 'dispose', slot: 'd' },
+  { op: 'await', slot: 'r' }, { op: 'await', slot: 'd' }, { op: 'state' },
+]);
 // GatewayCommandCatalogBundle.commandsList over the real runtime.
 add('catalog-lists-one-generation', {}, [
   w(`${P}/proj/plugin.json`, manifest({ name: 'proj' })),
@@ -408,7 +470,16 @@ try {
     await mkdir(home, { recursive: true });
     await mkdir(project, { recursive: true });
     const calls: unknown[] = [];
+    const trace: unknown[] = [];
     const event = (name: string, args: Record<string, unknown> = {}) => calls.push(normalize({ event: name, ...args }, root));
+    const gates = new Map<string, { promise: Promise<void>; open: () => void }>();
+    for (const b of scenario.builtins ?? []) {
+      if (b.gate && !gates.has(b.gate)) {
+        let open!: () => void;
+        const promise = new Promise<void>((resolve) => { open = resolve; });
+        gates.set(b.gate, { promise, open });
+      }
+    }
     const builtins = (scenario.builtins ?? []).map((b) => {
       const plugin: any = {
         name: b.name,
@@ -420,6 +491,10 @@ try {
       if (b.dispose) {
         plugin.dispose = async () => {
           event('dispose', { plugin: b.name });
+          if (b.gate) {
+            await gates.get(b.gate)!.promise;
+            event('disposeFinished', { plugin: b.name });
+          }
           if (b.dispose !== 'ok') throw new Error(b.dispose);
         };
       }
@@ -543,6 +618,12 @@ try {
         case 'pending':
           out.result = !slots.get(step.slot)!.settled;
           break;
+        case 'calls':
+          out.result = [...trace, ...calls];
+          break;
+        case 'open':
+          gates.get(step.gate)!.open();
+          break;
         case 'flush':
           await flush();
           break;
@@ -559,6 +640,7 @@ try {
           throw new Error(`unknown op ${step.op}`);
       }
       out.calls = calls.splice(0);
+      trace.push(...out.calls as unknown[]);
       results.push(out);
       totalSteps += 1;
     }
