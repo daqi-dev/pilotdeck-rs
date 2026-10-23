@@ -33,6 +33,10 @@ pub struct PreparedInvocation {
     pub model: JsString,
     pub max_context_tokens: Option<JsValue>,
     pub max_output_tokens: Option<JsValue>,
+    /// `PreparedModelInvocation.opaque`: host-local routing state the preparing
+    /// adapter reuses to execute without routing again. Like TS, it never
+    /// serializes over the sidecar wire (`serialize_prepared` omits it).
+    pub opaque: Option<JsValue>,
 }
 impl PreparedInvocation {
     pub fn new(request: JsValue, provider: JsString, model: JsString) -> Self {
@@ -42,6 +46,7 @@ impl PreparedInvocation {
             model,
             max_context_tokens: None,
             max_output_tokens: None,
+            opaque: None,
         }
     }
 }
