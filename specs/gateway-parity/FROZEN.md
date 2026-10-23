@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 重登记（PR #539，透明披露）**：accepted-diffs.md 末尾追加「A6-JSVALUE-DEPTH-001 追加说明」：fingerprint 合一后 runtime 路径保持 2000 门限、host 路径保持无门限显式栈，两路径相对 TS 的剩余差异写明；不改原条目、不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希。两家评审见 PR。
+
 > **2026-10-23 重登记（PR #535 修复轮 2，更正）**：accepted-diffs.md 末尾追加「A7.4 user_dialog HTTP store 条目更正」：MAX-CONNECTIONS、431-408-SHAPE、KEEPALIVE、CLIENT-ERROR-CLASS、CLIENT-BODY-UNITS、AUTH-BEFORE-BODY 六条各追加 -R1（原条目保留），均未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希。两家评审见 PR。
 
 > **2026-10-23 重登记（PR #535，透明披露）**：accepted-diffs.md 末尾新增「已知未对齐（未批准，待人批）· A7.4 user_dialog HTTP store」一节，共九条（鉴权先于读 body、请求体 2 MiB、两段超时、未实现 keep-alive 5 s、连接上限 64、431/408 形状、键序、客户端错误类名、客户端上限计量单位），全部未批准，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
@@ -55,7 +57,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-729798edd060a756134d148f29c4b4e3f4eb2c914ee9a01ea81c02d87c292a7f  accepted-diffs.md
+0d4c4cb149442e9dd3342bd77b6de11da5270d78c6da18da4c37e24942948890  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py

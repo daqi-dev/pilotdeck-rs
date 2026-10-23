@@ -638,3 +638,19 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：HTTP server 包装层；handler API 仍接收完整 body。
 - **机器判据**：原有 `request_body_limit_rejects_oversized_content_length_before_reading`；建议追加 `http_store_tests.rs:576 anonymous_oversized_body_is_rejected_before_reading`（4 GiB CL，150 ms 内 401）。负控把 precheck 后移即 413 红。
 - **批准记录**：无；行为未变，仅补强判据，**未批准**。
+
+## A6-JSVALUE-DEPTH-001 追加说明（#495 / PR #539，10-23）
+
+- **追加（不改原条目）**：#495（PR #539）修复轮 2 起，`CachePlan.ts:buildCachePlan` 的 stableSerialize 深度
+行为按入口分开，均为各入口本 PR 之前的既有行为：runtime 路径
+（`PromptCacheCoordinator.create_plan` 与消息指纹）保持 `js_value::MAX_ARRAY_DEPTH`
+的 2000 容器门限与 `RangeError: Maximum call stack size exceeded` 原文，故 1998 层
+嵌套数组 `inputSchema`（2001 容器）被拒绝而真实 TS 经真实入口实测成功（最深实测
+2398 层数组成功，fp `b84cd74c…e87467`）；host 路径
+（`finalizePreparedModelRequest`）保持无门限的显式栈，2398 层数组成功（与 TS 一致），
+2100 层 `{x:…}` 对象成功序列化而真实 TS 两入口重复实测均报
+`RangeError: Maximum call stack size exceeded`（V8 栈深随帧大小与容器形状变化，
+数组 2398 层成功、对象约 2100 层溢出）。V8 的真实边界无法用常数逐字复刻；两边钉住
+的是 Rust 既有行为（期望值取自本 PR 之前的代码），不是 TS 对齐。机器判据：
+`src/pilotdeck-gateway/src/runtime/context/cache.rs` `runtime::context::cache::tests::depth_boundaries_match_pre_pr_rust_behavior` 与
+`src/pilotdeck-gateway/src/host/modules/context/request.rs` `host::modules::context::request::tests::deep_input_schema_fingerprints_reach_the_host_entry`。 判据依据决策卡 `_tmp/20261023-loop/card-v8-stack-depth.md`（AI 代批，待人复核）。**批准记录**：无；**已知未对齐（未批准）**。
