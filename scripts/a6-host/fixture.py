@@ -43,7 +43,9 @@ known_modes.update({
     'frame-boundary', 'cancel-write-failure', 'cancel-duplicate-acceptance', 'event-then-disconnect',
     'cancel-before-timeout', 'cancel-before-disconnect',
     'batched-split-frames', 'accepted-then-rejected', 'close-term-cleanup',
-    'event-order',
+    'event-order', 'host-cancel-before-acceptance-hang',
+    'host-cancel-after-acceptance-hang', 'host-cancel-no-terminal-hang',
+    'host-cancel-late-terminal',
 })
 if mode not in known_modes:
     sys.exit('unknown fixture mode: ' + mode)
@@ -130,6 +132,10 @@ if mode.startswith('cancel-'):
         methods.append(dict(name='cancel', enabled=mode not in ('cancel-disabled', 'cancel-execute-capability')))
     if mode == 'cancel-execute-capability':
         methods[0]['cancel'] = True
+if mode in ('host-cancel-after-acceptance-hang', 'host-cancel-late-terminal'):
+    # Advertise the cancel wire path; the host must still bound its exit when
+    # the peer accepts cancel but never emits (or delays) a terminal.
+    methods.append(dict(name='cancel', enabled=True))
 if mode.startswith('grandchild-'):
     # Inherits the sidecar process group and stderr/stdout descriptors.
     descendant = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
@@ -185,6 +191,53 @@ def module_call(number=1, padding=0):
     return dict(kind='request', messageId='call-' + str(number), method='module_call', module='model',
                 runId=execute['runId'], operationId=execute['operationId'], requestId='callback-request',
                 payload=dict(operation='stream', padding='x' * padding))
+
+
+if mode in ('host-cancel-before-acceptance-hang', 'host-cancel-after-acceptance-hang',
+            'host-cancel-no-terminal-hang'):
+    # Post-cancel exit-bound probe: hold the connection open and never send a
+    # terminal. The host must close us after its bounded deadline.
+    assert receipt is not None
+    if mode != 'host-cancel-before-acceptance-hang':
+        send(response(execute, requestId=execute['requestId'], streamId='stream'))
+        send(event(sequence=0))
+    receipt.with_suffix('.ready').write_text(mode + ' ready\n')
+    frames = [json.loads(line) for line in sys.stdin.read().splitlines() if line.strip()]
+    received = [frame.get('method') for frame in frames]
+    if mode == 'host-cancel-before-acceptance-hang':
+        assert 'cancel' not in received, received
+    elif mode == 'host-cancel-no-terminal-hang':
+        assert 'cancel' not in received, received
+    else:
+        assert 'cancel' in received, received
+    write_receipt()
+    sys.exit(0)
+
+
+if mode == 'host-cancel-late-terminal':
+    # Post-cancel deadline oracle: accept, emit one applicable event, then hold
+    # the authoritative terminal until the host test releases it at +3 s of
+    # virtual time. A 5 s bound must let that late-but-valid terminal win; a
+    # shorter bound (the former 1 s close_timeout) would drop it as Timeout.
+    # The bounded wait keeps an aborted test from leaving an orphan behind.
+    assert receipt is not None
+    send(response(execute, requestId=execute['requestId'], streamId='stream'))
+    send(event(sequence=0))
+    receipt.with_suffix('.ready').write_text(mode + ' ready\n')
+    while True:
+        frame = read()
+        if frame.get('method') == 'cancel':
+            break
+        assert frame.get('method') == 'ack', frame
+    release = receipt.with_suffix('.release')
+    deadline = time.monotonic() + 30
+    while not release.exists():
+        assert time.monotonic() < deadline, 'late-terminal release not signaled'
+        time.sleep(0.01)
+    send(event(sequence=1, final=True))
+    assert sys.stdin.read() == ''
+    write_receipt()
+    sys.exit(0)
 
 
 if mode in ('rejected-nonfinal', 'rejected-final-cancelled', 'rejected-error-message', 'rejected-unknown'):
