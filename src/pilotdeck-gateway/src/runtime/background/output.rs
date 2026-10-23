@@ -15,6 +15,11 @@ struct Spill {
     tail: watch::Receiver<Option<bool>>,
     #[cfg(test)]
     write_error: bool,
+    #[cfg(test)]
+    write_gate: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
 }
 
 impl Spill {
@@ -25,6 +30,8 @@ impl Spill {
         let path = self.path.clone();
         #[cfg(test)]
         let write_error = self.write_error;
+        #[cfg(test)]
+        let write_gate = self.write_gate.take();
         // Own accepted writes independently of the caller and keep their order.
         drop(tokio::spawn(async move {
             let ready = previous
@@ -33,6 +40,12 @@ impl Spill {
                 .ok()
                 .and_then(|v| *v)
                 .unwrap_or(false);
+            #[cfg(test)]
+            if let Some((entered, release)) = write_gate {
+                let _ = entered.send(());
+                // Sender drop also releases the write when an assertion fails.
+                let _ = release.await;
+            }
             let ready = tokio::task::spawn_blocking(move || {
                 #[cfg(test)]
                 if write_error {
@@ -86,8 +99,23 @@ impl OutputStore {
                 tail: watch::channel(Some(false)).1,
                 #[cfg(test)]
                 write_error: false,
+                #[cfg(test)]
+                write_gate: None,
             }),
         }
+    }
+    /// Hold exactly the next accepted write before filesystem I/O.
+    #[cfg(test)]
+    pub(super) fn gate_next_write(
+        &mut self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (entered, waiting) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        self.spill.as_mut().expect("configured spill").write_gate = Some((entered, released));
+        (waiting, release)
     }
     pub(super) fn append(&mut self, chunk: &[u8]) {
         if self.closed || chunk.is_empty() {
@@ -221,6 +249,23 @@ impl OutputStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn begin_close_rejects_append_before_ring_is_released() {
+        let mut store = OutputStore::new(10);
+        store.append(b"accepted");
+        let flushed = store.begin_close();
+        store.append(b"rejected");
+        assert_eq!(store.total, 8, "begin_close must freeze accepted output");
+        let slice = store.read_slice(&JsValue::Number(0.0), &JsValue::Undefined);
+        assert_eq!(
+            slice.content, "accepted",
+            "begin_close must retain the ring"
+        );
+        flushed.await;
+        store.close();
+        assert!(store.chunks.is_empty());
+    }
+
     #[test]
     fn output_ring_drops_oldest_bytes_and_reports_the_gap() {
         let mut store = OutputStore::new(4);
@@ -269,12 +314,19 @@ mod oracle_tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn spill_replays_real_ts_oracle() {
-        tokio::time::timeout(std::time::Duration::from_secs(30), replay())
+        tokio::time::timeout(std::time::Duration::from_secs(30), replay(false))
             .await
             .unwrap();
     }
 
-    async fn replay() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn spill_replays_added_ts_boundary_cases() {
+        tokio::time::timeout(std::time::Duration::from_secs(30), replay(true))
+            .await
+            .unwrap();
+    }
+
+    async fn replay(only_added_cases: bool) {
         let oracle: Value = serde_json::from_str(include_str!(
             "../../../tests/fixtures/background-output/oracle.json"
         ))
@@ -285,6 +337,16 @@ mod oracle_tests {
         );
         for case in oracle["cases"].as_array().unwrap() {
             let name = case["name"].as_str().unwrap();
+            if only_added_cases
+                && !matches!(
+                    name,
+                    "disk-ring-utf8-boundary"
+                        | "disk-cap-and-closed-read"
+                        | "unflushed-utf8-ring-boundary"
+                )
+            {
+                continue;
+            }
             let scratch = Scratch(
                 std::env::temp_dir().join(format!("pdrs-553-rust-{}", uuid::Uuid::new_v4())),
             );

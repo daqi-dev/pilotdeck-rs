@@ -743,6 +743,164 @@
           }
         }
       ]
+    },
+    {
+      "name": "disk-ring-utf8-boundary",
+      "spill": true,
+      "steps": [
+        {
+          "op": "append",
+          "text": "🙂",
+          "repeat": 250001
+        },
+        {
+          "op": "append",
+          "text": "x",
+          "repeat": 1
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "truncate",
+          "size": 5
+        },
+        {
+          "op": "read",
+          "offset": 4,
+          "cap": 8,
+          "result": {
+            "nextOffset": 12,
+            "totalBytes": 1000005,
+            "truncated": false,
+            "bytes": 8,
+            "sha256": "f5f567309f36510e8e126fca21c077cdf2662918675a6b69c377c8bda9e65fc3"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 2,
+          "result": {
+            "nextOffset": 2,
+            "totalBytes": 1000005,
+            "truncated": false,
+            "bytes": 3,
+            "sha256": "83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097"
+          }
+        }
+      ]
+    },
+    {
+      "name": "disk-cap-and-closed-read",
+      "spill": true,
+      "steps": [
+        {
+          "op": "append",
+          "text": "中",
+          "repeat": 333335
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 2,
+          "result": {
+            "nextOffset": 2,
+            "totalBytes": 1000005,
+            "truncated": false,
+            "bytes": 3,
+            "sha256": "83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097"
+          }
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 20,
+          "result": {
+            "nextOffset": 20,
+            "totalBytes": 1000005,
+            "truncated": false,
+            "bytes": 21,
+            "sha256": "bc4e608c8ca22ed867d688d16d7876e5a0b5a096730572a886544239769dcba8"
+          }
+        },
+        {
+          "op": "read",
+          "offset": 999999,
+          "cap": 3,
+          "result": {
+            "nextOffset": 999999,
+            "totalBytes": 1000005,
+            "truncated": false,
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unflushed-utf8-ring-boundary",
+      "spill": true,
+      "steps": [
+        {
+          "op": "append",
+          "text": "🙂",
+          "repeat": 250001
+        },
+        {
+          "op": "append",
+          "text": "x",
+          "repeat": 1
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 12,
+          "result": {
+            "nextOffset": 17,
+            "totalBytes": 1000005,
+            "truncated": true,
+            "bytes": 20,
+            "sha256": "8339b2d91d5ccac7e7be991edc370f8b3315d846bee27cfe946b026156c8ed6d"
+          }
+        },
+        {
+          "op": "flush"
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 12,
+          "result": {
+            "nextOffset": 12,
+            "totalBytes": 1000005,
+            "truncated": false,
+            "bytes": 12,
+            "sha256": "a9d446560237e678f08df9207178713f703b7c46681859d41e0fa5cb03d7711a"
+          }
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "read",
+          "offset": 0,
+          "cap": 12,
+          "result": {
+            "nextOffset": 12,
+            "totalBytes": 1000005,
+            "truncated": false,
+            "bytes": 12,
+            "sha256": "a9d446560237e678f08df9207178713f703b7c46681859d41e0fa5cb03d7711a"
+          }
+        }
+      ]
     }
   ]
 }

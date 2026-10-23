@@ -1455,6 +1455,82 @@ mod tests {
     use super::*;
     use tokio::sync::oneshot;
 
+    #[tokio::test]
+    async fn dispose_waits_for_gated_output_write_before_returning() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let scratch = crate::test_scratch::Scratch::new("553-gated-dispose");
+            let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                background_task_state_dir: Some(scratch.path().to_path_buf()),
+                ..Default::default()
+            });
+            let task = runtime
+                .start(StartTaskSpec {
+                    command: JsValue::from("exit 0"),
+                    cwd: "/".into(),
+                    env: None,
+                    session_id: JsValue::Undefined,
+                    agent_id: JsValue::Undefined,
+                    kind: JsValue::Undefined,
+                })
+                .await
+                .unwrap();
+            let entry = runtime.find(&task.task_id, None).unwrap();
+            entry.wait_done().await;
+            // Feed the same input as the real TS configured case, after the
+            // process exits so the single write cannot race gate installation.
+            let oracle: serde_json::Value = serde_json::from_str(include_str!(
+                "../../tests/fixtures/background-output/oracle.json"
+            ))
+            .unwrap();
+            let steps = oracle["cases"][0]["steps"].as_array().unwrap();
+            let mut bytes = Vec::new();
+            for step in steps.iter().take_while(|step| step["op"] != "close") {
+                if step["op"] == "append" {
+                    bytes.extend_from_slice(
+                        step["text"]
+                            .as_str()
+                            .unwrap()
+                            .repeat(step["repeat"].as_u64().unwrap() as usize)
+                            .as_bytes(),
+                    );
+                }
+            }
+            let (entered, release) = entry.state.lock().unwrap().output.gate_next_write();
+            entry.append(&bytes);
+            entered.await.unwrap();
+            let path = scratch.path().join("output").join(format!(
+                "{}.log",
+                String::from_utf16_lossy(task.task_id.units())
+            ));
+            assert!(!path.exists(), "the accepted write must still be gated");
+            let mut dispose = Box::pin(runtime.dispose());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), &mut dispose)
+                    .await
+                    .is_err(),
+                "dispose returned before the gated write completed"
+            );
+            assert!(!path.exists(), "no filesystem write before gate release");
+            release.send(()).unwrap();
+            dispose.await;
+            let written = std::fs::read(path).unwrap();
+            assert_eq!(written, bytes, "dispose must wait for the complete log");
+            use sha2::{Digest, Sha256};
+            let expected = &steps
+                .iter()
+                .rev()
+                .find(|step| step["op"] == "disk")
+                .unwrap()["result"];
+            assert_eq!(written.len() as u64, expected["bytes"].as_u64().unwrap());
+            assert_eq!(
+                format!("{:x}", Sha256::digest(&written)),
+                expected["sha256"].as_str().unwrap()
+            );
+        })
+        .await
+        .expect("bounded gated dispose probe");
+    }
+
     fn pause_once(
         entered: oneshot::Sender<()>,
         resume: std::sync::mpsc::Receiver<()>,

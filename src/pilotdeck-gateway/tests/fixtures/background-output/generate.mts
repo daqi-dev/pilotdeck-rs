@@ -32,6 +32,9 @@ const specs = [
   {name:'disk-full-retry',spill:true,steps:[{op:'full'},append('F',1000001),flush,capture,read(0,1000009),{op:'healthy'},append('ok',1),flush,capture,read(0,1000009)]},
   {name:'partial-file-join',spill:true,steps:[append('ab中🙂',150000),flush,{op:'truncate',size:350007},read(350000,40),capture,{op:'remove'},read(0,50)]},
   {name:'preexisting-append',spill:true,steps:[{op:'seed',text:'OLD'},append('new',333334),flush,capture,read(0,1000010),{op:'remove'},read(0,1000010)]},
+  {name:'disk-ring-utf8-boundary',spill:true,steps:[append('🙂',250001),append('x',1),flush,{op:'truncate',size:5},read(4,8),read(0,2)]},
+  {name:'disk-cap-and-closed-read',spill:true,steps:[append('中',333335),flush,read(0,2),close,read(0,20),read(999999,3)]},
+  {name:'unflushed-utf8-ring-boundary',spill:true,steps:[append('🙂',250001),append('x',1),read(0,12),flush,read(0,12),close,read(0,12)]},
 ];
 const original = fs.appendFile;
 const cases = [];
