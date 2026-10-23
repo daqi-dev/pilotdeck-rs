@@ -979,3 +979,13 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **更正**：上一条「只有 bash runner 安装此 hook，其他 spawn 点在 TS 中本就不是 detached」不实（协调者转述实现方结论未核；PR #573 gate1 sibling 指出）。按 TS 逐点核对（协调者抽查 `src/agent/.../SubprocessPort.ts:63` `detached: process.platform !== "win32"`、`src/tool/builtin/bash/commandRunner.ts:43` `detached: !isWindows`、`stdioAgentLoopSidecarConnection.ts:75-81` 无 detached）：**bash runner、grep / glob 的 ripgrep spawn、command hook** 在 TS 中为 detached，本 PR 均已改为 setsid（复用人批 `install_child_detach_session`，不新增 unsafe）；**宿主 sidecar（host/connection.rs）、MCP stdio** 在 TS 中不是 detached，保持 `process_group(0)`；TS `NodeCodeRuntimePort.ts:87-91` 为 detached 但 Rust 尚无对应位点。
 - **机器判据**（补充）：`tests/fixtures/grep-session/` 真实 TS 金样与 grep 子进程新会话断言；`tests/hooks_runtime.rs` 的 command hook 会话断言；`tests/unsafe_boundary.rs` 按函数体绑定 + 完整 token 序列 pin（负控：跨函数搬块、复制、删除、同名遮蔽、grep / 钩子回退均被拒绝）。
 - **批准记录**：同上文（人批 2026-10-23「#552 选 A」，原话见 `state/decisions-20261023.md`）。
+
+### A6.5-BASH-OS-001 · 当前状态更正二（追加，不改上文；#552 r2 codex）
+
+- **更正**：上一条「当前状态更正」有两处 Rust 描述不实（协调者只核了 TS 侧、未核 Rust 侧；PR #573 codex r2 指出）。协调者逐点核对 Rust 源码后的实际情况：
+  - **glob**：Rust `src/pilotdeck-gateway/src/runtime/tools/builtin/glob.rs` 在进程内遍历目录（`walk`，约 :106、:188），**不 spawn ripgrep**，无子进程会话问题；上一条「grep / glob 的 ripgrep spawn」中的 glob 应删去，只有 grep（`grep.rs:597-601`）改为 setsid。
+  - **MCP stdio**：Rust `src/pilotdeck-gateway/src/runtime/mcp/wire.rs:258` 只安装信号重置，**没有 `process_group(0)`**，子进程留在网关进程组；TS SDK `stdio.js:65`（cross-spawn，无 detached）同样留在父进程组，两者一致。上一条「保持 `process_group(0)`」应改为「不设进程组，与 TS 一致」。
+  - **宿主 sidecar**：`src/pilotdeck-gateway/src/host/connection.rs:65` 保持 `process_group(0)`，TS `stdioAgentLoopSidecarConnection.ts:75-81` 无 detached（Rust 多建了进程组以便回收，非本条范围）。
+  - **改为 setsid 的**：bash runner（`bash/runner.rs:397`）、grep（`grep.rs:601`）、command hook（`hooks/exec.rs:641`）。
+- **批准记录**：同上文。
+
