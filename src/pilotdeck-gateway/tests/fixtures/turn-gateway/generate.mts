@@ -247,7 +247,7 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
       else if (step === 'close') closing = ws.handleClose();
       else if (step === 'pending') gateway.interactionCoordinator.getPermissionBus().register('s', { requestId: 'q', toolCallId: 'tc', toolName: 'bash', resolve() {}, reject() {} });
       else if (step === 'describe') await ws.handleMessage(JSON.stringify({ type: 'request', id: 'info', method: 'describe_server', params: {} }));
-      else if (step === 'abort') await ws.handleMessage(JSON.stringify({ type: 'request', id: 'stop', method: 'abort_turn', params: { sessionKey: 's', runId: 'r' } }));
+      else if (step === 'abort') await ws.handleMessage(JSON.stringify({ type: 'request', id: 'stop', method: 'abort_turn', params: setup.abortParams ?? { sessionKey: 's', runId: 'r' } }));
       else assert.equal(step, 'observe');
       await snapshot();
     }
@@ -281,6 +281,19 @@ await run('abort-active', {}, ['observe', 'accept', 'abort']);
 await run('abort-after-busy', {}, ['observe', 'second', 'abort']);
 await run('abort-generated-run-id', { generatedRunId: true }, ['observe', 'accept', 'abort']);
 await run('close-generated-run-id', { generatedRunId: true }, ['observe', 'accept', 'close']);
+// Invalid keys/explicit run IDs must acknowledge without aborting the live turn.
+for (const [name, abortParams] of [
+  ['missing-session', {}],
+  ['numeric-session', { sessionKey: 123 }],
+  ['null-session', { sessionKey: null }],
+  ['numeric-run', { sessionKey: 's', runId: 123 }],
+  ['null-run', { sessionKey: 's', runId: null }],
+  ['false-run', { sessionKey: 's', runId: false }],
+  ['object-run', { sessionKey: 's', runId: {} }],
+  ['array-run', { sessionKey: 's', runId: [] }],
+] as const) {
+  await run(`abort-${name}`, { abortParams }, ['observe', 'accept', 'abort', 'terminal', 'end']);
+}
 
 // Deterministic abort/fence interleavings. The real router and fence own all
 // cancellation/wait behavior; only admission/consumer completion are stepped.

@@ -7,6 +7,7 @@ Every selected replacement has one exact source anchor; no test/oracle is edited
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -28,7 +29,7 @@ def mutation(name, path, before, after, case=None, marker='assertion'):
 
 mutants = [
     mutation('transport-bypasses-serial-host', gateway, 'self.host\n            .call(async move { connection.receive(&text).await })\n            .await?', 'connection.receive(&text).await', 'permission-before-event-and-final', 'gateway host thread'),
-    mutation('dropped-event', gateway, '                emit(event);', '                let _ = event;', 'permission-before-event-and-final'),
+    mutation('dropped-event', gateway, '                emit(event);', '                let _ = event;', 'permission-before-event-and-final', 'transport observation did not arrive'),
     mutation('duplicated-event', gateway, '                emit(event);', '                emit(event.clone()); emit(event);', 'permission-before-event-and-final'),
     mutation('early-final', gateway, '                emit(event);', '                emit(event); break;', 'permission-before-event-and-final'),
     mutation('registry-seq-used-as-ws-seq', connection, 'Mutex::new((0u64, None, None))', 'Mutex::new((1u64, None, None))', 'permission-before-event-and-final'),
@@ -37,7 +38,7 @@ mutants = [
     mutation('module-seq-used-as-registry-seq', registry, 'record.insert("lastSeq".into(), JsValue::Number(0.0));', 'record.insert("lastSeq".into(), JsValue::Number(41.0));', 'permission-before-event-and-final'),
     mutation('ws-seq-overwrites-module-seq', gateway, '                emit(event);', '                let mut event = event; if event.get("sequence").is_some() && let JsValue::Object(ref mut data) = event { data.insert("sequence".into(), JsValue::Number(0.0)); } emit(event);', 'permission-before-event-and-final'),
     mutation('registry-seq-overwrites-module-seq', gateway, '                emit(event);', '                let mut event = event; if event.get("sequence").is_some() && let JsValue::Object(ref mut data) = event { data.insert("sequence".into(), JsValue::Number(1.0)); } emit(event);', 'permission-before-event-and-final'),
-    mutation('notification-dropped', connection, 'self.notify("permission_changed", Some(JsValue::Object(payload)));\n            }\n            let mut out', 'let _ = payload;\n            }\n            let mut out', 'permission-before-event-and-final'),
+    mutation('notification-dropped', connection, 'self.notify("permission_changed", Some(JsValue::Object(payload)));\n            }\n            let mut out', 'let _ = payload;\n            }\n            let mut out', 'permission-before-event-and-final', 'transport observation did not arrive'),
     mutation('final-seq-skipped', connection, 'out.insert("seq".into(), JsValue::Number(seq as f64));', 'out.insert("seq".into(), JsValue::Number((seq + 1) as f64));', 'permission-before-event-and-final'),
     mutation('final-marked-nonterminal', connection, 'out.insert("final".into(), JsValue::Bool(true));', 'out.insert("final".into(), JsValue::Bool(false));', 'permission-before-event-and-final'),
     mutation('completion-overrides-error', connection, 'error.or(completed)', 'completed.or(error)', 'error-before-success'),
@@ -51,6 +52,21 @@ mutants = [
     mutation('replacement-generation-ignored', gateway, 'entries.get(&key).is_some_and(|id| *id == serial)', 'entries.contains_key(&key)', None, 'replacement invalidates detached serial timer'),
     mutation('queued-dispose-ignored', gateway, 'self.entries.lock().unwrap().clear();', 'let _ = self.entries.lock().unwrap().len();', None, 'dispose cancels queued serial timers'),
 ]
+# Each new invalid abort-argument behavior is checked through unchanged TS gold.
+for name, case in [
+    ('missing-abort-session-rejected', 'abort-missing-session'),
+    ('nonstring-abort-session-rejected', 'abort-numeric-session'),
+]:
+    mutants.append(mutation(name, gateway,
+        'let Some(key) = params.get("sessionKey").and_then(JsValue::as_string) else {\n                return Ok(());\n            };',
+        'let key = params.get("sessionKey").and_then(JsValue::as_string).ok_or_else(|| RequestError::new("sessionKey must be a string."))?;', case))
+for name, case in [
+    ('nonstring-abort-run-as-session-abort', 'abort-numeric-run'),
+    ('null-abort-run-as-session-abort', 'abort-null-run'),
+]:
+    mutants.append(mutation(name, gateway,
+        '.is_some_and(|run| !matches!(run, JsValue::String(_) | JsValue::Undefined))',
+        '.is_some_and(|run| { let _ = run; false })', case))
 # Change only ordering, keeping exactly one ordinary event and notification.
 mutants.append(dict(name='notification-after-event', case='permission-before-event-and-final', marker='assertion', changes=[
     (connection, 'let emit = |event: JsValue| {', 'let emit = |event: JsValue| { let mut delayed_notification = None;'),
@@ -74,21 +90,33 @@ summary = []
 env = dict(os.environ, CARGO_NET_OFFLINE='true')
 assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
 assert Path(env['CARGO_TARGET_DIR']).resolve() == workspace / 'target', 'use this tree src/target'
+# Current non-ignored tests selected by the gateway module filter. New tests may
+# increase the total; each existing behavior must still execute successfully.
+baseline_tests = [
+    'transport_observation_waits_for_delivery_and_receive_completion',
+    'real_ts_gateway_frames_registry_replay_and_concurrency',
+    'serial_retention_matches_real_ts_host_steps_and_dispose',
+    'serial_timer_cancels_queued_callbacks_and_replacements',
+    'abort_waits_for_latest_real_ts_session_fence',
+    'abort_snapshots_before_ungated_cleanup_replacement',
+]
 command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::gateway::tests', '--', '--nocapture', '--test-threads=1']
 (out / 'original-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest() for p, data in original.items()}, indent=2)+'\n')
 try:
     for mutant in selected:
         assert all(p.read_bytes() == data for p, data in original.items()), 'source changed outside this run'
+        slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+        slot_deadline = time.monotonic() + 1800
+        while slots.returncode == 1:
+            assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
+            time.sleep(20)
+            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+        assert slots.returncode == 0
         modified = dict(original)
         for path, before, after in mutant['changes']:
             modified[path] = modified[path].decode().replace(before, after, 1).encode()
         for path in original:
             if modified[path] != original[path]: path.write_bytes(modified[path])
-        slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
-        while slots.returncode == 1:
-            time.sleep(20)
-            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
-        assert slots.returncode == 0
         run_env = dict(env)
         if mutant['case']: run_env['PDRS_GATEWAY_CASE'] = mutant['case']
         else: run_env.pop('PDRS_GATEWAY_CASE', None)
@@ -104,14 +132,20 @@ try:
             for path, data in original.items():
                 assert path.read_bytes() == modified[path], f'concurrent source edit: {path}; preserve it'
                 if modified[path] != data: path.write_bytes(data)
-        valid = not timed_out and ((process.returncode == 0 and 'test result: ok. 4 passed' in raw) if mutant['name'] == 'baseline' else (
-            process.returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and 'assertion' in raw and mutant['marker'] in raw))
+        result = re.search(r'^test result: ok\. (\d+) passed; 0 failed;', raw, re.MULTILINE)
+        baseline_ok = (process.returncode == 0 and result is not None
+            and int(result.group(1)) >= len(baseline_tests)
+            and all(re.search(r'^test runtime::turn::gateway::tests::' + re.escape(name) + r' \.\.\. ok$',
+                raw, re.MULTILINE) for name in baseline_tests))
+        valid = not timed_out and (baseline_ok if mutant['name'] == 'baseline' else (
+            process.returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and mutant['marker'] in raw))
         (out / (mutant['name']+'.log')).write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={process.returncode}\n')
         summary.append(dict(name=mutant['name'], case=mutant['case'], exit=process.returncode, marker=mutant['marker'], valid=valid))
         (out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
         print(f'{mutant["name"]}: {"KILLED" if valid and mutant["changes"] else "PASS" if valid else "INVALID"} exit={process.returncode}', flush=True)
-        if not valid: raise SystemExit(1)
+        # Retain every control even after an INVALID result.
 finally:
     assert all(path.read_bytes() == data for path, data in original.items()), 'original bytes not restored'
     lock.rmdir()
 print(f'{len(summary)} controls checked; original bytes restored', flush=True)
+raise SystemExit(0 if all(row['valid'] for row in summary) else 1)

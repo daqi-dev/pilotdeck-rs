@@ -458,7 +458,7 @@ async fn replay_case(case: &Value) {
             "replay" => connection.receive(request("b", &case["input"])).await.unwrap(),
             "conflict" => { let mut input = case["input"].clone(); input["message"] = "different".into(); connection.receive(request("b", &input)).await.unwrap(); },
             "close" => { let c = connection.clone(); closing = Some(tokio::spawn(async move { c.closed().await.unwrap(); })); },
-            "abort" => connection.receive(json!({"type":"request","id":"stop","method":"abort_turn","params":{"sessionKey":"s","runId":actual_run}}).to_string()).await.unwrap(),
+            "abort" => connection.receive(json!({"type":"request","id":"stop","method":"abort_turn","params":case["setup"].get("abortParams").cloned().unwrap_or_else(|| json!({"sessionKey":"s","runId":actual_run}))}).to_string()).await.unwrap(),
             other => panic!("unknown step {other}"),
         }
         // A scheduler yield is not a dispatch or I/O barrier: on Linux the
