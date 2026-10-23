@@ -131,6 +131,15 @@ CASES += [
      'read_markdown(&root, &canonical, file, file_identity(&metadata), true)?.ok_or_else(refused)',
      'Ok(read_markdown(&root, &canonical, file, file_identity(&metadata), true)?.unwrap_or_default())',
      TOCTOU + 'standalone_static_fifo_is_refused_without_blocking'),
+    # An Err with the wrong code must fail each special-file contract test.
+    *[(f'standalone-{kind}-error-code', MARKDOWN,
+       'let refused = || {\n        super::io_error(\n            "open",\n            file,\n            &std::io::Error::from_raw_os_error(libc::EACCES),\n        )\n    };',
+       'let refused = || {\n        super::io_error(\n            "open",\n            file,\n            &std::io::Error::from_raw_os_error(libc::EIO),\n        )\n    };',
+       TOCTOU + test)
+      for kind, test in [
+          ('fifo', 'standalone_static_fifo_is_refused_without_blocking'),
+          ('socket', 'standalone_static_socket_is_refused'),
+      ]],
     # Leaf NOFOLLOW under a race: revert to a path read after the swap fires.
     ('standalone-raced-leaf-symlink', MARKDOWN,
      '    let mut file = match crate::project_files::open_beneath(root, canonical) {',
@@ -393,6 +402,8 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'markdown-ancestor-file-directory-skip': ['ordinary-file ancestor rejects exactly its configured directory like TS', 'String("safe")'],
  'standalone-path-read': ['out-of-root leaf symlink must be refused, not read'],
  'standalone-none-error': ['FIFO skill must be refused without blocking'],
+ 'standalone-fifo-error-code': ['FIFO refusal must report EACCES', 'EIO'],
+ 'standalone-socket-error-code': ['socket refusal must report EACCES', 'EIO'],
  'standalone-raced-leaf-symlink': ['leaf symlink raced after check must be refused'],
  'standalone-raced-hardlink': ['hardlinked different inode must be refused by identity recheck'],
  'standalone-deleted-code': ['error matches TS code ENOENT']}

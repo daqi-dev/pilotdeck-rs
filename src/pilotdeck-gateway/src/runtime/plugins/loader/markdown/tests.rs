@@ -473,9 +473,12 @@ fn standalone_static_fifo_is_refused_without_blocking() {
             .success()
     );
     assert!(fs::symlink_metadata(&leaf).unwrap().file_type().is_fifo());
+    let error = load_standalone_skill("skill", &skill_dir)
+        .err()
+        .expect("FIFO skill must be refused without blocking");
     assert!(
-        load_standalone_skill("skill", &skill_dir).is_err(),
-        "FIFO skill must be refused without blocking"
+        error.to_string().contains("EACCES"),
+        "FIFO refusal must report EACCES: {error}"
     );
 }
 
@@ -496,9 +499,12 @@ fn standalone_static_socket_is_refused() {
     let _listener = std::os::unix::net::UnixListener::bind(&bound).unwrap();
     fs::rename(&bound, &leaf).unwrap();
     assert!(fs::symlink_metadata(&leaf).unwrap().file_type().is_socket());
+    let error = load_standalone_skill("skill", &skill_dir)
+        .err()
+        .expect("socket skill must be refused");
     assert!(
-        load_standalone_skill("skill", &skill_dir).is_err(),
-        "socket skill must be refused"
+        error.to_string().contains("EACCES"),
+        "socket refusal must report EACCES: {error}"
     );
 }
 
