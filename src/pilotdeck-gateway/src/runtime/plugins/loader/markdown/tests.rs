@@ -1,10 +1,10 @@
 //! #564 / ROOT-001: checked Markdown read under deterministic races.
 //!
 //! Every race fires on `sub/b.md` itself (asserted): after its traversal
-//! containment check and pre-open lstat, before the checked open. Layouts and
-//! swaps mirror `generate-toctou.mts`; the expected values are the real TS
-//! observations in `toctou.json` (`checked` unraced, `control` with the raced
-//! entry removed). Unix only: symlinks, chmod and the openat path.
+//! containment check, either before lstat or before the checked open. Layouts and
+//! swaps mirror `generate-toctou.mts` and `generate-pre-lstat.mts`; expected
+//! values come from their real TS observations (`checked` unraced, `control`
+//! with the raced entry removed). Unix only: symlinks and the openat path.
 use super::*;
 use crate::test_scratch::Scratch;
 use serde_json::{Value, json};
@@ -16,7 +16,20 @@ use std::{
 };
 
 fn case(id: &str) -> Value {
-    let text = include_str!("../../../../../tests/fixtures/plugin-loader/toctou.json");
+    fixture_case(
+        include_str!("../../../../../tests/fixtures/plugin-loader/toctou.json"),
+        id,
+    )
+}
+
+fn pre_lstat_case(id: &str) -> Value {
+    fixture_case(
+        include_str!("../../../../../tests/fixtures/plugin-loader/pre-lstat.json"),
+        id,
+    )
+}
+
+fn fixture_case(text: &str, id: &str) -> Value {
     crate::test_baseline::oracle(text);
     let fixture: Value = serde_json::from_str(text).unwrap();
     fixture["cases"]
@@ -24,7 +37,7 @@ fn case(id: &str) -> Value {
         .unwrap()
         .iter()
         .find(|c| c["id"] == id)
-        .unwrap_or_else(|| panic!("toctou.json has no case {id}"))
+        .unwrap_or_else(|| panic!("fixture has no case {id}"))
         .clone()
 }
 
@@ -48,13 +61,14 @@ fn layout(id: &str) -> (Scratch, PathBuf, PathBuf) {
     (scratch, dir, base)
 }
 
-/// Loads with `swap(dir, base)` injected just before `sub/b.md` is opened and
+/// Loads with `swap(dir, base)` at the selected pre-lstat / pre-open window and
 /// returns the raced result; panics unless the hook fired on that file.
 fn raced_load(
     id: &str,
     dir: &Path,
     base: &Path,
     swap: impl FnOnce(&Path, &Path) + 'static,
+    before_lstat: bool,
 ) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
     let target = base.join("sub/b.md").canonicalize().unwrap();
     let fired = Rc::new(RefCell::new(None::<PathBuf>));
@@ -64,9 +78,14 @@ fn raced_load(
         *seen.borrow_mut() = Some(canonical.to_path_buf());
         swap(&dir, &swap_base);
     });
-    BEFORE_OPEN.with(|h| *h.borrow_mut() = Some((target.clone(), hook)));
+    let window = if before_lstat {
+        &BEFORE_LSTAT
+    } else {
+        &BEFORE_OPEN
+    };
+    window.with(|h| *h.borrow_mut() = Some((target.clone(), hook)));
     let result = load_plugin_commands("p", base);
-    BEFORE_OPEN.with(|h| h.borrow_mut().take());
+    window.with(|h| h.borrow_mut().take());
     assert_eq!(
         fired.borrow().as_deref(),
         Some(target.as_path()),
@@ -77,7 +96,15 @@ fn raced_load(
 /// The unraced layout replays TS `checked`; the raced load equals TS `control`
 /// (raced entry removed): skipped, never read, and never a load error.
 fn race(id: &str, swap: impl FnOnce(&Path, &Path) + 'static) {
-    let case = case(id);
+    race_at(id, swap, false);
+}
+
+fn race_at(id: &str, swap: impl FnOnce(&Path, &Path) + 'static, before_lstat: bool) {
+    let case = if before_lstat {
+        pre_lstat_case(id)
+    } else {
+        case(id)
+    };
     let (scratch, dir, base) = layout(id);
     let unraced = load_plugin_commands("p", &base).unwrap();
     assert_eq!(
@@ -85,7 +112,7 @@ fn race(id: &str, swap: impl FnOnce(&Path, &Path) + 'static) {
         case["checked"],
         "{id}: unraced layout replays TS checked"
     );
-    let raced = raced_load(id, &dir, &base, swap)
+    let raced = raced_load(id, &dir, &base, swap, before_lstat)
         .unwrap_or_else(|e| panic!("{id}: raced entry must be skipped, not fail: {e}"));
     assert_eq!(
         project(&raced, scratch.path()),
@@ -164,5 +191,48 @@ fn socket_markdown_is_skipped() {
         project(&result, scratch.path()),
         case["control"],
         "socket skipped like the TS control"
+    );
+}
+
+/// A replacement before lstat matches lstat's identity, but not the original
+/// traversal identity. Replay the same real TS hardlink control as the later race.
+#[test]
+fn hardlink_with_different_checked_identity_is_skipped() {
+    race_at(
+        "leaf-hardlink",
+        |dir, base| {
+            let leaf = base.join("sub/b.md");
+            fs::remove_file(&leaf).unwrap();
+            fs::hard_link(dir.join("outside/secret.md"), &leaf).unwrap();
+        },
+        true,
+    );
+}
+
+/// TS readFile rejects after collection if the checked file was deleted;
+/// swallowing this at lstat would keep the safe sibling instead of failing.
+#[test]
+fn deleted_after_check_propagates_error() {
+    let case = pre_lstat_case("deleted-after-check");
+    assert_eq!(case["deleted"]["rejected"], true, "TS readFile rejects");
+    let (scratch, dir, base) = layout("deleted-after-check");
+    assert_eq!(
+        project(&load_plugin_commands("p", &base).unwrap(), scratch.path()),
+        case["checked"]
+    );
+    let result = raced_load(
+        "deleted-after-check",
+        &dir,
+        &base,
+        |_dir, base| {
+            fs::remove_file(base.join("sub/b.md")).unwrap();
+        },
+        true,
+    );
+    assert!(result.is_err(), "deletion after check must propagate error");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains(case["deleted"]["code"].as_str().unwrap()),
+        "error matches TS: {err}"
     );
 }
