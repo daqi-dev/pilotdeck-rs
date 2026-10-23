@@ -180,11 +180,11 @@ pub(crate) fn display(value: &JsValue) -> Result<String, StackOverflow> {
 /// (`routerModelInvokerAdapter.ts:30-31`), so a lookup face that indexes its
 /// config — `config.providers[providerId]` — coerces exactly like
 /// `String(value)`: `undefined` reads as `"undefined"`, numbers as their
-/// decimal form. A stack-overflowing container coerces as the empty key.
-pub(crate) fn property_key(value: &JsValue) -> JsString {
-    to_string_units(value)
-        .map(JsString::from_utf16)
-        .unwrap_or_default()
+/// decimal form, plain objects as `[object Object]`. A value whose `String()`
+/// throws (`toString` shadowing an object's, a too-deep array join) reports
+/// the JS error instead of substituting a made-up key.
+pub(crate) fn property_key(value: &JsValue) -> Result<JsString, ToStringError> {
+    to_string_units_checked(value).map(JsString::from_utf16)
 }
 
 /// `JSON.stringify` with the same conservative container-depth bound as

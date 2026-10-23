@@ -19,7 +19,10 @@ use pilotdeck_gateway::{
     host::{
         ModuleError,
         modules::{
-            model::{PrepareInput, StreamInput, TurnContext},
+            model::{
+                Handler, ModelExecution, ModelFuture, ModelStream, PrepareInput,
+                PreparedInvocation, StreamInput, TurnContext,
+            },
             model_port::{self, DurableRecorder, RouterModelPortOptions},
         },
     },
@@ -264,6 +267,26 @@ fn error_entry(error: &ModuleError) -> JsValue {
     obj(&[("kind", "error".into()), ("value", JsValue::Object(value))])
 }
 
+/// Wraps the composed execution for wire specs, capturing the context each
+/// `prepare` receives — the context `Handler::call` rebuilt via
+/// `execution_context`, the port of `sidecarDefaultModuleDispatcher.ts:441`.
+struct CapturingExecution {
+    inner: Arc<dyn ModelExecution>,
+    contexts: Trace,
+}
+impl ModelExecution for CapturingExecution {
+    fn prepare(&self, input: PrepareInput) -> ModelFuture<PreparedInvocation> {
+        self.contexts
+            .lock()
+            .unwrap()
+            .push(JsValue::Object(input.context.clone()));
+        self.inner.prepare(input)
+    }
+    fn stream(&self, input: StreamInput) -> ModelFuture<Box<dyn ModelStream>> {
+        self.inner.stream(input)
+    }
+}
+
 /// The request every case prepares (`record.mts` `baseRequest`).
 fn base_request() -> JsValue {
     parsed(
@@ -466,6 +489,64 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
         }
         let repeats = get(&spec, "repeat").as_number().unwrap_or(1.0) as usize;
         for _ in 0..repeats {
+            // Fix round 5: wire specs drive the module handler itself — the
+            // port of the TS dispatcher's model handler — so the context
+            // `execution_context` rebuilds (including the `modelOverride`
+            // sanitization of `sidecarDefaultModuleDispatcher.ts:441,473`)
+            // is on the replayed path. The captured context and the wire
+            // response are traced exactly like the TS generator does.
+            if get(&spec, "wire") == &JsValue::Bool(true) {
+                let captured: Trace = Arc::default();
+                let handler = Handler::with_ports(
+                    Arc::new(CapturingExecution {
+                        inner: execution.clone(),
+                        contexts: captured.clone(),
+                    }),
+                    metadata.clone(),
+                    TurnContext {
+                        session_id: session.clone(),
+                        turn_id: turn_id.clone(),
+                        ..Default::default()
+                    },
+                );
+                let mut payload = JsObject::new();
+                payload.insert("operation".into(), "prepare".into());
+                payload.insert("preparationId".into(), "p1".into());
+                payload.insert("request".into(), base_request());
+                if let Some(extra) = get(&spec, "context").as_object() {
+                    payload.insert("context".into(), JsValue::Object(extra.clone()));
+                }
+                let mut call = JsObject::new();
+                call.insert("payload".into(), JsValue::Object(payload));
+                call.insert("runId".into(), JsValue::String(turn_id.clone()));
+                call.insert("operationId".into(), JsValue::String(turn_id.clone()));
+                let response = match handler.call(JsValue::Object(call)).await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        trace
+                            .lock()
+                            .unwrap()
+                            .push(error_entry(&ModuleError::new(error.message.clone())));
+                        continue;
+                    }
+                };
+                let context = captured
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .into_iter()
+                    .next()
+                    .unwrap_or(JsValue::Null);
+                trace
+                    .lock()
+                    .unwrap()
+                    .push(obj(&[("kind", "wire-context".into()), ("value", context)]));
+                trace.lock().unwrap().push(obj(&[
+                    ("kind", "wire-prepared".into()),
+                    ("value", JsValue::Object(response)),
+                ]));
+                continue;
+            }
             let context = turn_context(&spec, &turn_id);
             let prepared = match execution
                 .prepare(PrepareInput {
@@ -549,15 +630,17 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
                 }
             }
             if get(&spec, "materialize") == &JsValue::Bool(true) {
-                let candidate = merge(
-                    &base_request(),
-                    &obj(&[(
-                        "messages",
-                        parsed(
-                            r#"[{"role":"user","content":[{"type":"text","text":"candidate"}]}]"#,
-                        ),
-                    )]),
-                );
+                // Fix round 5: `candidateCachePlan` carries a cache plan whose
+                // route the materializer compares against the decision's raw
+                // route with JS `===` (`RouterRequestMaterializer.ts:22-25`).
+                let mut patches = vec![(
+                    "messages",
+                    parsed(r#"[{"role":"user","content":[{"type":"text","text":"candidate"}]}]"#),
+                )];
+                if let Some(cache_plan) = get(&spec, "candidateCachePlan").as_object() {
+                    patches.push(("cachePlan", JsValue::Object(cache_plan.clone())));
+                }
+                let candidate = merge(&base_request(), &obj(&patches));
                 let materialized = materializer
                     .as_ref()
                     .expect("composed materializer")
@@ -713,7 +796,7 @@ async fn replay_case(case: &JsValue, oracle: &JsValue) -> Result<(), String> {
 async fn port_sequences_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let cases = items(get(&oracle, "cases"));
-    assert_eq!(cases.len(), 31);
+    assert_eq!(cases.len(), 41);
     for case in cases {
         replay_case(case, &oracle).await.unwrap();
     }
@@ -1141,6 +1224,99 @@ async fn default_options_compose_the_main_agent() {
         .expect("prepare");
     let decision = prepared.opaque.expect("router decision");
     assert_eq!(get(&decision, "isSubagent"), &JsValue::Bool(false));
+}
+
+/// An array nested deeper than the join depth bound (`MAX_ARRAY_DEPTH`).
+fn deep_array(depth: usize) -> JsValue {
+    let mut value = JsValue::Array(vec![JsValue::Number(7.0)]);
+    for _ in 0..depth {
+        value = JsValue::Array(vec![value]);
+    }
+    value
+}
+
+/// Fix round 5: a route whose `String()` conversion throws must reject the
+/// first stream pull of `router.execute` (`RouterRuntime.ts:581-585` builds
+/// the attempt id as a template string before anything else), not silently
+/// route as a made-up key. Real TS probe (run twice, byte-identical): the
+/// same deep-array route throws `RangeError: Maximum call stack size
+/// exceeded` at execute entry with no provider invocation; through the TS
+/// adapter the failure surfaces one layer earlier, at
+/// `snapshotCanonicalModelRequest`'s `structuredClone`.
+#[tokio::test]
+async fn unconvertible_route_rejects_first_stream_pull() {
+    let oracle = baseline::oracle(ORACLE);
+    let providers = get(&oracle, "providers").clone();
+    let calls: Trace = Arc::default();
+    let invoker = Arc::new(ScriptedInvoker {
+        providers: providers.clone(),
+        spec: obj(&[("scripts", JsValue::Array(vec![]))]),
+        calls: calls.clone(),
+    });
+    let mut deps = RouterDeps::new(invoker);
+    deps.clock = Arc::new(|| 0.0);
+    let snapshot = obj(&[(
+        "config",
+        obj(&[(
+            "router",
+            obj(&[
+                ("enabled", JsValue::Bool(true)),
+                (
+                    "scenarios",
+                    obj(&[(
+                        "default",
+                        parsed(r#"{"id":"a/m","provider":"a","model":"m"}"#),
+                    )]),
+                ),
+            ]),
+        )]),
+    )]);
+    let router = Arc::new(
+        RouterRuntime::with_deps(RouterConfig::from_snapshot(&snapshot), deps)
+            .expect("router runtime"),
+    );
+    let session: JsString = SESSION.into();
+    let model_port::ComposedPorts { execution, .. } = model_port::ports(
+        router,
+        obj(&[("providers", providers)]),
+        None,
+        RouterModelPortOptions::default(),
+        &session,
+    );
+    let mut context = JsObject::new();
+    context.insert("sessionId".into(), JsValue::String(session.clone()));
+    context.insert("turnId".into(), "t1".into());
+    context.insert("runId".into(), "t1".into());
+    context.insert(
+        "modelOverride".into(),
+        obj(&[("provider", deep_array(2100)), ("model", "m".into())]),
+    );
+    let prepared = execution
+        .prepare(PrepareInput {
+            request: base_request(),
+            context: context.clone(),
+        })
+        .await
+        .expect("prepare keeps the raw route");
+    assert!(matches!(prepared.provider, JsValue::Array(_)));
+    let mut stream = execution
+        .stream(StreamInput {
+            prepared,
+            context,
+            abort: None,
+        })
+        .await
+        .expect("stream starts");
+    let error = stream
+        .next()
+        .await
+        .expect_err("the first pull rejects with the conversion error");
+    assert!(
+        error.message.equals_str("Maximum call stack size exceeded"),
+        "{error:?}"
+    );
+    assert!(error.code.is_none(), "{error:?}");
+    assert!(calls.lock().unwrap().is_empty(), "no provider invocation");
 }
 
 /// A [`TranscriptStore`] that parks chosen appends: `gate(type)` blocks the

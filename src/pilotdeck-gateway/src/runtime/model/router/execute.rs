@@ -39,6 +39,16 @@ impl From<RouterRuntimeError> for RouterExecuteError {
     }
 }
 
+/// A route conversion failure reaches the module wire as the thrown JS error's
+/// message (`errorOf` keeps no `name`): `TypeError: Cannot convert object to
+/// primitive value` or `RangeError: Maximum call stack size exceeded`.
+fn route_conversion_error(error: crate::js_value::ToStringError) -> RouterExecuteError {
+    RouterExecuteError::Model(ModelStreamError::Thrown {
+        name: error.name().into(),
+        message: error.message().into(),
+    })
+}
+
 #[derive(Default)]
 struct Outcome {
     buffered: Vec<JsValue>,
@@ -121,9 +131,16 @@ impl RouterRuntime {
         sink: &mut (dyn FnMut(JsValue) + Send),
     ) -> Result<(), RouterExecuteError> {
         let requested = AttemptRoute {
+            // `RouterRuntime.ts:581-585` builds the requested attempt's `id`
+            // as `` `${decision.provider}/${decision.model}` `` before anything
+            // else runs, so a route whose `String()` conversion throws rejects
+            // the first pull with the raw JS error — before the selection
+            // policy and before any provider call.
             reference: RouterModelRef::new(
-                crate::js_value::property_key(field(decision, "provider")),
-                crate::js_value::property_key(field(decision, "model")),
+                crate::js_value::property_key(field(decision, "provider"))
+                    .map_err(route_conversion_error)?,
+                crate::js_value::property_key(field(decision, "model"))
+                    .map_err(route_conversion_error)?,
             ),
             provider: field(decision, "provider").clone(),
             model: field(decision, "model").clone(),

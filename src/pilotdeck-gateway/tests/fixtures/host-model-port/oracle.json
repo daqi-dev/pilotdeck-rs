@@ -5719,6 +5719,1232 @@
         }
       ],
       "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"a\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-own-tostring-provider",
+        "context": {
+          "modelOverride": {
+            "provider": {
+              "toString": null
+            },
+            "model": "m"
+          }
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ],
+        "materialize": true
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": {
+                "toString": null
+              },
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 100
+            },
+            "provider": {
+              "toString": null
+            },
+            "model": "m",
+            "opaque": {
+              "provider": {
+                "toString": null
+              },
+              "model": "m",
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "materialized",
+          "value": {
+            "provider": {
+              "toString": null
+            },
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "candidate"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 100
+          }
+        },
+        {
+          "kind": "error",
+          "value": {
+            "message": "Cannot convert object to primitive value"
+          }
+        }
+      ],
+      "calls": [],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":{\"toString\":null},\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":100},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-plain-object-provider",
+        "context": {
+          "modelOverride": {
+            "provider": {
+              "k": 1
+            },
+            "model": "m"
+          }
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": {
+                "k": 1
+              },
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 100
+            },
+            "provider": {
+              "k": 1
+            },
+            "model": "m",
+            "opaque": {
+              "provider": {
+                "k": 1
+              },
+              "model": "m",
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "provider": {
+            "k": 1
+          },
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 100
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":{\"k\":1},\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":100},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-object-provider-cache-plan-mismatch",
+        "context": {
+          "modelOverride": {
+            "provider": {
+              "k": 1
+            },
+            "model": "m"
+          }
+        },
+        "candidateCachePlan": {
+          "provider": {
+            "k": 1
+          },
+          "model": "m",
+          "messages": [
+            7
+          ]
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ],
+        "materialize": true
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": {
+                "k": 1
+              },
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 100
+            },
+            "provider": {
+              "k": 1
+            },
+            "model": "m",
+            "opaque": {
+              "provider": {
+                "k": 1
+              },
+              "model": "m",
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "materialized",
+          "value": {
+            "provider": {
+              "k": 1
+            },
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "candidate"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 100
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "provider": {
+            "k": 1
+          },
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 100
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":{\"k\":1},\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":100},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-array-provider-cache-plan-mismatch",
+        "context": {
+          "modelOverride": {
+            "provider": [
+              "b"
+            ],
+            "model": "m"
+          }
+        },
+        "candidateCachePlan": {
+          "provider": [
+            "b"
+          ],
+          "model": "m",
+          "messages": [
+            7
+          ]
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ],
+        "materialize": true
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": [
+                "b"
+              ],
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": [
+              "b"
+            ],
+            "model": "m",
+            "opaque": {
+              "provider": [
+                "b"
+              ],
+              "model": "m",
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "materialized",
+          "value": {
+            "provider": [
+              "b"
+            ],
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "candidate"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 64
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "provider": [
+            "b"
+          ],
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":[\"b\"],\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "override-cache-plan-kept-by-value",
+        "context": {
+          "modelOverride": {
+            "provider": "b",
+            "model": "m"
+          }
+        },
+        "candidateCachePlan": {
+          "provider": "b",
+          "model": "m",
+          "messages": [
+            7
+          ]
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ],
+        "materialize": true
+      },
+      "trace": [
+        {
+          "kind": "prepared",
+          "value": {
+            "request": {
+              "provider": "b",
+              "model": "m",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "hello"
+                    }
+                  ]
+                }
+              ],
+              "maxOutputTokens": 64
+            },
+            "provider": "b",
+            "model": "m",
+            "opaque": {
+              "provider": "b",
+              "model": "m",
+              "scenarioType": "explicit",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "explicit",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "materialized",
+          "value": {
+            "provider": "b",
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "candidate"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 64,
+            "cachePlan": {
+              "provider": "b",
+              "model": "m",
+              "messages": [
+                7
+              ]
+            },
+            "cacheBreakpoints": [
+              7
+            ]
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_start",
+            "messageId": "id"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "text_delta",
+            "text": "ok"
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 2
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "value": {
+            "type": "message_end",
+            "finishReason": "stop"
+          }
+        },
+        {
+          "kind": "done"
+        }
+      ],
+      "calls": [
+        {
+          "provider": "b",
+          "model": "m",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "maxOutputTokens": 64
+        }
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"provider\":\"b\",\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"maxOutputTokens\":64},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_start\",\"messageId\":\"id\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"text\":\"ok\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":3,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"message_end\",\"finishReason\":\"stop\"},\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "spec": {
+        "name": "wire-override-kept",
+        "wire": true,
+        "context": {
+          "modelOverride": {
+            "provider": "b",
+            "model": "m",
+            "extra": 1
+          }
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "wire-context",
+          "value": {
+            "sessionId": "s1",
+            "turnId": "t1",
+            "runId": "t1",
+            "operationId": "t1",
+            "modelOverride": {
+              "provider": "b",
+              "model": "m"
+            }
+          }
+        },
+        {
+          "kind": "wire-prepared",
+          "value": {
+            "prepared": {
+              "request": {
+                "provider": "b",
+                "model": "m",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "maxOutputTokens": 64
+              },
+              "provider": "b",
+              "model": "m"
+            },
+            "metadata": {
+              "provider": "b",
+              "model": "m",
+              "maxOutputTokens": 64,
+              "tokenLimits": {
+                "maxOutputTokens": 64
+              },
+              "protocol": "anthropic"
+            }
+          }
+        }
+      ],
+      "calls": [],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n"
+    },
+    {
+      "spec": {
+        "name": "wire-override-dropped-missing-model",
+        "wire": true,
+        "context": {
+          "modelOverride": {
+            "provider": "b"
+          }
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "wire-context",
+          "value": {
+            "sessionId": "s1",
+            "turnId": "t1",
+            "runId": "t1",
+            "operationId": "t1"
+          }
+        },
+        {
+          "kind": "wire-prepared",
+          "value": {
+            "prepared": {
+              "request": {
+                "provider": "a",
+                "model": "m",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "maxOutputTokens": 64
+              },
+              "provider": "a",
+              "model": "m"
+            },
+            "metadata": {
+              "provider": "a",
+              "model": "m",
+              "maxContextTokens": 1024,
+              "maxOutputTokens": 64,
+              "tokenLimits": {
+                "maxContextTokens": 1024,
+                "maxOutputTokens": 64
+              },
+              "protocol": "anthropic",
+              "supportsPromptCache": true
+            }
+          }
+        }
+      ],
+      "calls": [],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n"
+    },
+    {
+      "spec": {
+        "name": "wire-override-dropped-truthy-non-object",
+        "wire": true,
+        "context": {
+          "modelOverride": "x"
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "wire-context",
+          "value": {
+            "sessionId": "s1",
+            "turnId": "t1",
+            "runId": "t1",
+            "operationId": "t1"
+          }
+        },
+        {
+          "kind": "wire-prepared",
+          "value": {
+            "prepared": {
+              "request": {
+                "provider": "a",
+                "model": "m",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "maxOutputTokens": 64
+              },
+              "provider": "a",
+              "model": "m"
+            },
+            "metadata": {
+              "provider": "a",
+              "model": "m",
+              "maxContextTokens": 1024,
+              "maxOutputTokens": 64,
+              "tokenLimits": {
+                "maxContextTokens": 1024,
+                "maxOutputTokens": 64
+              },
+              "protocol": "anthropic",
+              "supportsPromptCache": true
+            }
+          }
+        }
+      ],
+      "calls": [],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n"
+    },
+    {
+      "spec": {
+        "name": "wire-override-dropped-non-string-provider",
+        "wire": true,
+        "context": {
+          "modelOverride": {
+            "provider": 42,
+            "model": "m"
+          }
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "wire-context",
+          "value": {
+            "sessionId": "s1",
+            "turnId": "t1",
+            "runId": "t1",
+            "operationId": "t1"
+          }
+        },
+        {
+          "kind": "wire-prepared",
+          "value": {
+            "prepared": {
+              "request": {
+                "provider": "a",
+                "model": "m",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "maxOutputTokens": 64
+              },
+              "provider": "a",
+              "model": "m"
+            },
+            "metadata": {
+              "provider": "a",
+              "model": "m",
+              "maxContextTokens": 1024,
+              "maxOutputTokens": 64,
+              "tokenLimits": {
+                "maxContextTokens": 1024,
+                "maxOutputTokens": 64
+              },
+              "protocol": "anthropic",
+              "supportsPromptCache": true
+            }
+          }
+        }
+      ],
+      "calls": [],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n"
+    },
+    {
+      "spec": {
+        "name": "wire-override-dropped-array",
+        "wire": true,
+        "context": {
+          "modelOverride": [
+            "b",
+            "m"
+          ]
+        },
+        "scripts": [
+          {
+            "events": [
+              {
+                "type": "message_start",
+                "messageId": "id"
+              },
+              {
+                "type": "text_delta",
+                "text": "ok"
+              },
+              {
+                "type": "usage",
+                "usage": {
+                  "inputTokens": 3,
+                  "outputTokens": 2
+                }
+              },
+              {
+                "type": "message_end",
+                "finishReason": "stop"
+              }
+            ]
+          }
+        ]
+      },
+      "trace": [
+        {
+          "kind": "router",
+          "value": {
+            "type": "pilotdeck_router_decision",
+            "sessionId": "s1",
+            "decision": {
+              "provider": "a",
+              "model": "m",
+              "scenarioType": "default",
+              "isSubagent": false,
+              "orchestrating": false,
+              "resolvedFrom": "scenario",
+              "mutations": {}
+            }
+          }
+        },
+        {
+          "kind": "wire-context",
+          "value": {
+            "sessionId": "s1",
+            "turnId": "t1",
+            "runId": "t1",
+            "operationId": "t1"
+          }
+        },
+        {
+          "kind": "wire-prepared",
+          "value": {
+            "prepared": {
+              "request": {
+                "provider": "a",
+                "model": "m",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "maxOutputTokens": 64
+              },
+              "provider": "a",
+              "model": "m"
+            },
+            "metadata": {
+              "provider": "a",
+              "model": "m",
+              "maxContextTokens": 1024,
+              "maxOutputTokens": 64,
+              "tokenLimits": {
+                "maxContextTokens": 1024,
+                "maxOutputTokens": 64
+              },
+              "protocol": "anthropic",
+              "supportsPromptCache": true
+            }
+          }
+        }
+      ],
+      "calls": [],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"t1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n"
     }
   ]
 }
