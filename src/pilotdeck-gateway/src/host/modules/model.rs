@@ -644,6 +644,12 @@ fn execution_context(turn: &TurnContext, call: &JsValue, remote: Option<&JsValue
         );
     }
     if let Some(remote) = remote {
+        // `sidecarDefaultModuleDispatcher.ts:441,473`: the wire entry sanitizes
+        // `modelOverride` — `asRecord` plus both `provider`/`model` strings,
+        // only those two fields copied — and drops it otherwise, so a
+        // non-conforming override falls back to router routing here. The
+        // truthiness semantics of fix round 4 apply one layer down
+        // (`model_port.rs`), where the context is already in-process.
         if let Some(over) = remote.get("modelOverride").and_then(JsValue::as_object)
             && let (Some(provider), Some(model)) = (
                 over.get("provider").and_then(JsValue::as_string),
@@ -883,32 +889,49 @@ fn serialize_metadata(
     // run: a TS metadata port resolves them against its config by property
     // key (`config.providers[providerId]`), so the raw route coerces to its
     // `String()` form and every lookup misses exactly like the baseline's
-    // throw-and-catch wrappers (`ProjectSessionRuntimeBundle.ts:469-497`).
-    let key_provider = &crate::js_value::property_key(provider);
-    let key_model = &crate::js_value::property_key(model);
+    // throw-and-catch wrappers (`ProjectSessionRuntimeBundle.ts:469-497`) —
+    // including a route whose key conversion throws, which the wrappers
+    // catch and answer `undefined`.
+    let key_provider = crate::js_value::property_key(provider);
+    let key_model = crate::js_value::property_key(model);
+    let keys = key_provider.as_ref().ok().zip(key_model.as_ref().ok());
     // TS calls every lookup before validating any result (:446-453).
     let max_context = if metadata.provides(MetadataField::MaxContextTokens) {
-        defined(metadata.get_model_max_context_tokens(key_provider, key_model)?)
+        defined(keys.map_or(Ok(None), |(provider, model)| {
+            metadata.get_model_max_context_tokens(provider, model)
+        })?)
     } else {
         None
     };
     let max_output = if metadata.provides(MetadataField::MaxOutputTokens) {
-        defined(metadata.get_model_max_output_tokens(key_provider, key_model)?)
+        defined(keys.map_or(Ok(None), |(provider, model)| {
+            metadata.get_model_max_output_tokens(provider, model)
+        })?)
     } else {
         None
     };
     let token_limits = if metadata.provides(MetadataField::TokenLimits) {
-        defined(metadata.get_model_token_limits(key_provider, key_model)?).filter(js_truthy)
+        defined(keys.map_or(Ok(None), |(provider, model)| {
+            metadata.get_model_token_limits(provider, model)
+        })?)
+        .filter(js_truthy)
     } else {
         None
     };
     let protocol = if metadata.provides(MetadataField::Protocol) {
-        defined(metadata.get_model_protocol(key_provider)?)
+        defined(
+            key_provider
+                .as_ref()
+                .ok()
+                .map_or(Ok(None), |provider| metadata.get_model_protocol(provider))?,
+        )
     } else {
         None
     };
     let prompt_cache = if metadata.provides(MetadataField::SupportsPromptCache) {
-        defined(metadata.get_model_supports_prompt_cache(key_provider, key_model)?)
+        defined(keys.map_or(Ok(None), |(provider, model)| {
+            metadata.get_model_supports_prompt_cache(provider, model)
+        })?)
     } else {
         None
     };

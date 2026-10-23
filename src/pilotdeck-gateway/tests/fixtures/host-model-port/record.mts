@@ -29,6 +29,7 @@ export async function record(baselineDir: string, scratchDir: string) {
   const { createRouterModelInvokerPort } = await load('src/agent/modules/llm/routerModelInvokerAdapter.ts');
   const { createDurableModelInvokerPort } = await load('src/agent/modules/llm/durableModelInvokerPort.ts');
   const { createSidecarModuleComposition } = await load('src/agent/modules/transport/sidecarHostModulePorts.ts');
+  const { createSidecarDefaultModuleDispatcher } = await load('src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts');
   const { AgentSessionEventRecorder } = await load('src/agent/session/AgentSessionEventRecorder.ts');
   const { JsonlTranscriptWriter } = await load('src/session/transcript/JsonlTranscriptWriter.ts');
   const { SessionRuntime } = await load('src/session/events/SessionRuntime.ts');
@@ -295,6 +296,85 @@ export async function record(baselineDir: string, scratchDir: string) {
       pulls: 1,
       abortAfterPulls: 1,
     },
+    // Fix round 5: a route whose `String()` conversion throws must reject the
+    // first stream pull (`RouterRuntime.ts:581-585` builds the attempt id as a
+    // template string before anything else runs). The durable wrapper has
+    // already recorded the request when the pull fails, and the provider is
+    // never invoked. A plain object still converts to "[object Object]" and
+    // streams.
+    {
+      name: 'override-own-tostring-provider',
+      context: { modelOverride: { provider: { toString: null }, model: 'm' } },
+      scripts: [{ events: ok }],
+      materialize: true,
+    },
+    {
+      name: 'override-plain-object-provider',
+      context: { modelOverride: { provider: { k: 1 }, model: 'm' } },
+      scripts: [{ events: ok }],
+    },
+    // Fix round 5: the cache-plan route comparison is JS `===`
+    // (`RouterRequestMaterializer.ts:22-25`): reference identity for objects
+    // and arrays, so a distinct same-shaped container does not match and the
+    // plan plus its breakpoints are cleared, while string/number routes match
+    // by value.
+    {
+      name: 'override-object-provider-cache-plan-mismatch',
+      context: { modelOverride: { provider: { k: 1 }, model: 'm' } },
+      candidateCachePlan: { provider: { k: 1 }, model: 'm', messages: [7] },
+      scripts: [{ events: ok }],
+      materialize: true,
+    },
+    {
+      name: 'override-array-provider-cache-plan-mismatch',
+      context: { modelOverride: { provider: ['b'], model: 'm' } },
+      candidateCachePlan: { provider: ['b'], model: 'm', messages: [7] },
+      scripts: [{ events: ok }],
+      materialize: true,
+    },
+    {
+      name: 'override-cache-plan-kept-by-value',
+      context: { modelOverride: { provider: 'b', model: 'm' } },
+      candidateCachePlan: { provider: 'b', model: 'm', messages: [7] },
+      scripts: [{ events: ok }],
+      materialize: true,
+    },
+    // Fix round 5: the module wire entry itself. The dispatcher's
+    // `modelExecutionContext` (`sidecarDefaultModuleDispatcher.ts:441,473`)
+    // sanitizes `context.modelOverride` — an object whose `provider`/`model`
+    // are both strings survives with exactly those two fields, anything else
+    // is dropped and the turn routes through the router. Each case captures
+    // the context the dispatcher hands the port alongside the wire response.
+    {
+      name: 'wire-override-kept',
+      wire: true,
+      context: { modelOverride: { provider: 'b', model: 'm', extra: 1 } },
+      scripts: [{ events: ok }],
+    },
+    {
+      name: 'wire-override-dropped-missing-model',
+      wire: true,
+      context: { modelOverride: { provider: 'b' } },
+      scripts: [{ events: ok }],
+    },
+    {
+      name: 'wire-override-dropped-truthy-non-object',
+      wire: true,
+      context: { modelOverride: 'x' },
+      scripts: [{ events: ok }],
+    },
+    {
+      name: 'wire-override-dropped-non-string-provider',
+      wire: true,
+      context: { modelOverride: { provider: 42, model: 'm' } },
+      scripts: [{ events: ok }],
+    },
+    {
+      name: 'wire-override-dropped-array',
+      wire: true,
+      context: { modelOverride: ['b', 'm'] },
+      scripts: [{ events: ok }],
+    },
   ];
 
   const cases = [];
@@ -476,6 +556,39 @@ export async function record(baselineDir: string, scratchDir: string) {
       }
       const repeats = spec.repeat ?? 1;
       for (let repeat = 1; repeat <= repeats; repeat += 1) {
+        if (spec.wire) {
+          // Fix round 5: drive the module through the real dispatcher wire
+          // entry (`sidecarDefaultModuleDispatcher.ts` model handler) instead
+          // of the bound port, so the context it rebuilds — including the
+          // `modelOverride` sanitization — is on the golden path. The context
+          // the port receives is captured alongside the wire response.
+          const contexts: any[] = [];
+          const dispatcher = createSidecarDefaultModuleDispatcher({
+            config: { cwd: '/w', permissionMode: 'default', env: {}, permissionContext: { canPrompt: false } } as any,
+            modules: {
+              ...composition,
+              model: {
+                execution: {
+                  prepare: async (input: any) => { contexts.push(input.context); return bound.execution.prepare(input); },
+                  stream: bound.execution.stream.bind(bound.execution),
+                },
+                metadata: bound.metadata,
+                materializeRequest: bound.materializeRequest,
+              },
+            } as any,
+            input: { sessionId: SESSION, turnId } as any,
+            checkpoint: { allowReadFiles: () => {} } as any,
+            capabilityResultObserver: { onCapabilityResults: async () => {} } as any,
+            planTodoHandler: (async () => ({})) as any,
+          });
+          const payload: any = { operation: 'prepare', preparationId: 'p1', request: structuredClone(baseRequest) };
+          if (spec.context) payload.context = structuredClone(spec.context);
+          const response = await dispatcher.handlers.model({ payload, runId: turnId, operationId: turnId } as any);
+          trace.push({ kind: 'wire-context', value: contexts[0] });
+          trace.push({ kind: 'wire-prepared', value: response });
+          await dispatcher.dispose();
+          continue;
+        }
         const context = { sessionId: SESSION, turnId, runId: turnId, ...spec.context };
         let prepared: any;
         try {
@@ -503,7 +616,8 @@ export async function record(baselineDir: string, scratchDir: string) {
           }
         }
         if (spec.materialize) {
-          const candidate = { ...structuredClone(baseRequest), messages: [{ role: 'user', content: [{ type: 'text', text: 'candidate' }] }] };
+          const candidate: any = { ...structuredClone(baseRequest), messages: [{ role: 'user', content: [{ type: 'text', text: 'candidate' }] }] };
+          if (spec.candidateCachePlan) candidate.cachePlan = structuredClone(spec.candidateCachePlan);
           const materialized = await bound.materializeRequest(prepared, candidate);
           trace.push({ kind: 'materialized', value: materialized });
         }

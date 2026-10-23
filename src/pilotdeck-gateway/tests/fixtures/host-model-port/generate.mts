@@ -19,6 +19,7 @@ const sourceSha256 = sourceClosureSha256(baseline, commit, git, [
   'src/agent/modules/llm/routerModelInvokerAdapter.ts',
   'src/agent/modules/llm/durableModelInvokerPort.ts',
   'src/agent/modules/transport/sidecarHostModulePorts.ts',
+  'src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts',
   'src/agent/modules/transport/sidecarToolContext.ts',
   'src/agent/session/AgentSessionEventRecorder.ts',
   'src/agent/runtime/modelContextWindow.ts',

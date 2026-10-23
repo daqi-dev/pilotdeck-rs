@@ -313,10 +313,10 @@ pub fn materialize_request(
         // decision's route values, raw types included.
         let provider_matches = plan
             .get("provider")
-            .is_none_or(|value| value.is_undefined() || value == &provider);
+            .is_none_or(|value| value.is_undefined() || route_strictly_equals(value, &provider));
         let model_matches = plan
             .get("model")
-            .is_none_or(|value| value.is_undefined() || value == &model);
+            .is_none_or(|value| value.is_undefined() || route_strictly_equals(value, &model));
         (provider_matches && model_matches).then(|| plan.clone())
     });
     let has_cache_plan = cache_plan.as_ref().is_some_and(|plan| !plan.is_undefined());
@@ -354,11 +354,13 @@ pub fn materialize_request(
     };
     // `clampMaxOutputTokensToModelCap` (`RouterRequestMaterializer.ts:51-59`):
     // the capability read indexes the config by the raw route's property-key
-    // form and an unknown route is caught here, leaving the request alone.
-    if let Ok(capabilities) = invoker.get_capabilities(
-        &crate::js_value::property_key(&provider),
-        &crate::js_value::property_key(&model),
-    ) {
+    // form and an unknown route — or a route whose key conversion throws — is
+    // caught here, leaving the request alone.
+    if let (Ok(provider_key), Ok(model_key)) = (
+        crate::js_value::property_key(&provider),
+        crate::js_value::property_key(&model),
+    ) && let Ok(capabilities) = invoker.get_capabilities(&provider_key, &model_key)
+    {
         let cap = capabilities
             .get("maxOutputTokens")
             .and_then(JsValue::as_number);
@@ -367,6 +369,31 @@ pub fn materialize_request(
         }
     }
     JsValue::Object(result)
+}
+
+/// JS `===` between a cache-plan route and the decision's raw route
+/// (`RouterRequestMaterializer.ts:23-24`). Primitives compare by value —
+/// except `NaN`, which never equals itself — and objects/arrays by reference
+/// identity. [`JsValue`] carries no identity, and both operands cross a
+/// serialization boundary before they reach this port (the module wire or the
+/// replay oracle), where references are severed: two containers are never the
+/// same object on inputs this port can receive, so they never strictly equal.
+/// TS keeps the cache plan only when one object aliases the other
+/// (`context.modelOverride.provider === request.cachePlan.provider`); the
+/// fixed baseline never produces that — `AgentModelOverride` is
+/// `{provider: string, model: string}` (`agent/protocol/input.ts:16-18`) and
+/// the request's cache plan is assembled from config strings
+/// (`modelRequestAssembly.ts:59-78`) — so distinct same-shaped containers
+/// clearing the plan is the only reachable shape, matching TS.
+fn route_strictly_equals(value: &JsValue, route: &JsValue) -> bool {
+    match (value, route) {
+        (JsValue::Object(_), _)
+        | (_, JsValue::Object(_))
+        | (JsValue::Array(_), _)
+        | (_, JsValue::Array(_)) => false,
+        (JsValue::Number(a), JsValue::Number(b)) => a == b && !a.is_nan(),
+        _ => value == route,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
