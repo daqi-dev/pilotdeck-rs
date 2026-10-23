@@ -44,3 +44,5 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway transc
 修复轮 1（#562）：`restore-message-*` 由真实 restore/hydrate 生成，覆盖三类 message 条目的 20 种形状：缺失/null/原始值 message，非数组 content，null block、原始值 block、空数组，以及 tool_result/tool_result_reference 的 `.some` 短路。比较完整输出与 TypeError 文案；不把 canonical-message 形状校验代替 JS reducer 语义。TS 来源 `WebHistoryProjections.ts:79,321-324`，另加一条 reducer 全日志执行顺序用例，总计新增 61 场景（336→397）。WebHistory、SessionProjectionDriver 与 BuiltinSessionProjections 源码也纳入逐文件溯源守卫。
 
 修复负控：在仓根运行 `python3 src/pilotdeck-gateway/tests/fixtures/session-domain/fix1-negative.py`。脚本核启动器 target、逐 cargo 核 slot、对子进程组设期限，实际修改产品源码后验证行为失败并在 finally 恢复。除消息错误、短路和原始值 block 外，还把 restore 的锁移到读盘之后，要求确定性的锁范围回归测试转红。
+
+修复轮 2（#562）：生成器与 Rust 测试均精确断言 397 场景；增删场景时须同步修改两处计数与本 README，防止金样再生或合并时覆盖静默缩水。现有 61 条 restore-message 场景继续读取 writer 状态、追加 metadata、读取磁盘并再次 restore；对齐 SessionRuntime.ts:106-115 与 ProjectSessionStorage.ts:337-346 的 envelope→domain→状态安装→hydrate 顺序，hydrate 失败后仍延续原 sequence 与 parent 链。

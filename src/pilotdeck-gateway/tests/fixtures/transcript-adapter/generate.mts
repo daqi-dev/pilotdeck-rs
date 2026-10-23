@@ -507,7 +507,9 @@ try {
       // including TypeError class and text, for byte comparison in Rust.
       scenarios.push(await runScenario(scratch, name, {
         files: { 's1.jsonl': line(at(1, type, { message })) },
-        steps: [open(), { op: 'restore' }],
+        steps: [open(), { op: 'restore' }, { op: 'state' },
+          { op: 'metadata', turnId: 'turn-1', metadata: { title: 'after hydrate' } },
+          { op: 'state' }, { op: 'read' }, open(), { op: 'restore' }],
       }));
     }
   }
@@ -515,8 +517,10 @@ try {
   await scenario('restore-message-reducer-order', {
     files: { 's1.jsonl': line(at(1, 'assistant_message', { message: { content: 'str' } }))
       + line(at(2, 'turn_result', { result: null })) },
-    steps: [open(), { op: 'restore' }],
-  }, ['open:0', 'error:TypeError']);
+    steps: [open(), { op: 'restore' }, { op: 'state' },
+      { op: 'metadata', turnId: 'turn-1', metadata: { title: 'after hydrate' } },
+      { op: 'state' }, { op: 'read' }, open(), { op: 'restore' }],
+  }, ['open:0', 'error:TypeError', 'state:2', 'ok', 'state:3', 'read:3/0', 'open:0', 'error:TypeError']);
 
   await scenario('domain-append-failure', {
     store: { failBefore: [1, 3] },
@@ -556,6 +560,8 @@ try {
     scenarios.push(r);
   }
 
+  // Changing scenarios requires updating the exact Rust count and README too.
+  assert.equal(scenarios.length, 397, 'adapter oracle scenario count');
   assert.equal(new Set(scenarios.map(s => s.name)).size, scenarios.length, "scenario directories must be independent");
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);

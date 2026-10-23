@@ -569,11 +569,8 @@ fn real_ts_scenarios_match_outcomes_calls_and_bytes() {
     let JsValue::Array(scenarios) = field(&oracle, "scenarios") else {
         panic!("scenarios")
     };
-    assert!(
-        scenarios.len() >= 25,
-        "oracle has {} scenarios",
-        scenarios.len()
-    );
+    // Keep in sync with transcript-adapter/generate.mts and its README.
+    assert_eq!(scenarios.len(), 397, "adapter oracle scenario count");
     let scratch = Scratch::new();
     for scenario in scenarios {
         let name = s(field(scenario, "name"));

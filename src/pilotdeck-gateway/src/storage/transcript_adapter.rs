@@ -611,6 +611,12 @@ impl TranscriptWriter {
         for entry in entries {
             domain = domain.next(entry)?;
         }
+        // SessionRuntime.restore installs validated state before hydrate; a
+        // projection error must still leave subsequent appends on this chain.
+        inner.sequence = state.sequence;
+        inner.last_entry_id = state.last_entry_id;
+        inner.entry_ids = ids;
+        inner.recorder_domain = domain;
         // Hydration runs every registered reducer. Agent transcript reducers
         // run over the whole log before WebHistory's file-artifact reducer;
         // accepted_input.messages waits for conversation finalization.
@@ -631,10 +637,6 @@ impl TranscriptWriter {
                 validate_hydrated_message(field(entry, "message"))?;
             }
         }
-        inner.sequence = state.sequence;
-        inner.last_entry_id = state.last_entry_id;
-        inner.entry_ids = ids;
-        inner.recorder_domain = domain;
         Ok(())
     }
     /// JsonlTranscriptWriter.close: later appends resolve without writing.

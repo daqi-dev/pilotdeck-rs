@@ -19,6 +19,8 @@ const scenarios=cases.map(({name,entries,code})=>{
  const outcomes=entries.map(entry=>outcome(()=>{state=validateSessionDomainEvent(state,structuredClone(entry));}));
  return {name,entries,outcomes,log};
 });
+// Changing scenarios requires updating the exact Rust count and README too.
+assert.equal(scenarios.length,304,'domain oracle scenario count');
 const output=resolve(process.argv[2]);await mkdir(output,{recursive:true});
 await writeFile(join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,node:process.version,scenarios},null,2)+'\n');
 console.log(`PASS: ${scenarios.length} real TS domain cases`);
