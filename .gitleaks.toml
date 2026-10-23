@@ -53,6 +53,6 @@ regexTarget = "match"
 regexes = ['''d0454d191c3bd2e23fda13b0bde13cbbeb47e2fc26fa10e6b7403684b4adc59a''']
 
 [[allowlists]]
-description = "A6.5-MCP-HTTP-LIFETIME-001（#551）夹具 proxy-tls.json：openssl 一次性生成、仅给 0.0.0.0 本地 TLS 冒烟的测试 CA/叶子 EC 私钥（P-256，自签 CA 不受任何系统信任），不是凭据"
+description = "A6.5-MCP-HTTP-LIFETIME-001（#551）夹具 proxy-tls.json：openssl 一次性生成、仅给 0.0.0.0 本地 TLS 冒烟的测试 CA/叶子 EC 私钥（P-256，自签 CA 不受任何系统信任），不是凭据；例外是这把私钥的完整 PEM 正文（含夹具 JSON 里的转义换行），另一把 P-256 私钥仍会命中"
 regexTarget = "match"
-regexes = ['''MHcCAQEEIB47aFBupvRa9/Vwm''']
+regexes = ['''MHcCAQEEIB47aFBupvRa9/Vwmz8s\+a1D\+c51rKAXY03D6qsjlxOloAoGCCqGSM49\\nAwEHoUQDQgAEYILd5e5OgILFrySL6YdrBg8VY9xEIqgZawws/p/RmedCq/7j1Cf4\\nfPaV1tKEU/LjST4ze6R\+jek/OeyXzJJvQQ==''']

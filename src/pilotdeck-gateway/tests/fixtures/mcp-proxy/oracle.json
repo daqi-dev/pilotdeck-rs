@@ -4789,6 +4789,1905 @@
       ],
       "requests": [],
       "connects": []
+    },
+    {
+      "id": "proxy-auth-header-rejected-upper",
+      "transport": "streamable_http",
+      "url": "http://<mock>/mcp",
+      "headers": {
+        "Proxy-Authorization": "Basic abc"
+      },
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open",
+        "env": "HTTP_PROXY"
+      },
+      "env": {},
+      "noProxy": null,
+      "config": null,
+      "configMode": null,
+      "script": {},
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "status"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": true,
+      "proxyMode": "proxy",
+      "source": "env",
+      "noProxyValue": "127.0.0.1,localhost",
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: fetch failed"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [],
+      "connects": []
+    },
+    {
+      "id": "proxy-auth-header-rejected-lower-sse",
+      "transport": "sse",
+      "url": "http://<mock>/sse",
+      "headers": {
+        "proxy-authorization": "Basic abc"
+      },
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open",
+        "env": "HTTP_PROXY"
+      },
+      "env": {},
+      "noProxy": null,
+      "config": null,
+      "configMode": null,
+      "script": {},
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "status"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": true,
+      "proxyMode": "proxy",
+      "source": "env",
+      "noProxyValue": "127.0.0.1,localhost",
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_handshake_failed",
+            "serverId": "mock",
+            "message": "MCP handshake failed: SSE error: TypeError: fetch failed: Proxy-Authorization should be sent in ProxyAgent constructor"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [],
+      "connects": []
+    },
+    {
+      "id": "proxy-auth-header-direct",
+      "transport": "streamable_http",
+      "url": "http://<mock>/mcp",
+      "headers": {
+        "Proxy-Authorization": "Basic abc"
+      },
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open",
+        "env": "HTTP_PROXY"
+      },
+      "env": {},
+      "noProxy": {
+        "name": "NO_PROXY",
+        "value": "<mock>"
+      },
+      "config": null,
+      "configMode": null,
+      "script": {
+        "initialize": [
+          {
+            "headers": {
+              "mcp-session-id": "sess-1"
+            },
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-proxy",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo through a proxy",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "direct with proxy auth header"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {
+            "q": 1
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": true,
+      "proxyMode": "proxy",
+      "source": "env",
+      "noProxyValue": "<mock>,127.0.0.1,localhost",
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo through a proxy",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "direct with proxy auth header"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "proxy-authorization": "Basic abc"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "proxy-authorization": "Basic abc"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "proxy-authorization": "Basic abc"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1",
+            "proxy-authorization": "Basic abc"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "proxy-authorization": "Basic abc"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ],
+      "connects": []
+    },
+    {
+      "id": "no-proxy-port-overflow",
+      "transport": "streamable_http",
+      "url": "http://<mock>/mcp",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open",
+        "env": "HTTP_PROXY"
+      },
+      "env": {},
+      "noProxy": {
+        "name": "NO_PROXY",
+        "value": "0.0.0.0:4294967296"
+      },
+      "config": null,
+      "configMode": null,
+      "script": {
+        "initialize": [
+          {
+            "headers": {
+              "mcp-session-id": "sess-1"
+            },
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-proxy",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo through a proxy",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "through proxy, overflow port never matches"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {
+            "q": 1
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": true,
+      "proxyMode": "proxy",
+      "source": "env",
+      "noProxyValue": "0.0.0.0:4294967296,127.0.0.1,localhost",
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo through a proxy",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "through proxy, overflow port never matches"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ],
+      "connects": [
+        {
+          "method": "CONNECT",
+          "target": "<mock>",
+          "host": "<mock>",
+          "proxyConnection": "keep-alive",
+          "proxyAuthorization": null
+        }
+      ]
+    },
+    {
+      "id": "no-proxy-port-negative",
+      "transport": "streamable_http",
+      "url": "http://<mock>/mcp",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open",
+        "env": "HTTP_PROXY"
+      },
+      "env": {},
+      "noProxy": {
+        "name": "NO_PROXY",
+        "value": "0.0.0.0:-1"
+      },
+      "config": null,
+      "configMode": null,
+      "script": {
+        "initialize": [
+          {
+            "headers": {
+              "mcp-session-id": "sess-1"
+            },
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-proxy",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo through a proxy",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "through proxy, negative port never matches"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {
+            "q": 1
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": true,
+      "proxyMode": "proxy",
+      "source": "env",
+      "noProxyValue": "0.0.0.0:-1,127.0.0.1,localhost",
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo through a proxy",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "through proxy, negative port never matches"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ],
+      "connects": [
+        {
+          "method": "CONNECT",
+          "target": "<mock>",
+          "host": "<mock>",
+          "proxyConnection": "keep-alive",
+          "proxyAuthorization": null
+        }
+      ]
+    },
+    {
+      "id": "no-proxy-port-non-numeric",
+      "transport": "streamable_http",
+      "url": "http://<mock>/mcp",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open",
+        "env": "HTTP_PROXY"
+      },
+      "env": {},
+      "noProxy": {
+        "name": "NO_PROXY",
+        "value": "0.0.0.0:abc"
+      },
+      "config": null,
+      "configMode": null,
+      "script": {
+        "initialize": [
+          {
+            "headers": {
+              "mcp-session-id": "sess-1"
+            },
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-proxy",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo through a proxy",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "through proxy, text port never matches"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {
+            "q": 1
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": true,
+      "proxyMode": "proxy",
+      "source": "env",
+      "noProxyValue": "0.0.0.0:abc,127.0.0.1,localhost",
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo through a proxy",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "through proxy, text port never matches"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ],
+      "connects": [
+        {
+          "method": "CONNECT",
+          "target": "<mock>",
+          "host": "<mock>",
+          "proxyConnection": "keep-alive",
+          "proxyAuthorization": null
+        }
+      ]
+    },
+    {
+      "id": "no-proxy-port-empty",
+      "transport": "streamable_http",
+      "url": "http://<mock>/mcp",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open",
+        "env": "HTTP_PROXY"
+      },
+      "env": {},
+      "noProxy": {
+        "name": "NO_PROXY",
+        "value": "0.0.0.0:"
+      },
+      "config": null,
+      "configMode": null,
+      "script": {
+        "initialize": [
+          {
+            "headers": {
+              "mcp-session-id": "sess-1"
+            },
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-proxy",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo through a proxy",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "through proxy, empty port never matches"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {
+            "q": 1
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": true,
+      "proxyMode": "proxy",
+      "source": "env",
+      "noProxyValue": "0.0.0.0:,127.0.0.1,localhost",
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo through a proxy",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "through proxy, empty port never matches"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ],
+      "connects": [
+        {
+          "method": "CONNECT",
+          "target": "<mock>",
+          "host": "<mock>",
+          "proxyConnection": "keep-alive",
+          "proxyAuthorization": null
+        }
+      ]
+    },
+    {
+      "id": "proxy-auth-decode-invalid-escape",
+      "transport": "streamable_http",
+      "url": "http://<mock>/mcp",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open"
+      },
+      "env": {},
+      "noProxy": null,
+      "config": {
+        "url": "http://user%ZZ:pass@<proxyAuthority>"
+      },
+      "configMode": "startup",
+      "script": {
+        "initialize": [
+          {
+            "headers": {
+              "mcp-session-id": "sess-1"
+            },
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-proxy",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo through a proxy",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "direct after invalid percent escape"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {
+            "q": 1
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": false,
+      "proxyMode": "direct",
+      "source": null,
+      "noProxyValue": null,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo through a proxy",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "direct after invalid percent escape"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ],
+      "connects": []
+    },
+    {
+      "id": "proxy-auth-decode-invalid-utf8",
+      "transport": "streamable_http",
+      "url": "http://<mock>/mcp",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open",
+        "env": "HTTP_PROXY"
+      },
+      "env": {
+        "HTTP_PROXY": "http://user:%FF@<proxyAuthority>"
+      },
+      "noProxy": null,
+      "config": null,
+      "configMode": null,
+      "script": {
+        "initialize": [
+          {
+            "headers": {
+              "mcp-session-id": "sess-1"
+            },
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-proxy",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo through a proxy",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "direct after invalid UTF-8"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {
+            "q": 1
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": false,
+      "proxyMode": null,
+      "source": null,
+      "noProxyValue": null,
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo through a proxy",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "direct after invalid UTF-8"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ],
+      "connects": []
+    },
+    {
+      "id": "proxy-auth-decode-valid-escapes",
+      "transport": "streamable_http",
+      "url": "http://<mock>/mcp",
+      "headers": {},
+      "options": {},
+      "mockTls": false,
+      "proxy": {
+        "mode": "open",
+        "authExpected": "u/ser:päss"
+      },
+      "env": {},
+      "noProxy": null,
+      "config": {
+        "url": "http://u%2Fser:p%C3%A4ss@<proxyAuthority>"
+      },
+      "configMode": "startup",
+      "script": {
+        "initialize": [
+          {
+            "headers": {
+              "mcp-session-id": "sess-1"
+            },
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                  "tools": {}
+                },
+                "serverInfo": {
+                  "name": "mock-proxy",
+                  "version": "1.0.0"
+                }
+              }
+            }
+          }
+        ],
+        "tools/list": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "tools": [
+                  {
+                    "name": "echo",
+                    "description": "echo through a proxy",
+                    "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                        "q": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "tools/call:echo": [
+          {
+            "json": {
+              "jsonrpc": "2.0",
+              "id": "$id",
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "through proxy with decoded credentials"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ops": [
+        {
+          "op": "start"
+        },
+        {
+          "op": "listTools"
+        },
+        {
+          "op": "callTool",
+          "name": "echo",
+          "args": {
+            "q": 1
+          }
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "installed": true,
+      "proxyMode": "proxy",
+      "source": "config",
+      "noProxyValue": "127.0.0.1,localhost",
+      "steps": [
+        {
+          "step": {
+            "op": "start"
+          },
+          "ok": null,
+          "instructions": "",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "ok": [
+            {
+              "serverId": "mock",
+              "toolName": "echo",
+              "wireName": "mcp__mock__echo",
+              "description": "echo through a proxy",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "callTool",
+            "name": "echo",
+            "args": {
+              "q": 1
+            }
+          },
+          "ok": {
+            "content": [
+              {
+                "type": "text",
+                "text": "through proxy with decoded credentials"
+              }
+            ]
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/mcp",
+          "headers": {
+            "accept": "text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": ""
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"q\":1}},\"jsonrpc\":\"2.0\",\"id\":2}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "mcp-session-id": "sess-1"
+          },
+          "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp",
+          "headers": {
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+        }
+      ],
+      "connects": [
+        {
+          "method": "CONNECT",
+          "target": "<mock>",
+          "host": "<mock>",
+          "proxyConnection": "keep-alive",
+          "proxyAuthorization": "Basic <scrub>"
+        }
+      ]
     }
   ]
 }

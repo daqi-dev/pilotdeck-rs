@@ -50,7 +50,9 @@ async function serveHttp(dir) {
   const script = JSON.parse(fs.readFileSync(path.join(dir, 'script.json'), 'utf8')).http;
   const counters = new Map();
   let channel = null;
-  const LOGGED = ['accept', 'authorization', 'content-type', 'last-event-id', 'mcp-protocol-version', 'mcp-session-id', 'x-api-key'];
+  // `proxy-authorization` is logged so the proxy-credential leak regression
+  // can assert the header never reaches the tunnelled target.
+  const LOGGED = ['accept', 'authorization', 'content-type', 'last-event-id', 'mcp-protocol-version', 'mcp-session-id', 'proxy-authorization', 'x-api-key'];
   const take = (key) => {
     const list = script[key];
     if (!list) return undefined;

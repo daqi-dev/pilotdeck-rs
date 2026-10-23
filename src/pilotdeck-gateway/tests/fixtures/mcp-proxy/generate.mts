@@ -492,6 +492,123 @@ const scenarios = [
     script: {},
     ops: FAILURE_OPS,
   },
+  // ---------------------------------------------------------------- round 2
+  {
+    // A caller-supplied `Proxy-Authorization` header must never reach the
+    // target: undici's ProxyAgent.dispatch rejects it (case-insensitively)
+    // before tunnelling, so the fetch fails and no HTTP request is sent.
+    id: 'proxy-auth-header-rejected-upper',
+    transport: 'streamable_http',
+    url: 'http://<mock>/mcp',
+    headers: { 'Proxy-Authorization': 'Basic abc' },
+    proxy: { mode: 'open', env: 'HTTP_PROXY' },
+    script: {},
+    ops: FAILURE_OPS,
+  },
+  {
+    // Same check with the lowercase spelling; the legacy SSE transport
+    // flattens the fetch cause into its EventSource error text.
+    id: 'proxy-auth-header-rejected-lower-sse',
+    transport: 'sse',
+    url: 'http://<mock>/sse',
+    headers: { 'proxy-authorization': 'Basic abc' },
+    proxy: { mode: 'open', env: 'HTTP_PROXY' },
+    script: {},
+    ops: FAILURE_OPS,
+  },
+  {
+    // `NO_PROXY` sends this request through the direct agent, which performs
+    // no Proxy-Authorization check: the header reaches the target unchanged.
+    // This pins that the rejection is proxy-dispatch-specific.
+    id: 'proxy-auth-header-direct',
+    transport: 'streamable_http',
+    url: 'http://<mock>/mcp',
+    headers: { 'Proxy-Authorization': 'Basic abc' },
+    proxy: { mode: 'open', env: 'HTTP_PROXY' },
+    noProxy: { name: 'NO_PROXY', value: '<mock>' },
+    script: STREAMABLE_SCRIPT('direct with proxy auth header'),
+    ops: SUCCESS_OPS,
+  },
+  {
+    // `Number.parseInt('4294967296')` is a truthy port that never equals the
+    // target's, so the entry must NOT bypass the proxy (Rust previously
+    // treated the u32 overflow as the wildcard port 0).
+    id: 'no-proxy-port-overflow',
+    transport: 'streamable_http',
+    url: 'http://<mock>/mcp',
+    proxy: { mode: 'open', env: 'HTTP_PROXY' },
+    noProxy: { name: 'NO_PROXY', value: '0.0.0.0:4294967296' },
+    script: STREAMABLE_SCRIPT('through proxy, overflow port never matches'),
+    ops: SUCCESS_OPS,
+  },
+  {
+    // `^(.+):(\d+)$` does not match a negative port, so the whole entry is a
+    // hostname that cannot equal the target: the proxy is used.
+    id: 'no-proxy-port-negative',
+    transport: 'streamable_http',
+    url: 'http://<mock>/mcp',
+    proxy: { mode: 'open', env: 'HTTP_PROXY' },
+    noProxy: { name: 'NO_PROXY', value: '0.0.0.0:-1' },
+    script: STREAMABLE_SCRIPT('through proxy, negative port never matches'),
+    ops: SUCCESS_OPS,
+  },
+  {
+    // Non-numeric port: same hostname fallback.
+    id: 'no-proxy-port-non-numeric',
+    transport: 'streamable_http',
+    url: 'http://<mock>/mcp',
+    proxy: { mode: 'open', env: 'HTTP_PROXY' },
+    noProxy: { name: 'NO_PROXY', value: '0.0.0.0:abc' },
+    script: STREAMABLE_SCRIPT('through proxy, text port never matches'),
+    ops: SUCCESS_OPS,
+  },
+  {
+    // Empty port: `\d+` requires at least one digit, so the entry is a host.
+    id: 'no-proxy-port-empty',
+    transport: 'streamable_http',
+    url: 'http://<mock>/mcp',
+    proxy: { mode: 'open', env: 'HTTP_PROXY' },
+    noProxy: { name: 'NO_PROXY', value: '0.0.0.0:' },
+    script: STREAMABLE_SCRIPT('through proxy, empty port never matches'),
+    ops: SUCCESS_OPS,
+  },
+  {
+    // `decodeURIComponent` validates `%ZZ` and throws URIError while the
+    // EnvHttpProxyAgent is constructed; `applyGlobalProxy` catches it, warns,
+    // and leaves no proxy installed, so the client goes direct.
+    id: 'proxy-auth-decode-invalid-escape',
+    transport: 'streamable_http',
+    url: 'http://<mock>/mcp',
+    proxy: { mode: 'open' },
+    config: { url: 'http://user%ZZ:pass@<proxyAuthority>' },
+    configMode: 'startup',
+    script: STREAMABLE_SCRIPT('direct after invalid percent escape'),
+    ops: SUCCESS_OPS,
+  },
+  {
+    // `%FF` decodes to bytes that are not valid UTF-8; decodeURIComponent
+    // throws URIError, so the env proxy is never installed.
+    id: 'proxy-auth-decode-invalid-utf8',
+    transport: 'streamable_http',
+    url: 'http://<mock>/mcp',
+    proxy: { mode: 'open', env: 'HTTP_PROXY' },
+    env: { HTTP_PROXY: 'http://user:%FF@<proxyAuthority>' },
+    script: STREAMABLE_SCRIPT('direct after invalid UTF-8'),
+    ops: SUCCESS_OPS,
+  },
+  {
+    // Valid percent escapes must decode like decodeURIComponent (multi-byte
+    // UTF-8 and `%2F`) before Basic auth is built; the proxy checks the exact
+    // credential, so a lossy/different decode fails the CONNECT with 407.
+    id: 'proxy-auth-decode-valid-escapes',
+    transport: 'streamable_http',
+    url: 'http://<mock>/mcp',
+    proxy: { mode: 'open', authExpected: 'u/ser:päss' },
+    config: { url: 'http://u%2Fser:p%C3%A4ss@<proxyAuthority>' },
+    configMode: 'startup',
+    script: STREAMABLE_SCRIPT('through proxy with decoded credentials'),
+    ops: SUCCESS_OPS,
+  },
 ];
 
 function fill(value, hosts) {
@@ -555,7 +672,11 @@ function startProxy(dir, scenarioProxy) {
     env: {
       ...process.env,
       PROXY_LOG: log,
-      ...(scenarioProxy.mode === 'auth' ? { PROXY_AUTH: `${scenarioProxy.authUser}:${scenarioProxy.authPass}` } : {}),
+      ...(scenarioProxy.authExpected
+        ? { PROXY_AUTH: scenarioProxy.authExpected }
+        : scenarioProxy.mode === 'auth'
+          ? { PROXY_AUTH: `${scenarioProxy.authUser}:${scenarioProxy.authPass}` }
+          : {}),
       ...(scenarioProxy.mode === 'reject' ? { PROXY_STATUS: String(scenarioProxy.status) } : {}),
     },
     stdio: ['pipe', 'pipe', 'inherit'],
@@ -715,8 +836,11 @@ const oracle = {
 const text = JSON.stringify(oracle, null, 2) + '\n';
 assert.ok(!text.includes(baseline), 'oracle leaked the baseline path');
 assert.ok(!text.includes(runRoot), 'oracle leaked the run root');
-assert.ok(!/0\.0\.0\.0:\d+/.test(text), 'oracle leaked a target authority');
-assert.ok(!/127\.0\.0\.1:\d+/.test(text), 'oracle leaked a proxy authority');
+// A real authority is `host:port` with a 1-5 digit port; the NO_PROXY cases
+// intentionally record fake oversized ports (`4294967296`) which must not be
+// mistaken for one.
+assert.ok(!/0\.0\.0\.0:\d{1,5}(?!\d)/.test(text), 'oracle leaked a target authority');
+assert.ok(!/127\.0\.0\.1:\d{1,5}(?!\d)/.test(text), 'oracle leaked a proxy authority');
 mkdirSync(output, { recursive: true });
 writeFileSync(join(output, 'oracle.json'), text);
 console.log(`mcp-proxy oracle: ${recorded.length} real TS proxy cases`);
