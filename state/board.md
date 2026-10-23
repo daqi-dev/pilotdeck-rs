@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-23 13:20 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-23 11:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
@@ -10,23 +10,20 @@ updated: 2026-10-23 13:20 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - regress | coord | blocked | 等 regress 发布带 UTF-16 回溯预算的稳定版；金样在 codex/regress-pr1-output-schema@2c2e4f87
-- #454 | coord | human | web_fetch 宽页节点内存：候选差异 A6.5-WEBFETCH-NODES-001（向严），待人定
-- #508 | coord | human | MCP 工具结果自动读图可越出 cwd、无上限（TS 相同），建议 A 向安全偏离；卡 _tmp/20261023-loop/card-mcp-image-read.md
-- accepted-diffs-502 | coord | human | #505 合入的 32 条「已知未对齐（未批准）」待人逐条批
-- accepted-diffs-1023 | coord | human | 10-23 新登记未批准 16 条（见 board 10-23 各段）+ AI 代批待复核 3 项（pr10g 路径穿越、#541、#484 防环）
-- #534 | impl | doing | p2-sweep-12，合并队列
-- #535 | impl | doing | A7.4-pr2 HTTP store 修复轮 2 已交付，待核验
-- #536 | impl | doing | A7.2-pr7 读面修复轮 2；GLM
-- #537 | impl | doing | A6.6-pr10g 修复轮 3（rebase 后编译失败 + Linux CI）；codex
-- #531 | impl | doing | A6.6-pr10f 修复轮 3（Linux clippy + nowIso）；GLM
-- #539 | impl | doing | #495 修复轮 1；GLM
-- #544 | impl | doing | #484 插件 loader 修复轮 1（Grok P0×2）；codex
-- p2-hooks | impl | doing | #345-B7 https hook + #363-1 输出封顶，已交付待开 PR
-- p2-sweep-13 | impl | doing | #541 #426 #322，已交付待核验
-- #542 | impl | doing | connection.rs 负载假红（两次挡队列，优先）；DeepSeek
-- A7.2-pr5 | impl | ready | pr4（#533）已合入，可派；含 A7.2-REPLAY-RETENTION-TIMER-001 对齐
-- #543 | impl | ready | 插件 dispose 顺序与 TS 相反（P1）
-- #361-3 | impl | blocked | https MCP，等 p2-hooks 合入后复用 TLS
+- #454 | coord | human | web_fetch 大页内存；决策卡 _tmp/20261023-loop/decision-454-webfetch-memory.md（建议 C 内存加权并发）
+- accepted-diffs-502 | coord | human | #505 的 32 条；分档卡 _tmp/20261023-loop/decision-505-diffs.md（26 接受 / 5 修 / 1 已修，5 条请人看）
+- accepted-diffs-1023 | coord | human | 10-23 新登记未批准约 22 条 + AI 代批待复核（pr10g 路径穿越、#541、#484 防环与根边界、V8 栈深判据）
+- state-files | coord | human | 状态文件精简提案 _tmp/20261023-loop/proposal-state-files.md（改 CLAUDE.md 两条规则，待人批）
+- #536 | impl | doing | A7.2-pr7 读面 gate5 P1（账本范围句）+ P2a 负控进仓；GLM 修复轮 5
+- #537 | impl | doing | A6.6-pr10g gate5 P1（edit 缺 id 的错误类）；codex 修复轮 5
+- #531 | impl | doing | A6.6-pr10f gate5 P1×2（scope 真值、limit/offset 强转）；GLM 修复轮 5
+- #539 | impl | doing | #495 合并队列
+- #544 | impl | doing | #484 修复轮 3 已交付，核验中；codex
+- #547 | impl | doing | p2-sweep-13 修复轮 2；GLM
+- #549 | impl | doing | A7.2-pr5 Grok r2 P1（fence 单槽语义）+ Linux CI 时序失败；codex 修复轮 2
+- #361-3 | impl | doing | https MCP 已交付，核验中；DeepSeek
+- #508 | impl | doing | 人定 A（realpath + cwd 子树 + 白名单）已交付，核验中；codex
+- #543 | impl | ready | 插件 dispose 顺序与 TS 相反（P1）；等 #544 合入（同模块串行）
 <!-- READY:END -->
 
 > ## 2026-10-23 05:00 → 13:20 · /loop 协调轮与两小时交接（逾期约 1.5 小时补上）
@@ -749,3 +746,20 @@ updated: 2026-10-23 13:20 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 > **#429 入队**：gate3（--serial，head 4e13bbb1）0/0 贴正文并删掉旧 0fdf24bd 块（双块致 pr-gate 失败，删后 pass）；boundary P2「封顶边界无 TS 出处」仲裁：`agentLoopSidecarServer.ts:253` 为 `Math.min(2_147_483_647, …)` 整数封顶，Node 实测三值均 2147483647，不升 P1。
 > **#441**：gate1（head 6fcf0c9b）0/0，sibling + boundary 独立撞同一 P2（无 release 档防线）→ 974fd6d6 workspace 开 `clippy::debug_assert_with_mut_call`，CI 的 clippy -D warnings 即成机检；负控（恢复原写法）报 output_schema.rs:1456。codex + GLM r2 增量与 gate2 排队。
 > **#421**：GLM 增量 0/0；与 DeepSeek 增量合计两家 0 P0/P1，等 a7-1-gate5。
+
+> ## 2026-10-23 13:20 交接之后 → 11:05 CST 交接
+> **时间标签说明**：本段 13:40–19:00 这些标签是我按错误的钟写的，和系统时钟对不上（13:20 交接实际提交于 08:27 CST）；顺序是对的，绝对时刻不可信。从下面「11:05」起一律取 `date` 的实际 CST 时间。
+> **13:40**：p2-hooks → PR #546（DeepSeek；hooks_https 2/0 回环 TLS 真实执行、hooks_runtime 18/0、async_hooks 13/0、hooks_config 9/0、lib 1033/0）：账本追加 A6.7-HOOK-HTTPS-001「已实现」、新增 A6.7-HOOK-OUTPUT-001 与 A6.7-HOOK-TLS-TRUST-001（未批准），GLM+Grok r1。board 交接 → PR #545（第一次提交时 READY 校验其实失败了，但 `| tail -1` 吞了退出码照样提交——与 rebase 那条同一类，已 amend 修好再推）。#535 修复轮 2 交付，核验排队。
+> **14:00**：p2-sweep-13 → PR #547（GLM；skills 含 ignored 15/0、lib 1034/0、check_suffix 8/8；#541 真实 TS 两个自指链接 204 s 不返回、RSS 2.30 GiB——TS 自身同爆，Rust 有界化登记 A6.8-SKILLS-TREEFILES-001），Grok+codex r1。首跑 source_identity 自测我漏设 PDRS_SOURCE_IDENTITY_FIXTURES，测试按设计拒跑；先看原始输出再下结论，设好后 1/1。**#542 → PR #548**（DeepSeek；改动全在 #[cfg(test)] 下，非测试构建 reap_deadline() 即原 close_timeout；目标用例 8×6 48/48、lib 1033/0），GLM+Grok r1——它两次把 PR 挤出队列，优先合。#537 修复轮 3、#539 修复轮 1 交付，核验排队；#535 修复轮 2 核验通过（http_store 7/0、lib 1056/0），因 main 前进已 DIRTY，下轮 rebase 并同步账本。
+> **14:20**：#534（p2-sweep-12）合入（6c510c7f），树回收 → **A7.2-pr5 派 codex**（生产 ConnectionGateway 接线 + 宿主串行计时器，消除 A7.2-REPLAY-RETENTION-TIMER-001；派前我 grep 账本没找到这个编号，以为写错了——其实是我在 worktree 外的主仓旧副本上 grep，origin/main 上有，:436）。#545（board）入队。#544 修复轮 1（codex：全局 dev+ino 去重 + 4096 条目 / 64 层预算，k=3/7/10/20 互链均 1 s 内返回；禁止链接越出插件根）核验：**防环用例已挪到新文件 tests/plugin_traversal.rs，我第一次核验只按旧清单跑，没跑到它**——补跑 9/0；规则追加到 auto-memory「stress-bin-script」（同类第四次：列核验套件前先查本 PR 新增的 tests/*.rs）。rebase 到含 #534 的 main：plugin-loader/negative-controls.py 两次冲突，真合并（保留 #484 的按目标分派 + traversal，与 #534 的 run_owned），合并后整跑负控在跑。账本：实现方指出我上一轮登记的 CYCLE-001 有两处不实（引用的测试已挪走；「非循环别名各自贡献、与 TS 一致」——实测 TS 两条、Rust 一条），待负控跑完一并改写并新增 ROOT-001。
+> **14:50**：#545（board 交接）合入，树回收。#548（#542 修复）入队。#544 修复轮 1：rebase 合并后整跑负控 58/58 检出；账本改写 CYCLE-001（首版三处不实：只按祖先防环、引用的测试已挪走、误称别名与 TS 一致——真实 TS 两条对一条）、新增 ROOT-001，逐个核对 8 个测试名与行号后推送，GLM+Grok r2。#547 两家独立撞上「源码身份合同漏 include_str! 编入的 tokenizer 资产」，codex 另报正常大 skills 目录累计 10 万条目后静默算 0 → GLM 修复轮 1。#546 Grok P1（TLS 握手卡住 Rust 600 s、TS 约 10.5 s，RESULT「已对齐 undici」不属实）→ DeepSeek 修复轮 1（不改共享连接器）。#539 修复轮 1 推送，Grok+codex r2；lib 1 条 host 握手用例负载假红（第三条同类，记 #542）。#537 修复轮 3 推送（ledger 工具合并账本），盯 Linux CI 看金样差异。
+> **15:20**：**磁盘越限**：pr5 实现方报告共享目录约 181 GiB、超过 160 上限后按规则停工；实测 184.3 GiB。主因是两棵树根下的第二份构建目录（wt-a72-pr7-read/target 32.5 GiB、wt-a66-pr10g-entries/target 5.6 GiB）——#536 的 turn-read/negative.py:28 写死 CARGO_TARGET_DIR=repo/target。确认无进程在用、是 gitignored 的可再生缓存后删除，回到 146.3 GiB。#536 那一行改为沿用本树 src/target（setdefault），修复轮 2 核验 + 改后负控整跑在跑、并检查不再生成根下 target/。pr5 交回 codex 接续剩余 12 条负控与回归。我约两小时没看磁盘：每轮现场命令加 du，公共规则文件加「不要另建 <repo>/target」，auto-memory「disk-cap-check」。#548 在队列第 1 位；#537 等 Linux CI。
+> **15:45**：**#548（#542 connection.rs 假红）合入**（24945a72），树回收；之后磁盘 147.8 GiB。**#537 Linux 失败定因**：删除 id "" 解析到 memory 根目录，对目录 unlink 在 macOS 报 EPERM、Linux 报 EISDIR，Node 原样透传 errno——TS 在 Linux 上同样是 EISDIR，Rust 两平台都正确，是金样只代表 macOS → codex 修复轮 4（测试侧按平台映射这一类 errno，显式常量、不做宽松匹配；产品不改）。#539 codex r2 P1×2：求值顺序（右值读取与强转被一起提前）；深度门限第三轮追 V8 栈深（2000→2400 仍双向分叉）→ **自决·待复核**：V8 栈深不可用常数复刻，本 PR 目的是两份实现合一不改行为，判据定为两条路径各自保持本 PR 之前的深度行为，剩余差异归已登记的 A6-JSVALUE-DEPTH-001 → GLM 修复轮 2。#531 修复轮 3、#546 修复轮 1 交付，核验排队；#546 新增直接依赖 tower-service（锁文件已有同版本、不新增包），按 sha1 卡先例自决，卡 `_tmp/20261023-loop/card-tower-service.md`。
+> **16:20**：磁盘 156.2 GiB（10 分钟涨 8）→ 删三个已关单证据目录里的 target/ 构建缓存（#494 5.8、#496 4.7、#481 3.1 GiB；CACHEDIR.TAG、无进程在用），回到 142.2。pr5 接续交付（24/24 负控，沙箱内 lib 3 条失败为两条监听 EPERM + 一条锁超时，沙箱外核验在跑）。#537 修复轮 4（测试侧按平台映射目录 unlink errno）推送，盯 Linux CI。#531 修复轮 3 rebase 再撞 #517：file_memory.rs 构造函数（保留 #525 的结构、套 with_clock 一行）；账本工具对「更正已有条目」的提交按设计拒绝，FROZEN 手工合并；EdgeClaw 七套含 ignored 全过（edgeclaw_entries 本分支无此文件，属未合入的 pr10g）→ codex+Grok r3。#546 修复轮 1 推送（锁文件新增 [[package]] 为 0），GLM+Grok r2。**#544 Grok r2 P1 #1：我原地改写了自己上一轮加的 CYCLE-001**——账本只追加对同 PR 内的条目同样适用（先例 #487、#516）：已恢复首版原文、追加 CYCLE-001-R1；恢复时第一次 `git log --diff-filter=A -S` 返回空、取到的是暂存区当前版本，断言没过就发现了，checkout 后用正确的引入提交重做，相对首版与 main 均 0 删除行。P1 #2（预算把非 .md 也算进去，带 node_modules 的 skill 静默变空，TS 3 个 Rust 0 个）→ codex 修复轮 2。
+> **16:40**：pr5 沙箱外核验通过（lib 1039/0、turn 含 ignored 102/0、session 57/0；实现方沙箱内 3 条失败为环境）→ **PR #549**，协调者追加 A7.2-REPLAY-RETENTION-TIMER-001「TurnGateway 宿主内已消除」（先核对引用的两条测试名与负控名都存在；范围不含裸 TurnReplayStore），GLM+Grok r1。#536 修复轮 2：lib 1055/0、turn 117/0；改后负控整跑 baseline+25 全检出、根下无 target/；拆成 GLM 实现提交 + Claude 一行 CARGO_TARGET_DIR 修正两个提交（同一文件里两方改动，按署名如实分开），Grok+codex r3。#547 修复轮 1（GLM：大目录真实计数、编译资产纳入源码合同、六字段候选）交付，核验排队（source_identity 自测这次带 PDRS_SOURCE_IDENTITY_FIXTURES）。磁盘 144.4 GiB。#537 Linux CI 在跑。
+> **17:10**：**#537 Linux CI 通过**——修复轮 4（目录 unlink errno 按平台映射）定因正确；修复轮 2–4 未经评审，派 GLM+Grok r3 增量与 gate3。#546（p2-hooks）入队。#531 gate3 唯一 P1 是我账本里一句过期（「单线程 copy 回退尚无 Rust 测试」，修复轮 3 已补）→ 追加判据补充（不改原条目），两家 r3 均 0/0，gate4 后自动入队。#536 codex r3 P1：去掉门限后极深 lastSeq 不再复刻 TS 的 RangeError（约 2540 层）——与 #539 同一根因，写决策卡 `_tmp/20261023-loop/card-v8-stack-depth.md`（**自决·待复核**：不追 V8 精确栈深，现实范围与 TS 一致、病态深度有界不崩溃，剩余差异逐条登记），登记 A7.2-READ-LASTSEQ-DEPTH-001。**登记后自查发现**条目里「病态深度断言 Rust 有界」的测试并不存在——追加更正说明该句暂不构成判据，派 GLM 修复轮 3 补 10 万层有界测试。#547 修复轮 1 核验通过（lib 1041/0、skills 19/0、两个 node 自测过），追加 A6.8-SKILLS-TREEFILES-001-R1（首版保留），Grok+codex r2。
+> **17:40**：#546 队列 CI 已成功，待合入。#535 修复轮 2（满额回 503 不停 accept、读正文出错先判状态码、close 优雅关闭）提交并 rebase（只有账本冲突，工具合并）；按修复轮 2 的六条候选追加 A7.4-HTTPSTORE-*-R1（原条目保留；先逐个核对引用的 5 个测试名存在），GLM+Grok r3。#539 修复轮 2（求值顺序 + 两路径各保持原深度行为）、#544 修复轮 2（预算只计 .md 候选，4800 个非 md 资产场景 TS 与 Rust 都加载 3 个 skill；超限出诊断）交付，核验排队——#544 的套件按本 PR 改动的 tests/*.rs 列全（含 plugin_traversal）。磁盘 147.9 GiB。
+> **18:20**：**#546（p2-hooks：HTTP hook 接通 TLS、command hook 输出封顶）合入**，树回收 → #361-3（https MCP，复用同一 TLS 与 10 s connect 期限）派 DeepSeek；#543（插件 dispose 顺序）与 #544 共用 plugin_runtime.rs，按同模块串行规则等 #544 合入后再派。#537 #546 合入后账本冲突 → rebase（工具合并，src 补丁逐行一致），gate4 后入队。#531 gate4 P1（repository 级 list/count 仍转发 projectId——当初依赖 #525 而门控，#525 已合入）→ GLM 修复轮 4（打开门控、按 TS 修）。#549 gate1 P1×2（abort 的 fence 快照取在 await 之前、用例过滤空匹配假 PASS）→ codex 修复轮 1。#547 codex r2 P1×2（单目录展开上限截断 TS 能完成的 10,001 链接无环树；编译资产扫描对 concat!/原始字符串静默漏检）→ GLM 修复轮 2（超限必须报错，扫描 fail-closed）。#536 修复轮 3 补的有界测试协调者实跑 1/1（0.04 s），账本追加「判据更正二」指向它，codex 单独 r4 判定 + Grok r3 收尾。#539 修复轮 2 推送并追加 A6-JSVALUE-DEPTH-001 说明（引用的两条测试名核过），Grok+codex r3。#544 修复轮 2 推送并追加 CYCLE-001-R2；rebase 时历史里的原地改写与恢复逐个重放、账本工具按设计拒绝，新写 `_tmp/20261023-loop/frozen-merge.py` 处理「只有 FROZEN 冲突」的提交，相对 main 0 删除行，GLM+Grok r3。
+> **18:40**：#535（A7.4-pr2 HTTP store）入队第 1 位；#537（pr10g）gate4 后结果块已贴，merge-when-green 等 CI。#536 codex r4：同意 V8 栈深差异按登记处理（不再追常数），剩一条 P1——2 s tokio::time::timeout 约束不了不让出执行权的同步转换，所以「有界」判据仍无效；另指出登记范围应写明文件 registry 的 structuredClone 约 2000 层已先失败 → GLM 修复轮 4（子进程 + 父进程可终止期限，补同步自旋负控），账本范围待修后追加。#549 修复轮 1（codex：abort 在 await 后取最新 fence、空匹配护栏、5 个真实 TS 交错金样）交付，核验排队并补跑空匹配负控；新负控脚本断言 CARGO_TARGET_DIR 必须是本树 src/target。#531 #547 #549 因 #546 合入已 DIRTY，交付后统一 rebase。磁盘 141.6 GiB。
+> **19:00**：#535（A7.4-pr2）合入，树回收。#537 被 #535 挤出队列（第 6 次以上的账本同队冲突）→ 再 rebase 推送、gate5 后入队；**入队脚本改为同一时刻只放一个改 specs/gateway-parity/ 的 PR 进合并队列**（merge-when-green.sh 的 ledger_busy / enqueue，GraphQL 查队列已验证可用）。#544 Grok r3 P1：只计 .md 仍把 node_modules 里的 README 算进去（真实依赖树 TS 14 个 skill、Rust 0 个）——是我上一轮给错方向；全局去重后遍历必然终止且线性，条目预算与 64 层上限不再保护任何东西 → codex 修复轮 3 去掉两者。#531 修复轮 4（只改夹具：#525 合入后 projectId 已不转发，差异消除）rebase 后 export / accessors / snapshots 全过，gate5。#549 修复轮 1 核验通过（空匹配负控正确失败；lib 唯一失败为 resume 负载假红、单跑 24/24），rebase 推送，GLM+Grok r2。**#508 人定 A**（向安全偏离：realpath、只允许 cwd 及子目录 + 可配白名单、拒绝符号链接越界）→ 卡与 `_tmp/20261023-loop/decisions-1023-human.md` 记录，派 codex（只改 mcp/bridge.rs，与 #361-3 不重叠）。另注意：#361-3 的树改了 runtime/model/http.rs（共享连接器，任务书要求不改），评审时核。
+> **11:05 CST 交接（持有人：协调者本会话）**：#454、#505 的人用说明此前只在 _tmp，用户找不到——已写决策卡（路径见 READY），并给出状态文件精简提案待批。#508 人定 A 记录见 `state/decisions-20261023.md`。本轮：#549 Grok r2 P1（fence 选「id 最大」而 TS 是单槽覆盖）+ Linux CI `error-before-success` observe 时序假红 → codex 修复轮 2；#536 gate5 唯一 P1 是我写的账本范围句（文件 registry 上同样可观察），GLM 修复轮 5 把两条有界负控补进 negative.py，账本「判据更正四」等它交付后由我追加；#537 #531 被挤出队列后 gate5 各报边界 P1 → 原实现方修复轮 5（限定各改各的文件）；#508、#361-3、#544 修复轮 3 交付，沙箱外核验在跑。#361-3 改了 model/http.rs，核过是把 hook 的 ConnectDeadline 原样搬去共享，模型连接器行为不变。worktree 11/12、cargo 名额排队、磁盘约 145 GiB / 160。下一个交接点约 13:05 CST。
