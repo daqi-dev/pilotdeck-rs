@@ -400,9 +400,8 @@ impl RouterModelInvocation for ModelInvocationProviderRegistry {
 }
 
 /// Native provider adapter with an immutable single-provider HTTP config.
-/// Non-streaming complete() is not yet implemented by the existing HTTP layer;
-/// its direct capability remains false; the registry dispatches calls to it
-/// at invocation time, where the inherited complete() reports the missing port.
+/// Exposes both streaming (via http::stream_model) and non-streaming complete()
+/// (via http::complete_model, #604).
 pub struct NativeModelInvocationProvider {
     id: JsString,
     config: JsValue,
