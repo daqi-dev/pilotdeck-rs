@@ -7,7 +7,7 @@ use pilotdeck_protocol::JsString;
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    fs,
+    fs, io,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -1341,4 +1341,17 @@ fn native_cstr_dirent_decoding_matches_22_node_byte_sequences() {
             .collect();
         assert_eq!(actual, expected, "{case}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn rimraf_descends_on_every_nonempty_report() {
+    // Table-driven lock of the descent predicate (node_fs.rs measured libuv):
+    // a non-empty rmdir descends however it is reported — ENOTEMPTY, EEXIST,
+    // or a sticky directory's EPERM — while EACCES never descends.
+    let descends = |errno| super::descends_after_rmdir(&io::Error::from_raw_os_error(errno));
+    assert!(descends(libc::ENOTEMPTY));
+    assert!(descends(libc::EEXIST));
+    assert!(descends(libc::EPERM));
+    assert!(!descends(libc::EACCES));
 }

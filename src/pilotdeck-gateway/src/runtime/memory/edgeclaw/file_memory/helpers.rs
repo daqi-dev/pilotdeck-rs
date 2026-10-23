@@ -705,6 +705,9 @@ pub(super) fn merge(primary: &JsObject, incoming: &JsObject) -> JsObject {
     }
     c
 }
+// Only the non-Unix read_file leg reads by path; Unix walks from the pinned
+// root descriptor instead.
+#[cfg(not(unix))]
 pub(super) fn read(path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&fs::read(path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::IsADirectory {
