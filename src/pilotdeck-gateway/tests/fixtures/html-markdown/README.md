@@ -1,5 +1,24 @@
 # HTML → Markdown：默认 Turndown 金样
 
+## #454 内存排队实测
+
+`probe-memory.mts` 在 Node 22 上调用真实 `getURLMarkdownContent`，分别生成恰好
+10 MiB 的 `<br>` 或 `a<br>` 正文；fetch hook 只替代 HTTP I/O，转换仍走生产
+domino + Turndown。先核固定提交源码树、import 闭包和两包版本/文件哈希。
+每种形状单独进程，外包 `/usr/bin/time -l timeout -k 10s 900s`；退出 124
+记为 15 分钟未完成，不能推断成功。示例（在仓库根运行）：
+
+```sh
+PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
+  /usr/bin/time -l timeout -k 10s 900s node \
+  --import /Users/da/ws/pilotdeck-rs/resources/PilotDeck/node_modules/tsx/dist/loader.mjs \
+  src/pilotdeck-gateway/tests/fixtures/html-markdown/probe-memory.mts br
+```
+
+第二种形状把末参数换成 `a-br`。摘要含输入/输出 SHA256、成功或错误、转换耗时；
+进程峰值 RSS 取 time 输出。不要将带耗时的摘要当作金样。输出兼容性继续复用下述
+五套真实 TS 金样；排队语义用 `html_memory::tests` 的可注入小预算确定性验证。
+
 真相源是固定 TS 基线 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 的
 `src/tool/builtin/web/urlFetcher.ts`。它用 `new Turndown()`，没有 GFM 或其他插件：
 H1/H2 是 setext，代码块缩进四空格，表格降成块文字，script/style 标签内的文字保留，

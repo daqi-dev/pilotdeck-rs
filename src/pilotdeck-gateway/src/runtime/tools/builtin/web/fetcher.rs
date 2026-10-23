@@ -10,6 +10,7 @@
 use super::{
     cache::{FetchedEntry, UrlCache},
     html_markdown::Turndown,
+    html_memory,
     network::{
         BodyError, FetchOptions, HttpRequest, Random, WEB_RETRY,
         network_fetch_with_parent_deadline, node_timer_duration,
@@ -17,10 +18,7 @@ use super::{
     url_validation::{is_permitted_redirect, parse_with_base, upgrade_http_to_https, validate_url},
 };
 use crate::runtime::{
-    model::{
-        cpu,
-        http::{ModelHttpTransport, NetworkFetchError},
-    },
+    model::http::{ModelHttpTransport, NetworkFetchError},
     tools::ToolRunContext,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -441,16 +439,18 @@ impl UrlFetcher {
             // TS runs turndown synchronously after the body and ignores an
             // abort delivered during conversion (including raw-mode success).
             // Preserve that result ordering, but keep CPU work off Tokio.
-            // Share the model CPU pool's four permits. Replacements
+            // Reserve estimated HTML memory before entering the unchanged
+            // model CPU pool's four permits. Replacements
             // materialize at most the truncation prefix plus the escaped input
             // text, so #409's depth×content amplification does not build the
             // full Markdown or its UTF-16 copy. Parsing itself remains bounded
             // by the 10 MiB body cap and the existing 256-level depth guard.
-            let markdown =
-                cpu::run(move || Ok(converter.convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1)))
-                    .await
-                    .map_err(|error| other(&error.message))?
-                    .map_err(|message| other(&message))?;
+            let markdown = html_memory::run(html.len(), move || {
+                Ok(converter.convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1))
+            })
+            .await
+            .map_err(|error| other(&error.message))?
+            .map_err(|message| other(&message))?;
             (
                 markdown.text,
                 markdown.byte_length,
