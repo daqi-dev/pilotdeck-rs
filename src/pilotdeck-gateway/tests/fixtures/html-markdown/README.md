@@ -17,7 +17,12 @@ PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
 
 第二种形状把末参数换成 `a-br`。摘要含输入/输出 SHA256、成功或错误、转换耗时；
 进程峰值 RSS 取 time 输出。不要将带耗时的摘要当作金样。输出兼容性继续复用下述
-五套真实 TS 金样；排队语义用 `html_memory::tests` 的可注入小预算确定性验证。
+五套真实 TS 金样；排队语义由 `html_memory::tests` 的可注入小预算测试，以及
+`fetcher_html_conversion_waits_for_global_memory_and_preserves_ts_output` 的生产入口
+接线测试确定性验证。后者占满全局预算后，经注入 HTTP transport 调用真实
+`get_url_markdown_content`：先交还一份，断言两份权重的转换已排队、尚未启动；
+全部交还后逐字节比较真实 TS 的 `ul-255` 金样，并核对缓存。测试使用显式 poll 和
+份额交接，不依赖墙钟；去掉 fetcher 的预算接线、改回直接 `cpu::run` 时必须失败。
 
 真相源是固定 TS 基线 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 的
 `src/tool/builtin/web/urlFetcher.ts`。它用 `new Turndown()`，没有 GFM 或其他插件：

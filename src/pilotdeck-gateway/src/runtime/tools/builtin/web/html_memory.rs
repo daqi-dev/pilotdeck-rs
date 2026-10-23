@@ -83,6 +83,10 @@ mod tests {
     };
     use tokio::sync::oneshot;
 
+    // Tests that reserve the process-wide budget must not inspect each other's
+    // permits. This lock is test-only; injected-budget tests remain parallel.
+    static GLOBAL_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     // Polling once deterministically registers a weighted waiter. No timing
     // assumptions, real large pages, or multi-GB allocations in these tests.
     fn poll_once<T>(future: Pin<&mut impl Future<Output = T>>) -> Poll<T> {
@@ -257,6 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn production_entry_shares_budget_without_blocking_other_cpu_callers() {
+        let _guard = GLOBAL_TEST_LOCK.lock().await;
         let (release, blocked) = std::sync::mpsc::channel();
         let (started, running) = oneshot::channel();
         let mut first = Box::pin(run(10 * MIB, move || {
@@ -291,5 +296,107 @@ mod tests {
         );
         drop(held);
         waiting.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetcher_html_conversion_waits_for_global_memory_and_preserves_ts_output() {
+        use super::super::{
+            cache::UrlCache,
+            fetcher::{FetchResult, HtmlToMarkdown, MarkdownOutput, UrlFetcher},
+            html_markdown::Turndown,
+        };
+        use crate::runtime::model::http::{ModelHttpTransport, TransportFuture};
+        use bytes::Bytes;
+        use http_body_util::{BodyExt, Full};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct ConversionTransport(String);
+        impl ModelHttpTransport for ConversionTransport {
+            fn send(&self, _: hyper::Request<Full<Bytes>>) -> TransportFuture {
+                TransportFuture::ready(Ok(hyper::Response::builder()
+                    .status(200)
+                    .header("content-type", "text/html")
+                    .body(
+                        Full::new(Bytes::from(self.0.clone()))
+                            .map_err(|never| match never {})
+                            .boxed(),
+                    )
+                    .unwrap()))
+            }
+        }
+
+        struct ObservedTurndown(AtomicUsize);
+        impl HtmlToMarkdown for ObservedTurndown {
+            fn convert(&self, html: &str) -> Result<String, String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Turndown.convert(html)
+            }
+
+            fn convert_bounded(&self, html: &str, units: usize) -> Result<MarkdownOutput, String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Turndown.convert_bounded(html, units)
+            }
+        }
+
+        let _guard = GLOBAL_TEST_LOCK.lock().await;
+        let raw = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/html-markdown/depth-oracle.json"
+        ));
+        crate::test_baseline::oracle(raw);
+        let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let case = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == "ul-255")
+            .unwrap();
+        let html = case["html"].as_str().unwrap();
+        let expected = case["markdown"].as_str().unwrap();
+        assert_eq!(MEMORY.weight(html.len()), 2);
+        let converter = Arc::new(ObservedTurndown(AtomicUsize::new(0)));
+        let mut fetcher = UrlFetcher::new(Arc::new(ConversionTransport(html.into())));
+        fetcher.cache = Arc::new(UrlCache::default());
+        fetcher.html = converter.clone();
+        let mut held = MEMORY
+            .slots
+            .clone()
+            .acquire_many_owned(BUDGET_MIB)
+            .await
+            .unwrap();
+        let url = "https://example.com/memory-wiring";
+        let mut pending = Box::pin(fetcher.get_url_markdown_content(url, None));
+        // The ready transport and Full body reach memory admission in this
+        // poll. No timer, socket, spawned fetch task or scheduler delay.
+        assert!(poll_once(pending.as_mut()).is_pending());
+        assert_eq!(converter.0.load(Ordering::SeqCst), 0);
+        assert!(fetcher.cache.get(url).is_none());
+
+        // Explicit handoff: the HTML waiter must reserve this one unit even
+        // though it still needs a second. A bypass to cpu::run leaves it free,
+        // making this assertion fail regardless of blocking-thread scheduling.
+        drop(held.split(1).unwrap());
+        assert_eq!(
+            MEMORY.slots.available_permits(),
+            0,
+            "fetcher did not queue HTML conversion on the global memory budget"
+        );
+        assert!(poll_once(pending.as_mut()).is_pending());
+        assert_eq!(converter.0.load(Ordering::SeqCst), 0);
+        drop(held);
+
+        let FetchResult::Fetched { entry, from_cache } = pending.await.unwrap() else {
+            panic!("expected converted HTML");
+        };
+        assert!(!from_cache);
+        assert_eq!(entry.content.as_bytes(), expected.as_bytes());
+        assert_eq!(entry.bytes, html.len());
+        assert_eq!(
+            entry.raw_markdown_length,
+            Some(expected.encode_utf16().count())
+        );
+        assert_eq!(converter.0.load(Ordering::SeqCst), 1);
+        assert_eq!(fetcher.cache.get(url), Some(entry));
+        assert_eq!(MEMORY.slots.available_permits(), BUDGET_MIB as usize);
     }
 }
