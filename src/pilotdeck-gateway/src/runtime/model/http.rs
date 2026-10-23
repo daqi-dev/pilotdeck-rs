@@ -1038,10 +1038,18 @@ impl StreamOptions {
     /// Suspend at the TS yield boundary: after an event becomes
     /// consumer-visible, the provider stream stays suspended until the
     /// consumer pulls it. A no-op without a gate or without outstanding
-    /// events, so pre-content buffering never blocks.
+    /// events, so pre-content buffering never blocks. The abort flag also
+    /// ends the suspension — TS registers the abort listener directly on the
+    /// response body (`streamModel.ts`'s `cancelReader`), so cancellation
+    /// tears the request down even while the generator is suspended at a
+    /// yield; the transport's next read observes the flag and unwinds, which
+    /// drops the connection like a cancelled reader.
     pub async fn yield_boundary(&self) {
         if let Some(gate) = &self.yield_gate {
-            gate.demand().await;
+            tokio::select! {
+                () = gate.demand() => {}
+                () = wait_abort(&self.abort) => {}
+            }
         }
     }
 }
@@ -1053,7 +1061,9 @@ impl StreamOptions {
 /// (`RouterRuntime.ts:775-808`). The push-based Rust port reproduces that
 /// with two counters: the producer `deliver()`s when an event becomes
 /// consumer-visible and `demand()`s the boundary before producing more;
-/// the consumer `pull()`s when it takes a delivered event.
+/// the consumer `pull()`s when the consumer asks for the next event —
+/// deferred past the queue-take to the start of the following `next()` call,
+/// since a TS generator resumes from its `yield` only on the next pull.
 #[derive(Clone, Default)]
 pub struct YieldGate {
     /// `(delivered, pulled)`.
