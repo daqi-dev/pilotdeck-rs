@@ -105,6 +105,13 @@ CASES += [
     ('markdown-identity-anchor', MARKDOWN, 'if !after.is_file() || (after.dev(), after.ino()) != checked_identity {', 'let lstat_identity = (_before.dev(), _before.ino());\n    if !after.is_file() || (after.dev(), after.ino()) != lstat_identity {', TOCTOU + 'hardlink_with_different_checked_identity_is_skipped'),
     # Fix round 2: deletion after check now propagates; revert to skip.
     ('markdown-deletion-skip', MARKDOWN, "        Err(e) => return Err(error(e)), // doesn't exist or other error: propagate", '        Err(_) => return Ok(None), // negative control: deletion silently skipped', TOCTOU + 'deleted_after_check_propagates_error'),
+    # Fix round 4: ENOTDIR alone cannot prove a link replaced an ancestor.
+    ('markdown-ancestor-file-open-skip', MARKDOWN, '&& has_symlink_ancestor(canonical)', '&& true', TOCTOU + 'ancestor_file_after_lstat_propagates_error'),
+    ('markdown-ancestor-file-lstat-skip', MARKDOWN, "        Err(e) => return Err(error(e)), // doesn't exist or other error: propagate", '        Err(_) => return Ok(None), // negative control: ENOTDIR silently skipped', TOCTOU + 'ancestor_file_before_lstat_propagates_error'),
+    ('markdown-ancestor-file-directory-skip', MARKDOWN,
+     'let Some(raw) = read_markdown(&root, &canonical, checked_identity)? else {\n                continue;\n            };',
+     'let Ok(Some(raw)) = read_markdown(&root, &canonical, checked_identity) else {\n                continue;\n            };',
+     TOCTOU + 'ancestor_file_rejects_only_its_configured_directory'),
     # Race errors are skipped, not turned into a failed load.
     ('markdown-race-error', MARKDOWN, '        {\n            return Ok(None);\n        }\n        Err(e) => return Err(error(e)),', '        {\n            return Err(error(e));\n        }\n        Err(e) => return Err(error(e)),', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
     # Ordinary open errors on the unchanged file still propagate like TS readFile.
@@ -320,7 +327,11 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'markdown-race-error': ['ancestor-symlink: raced entry must be skipped, not fail'],
  'markdown-open-error-skip': ['assertion `left == right` failed: hook-files-and-configured-paths: load attempt 2'],
  'markdown-identity-anchor': ['leaf-hardlink: raced load keeps only the TS control', 'String("SECRET")'],
- 'markdown-deletion-skip': ['deletion after check must propagate error']}
+ 'markdown-deletion-skip': ['deletion after check must propagate error'],
+ 'markdown-ancestor-file-open-skip': ['ordinary-file ancestor must propagate ENOTDIR'],
+ 'markdown-ancestor-file-lstat-skip': ['ordinary-file ancestor must propagate ENOTDIR'],
+ 'markdown-ancestor-file-directory-skip': ['ordinary-file ancestor rejects exactly its configured directory like TS', 'String("safe")']}
+
 
 assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
 assert set(EXPECTED_FAILURES) == {c[0] for c in CASES}, "every case needs failure markers"
