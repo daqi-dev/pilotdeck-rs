@@ -679,3 +679,4 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：仅持久化 run registry 快照中 `lastSeq` 为 2500 层以上嵌套容器的病态输入（正常为数字）；不放宽其他 lastSeq 取值（字符串、null、布尔、ToPrimitive 抛错等）的对拍。
 - **机器判据**：读面测试中 2000 / 2001 层场景与 TS 一致；病态深度只断言 Rust 有界返回、不崩溃，不钉 V8 临界层数（见 `_tmp/20261023-loop/card-v8-stack-depth.md`）。
 - **批准记录**：无；PR #536 codex r3 P1 指出，协调者按决策卡（AI 代批、待人复核）登记为已知未对齐；**已知未对齐（未批准）**。
+- **A7.2-READ-LASTSEQ-DEPTH-001 判据更正（追加）**：上一条「病态深度只断言 Rust 有界返回、不崩溃」在登记时尚无对应测试——现有只有 `run_events_deep_array_last_seq`（2001 层，对真实 TS 金样）。病态深度的有界测试由 PR #536 修复轮 3 补；补上之前，该句不构成机器判据。
