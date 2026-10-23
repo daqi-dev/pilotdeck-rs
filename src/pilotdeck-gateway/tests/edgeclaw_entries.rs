@@ -61,6 +61,108 @@ fn oracle() -> Value {
     baseline::oracle(ORACLE);
     serde_json::from_str(ORACLE).unwrap()
 }
+// Node v22.22.0: deps/uv/src/unix/fs.c:1635,1643 forwards unlink errno;
+// src/api/exceptions.cc:94-112 formats uv_err_name/uv_strerror and the path.
+// https://docs.libuv.org/en/v1.x/errors.html#error-constants
+// https://man7.org/linux/man-pages/man2/unlink.2.html#ERRORS (EISDIR vs EPERM).
+// The committed real-TS transcript was recorded on macOS. These are exact
+// per-platform expectations, never a set of acceptable actual errors.
+const DIRECTORY_UNLINK_ERRORS: [(&str, &str, &str); 2] = [
+    ("macos", "EPERM", "operation not permitted"),
+    ("linux", "EISDIR", "illegal operation on a directory"),
+];
+fn expected_observation(op: &Value, recorded: &Value, platform: &str) -> Value {
+    let mut expected = recorded.clone();
+    // Only the empty entry id resolving to the memory directory has this
+    // platform difference. Permission failures on files must remain untouched.
+    if op["method"] != "deleteMemoryEntries"
+        || !op["ids"]
+            .as_array()
+            .is_some_and(|ids| ids.iter().any(|id| id == ""))
+        || !recorded["disk"].as_array().is_some_and(|disk| {
+            disk.iter()
+                .any(|entry| entry["relativePath"] == "memory" && entry["dir"] == true)
+        })
+        || recorded["result"]
+            != json!({"error":"EPERM","message":"EPERM: operation not permitted, unlink '$ROOT/memory'"})
+    {
+        return expected;
+    }
+    if let Some((_, code, description)) = DIRECTORY_UNLINK_ERRORS
+        .iter()
+        .find(|(os, _, _)| *os == platform)
+    {
+        expected["result"]["error"] = json!(code);
+        expected["result"]["message"] =
+            json!(format!("{code}: {description}, unlink '$ROOT/memory'"));
+    }
+    expected
+}
+#[test]
+fn directory_unlink_expectation_is_platform_specific_and_strict() {
+    let o = oracle();
+    let c = o["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "invalid-entry-operations")
+        .unwrap();
+    let op = &c["ops"][7];
+    let recorded = &c["observations"][7];
+    assert_eq!(expected_observation(op, recorded, "macos"), *recorded);
+    let linux = expected_observation(op, recorded, "linux");
+    assert_eq!(linux["result"]["error"], "EISDIR");
+    assert_eq!(
+        linux["result"]["message"],
+        "EISDIR: illegal operation on a directory, unlink '$ROOT/memory'"
+    );
+    let mut unchanged = linux.clone();
+    unchanged["result"] = recorded["result"].clone();
+    assert_eq!(unchanged, *recorded); // Every other byte/field stays strict.
+    assert_ne!(linux, *recorded); // A macOS result must fail the Linux criterion.
+    for c in o["cases"].as_array().unwrap() {
+        for (i, op) in c["ops"].as_array().unwrap().iter().enumerate() {
+            if c["name"] == "invalid-entry-operations" && i == 7 {
+                continue;
+            }
+            let recorded = &c["observations"][i];
+            assert_eq!(expected_observation(op, recorded, "linux"), *recorded);
+        }
+    }
+    // Even a near-match must not be rewritten: path, syscall, errno, extra
+    // result fields, operation and directory evidence all remain significant.
+    for (pointer, replacement) in [
+        ("/result/error", json!("EACCES")),
+        (
+            "/result/message",
+            json!("EPERM: operation not permitted, unlink '$ROOT/other'"),
+        ),
+        (
+            "/result/message",
+            json!("EPERM: operation not permitted, rmdir '$ROOT/memory'"),
+        ),
+        ("/disk", json!([])),
+    ] {
+        let mut changed = recorded.clone();
+        *changed.pointer_mut(pointer).unwrap() = replacement;
+        assert_eq!(expected_observation(op, &changed, "linux"), changed);
+    }
+    let mut extra = recorded.clone();
+    extra["result"]["extra"] = json!(true);
+    assert_eq!(expected_observation(op, &extra, "linux"), extra);
+    let mut wrong_op = op.clone();
+    wrong_op["method"] = json!("restoreMemoryEntries");
+    assert_eq!(
+        expected_observation(&wrong_op, recorded, "linux"),
+        *recorded
+    );
+    wrong_op = op.clone();
+    wrong_op["ids"] = json!(["missing"]);
+    assert_eq!(
+        expected_observation(&wrong_op, recorded, "linux"),
+        *recorded
+    );
+}
 fn clean(v: &Value, root: &Path) -> Value {
     match v {
         Value::String(s) => json!(s.replace(root.to_str().unwrap(), "$ROOT")),
@@ -419,21 +521,20 @@ fn replay(root: &Path, c: &Value) -> Value {
             m => panic!("unknown method {m}"),
         })();
         let actual = json!({"result":clean(&result.map(value).unwrap_or_else(error),root),"disk":disk(root)});
-        if actual != c["observations"][i] {
+        let expected = expected_observation(op, &c["observations"][i], std::env::consts::OS);
+        if actual != expected {
             let evidence = std::env::temp_dir().join(format!(
                 "pdrs-entries-mismatch-{}.json",
                 uuid::Uuid::new_v4()
             ));
-            let diff = serde_json::to_string_pretty(
-                &json!({"actual":actual,"expected":c["observations"][i]}),
-            )
-            .unwrap();
+            let diff = serde_json::to_string_pretty(&json!({"actual":actual,"expected":expected}))
+                .unwrap();
             fs::write(&evidence, &diff).unwrap();
             // Keep return/error differences visible before the potentially large
             // disk tree, and bound CI output without splitting a UTF-8 character.
             let preview = format!(
                 "actual result: {}\nexpected result: {}\n{diff}",
-                actual["result"], c["observations"][i]["result"]
+                actual["result"], expected["result"]
             );
             let mut end = preview.len().min(4096);
             while !preview.is_char_boundary(end) {
