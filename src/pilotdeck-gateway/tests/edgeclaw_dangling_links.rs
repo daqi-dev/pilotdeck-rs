@@ -2,7 +2,8 @@
 //!
 //! Real TS follows `global/UserIdentity/user-profile.md -> real.md` even when
 //! `real.md` is missing: `getMemoryRecordsByIds` returns `[]`, `upsertUserProfile`
-//! creates `real.md` through the link, and `deleteEntries` skips it (see
+//! creates `real.md` through the link, and `deleteEntries` skips it but still
+//! calls `repairManifests()`, which creates the root `MEMORY.md` (see
 //! `fixtures/edgeclaw-dangling-links/oracle.json`, generated twice byte-identically
 //! from the unmodified baseline). Rust's `within` cannot prove that a dangling
 //! target stays inside the store root, so it rejects read / write / delete with
@@ -94,6 +95,8 @@ fn assert_json(actual: &JsValue, expected: &JsValue, label: &str) {
 }
 
 /// Symlink-aware snapshot in the same shape as the generator's `tree()`.
+/// Per-directory entries are ordered by UTF-16 code units, matching the
+/// generator's explicit `a.name < b.name` comparator (JS string order).
 fn tree(root: &Path, dir: &Path) -> Vec<JsValue> {
     let mut entries = fs::read_dir(root.join(dir))
         .unwrap()
@@ -178,6 +181,13 @@ fn ts_golden_proves_the_link_is_followed() {
         "TS write must create real.md through the link"
     );
     assert!(
+        files
+            .iter()
+            .any(|file| txt(field(file, "relativePath")) == "MEMORY.md"
+                && txt(field(file, "kind")) == "file"),
+        "TS write must repair the manifest and create MEMORY.md"
+    );
+    assert!(
         arr(field(write, "initialFiles"))
             .iter()
             .all(|file| { txt(field(file, "relativePath")) != "global/UserIdentity/real.md" }),
@@ -193,6 +203,9 @@ fn ts_golden_proves_the_link_is_followed() {
     let after_delete = arr(field(scenario(&oracle, "delete"), "files"));
     assert!(after_delete.iter().any(|file| {
         txt(field(file, "relativePath")) == link && txt(field(file, "kind")) == "symlink"
+    }));
+    assert!(after_delete.iter().any(|file| {
+        txt(field(file, "relativePath")) == "MEMORY.md" && txt(field(file, "kind")) == "file"
     }));
     assert!(
         after_delete
@@ -213,60 +226,79 @@ fn ts_not_found(oracle: &JsValue) -> String {
     ))
 }
 
-#[test]
-fn dangling_links_are_rejected_before_any_io() {
+/// Each operation gets its own test so a per-operation regression cannot hide
+/// behind an earlier panic in a shared loop.
+fn assert_scenario_is_rejected(name: &str) {
     let oracle = baseline::oracle(ORACLE);
     let expected = ts_not_found(&oracle);
+    let scenario = scenario(&oracle, name);
     let scratch = Scratch::new();
-    for scenario in arr(field(&oracle, "scenarios")) {
-        let name = txt(field(scenario, "name"));
-        let root = scratch.0.join(&name);
-        let store = FileMemoryStore::with_clock(
-            &root,
-            FileMemoryStoreOptions::default(),
-            Arc::new(|| NOW.into()),
-        )
-        .unwrap();
-        let (link, target) = setup(&oracle, &root);
-        assert_json(
-            &JsValue::Array(tree(&root, Path::new(""))),
-            field(scenario, "initialFiles"),
-            &format!("{name} initial tree"),
-        );
+    let root = scratch.0.join(name);
+    let store = FileMemoryStore::with_clock(
+        &root,
+        FileMemoryStoreOptions::default(),
+        Arc::new(|| NOW.into()),
+    )
+    .unwrap();
+    let (link, target) = setup(&oracle, &root);
+    assert_json(
+        &JsValue::Array(tree(&root, Path::new(""))),
+        field(scenario, "initialFiles"),
+        &format!("{name} initial tree"),
+    );
 
-        let operation = &arr(field(scenario, "operations"))[0];
-        let method = txt(field(operation, "method"));
-        let input = field(operation, "input").as_object().unwrap();
-        let result = match method.as_str() {
-            "getMemoryRecordsByIds" => store.get_memory_records_by_ids(input),
-            "upsertUserProfile" => store.upsert_user_profile(input),
-            "deleteEntries" => store.delete_entries(input),
-            "editEntry" => store.edit_entry(input),
-            other => panic!("unknown operation {other}"),
-        };
-        let error = match result {
-            Ok(value) => panic!(
-                "{name} must be rejected, got {}",
-                stringify_json(&value).unwrap().unwrap()
-            ),
-            Err(error) => error,
-        };
-        assert_eq!(error.to_string(), expected, "{name} rejection text");
-        assert!(
-            !root.join(&link).parent().unwrap().join(&target).exists(),
-            "{name} must not create {target}"
-        );
-        assert_eq!(
-            fs::read_link(root.join(&link)).unwrap(),
-            PathBuf::from(&target),
-            "{name} must leave the link in place"
-        );
-        assert_json(
-            &JsValue::Array(tree(&root, Path::new(""))),
-            field(scenario, "initialFiles"),
-            &format!("{name} tree after rejection"),
-        );
-    }
+    let operation = &arr(field(scenario, "operations"))[0];
+    let method = txt(field(operation, "method"));
+    let input = field(operation, "input").as_object().unwrap();
+    let result = match method.as_str() {
+        "getMemoryRecordsByIds" => store.get_memory_records_by_ids(input),
+        "upsertUserProfile" => store.upsert_user_profile(input),
+        "deleteEntries" => store.delete_entries(input),
+        "editEntry" => store.edit_entry(input),
+        other => panic!("unknown operation {other}"),
+    };
+    let error = match result {
+        Ok(value) => panic!(
+            "{name} must be rejected, got {}",
+            stringify_json(&value).unwrap().unwrap()
+        ),
+        Err(error) => error,
+    };
+    assert_eq!(error.to_string(), expected, "{name} rejection text");
+    assert!(
+        !root.join(&link).parent().unwrap().join(&target).exists(),
+        "{name} must not create {target}"
+    );
+    assert_eq!(
+        fs::read_link(root.join(&link)).unwrap(),
+        PathBuf::from(&target),
+        "{name} must leave the link in place"
+    );
+    assert_json(
+        &JsValue::Array(tree(&root, Path::new(""))),
+        field(scenario, "initialFiles"),
+        &format!("{name} tree after rejection"),
+    );
+}
+
+#[test]
+fn dangling_link_read_is_rejected_before_any_io() {
+    assert_scenario_is_rejected("read");
+}
+
+#[test]
+fn dangling_link_write_is_rejected_before_any_io() {
+    assert_scenario_is_rejected("write");
+}
+
+#[test]
+fn dangling_link_delete_is_rejected_before_any_io() {
+    assert_scenario_is_rejected("delete");
+}
+
+#[test]
+fn dangling_link_edit_is_rejected_before_any_io() {
+    assert_scenario_is_rejected("edit-anchor");
 }
 
 /// The rejection is specific to unprovable targets: once TS has created the

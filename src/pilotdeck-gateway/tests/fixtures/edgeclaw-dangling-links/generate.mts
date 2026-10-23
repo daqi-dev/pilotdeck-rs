@@ -2,8 +2,9 @@
 // Expectations are produced only by executing the unmodified fixed TS store.
 // The link `global/UserIdentity/user-profile.md -> real.md` has no target, so
 // TS follows it: reads see ENOENT (no record), upsertUserProfile creates
-// real.md through the link, and deleteEntries skips it. editEntry still reports
-// the ordinary not-found error and is kept as a message anchor.
+// real.md through the link, and deleteEntries skips it but still repairs the
+// manifest, creating the root MEMORY.md. editEntry still reports the ordinary
+// not-found error and is kept as a message anchor.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -68,7 +69,10 @@ function clean(value: any, root: string): any {
 
 function tree(root: string, dir = ''): any[] {
   return readdirSync(join(root, dir), { withFileTypes: true })
-    .sort()
+    // Dirent has no default string conversion; compare names explicitly so the
+    // oracle order does not depend on the filesystem's readdir order. This is
+    // JS UTF-16 code-unit order, matching Rust's `encode_utf16` sort in the test.
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     .flatMap((entry) => {
       const relativePath = dir ? `${dir}/${entry.name}` : entry.name;
       const absolutePath = join(root, relativePath);
@@ -156,10 +160,22 @@ assert.ok(
   ),
   'upsertUserProfile must create real.md through the dangling link',
 );
+assert.ok(
+  scenarios[1].files.some(
+    (file: any) => file.relativePath === 'MEMORY.md' && file.kind === 'file',
+  ),
+  'upsertUserProfile must repair the manifest and create MEMORY.md',
+);
 assert.deepEqual(scenarios[2].observations[0].mutatedIds, []);
 assert.ok(
   scenarios[2].files.some((file: any) => file.kind === 'symlink'),
   'deleteEntries must leave the dangling link in place',
+);
+assert.ok(
+  scenarios[2].files.some(
+    (file: any) => file.relativePath === 'MEMORY.md' && file.kind === 'file',
+  ),
+  'deleteEntries must repair the manifest and create MEMORY.md even when it skips the link',
 );
 assert.equal(
   scenarios[3].observations[0].message,
