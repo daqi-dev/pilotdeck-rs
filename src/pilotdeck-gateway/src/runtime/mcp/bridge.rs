@@ -8,6 +8,8 @@
 //!   every other block is collected into one trailing `json` block;
 //! - with a stdio `cwd` and no inline image, Markdown links to local
 //!   `./….png|jpg|jpeg|gif|webp` files are read and inlined as base64;
+//!   local reads are limited to regular files within the real cwd or explicit
+//!   image roots, up to 5 MiB (A6.5-MCP-IMAGE-READ-SANDBOX-001, human-approved);
 //! - `isError: true` fails with the joined text blocks; client errors become
 //!   `tool_execution_failed` with `details.errorCode`.
 //!
@@ -24,6 +26,9 @@ use crate::{
 use base64::Engine;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
+    fs::{File, Metadata},
+    io::{self, Read},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
@@ -31,11 +36,19 @@ use std::{
 /// `maxResultBytes` of every MCP tool.
 pub const MCP_TOOL_MAX_RESULT_BYTES: f64 = 200_000.0;
 
+/// Match AttachmentResolver.ts's DEFAULT_MAX_IMAGE_BYTES (5 MiB), also for
+/// files which grow after stat. Inline MCP image blocks are outside this policy.
+pub const MCP_FILE_IMAGE_MAX_BYTES: u64 = 5_242_880;
+
 /// `CreateToolDefinitionsOptions`.
 #[derive(Clone, Debug, Default)]
 pub struct CreateToolDefinitionsOptions {
     /// Per-call timeout override (default falls through to the client).
     pub call_timeout_ms: Option<f64>,
+    /// Trusted host configuration, never taken from MCP result text. Empty by
+    /// default. Absolute directories only; each is realpath'd on every call.
+    /// Applies only to automatic local images from stdio servers with a cwd.
+    pub image_read_allowed_roots: Vec<PathBuf>,
 }
 
 /// `createMcpToolDefinitionsFromRuntime`.
@@ -182,10 +195,10 @@ impl McpBridgeTool {
         metadata.insert("mcp".into(), JsValue::Object(mcp));
         let raw = result.content;
         let (content, raw) = if let Some(cwd) = cwd {
-            // Local links may name FIFOs or slow filesystems. Keep all file
-            // reads off the async executor; preserve the TS projection bytes.
+            // Filesystem resolution/reads stay off the async executor.
+            let roots = self.options.image_read_allowed_roots.clone();
             tokio::task::spawn_blocking(move || {
-                let content = marshal_mcp_content(&raw, Some(&cwd));
+                let content = marshal_mcp_content_with_roots(&raw, Some(&cwd), &roots);
                 (content, raw)
             })
             .await
@@ -257,6 +270,14 @@ fn content_block(entries: Vec<(&str, JsValue)>) -> JsValue {
 
 /// `marshalMcpContent(raw, cwd)`.
 pub fn marshal_mcp_content(raw: &JsValue, cwd: Option<&str>) -> Vec<JsValue> {
+    marshal_mcp_content_with_roots(raw, cwd, &[])
+}
+
+fn marshal_mcp_content_with_roots(
+    raw: &JsValue,
+    cwd: Option<&str>,
+    allowed_roots: &[PathBuf],
+) -> Vec<JsValue> {
     let JsValue::Array(blocks) = raw else {
         return vec![content_block(vec![
             ("type", "json".into()),
@@ -295,11 +316,12 @@ pub fn marshal_mcp_content(raw: &JsValue, cwd: Option<&str>) -> Vec<JsValue> {
         }
     }
     if !has_image && let Some(cwd) = cwd.filter(|cwd| !cwd.is_empty()) {
+        let policy = ImageReadPolicy::new(cwd, allowed_roots);
         for block in blocks {
             if block_type(block).is_some_and(|k| k.equals_str("text"))
                 && let Some(text) = block.get("text").and_then(JsValue::as_string)
             {
-                result.extend(extract_file_images(text, cwd));
+                result.extend(extract_file_images(text, cwd, &policy));
             }
         }
     }
@@ -330,12 +352,12 @@ fn resolve_path(cwd: &str, relative: &str) -> PathBuf {
     crate::metadata::resolve_process_path(Path::new(cwd), Path::new(relative))
 }
 
-fn extract_file_images(text: &JsString, cwd: &str) -> Vec<JsValue> {
+fn extract_file_images(text: &JsString, cwd: &str, policy: &ImageReadPolicy) -> Vec<JsValue> {
     let text = String::from_utf16_lossy(text.units());
     let mut images = Vec::new();
     for capture in IMAGE_LINK.captures_iter(&text) {
         let relative = &capture[1];
-        let Ok(bytes) = std::fs::read(resolve_path(cwd, relative)) else {
+        let Some(bytes) = policy.read(&resolve_path(cwd, relative)) else {
             continue;
         };
         let ext = relative.rsplit('.').next().unwrap_or("png").to_lowercase();
@@ -359,6 +381,73 @@ fn extract_file_images(text: &JsString, cwd: &str) -> Vec<JsValue> {
         ]));
     }
     images
+}
+
+/// Canonical roots are directories; failed/relative whitelist entries grant
+/// nothing. Path::starts_with compares components, never string prefixes.
+struct ImageReadPolicy {
+    roots: Vec<PathBuf>,
+}
+
+impl ImageReadPolicy {
+    fn new(cwd: &str, allowed_roots: &[PathBuf]) -> Self {
+        let roots = std::iter::once(Path::new(cwd))
+            .chain(
+                allowed_roots
+                    .iter()
+                    .filter(|p| p.is_absolute())
+                    .map(PathBuf::as_path),
+            )
+            .filter_map(|p| p.canonicalize().ok())
+            .filter(|p| p.is_dir())
+            .collect();
+        Self { roots }
+    }
+
+    fn read(&self, path: &Path) -> Option<Vec<u8>> {
+        self.read_with(path, crate::project_files::open_beneath, read_limited_image)
+    }
+
+    // The injected boundaries let tests prove rejected paths are neither opened
+    // nor read, and exercise replacements/growth at the exact race boundaries.
+    fn read_with(
+        &self,
+        path: &Path,
+        open: impl FnOnce(&Path, &Path) -> io::Result<File>,
+        read: impl FnOnce(File) -> io::Result<Vec<u8>>,
+    ) -> Option<Vec<u8>> {
+        let canonical = path.canonicalize().ok()?;
+        let root = self.roots.iter().find(|root| canonical.starts_with(root))?;
+        let before = std::fs::symlink_metadata(&canonical).ok()?;
+        if !safe_image_metadata(&before) {
+            return None;
+        }
+        // open_beneath walks ALL canonical components with NOFOLLOW and pins
+        // directories by fd. NONBLOCK also prevents a raced-in FIFO blocking.
+        let file = open(root, &canonical).ok()?;
+        let after = file.metadata().ok()?;
+        if !safe_image_metadata(&after)
+            || before.dev() != after.dev()
+            || before.ino() != after.ino()
+        {
+            return None;
+        }
+        read(file).ok()
+    }
+}
+
+fn safe_image_metadata(metadata: &Metadata) -> bool {
+    metadata.is_file() && metadata.len() <= MCP_FILE_IMAGE_MAX_BYTES
+}
+
+fn read_limited_image(file: impl Read) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    file.take(MCP_FILE_IMAGE_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MCP_FILE_IMAGE_MAX_BYTES {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    Ok(bytes)
 }
 
 /// `extractMcpErrorText`.
@@ -390,44 +479,5 @@ fn error_text(content: &JsValue, server_id: &str, tool_name: &str) -> JsString {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn image_paths_use_shared_lexical_resolution() {
-        assert_eq!(resolve_path("/a/./b", "../图.png"), Path::new("/a/图.png"));
-        assert_eq!(resolve_path("/a", "/x/../img.png"), Path::new("/img.png"));
-        assert_eq!(
-            resolve_path("/a", "../../../img.png"),
-            Path::new("/img.png")
-        );
-        let cwd = std::env::current_dir().unwrap();
-        assert_eq!(resolve_path("a/../b", "./../img.png"), cwd.join("img.png"));
-    }
-    use pilotdeck_protocol::parse_json;
-
-    #[test]
-    fn non_array_content_and_fallbacks() {
-        assert_eq!(
-            marshal_mcp_content(&JsValue::Null, None),
-            [parse_json(r#"{"type":"json","value":null}"#).unwrap()]
-        );
-        assert_eq!(
-            marshal_mcp_content(&parse_json("[]").unwrap(), None),
-            [parse_json(r#"{"type":"json","value":[]}"#).unwrap()]
-        );
-        assert_eq!(
-            error_text(&JsValue::Null, "s", "t"),
-            JsString::from("MCP server s/t returned isError")
-        );
-    }
-
-    #[test]
-    fn image_links_are_lazy_and_case_insensitive() {
-        let found: Vec<String> = IMAGE_LINK
-            .captures_iter("[a](./x.PNG) [b](./y.txt) [c\n](./z.png) [d](./w.jpeg)")
-            .map(|c| c[1].to_owned())
-            .collect();
-        assert_eq!(found, ["./x.PNG", "./w.jpeg"]);
-    }
-}
+#[path = "bridge/tests.rs"]
+mod tests;

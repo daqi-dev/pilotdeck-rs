@@ -1,0 +1,152 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/mcp/runtime/PluginToToolBridge.ts": "9b3fe86dad3a433a5c1a911626f00e62f482f6ad8274e63ce0f2382afd221c8c",
+    "src/context/attachments/AttachmentResolver.ts": "d80459b29172b7205cf2ef55e1a675f939a150dacec0f144f46a3a66de113bda"
+  },
+  "maxImageBytes": 5242880,
+  "files": [
+    {
+      "path": "pixel.png",
+      "hex": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200efa345990000000049454e44ae426082"
+    },
+    {
+      "path": "pixel.JPG",
+      "hex": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200efa345990000000049454e44ae426082"
+    },
+    {
+      "path": "pixel.jpeg",
+      "hex": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200efa345990000000049454e44ae426082"
+    },
+    {
+      "path": "pixel.gif",
+      "hex": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200efa345990000000049454e44ae426082"
+    },
+    {
+      "path": "pixel.webp",
+      "hex": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200efa345990000000049454e44ae426082"
+    }
+  ],
+  "cases": [
+    {
+      "id": "normal",
+      "raw": [
+        {
+          "type": "text",
+          "text": "saved [png](./pixel.png) [jpg](./pixel.JPG) [jpeg](./pixel.jpeg) [gif](./pixel.gif) [webp](./pixel.webp)"
+        }
+      ],
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "saved [png](./pixel.png) [jpg](./pixel.JPG) [jpeg](./pixel.jpeg) [gif](./pixel.gif) [webp](./pixel.webp)"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+          },
+          {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+          },
+          {
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+          },
+          {
+            "type": "image",
+            "mimeType": "image/gif",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+          },
+          {
+            "type": "image",
+            "mimeType": "image/webp",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+          }
+        ],
+        "data": [
+          {
+            "type": "text",
+            "text": "saved [png](./pixel.png) [jpg](./pixel.JPG) [jpeg](./pixel.jpeg) [gif](./pixel.gif) [webp](./pixel.webp)"
+          }
+        ],
+        "metadata": {
+          "mcp": {
+            "serverId": "s",
+            "toolName": "t",
+            "wireName": "mcp__s__t"
+          }
+        }
+      }
+    },
+    {
+      "id": "inside-link",
+      "raw": [
+        {
+          "type": "text",
+          "text": "[local link](./link.png)"
+        }
+      ],
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[local link](./link.png)"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+          }
+        ],
+        "data": [
+          {
+            "type": "text",
+            "text": "[local link](./link.png)"
+          }
+        ],
+        "metadata": {
+          "mcp": {
+            "serverId": "s",
+            "toolName": "t",
+            "wireName": "mcp__s__t"
+          }
+        }
+      }
+    },
+    {
+      "id": "missing",
+      "raw": [
+        {
+          "type": "text",
+          "text": "unchanged [missing](./missing.png)"
+        }
+      ],
+      "observed": {
+        "content": [
+          {
+            "type": "text",
+            "text": "unchanged [missing](./missing.png)"
+          }
+        ],
+        "data": [
+          {
+            "type": "text",
+            "text": "unchanged [missing](./missing.png)"
+          }
+        ],
+        "metadata": {
+          "mcp": {
+            "serverId": "s",
+            "toolName": "t",
+            "wireName": "mcp__s__t"
+          }
+        }
+      }
+    }
+  ]
+}
