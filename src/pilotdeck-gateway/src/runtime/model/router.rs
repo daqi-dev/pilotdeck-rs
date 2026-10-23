@@ -144,7 +144,9 @@ pub trait RouterModelInvocation: Send + Sync {
             })
         })
     }
-    /// Whether [`complete`](Self::complete) is implemented.
+    /// Whether this invocation port exposes [`complete`](Self::complete).
+    /// A registry exposes dispatch even when a particular route is absent or
+    /// its provider cannot complete; those errors belong to the invocation.
     fn supports_complete(&self) -> bool {
         false
     }

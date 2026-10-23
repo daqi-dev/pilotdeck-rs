@@ -25,6 +25,7 @@ const load = (file: string) => import(pathToFileURL(join(baseline, file)).href);
 const model = await load('src/model/providers/ModelInvocationProviderRegistry.ts');
 const { ProjectModelRuntimeBundle } = await load('src/cli/ProjectModelRuntimeBundle.ts');
 const { ProjectRouterRuntimeBundle } = await load('src/cli/ProjectRouterRuntimeBundle.ts');
+const { createRegistryRouterModelInvocationPort } = await load('src/router/provider/RouterModelInvocationPort.ts');
 const { resolvePilotDeckRuntimeProfile } = await load('src/cli/PilotDeckRuntimeProfile.ts');
 const { loadPilotConfig } = await load('src/pilot/config/loadPilotConfig.ts');
 const { isOptionalFeatureEnabled } = await load('src/pilot/config/optionalFeature.ts');
@@ -249,7 +250,59 @@ try {
     input: { config: { agent: { model: selection }, ...(router === null ? {} : { router }) } },
     result: ensureRouterConfig(router === null ? undefined : router, selection),
   }));
+  // Actual bundle staging with token-saver enabled. Capability belongs to
+  // the registry port, not to every provider currently registered in it.
+  const registryRouterCases: any[] = [];
+  for (const name of ['mixed', 'native', 'empty']) {
+    const judge = name === 'native' ? 'a' : 'b';
+    const routerYaml = `router:
+  enabled: true
+  tokenSaver:
+    enabled: true
+    judge: ${judge}/m
+    defaultTier: medium
+    tiers:
+      medium: { model: a/m }
+  autoOrchestrate: { enabled: false }
+  stats: { enabled: false }
+`;
+    const providerYaml = `    b:
+      protocol: anthropic
+      url: http://fixture.test/b
+      apiKey: mock-only
+      models:
+        m:
+          capabilities: { maxContextTokens: 3000, maxOutputTokens: 64 }
+`;
+    await writeFile(join(home, 'pilotdeck.yaml'), config(name, 3000) + providerYaml + routerYaml);
+    const snapshot = loadPilotConfig({ projectRoot: project, env: { PILOT_HOME: home } });
+    const modelBundle = new ProjectModelRuntimeBundle({ snapshot,
+      ...(name === 'native' ? {} : { modelInvocationProviderFactory: () => name === 'empty' ? [] : [
+        model.createNativeModelInvocationProvider(snapshot.config.model.providers.a),
+        { ...make('judge-b'), providerId: 'b', dispose() {} },
+      ] }),
+    });
+    const resources = modelBundle.stage();
+    const invocation = createRegistryRouterModelInvocationPort(resources.modelProviders);
+    const routerBundle = new ProjectRouterRuntimeBundle({ snapshot, ...resources,
+      extensions: { async loadSkillPrompt() { return undefined; } }, now: () => new Date(0), telemetry: {},
+      createRouterConfig: (s: any) => ensureRouterConfig(s.config.router, s.config.agent.model),
+      createRouterEventBus: () => ({ emit() {} }),
+    });
+    const staged = routerBundle.stage();
+    const result: any = { name, providerYaml, routerYaml, completeAvailable: typeof invocation.complete === 'function', staged: !!staged.router };
+    // Native non-streaming HTTP is a separate Rust gap: this case compares
+    // staging only. Mixed/empty also exercise the actual registry dispatch.
+    if (name !== 'native') {
+      const judgeRequest = { ...request, provider: judge };
+      result.request = judgeRequest;
+      try { result.completion = await invocation.complete!(judgeRequest); }
+      catch (error) { result.error = errorOf(error); }
+    }
+    registryRouterCases.push(result);
+    await routerBundle.dispose(); await modelBundle.dispose();
+  }
   const output = resolve(process.argv[2]); await mkdir(output, { recursive: true });
-  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, frames, request, trace, replacements, api, disposal: { order: disposalOrder, failedOld, aggregate }, completeTrace, completeError, nativeTrace, routerConfigs }, null, 2) + '\n', { flag: 'wx' });
+  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, frames, request, trace, replacements, api, disposal: { order: disposalOrder, failedOld, aggregate }, completeTrace, completeError, nativeTrace, routerConfigs, registryRouterCases }, null, 2) + '\n', { flag: 'wx' });
   console.log(`MODEL_FACTORY_ORACLE_PASS trace=${trace.length} replacements=${replacements.length}`);
 } finally { await rm(scratch, { recursive: true, force: true }); }

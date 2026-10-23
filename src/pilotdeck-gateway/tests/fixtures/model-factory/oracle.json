@@ -1046,5 +1046,71 @@
         }
       }
     }
+  ],
+  "registryRouterCases": [
+    {
+      "name": "mixed",
+      "providerYaml": "    b:\n      protocol: anthropic\n      url: http://fixture.test/b\n      apiKey: mock-only\n      models:\n        m:\n          capabilities: { maxContextTokens: 3000, maxOutputTokens: 64 }\n",
+      "routerYaml": "router:\n  enabled: true\n  tokenSaver:\n    enabled: true\n    judge: b/m\n    defaultTier: medium\n    tiers:\n      medium: { model: a/m }\n  autoOrchestrate: { enabled: false }\n  stats: { enabled: false }\n",
+      "completeAvailable": true,
+      "staged": true,
+      "request": {
+        "provider": "b",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "completion": {
+        "label": "judge-b"
+      }
+    },
+    {
+      "name": "native",
+      "providerYaml": "    b:\n      protocol: anthropic\n      url: http://fixture.test/b\n      apiKey: mock-only\n      models:\n        m:\n          capabilities: { maxContextTokens: 3000, maxOutputTokens: 64 }\n",
+      "routerYaml": "router:\n  enabled: true\n  tokenSaver:\n    enabled: true\n    judge: a/m\n    defaultTier: medium\n    tiers:\n      medium: { model: a/m }\n  autoOrchestrate: { enabled: false }\n  stats: { enabled: false }\n",
+      "completeAvailable": true,
+      "staged": true
+    },
+    {
+      "name": "empty",
+      "providerYaml": "    b:\n      protocol: anthropic\n      url: http://fixture.test/b\n      apiKey: mock-only\n      models:\n        m:\n          capabilities: { maxContextTokens: 3000, maxOutputTokens: 64 }\n",
+      "routerYaml": "router:\n  enabled: true\n  tokenSaver:\n    enabled: true\n    judge: b/m\n    defaultTier: medium\n    tiers:\n      medium: { model: a/m }\n  autoOrchestrate: { enabled: false }\n  stats: { enabled: false }\n",
+      "completeAvailable": true,
+      "staged": true,
+      "request": {
+        "provider": "b",
+        "model": "m",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hi"
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "marker": "fixture"
+        }
+      },
+      "error": {
+        "code": "provider_not_found",
+        "message": "Provider b does not exist."
+      }
+    }
   ]
 }

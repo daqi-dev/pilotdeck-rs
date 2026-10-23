@@ -897,3 +897,159 @@ async fn native_default_family_metadata_recording_and_http_abort_match_ts() {
     bounded(registry.dispose()).await.unwrap();
     assert_eq!(*trace.lock().unwrap(), strings(get(&oracle, "nativeTrace")));
 }
+
+struct JudgeProvider {
+    id: JsString,
+}
+impl ModelInvocationProvider for JudgeProvider {
+    fn provider_id(&self) -> &JsString {
+        &self.id
+    }
+}
+impl RouterModelInvocation for JudgeProvider {
+    fn get_capabilities(&self, _: &JsString, _: &JsString) -> Result<JsValue, ModuleError> {
+        Ok(JsValue::Undefined)
+    }
+    fn get_multimodal(&self, _: &JsString, _: &JsString) -> Result<JsValue, ModuleError> {
+        Ok(JsValue::Undefined)
+    }
+    fn supports_complete(&self) -> bool {
+        true
+    }
+    fn complete(
+        &self,
+        _: JsValue,
+        _: Option<pilotdeck_gateway::runtime::model::router::AbortFlag>,
+    ) -> pilotdeck_gateway::runtime::model::router::RouterFuture<JsValue> {
+        Box::pin(async { Ok(parse_json(r#"{"label":"judge-b"}"#).unwrap()) })
+    }
+}
+
+async fn registry_router_case(name: &str) {
+    let oracle = baseline::oracle(ORACLE);
+    let JsValue::Array(cases) = get(&oracle, "registryRouterCases") else {
+        panic!("registry router cases")
+    };
+    let case = cases
+        .iter()
+        .find(|case| text(get(case, "name")) == name)
+        .unwrap();
+    let scratch = Scratch::new();
+    let mut families = families();
+    if name != "native" {
+        let mixed = name == "mixed";
+        families.model_runtime = Arc::new(ModelFamilySource {
+            providers: Some(Arc::new(move |snapshot| {
+                if !mixed {
+                    return Ok(vec![]);
+                }
+                let provider = get(get(get(snapshot, "config"), "model"), "providers")
+                    .get("a")
+                    .unwrap()
+                    .clone();
+                let native = NativeModelInvocationProvider::new(
+                    provider,
+                    Arc::new(pilotdeck_gateway::runtime::model::http::HyperModelTransport::new()),
+                );
+                assert!(!native.supports_complete());
+                Ok(vec![
+                    Arc::new(native),
+                    Arc::new(JudgeProvider { id: "b".into() }),
+                ])
+            })),
+            ..Default::default()
+        });
+    }
+    let registry = registry(&scratch, families);
+    let home = scratch.0.join("home");
+    write_config(&home, name, 3000);
+    let config_path = home.join("pilotdeck.yaml");
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    std::fs::write(
+        config_path,
+        config + &text(get(case, "providerYaml")) + &text(get(case, "routerYaml")),
+    )
+    .unwrap();
+    let runtime = registry.resolve(None).unwrap();
+    let router = router(&runtime);
+    assert_eq!(JsValue::Bool(true), *get(case, "staged"));
+    let router = &router
+        .as_any()
+        .downcast_ref::<RouterResources>()
+        .unwrap()
+        .router;
+    assert!(router.config().enabled);
+    let saver = router.config().token_saver.as_ref().unwrap();
+    assert!(saver.enabled);
+    assert_eq!(
+        saver.judge.provider,
+        if name == "native" { "a" } else { "b" }.into()
+    );
+    let model = model(&runtime);
+    let providers = &model
+        .as_any()
+        .downcast_ref::<ModelResources>()
+        .unwrap()
+        .providers;
+    assert_eq!(
+        JsValue::Bool(providers.supports_complete()),
+        *get(case, "completeAvailable")
+    );
+    if name != "native" {
+        let result = bounded(providers.complete(get(case, "request").clone(), None)).await;
+        if let Some(expected) = case.get("completion") {
+            assert_eq!(result.unwrap(), *expected);
+        } else {
+            let error = result.unwrap_err();
+            let mut value = JsObject::new();
+            value.insert("code".into(), JsValue::String(error.code.unwrap()));
+            value.insert("message".into(), JsValue::String(error.message));
+            assert_eq!(JsValue::Object(value), *get(case, "error"));
+        }
+    } else {
+        // Staging matches TS; the existing native non-streaming HTTP gap
+        // still reports an invocation error, rather than breaking staging.
+        let lease = providers.acquire(&"a".into()).unwrap();
+        assert!(!lease.provider().supports_complete());
+        drop(lease);
+        let failure = bounded(providers.complete(get(&oracle, "request").clone(), None))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            failure.message,
+            "Router judge invocation provider does not implement complete().".into()
+        );
+    }
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
+async fn mixed_registry_router_staging_and_judge_dispatch_match_ts() {
+    registry_router_case("mixed").await;
+}
+#[tokio::test]
+async fn native_registry_enabled_router_staging_matches_ts() {
+    registry_router_case("native").await;
+}
+#[tokio::test]
+async fn empty_registry_router_staging_and_missing_judge_match_ts() {
+    registry_router_case("empty").await;
+}
+
+#[tokio::test]
+async fn model_family_resolve_without_tokio_returns_error_without_panic() {
+    let scratch = Scratch::new();
+    let registry = Arc::new(registry(&scratch, families()));
+    write_config(&scratch.0.join("home"), "native", 3000);
+    let worker_registry = registry.clone();
+    let failure = std::thread::spawn(move || worker_registry.resolve(None).err().unwrap())
+        .join()
+        .expect("synchronous resolve must not panic");
+    assert_eq!(
+        failure.message,
+        "Model family staging requires a Tokio runtime."
+    );
+    // A failed off-runtime attempt must not publish a broken generation.
+    assert!(registry.resolve(None).is_ok());
+    bounded(registry.dispose()).await.unwrap();
+}

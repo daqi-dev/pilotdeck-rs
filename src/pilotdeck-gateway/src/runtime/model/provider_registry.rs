@@ -363,12 +363,10 @@ impl RouterModelInvocation for ModelInvocationProviderRegistry {
         })
     }
     fn supports_complete(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap()
-            .entries
-            .values()
-            .all(|entry| entry.provider.supports_complete())
+        // RouterModelInvocationPort.ts:40-48 always exposes complete, even
+        // for an empty registry. Dispatch (and any unsupported implementation)
+        // is resolved against the requested provider when complete is called.
+        true
     }
     fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
         let lease = request
@@ -387,7 +385,8 @@ impl RouterModelInvocation for ModelInvocationProviderRegistry {
 
 /// Native provider adapter with an immutable single-provider HTTP config.
 /// Non-streaming complete() is not yet implemented by the existing HTTP layer;
-/// it advertises that explicitly, so token-saver staging fails closed.
+/// its direct capability remains false; the registry dispatches calls to it
+/// at invocation time, where the inherited complete() reports the missing port.
 pub struct NativeModelInvocationProvider {
     id: JsString,
     config: JsValue,

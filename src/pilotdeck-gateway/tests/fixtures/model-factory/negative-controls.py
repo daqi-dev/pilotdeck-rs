@@ -65,6 +65,34 @@ controls = [
     ('factory-ignores-project-router-defaults', family,
      'project_router_config(&snapshot)', 'RouterConfig::from_snapshot(&snapshot)',
      'native_default_family_metadata_recording_and_http_abort_match_ts'),
+    ('mixed-registry-requires-all-providers-complete', registry,
+     '        // RouterModelInvocationPort.ts:40-48 always exposes complete, even\n        // for an empty registry. Dispatch (and any unsupported implementation)\n        // is resolved against the requested provider when complete is called.\n        true',
+     '        self.state.lock().unwrap().entries.values().all(|entry| entry.provider.supports_complete())',
+     'mixed_registry_router_staging_and_judge_dispatch_match_ts'),
+    ('native-registry-rejected-at-staging', registry,
+     '        // RouterModelInvocationPort.ts:40-48 always exposes complete, even\n        // for an empty registry. Dispatch (and any unsupported implementation)\n        // is resolved against the requested provider when complete is called.\n        true',
+     '        self.state.lock().unwrap().entries.values().all(|entry| entry.provider.supports_complete())',
+     'native_registry_enabled_router_staging_matches_ts'),
+    ('empty-registry-rejected-at-staging', registry,
+     '        // RouterModelInvocationPort.ts:40-48 always exposes complete, even\n        // for an empty registry. Dispatch (and any unsupported implementation)\n        // is resolved against the requested provider when complete is called.\n        true',
+     '        !self.state.lock().unwrap().entries.is_empty()',
+     'empty_registry_router_staging_and_missing_judge_match_ts'),
+    ('complete-ignores-requested-provider', registry,
+     '''    fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
+        let lease = request
+            .get("provider")
+            .and_then(JsValue::as_string)
+            .ok_or_else(|| missing(&JsString::from("undefined")))
+            .and_then(|id| self.acquire(id));''',
+     '''    fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
+        let lease = self.acquire(&"a".into());''',
+     'mixed_registry_router_staging_and_judge_dispatch_match_ts'),
+    ('model-family-panics-outside-tokio', family,
+     '''tokio::runtime::Handle::try_current().map_err(|_| {
+                    RuntimeError::new("Model family staging requires a Tokio runtime.")
+                })?''',
+     'tokio::runtime::Handle::current()',
+     'model_family_resolve_without_tokio_returns_error_without_panic'),
 ]
 
 try:

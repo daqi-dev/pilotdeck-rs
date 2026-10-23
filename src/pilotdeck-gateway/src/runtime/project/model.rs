@@ -61,7 +61,9 @@ impl ResourceFamilySource for ModelFamilySource {
             .unwrap_or(JsValue::Undefined);
         let resource = Arc::new(ModelResources {
             providers: Arc::new(ModelInvocationProviderRegistry::new(
-                tokio::runtime::Handle::current(),
+                tokio::runtime::Handle::try_current().map_err(|_| {
+                    RuntimeError::new("Model family staging requires a Tokio runtime.")
+                })?,
             )),
             config,
         });
