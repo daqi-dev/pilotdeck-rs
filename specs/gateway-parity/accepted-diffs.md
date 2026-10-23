@@ -728,3 +728,12 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：暂缺专门用例，补测由 #563 跟进（前置于 A6.6 关闭）。
 - **批准记录**：无；与上文同一政策（AI 代批，待人复核），不新增豁免、不改判分语义。
 
+### A6.6-EDGECLAW-SNAPSHOT-CPSYNC-ERROR-001 · 快照 rename 回退的目录复制失败时错误形状与 Node cpSync 不同（已知未对齐）
+
+- **类别**：错误文本 / 错误对象形状未对齐（仅失败路径）。
+- **TS 依据**：Node v22.22.0 目录 `cpSync` 失败时抛 `Error`，`syscall` 为 `cp`，`errno` 为正数，只有 `path`（指向目标）没有 `dest`，message 形如 `EACCES, Permission denied '<dst>/x'`（PR #537 Grok r6 第 1 条，同一组沙盒场景 Node 与 Rust 探针逐字对比实测）。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/snapshots.rs:197-236` 的 `copy_tree` 按逐个系统调用包装：目标不可写时报 `EACCES: permission denied, mkdir '…'`，源目录内有不可读文件时报 `…, copyfile '<src>' -> '<dst>'`。
+- **范围**：仅快照 rename 失败（EPERM / EACCES）后走 cpSync 等价回退、且回退本身失败的路径；成功路径与其他快照 IO 已对齐（修复轮 6–7 的 io / copy-io 金样）。这是生产上唯一能走到的该回退路径。
+- **机器判据**：暂无（修复轮 7 的 copy-io 金样只覆盖逐调用包装；cp 风格整体错误未做对拍）。
+- **批准记录**：无；实现方在修复轮 7 RESULT「范围外」披露，Grok r6 要求登记，协调者登记；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义。
+
