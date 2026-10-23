@@ -108,6 +108,7 @@ pub trait ProjectRuntimeFactory: Send + Sync {
 /// staging with the baseline's rollback order.
 mod factory;
 pub mod model;
+pub mod tools_mcp;
 pub use factory::{
     ConfigSource, Families, Family, FamilyResource, InteractionProfile, InteractionProfileName,
     NativeConfigSource, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,

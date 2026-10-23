@@ -431,6 +431,13 @@ impl Families {
         self
     }
 
+    /// Wire the MCP and execution-world families (A6.9-pr3c1).
+    pub fn with_tools_mcp(mut self) -> Self {
+        self.mcp = Arc::new(super::tools_mcp::McpFamilySource::default());
+        self.execution_world = Arc::new(super::tools_mcp::ExecutionWorldFamilySource::default());
+        self
+    }
+
     /// Every family not yet wired into the native runtime (A6.9-pr3b..3e).
     /// Staging reports each one explicitly instead of succeeding silently.
     pub fn unwired() -> Self {
