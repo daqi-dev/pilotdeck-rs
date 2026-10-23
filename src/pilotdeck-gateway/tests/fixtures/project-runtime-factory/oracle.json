@@ -1,0 +1,2290 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/cli/ProjectRuntimeRegistry.ts": "0df6b0e82be872c2a2d57f85e73136d75865ff1fc2c4ded2e5e5550d7a9353d9",
+    "src/cli/ProjectRuntimeResourcesBundle.ts": "a87d93667b02df3f120391f7440ef55dd0cdc406f82cbffcbbf738cecb9b4905",
+    "src/cli/PilotDeckRuntimeProfile.ts": "a21fd97e05c6ac22b4ec292cb74839e708952c524f6acdb6c1858f1a6b583e35",
+    "src/context/RuntimeContextSurface.ts": "f38686628f91125bb487d341e621de6e19c0a38b209b1ccf01962b11114ffed0",
+    "src/interaction/InteractionProfile.ts": "0c3fd44ab02861245bf391ccd4aebc8e84a4f191c50009fa2aefec061f4e3765",
+    "src/tool/execution-world/SandboxPort.ts": "050b14827a89b433365e33927bd86a5409e3d9b551c5ea01612d2b1ae748ae24"
+  },
+  "cases": [
+    {
+      "name": "construct-success-and-dispose",
+      "steps": [
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v1"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "a1"
+          },
+          "id": 1,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a1": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "a2"
+          },
+          "id": 1,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a1": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            },
+            "a2": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "dispose"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a1": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "a2": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "config-error-fails-before-families",
+      "steps": [
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "broken"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a"
+          },
+          "id": null,
+          "error": {
+            "message": "agent.subagents must be an object.",
+            "causes": []
+          },
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v1"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "a"
+          },
+          "id": 1,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "dispose"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "stage-failure-first-family",
+      "steps": [
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v1"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "fail": {
+              "family": "modelRuntime",
+              "phase": "stage"
+            }
+          },
+          "id": null,
+          "error": {
+            "message": "stage failed:modelRuntime:1",
+            "causes": []
+          },
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "dispose:modelRuntime:1"
+          ],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "a"
+          },
+          "id": 2,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "dispose:modelRuntime:1",
+            "construct:modelRuntime:2:agent=parity/alpha",
+            "stage:modelRuntime:2",
+            "construct:pluginRuntime:3:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:4",
+            "construct:routerRuntime:5:model=2:extensions=3:registry=4:useModelRuntime=false",
+            "stage:routerRuntime:5",
+            "construct:lspService:6",
+            "construct:executionWorld:7:profile=danger-full-access/interactive/system_prompt:lsp=6",
+            "stage:executionWorld:7",
+            "construct:contextStorage:8",
+            "stage:contextStorage:8",
+            "construct:compaction:9:now=0",
+            "construct:promptCacheCoordinator:10",
+            "construct:sessionTitleProvider:11:model=2",
+            "construct:mcpProvider:12",
+            "construct:memoryBundle:13:agentModel=parity/alpha",
+            "stage:memoryBundle:13"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 2,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "dispose"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "dispose:modelRuntime:1",
+            "construct:modelRuntime:2:agent=parity/alpha",
+            "stage:modelRuntime:2",
+            "construct:pluginRuntime:3:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:4",
+            "construct:routerRuntime:5:model=2:extensions=3:registry=4:useModelRuntime=false",
+            "stage:routerRuntime:5",
+            "construct:lspService:6",
+            "construct:executionWorld:7:profile=danger-full-access/interactive/system_prompt:lsp=6",
+            "stage:executionWorld:7",
+            "construct:contextStorage:8",
+            "stage:contextStorage:8",
+            "construct:compaction:9:now=0",
+            "construct:promptCacheCoordinator:10",
+            "construct:sessionTitleProvider:11:model=2",
+            "construct:mcpProvider:12",
+            "construct:memoryBundle:13:agentModel=parity/alpha",
+            "stage:memoryBundle:13",
+            "dispose:mcpProvider:12",
+            "dispose:pluginRuntime:3",
+            "dispose:routerSessionCustomRouters:4",
+            "dispose:compaction:9",
+            "dispose:sessionTitleProvider:11",
+            "dispose:lspService:6",
+            "dispose:executionWorld:7",
+            "dispose:routerRuntime:5",
+            "dispose:modelRuntime:2",
+            "dispose:memoryBundle:13"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 2,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "construct-failure-middle-family",
+      "steps": [
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v1"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "fail": {
+              "family": "pluginRuntime",
+              "phase": "construct"
+            }
+          },
+          "id": null,
+          "error": {
+            "message": "construct failed:pluginRuntime:2",
+            "causes": []
+          },
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "dispose:modelRuntime:1"
+          ],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "a"
+          },
+          "id": 3,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "dispose:modelRuntime:1",
+            "construct:modelRuntime:3:agent=parity/alpha",
+            "stage:modelRuntime:3",
+            "construct:pluginRuntime:4:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:5",
+            "construct:routerRuntime:6:model=3:extensions=4:registry=5:useModelRuntime=false",
+            "stage:routerRuntime:6",
+            "construct:lspService:7",
+            "construct:executionWorld:8:profile=danger-full-access/interactive/system_prompt:lsp=7",
+            "stage:executionWorld:8",
+            "construct:contextStorage:9",
+            "stage:contextStorage:9",
+            "construct:compaction:10:now=0",
+            "construct:promptCacheCoordinator:11",
+            "construct:sessionTitleProvider:12:model=3",
+            "construct:mcpProvider:13",
+            "construct:memoryBundle:14:agentModel=parity/alpha",
+            "stage:memoryBundle:14"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 3,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "dispose"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "dispose:modelRuntime:1",
+            "construct:modelRuntime:3:agent=parity/alpha",
+            "stage:modelRuntime:3",
+            "construct:pluginRuntime:4:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:5",
+            "construct:routerRuntime:6:model=3:extensions=4:registry=5:useModelRuntime=false",
+            "stage:routerRuntime:6",
+            "construct:lspService:7",
+            "construct:executionWorld:8:profile=danger-full-access/interactive/system_prompt:lsp=7",
+            "stage:executionWorld:8",
+            "construct:contextStorage:9",
+            "stage:contextStorage:9",
+            "construct:compaction:10:now=0",
+            "construct:promptCacheCoordinator:11",
+            "construct:sessionTitleProvider:12:model=3",
+            "construct:mcpProvider:13",
+            "construct:memoryBundle:14:agentModel=parity/alpha",
+            "stage:memoryBundle:14",
+            "dispose:mcpProvider:13",
+            "dispose:pluginRuntime:4",
+            "dispose:routerSessionCustomRouters:5",
+            "dispose:compaction:10",
+            "dispose:sessionTitleProvider:12",
+            "dispose:lspService:7",
+            "dispose:executionWorld:8",
+            "dispose:routerRuntime:6",
+            "dispose:modelRuntime:3",
+            "dispose:memoryBundle:14"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 3,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "stage-failure-middle-family",
+      "steps": [
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v1"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "fail": {
+              "family": "executionWorld",
+              "phase": "stage"
+            }
+          },
+          "id": null,
+          "error": {
+            "message": "stage failed:executionWorld:6",
+            "causes": []
+          },
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1"
+          ],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "a"
+          },
+          "id": 7,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "construct:modelRuntime:7:agent=parity/alpha",
+            "stage:modelRuntime:7",
+            "construct:pluginRuntime:8:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:9",
+            "construct:routerRuntime:10:model=7:extensions=8:registry=9:useModelRuntime=false",
+            "stage:routerRuntime:10",
+            "construct:lspService:11",
+            "construct:executionWorld:12:profile=danger-full-access/interactive/system_prompt:lsp=11",
+            "stage:executionWorld:12",
+            "construct:contextStorage:13",
+            "stage:contextStorage:13",
+            "construct:compaction:14:now=0",
+            "construct:promptCacheCoordinator:15",
+            "construct:sessionTitleProvider:16:model=7",
+            "construct:mcpProvider:17",
+            "construct:memoryBundle:18:agentModel=parity/alpha",
+            "stage:memoryBundle:18"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 7,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "dispose"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "construct:modelRuntime:7:agent=parity/alpha",
+            "stage:modelRuntime:7",
+            "construct:pluginRuntime:8:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:9",
+            "construct:routerRuntime:10:model=7:extensions=8:registry=9:useModelRuntime=false",
+            "stage:routerRuntime:10",
+            "construct:lspService:11",
+            "construct:executionWorld:12:profile=danger-full-access/interactive/system_prompt:lsp=11",
+            "stage:executionWorld:12",
+            "construct:contextStorage:13",
+            "stage:contextStorage:13",
+            "construct:compaction:14:now=0",
+            "construct:promptCacheCoordinator:15",
+            "construct:sessionTitleProvider:16:model=7",
+            "construct:mcpProvider:17",
+            "construct:memoryBundle:18:agentModel=parity/alpha",
+            "stage:memoryBundle:18",
+            "dispose:mcpProvider:17",
+            "dispose:pluginRuntime:8",
+            "dispose:routerSessionCustomRouters:9",
+            "dispose:compaction:14",
+            "dispose:sessionTitleProvider:16",
+            "dispose:lspService:11",
+            "dispose:executionWorld:12",
+            "dispose:routerRuntime:10",
+            "dispose:modelRuntime:7",
+            "dispose:memoryBundle:18"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 7,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "stage-failure-last-family",
+      "steps": [
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v1"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "fail": {
+              "family": "memoryBundle",
+              "phase": "stage"
+            }
+          },
+          "id": null,
+          "error": {
+            "message": "stage failed:memoryBundle:12",
+            "causes": []
+          },
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12"
+          ],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "a"
+          },
+          "id": 13,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/alpha",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=danger-full-access/interactive/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/alpha",
+            "stage:memoryBundle:24"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "dispose"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/alpha",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=danger-full-access/interactive/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/alpha",
+            "stage:memoryBundle:24",
+            "dispose:mcpProvider:23",
+            "dispose:pluginRuntime:14",
+            "dispose:routerSessionCustomRouters:15",
+            "dispose:compaction:20",
+            "dispose:sessionTitleProvider:22",
+            "dispose:lspService:17",
+            "dispose:executionWorld:18",
+            "dispose:routerRuntime:16",
+            "dispose:modelRuntime:13",
+            "dispose:memoryBundle:24"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 13,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "dispose-failure-order-and-aggregation",
+      "steps": [
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v1"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "a"
+          },
+          "id": 1,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "acquire",
+            "runtime": "a",
+            "as": "l1"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "active",
+              "leases": 1
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "invalidate",
+            "root": "a"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "retired",
+              "leases": 1
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "release",
+            "lease": "l1",
+            "failCleanup": [
+              "mcpProvider",
+              "lspService",
+              "memoryBundle"
+            ]
+          },
+          "id": null,
+          "error": {
+            "message": "Failed to dispose project runtime resources.",
+            "causes": [
+              {
+                "message": "dispose failed:mcpProvider:11",
+                "causes": []
+              },
+              {
+                "message": "dispose failed:lspService:5",
+                "causes": []
+              },
+              {
+                "message": "dispose failed:memoryBundle:12",
+                "causes": []
+              }
+            ]
+          },
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "dispose"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "reload-generation-switch-and-drain",
+      "steps": [
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v1"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "old"
+          },
+          "id": 1,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "old": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "acquire",
+            "runtime": "old",
+            "as": "l1"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "old": {
+              "id": 1,
+              "state": "active",
+              "leases": 1
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v2"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "old": {
+              "id": 1,
+              "state": "active",
+              "leases": 1
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "reload"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24"
+          ],
+          "runtimes": {
+            "old": {
+              "id": 1,
+              "state": "retired",
+              "leases": 1
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "new"
+          },
+          "id": 13,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24"
+          ],
+          "runtimes": {
+            "old": {
+              "id": 1,
+              "state": "retired",
+              "leases": 1
+            },
+            "new": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "release",
+            "lease": "l1"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12"
+          ],
+          "runtimes": {
+            "old": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "new": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "dispose"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12",
+            "dispose:mcpProvider:23",
+            "dispose:pluginRuntime:14",
+            "dispose:routerSessionCustomRouters:15",
+            "dispose:compaction:20",
+            "dispose:sessionTitleProvider:22",
+            "dispose:lspService:17",
+            "dispose:executionWorld:18",
+            "dispose:routerRuntime:16",
+            "dispose:modelRuntime:13",
+            "dispose:memoryBundle:24"
+          ],
+          "runtimes": {
+            "old": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "new": {
+              "id": 13,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "reload-partial-failure-keeps-old",
+      "steps": [
+        {
+          "input": {
+            "op": "write",
+            "project": "a",
+            "variant": "v1"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "write",
+            "project": "b",
+            "variant": "v2"
+          },
+          "id": null,
+          "error": null,
+          "events": [],
+          "runtimes": {}
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "a"
+          },
+          "id": 1,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "b",
+            "as": "b"
+          },
+          "id": 13,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            },
+            "b": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "reload",
+            "fail": {
+              "family": "routerRuntime",
+              "phase": "stage"
+            }
+          },
+          "id": null,
+          "error": {
+            "message": "stage failed:routerRuntime:28",
+            "causes": []
+          },
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24",
+            "construct:modelRuntime:25:agent=parity/alpha",
+            "stage:modelRuntime:25",
+            "construct:pluginRuntime:26:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:27",
+            "construct:routerRuntime:28:model=25:extensions=26:registry=27:useModelRuntime=false",
+            "stage:routerRuntime:28",
+            "dispose:pluginRuntime:26",
+            "dispose:routerSessionCustomRouters:27",
+            "dispose:routerRuntime:28",
+            "dispose:modelRuntime:25"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            },
+            "b": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "sameA"
+          },
+          "id": 1,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24",
+            "construct:modelRuntime:25:agent=parity/alpha",
+            "stage:modelRuntime:25",
+            "construct:pluginRuntime:26:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:27",
+            "construct:routerRuntime:28:model=25:extensions=26:registry=27:useModelRuntime=false",
+            "stage:routerRuntime:28",
+            "dispose:pluginRuntime:26",
+            "dispose:routerSessionCustomRouters:27",
+            "dispose:routerRuntime:28",
+            "dispose:modelRuntime:25"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            },
+            "b": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            },
+            "sameA": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "b",
+            "as": "sameB"
+          },
+          "id": 13,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24",
+            "construct:modelRuntime:25:agent=parity/alpha",
+            "stage:modelRuntime:25",
+            "construct:pluginRuntime:26:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:27",
+            "construct:routerRuntime:28:model=25:extensions=26:registry=27:useModelRuntime=false",
+            "stage:routerRuntime:28",
+            "dispose:pluginRuntime:26",
+            "dispose:routerSessionCustomRouters:27",
+            "dispose:routerRuntime:28",
+            "dispose:modelRuntime:25"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            },
+            "b": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            },
+            "sameA": {
+              "id": 1,
+              "state": "active",
+              "leases": 0
+            },
+            "sameB": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "invalidate",
+            "root": "a"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24",
+            "construct:modelRuntime:25:agent=parity/alpha",
+            "stage:modelRuntime:25",
+            "construct:pluginRuntime:26:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:27",
+            "construct:routerRuntime:28:model=25:extensions=26:registry=27:useModelRuntime=false",
+            "stage:routerRuntime:28",
+            "dispose:pluginRuntime:26",
+            "dispose:routerSessionCustomRouters:27",
+            "dispose:routerRuntime:28",
+            "dispose:modelRuntime:25",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "b": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            },
+            "sameA": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "sameB": {
+              "id": 13,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "reload"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24",
+            "construct:modelRuntime:25:agent=parity/alpha",
+            "stage:modelRuntime:25",
+            "construct:pluginRuntime:26:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:27",
+            "construct:routerRuntime:28:model=25:extensions=26:registry=27:useModelRuntime=false",
+            "stage:routerRuntime:28",
+            "dispose:pluginRuntime:26",
+            "dispose:routerSessionCustomRouters:27",
+            "dispose:routerRuntime:28",
+            "dispose:modelRuntime:25",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12",
+            "construct:modelRuntime:29:agent=parity/beta",
+            "stage:modelRuntime:29",
+            "construct:pluginRuntime:30:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:31",
+            "construct:routerRuntime:32:model=29:extensions=30:registry=31:useModelRuntime=false",
+            "stage:routerRuntime:32",
+            "construct:lspService:33",
+            "construct:executionWorld:34:profile=read-only/headless/system_prompt:lsp=33",
+            "stage:executionWorld:34",
+            "construct:contextStorage:35",
+            "stage:contextStorage:35",
+            "construct:compaction:36:now=0",
+            "construct:promptCacheCoordinator:37",
+            "construct:sessionTitleProvider:38:model=29",
+            "construct:mcpProvider:39",
+            "construct:memoryBundle:40:agentModel=parity/beta",
+            "stage:memoryBundle:40",
+            "dispose:mcpProvider:23",
+            "dispose:pluginRuntime:14",
+            "dispose:routerSessionCustomRouters:15",
+            "dispose:compaction:20",
+            "dispose:sessionTitleProvider:22",
+            "dispose:lspService:17",
+            "dispose:executionWorld:18",
+            "dispose:routerRuntime:16",
+            "dispose:modelRuntime:13",
+            "dispose:memoryBundle:24"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "b": {
+              "id": 13,
+              "state": "disposed",
+              "leases": 0
+            },
+            "sameA": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "sameB": {
+              "id": 13,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "resolve",
+            "root": "a",
+            "as": "newA"
+          },
+          "id": 41,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24",
+            "construct:modelRuntime:25:agent=parity/alpha",
+            "stage:modelRuntime:25",
+            "construct:pluginRuntime:26:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:27",
+            "construct:routerRuntime:28:model=25:extensions=26:registry=27:useModelRuntime=false",
+            "stage:routerRuntime:28",
+            "dispose:pluginRuntime:26",
+            "dispose:routerSessionCustomRouters:27",
+            "dispose:routerRuntime:28",
+            "dispose:modelRuntime:25",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12",
+            "construct:modelRuntime:29:agent=parity/beta",
+            "stage:modelRuntime:29",
+            "construct:pluginRuntime:30:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:31",
+            "construct:routerRuntime:32:model=29:extensions=30:registry=31:useModelRuntime=false",
+            "stage:routerRuntime:32",
+            "construct:lspService:33",
+            "construct:executionWorld:34:profile=read-only/headless/system_prompt:lsp=33",
+            "stage:executionWorld:34",
+            "construct:contextStorage:35",
+            "stage:contextStorage:35",
+            "construct:compaction:36:now=0",
+            "construct:promptCacheCoordinator:37",
+            "construct:sessionTitleProvider:38:model=29",
+            "construct:mcpProvider:39",
+            "construct:memoryBundle:40:agentModel=parity/beta",
+            "stage:memoryBundle:40",
+            "dispose:mcpProvider:23",
+            "dispose:pluginRuntime:14",
+            "dispose:routerSessionCustomRouters:15",
+            "dispose:compaction:20",
+            "dispose:sessionTitleProvider:22",
+            "dispose:lspService:17",
+            "dispose:executionWorld:18",
+            "dispose:routerRuntime:16",
+            "dispose:modelRuntime:13",
+            "dispose:memoryBundle:24",
+            "construct:modelRuntime:41:agent=parity/alpha",
+            "stage:modelRuntime:41",
+            "construct:pluginRuntime:42:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:43",
+            "construct:routerRuntime:44:model=41:extensions=42:registry=43:useModelRuntime=false",
+            "stage:routerRuntime:44",
+            "construct:lspService:45",
+            "construct:executionWorld:46:profile=danger-full-access/interactive/system_prompt:lsp=45",
+            "stage:executionWorld:46",
+            "construct:contextStorage:47",
+            "stage:contextStorage:47",
+            "construct:compaction:48:now=0",
+            "construct:promptCacheCoordinator:49",
+            "construct:sessionTitleProvider:50:model=41",
+            "construct:mcpProvider:51",
+            "construct:memoryBundle:52:agentModel=parity/alpha",
+            "stage:memoryBundle:52"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "b": {
+              "id": 13,
+              "state": "disposed",
+              "leases": 0
+            },
+            "sameA": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "sameB": {
+              "id": 13,
+              "state": "disposed",
+              "leases": 0
+            },
+            "newA": {
+              "id": 41,
+              "state": "active",
+              "leases": 0
+            }
+          }
+        },
+        {
+          "input": {
+            "op": "dispose"
+          },
+          "id": null,
+          "error": null,
+          "events": [
+            "construct:modelRuntime:1:agent=parity/alpha",
+            "stage:modelRuntime:1",
+            "construct:pluginRuntime:2:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:3",
+            "construct:routerRuntime:4:model=1:extensions=2:registry=3:useModelRuntime=false",
+            "stage:routerRuntime:4",
+            "construct:lspService:5",
+            "construct:executionWorld:6:profile=danger-full-access/interactive/system_prompt:lsp=5",
+            "stage:executionWorld:6",
+            "construct:contextStorage:7",
+            "stage:contextStorage:7",
+            "construct:compaction:8:now=0",
+            "construct:promptCacheCoordinator:9",
+            "construct:sessionTitleProvider:10:model=1",
+            "construct:mcpProvider:11",
+            "construct:memoryBundle:12:agentModel=parity/alpha",
+            "stage:memoryBundle:12",
+            "construct:modelRuntime:13:agent=parity/beta",
+            "stage:modelRuntime:13",
+            "construct:pluginRuntime:14:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:15",
+            "construct:routerRuntime:16:model=13:extensions=14:registry=15:useModelRuntime=false",
+            "stage:routerRuntime:16",
+            "construct:lspService:17",
+            "construct:executionWorld:18:profile=read-only/headless/system_prompt:lsp=17",
+            "stage:executionWorld:18",
+            "construct:contextStorage:19",
+            "stage:contextStorage:19",
+            "construct:compaction:20:now=0",
+            "construct:promptCacheCoordinator:21",
+            "construct:sessionTitleProvider:22:model=13",
+            "construct:mcpProvider:23",
+            "construct:memoryBundle:24:agentModel=parity/beta",
+            "stage:memoryBundle:24",
+            "construct:modelRuntime:25:agent=parity/alpha",
+            "stage:modelRuntime:25",
+            "construct:pluginRuntime:26:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:27",
+            "construct:routerRuntime:28:model=25:extensions=26:registry=27:useModelRuntime=false",
+            "stage:routerRuntime:28",
+            "dispose:pluginRuntime:26",
+            "dispose:routerSessionCustomRouters:27",
+            "dispose:routerRuntime:28",
+            "dispose:modelRuntime:25",
+            "dispose:mcpProvider:11",
+            "dispose:pluginRuntime:2",
+            "dispose:routerSessionCustomRouters:3",
+            "dispose:compaction:8",
+            "dispose:sessionTitleProvider:10",
+            "dispose:lspService:5",
+            "dispose:executionWorld:6",
+            "dispose:routerRuntime:4",
+            "dispose:modelRuntime:1",
+            "dispose:memoryBundle:12",
+            "construct:modelRuntime:29:agent=parity/beta",
+            "stage:modelRuntime:29",
+            "construct:pluginRuntime:30:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:31",
+            "construct:routerRuntime:32:model=29:extensions=30:registry=31:useModelRuntime=false",
+            "stage:routerRuntime:32",
+            "construct:lspService:33",
+            "construct:executionWorld:34:profile=read-only/headless/system_prompt:lsp=33",
+            "stage:executionWorld:34",
+            "construct:contextStorage:35",
+            "stage:contextStorage:35",
+            "construct:compaction:36:now=0",
+            "construct:promptCacheCoordinator:37",
+            "construct:sessionTitleProvider:38:model=29",
+            "construct:mcpProvider:39",
+            "construct:memoryBundle:40:agentModel=parity/beta",
+            "stage:memoryBundle:40",
+            "dispose:mcpProvider:23",
+            "dispose:pluginRuntime:14",
+            "dispose:routerSessionCustomRouters:15",
+            "dispose:compaction:20",
+            "dispose:sessionTitleProvider:22",
+            "dispose:lspService:17",
+            "dispose:executionWorld:18",
+            "dispose:routerRuntime:16",
+            "dispose:modelRuntime:13",
+            "dispose:memoryBundle:24",
+            "construct:modelRuntime:41:agent=parity/alpha",
+            "stage:modelRuntime:41",
+            "construct:pluginRuntime:42:builtinPluginsEnabled=0",
+            "construct:routerSessionCustomRouters:43",
+            "construct:routerRuntime:44:model=41:extensions=42:registry=43:useModelRuntime=false",
+            "stage:routerRuntime:44",
+            "construct:lspService:45",
+            "construct:executionWorld:46:profile=danger-full-access/interactive/system_prompt:lsp=45",
+            "stage:executionWorld:46",
+            "construct:contextStorage:47",
+            "stage:contextStorage:47",
+            "construct:compaction:48:now=0",
+            "construct:promptCacheCoordinator:49",
+            "construct:sessionTitleProvider:50:model=41",
+            "construct:mcpProvider:51",
+            "construct:memoryBundle:52:agentModel=parity/alpha",
+            "stage:memoryBundle:52",
+            "dispose:mcpProvider:39",
+            "dispose:pluginRuntime:30",
+            "dispose:routerSessionCustomRouters:31",
+            "dispose:compaction:36",
+            "dispose:sessionTitleProvider:38",
+            "dispose:lspService:33",
+            "dispose:executionWorld:34",
+            "dispose:routerRuntime:32",
+            "dispose:modelRuntime:29",
+            "dispose:memoryBundle:40",
+            "dispose:mcpProvider:51",
+            "dispose:pluginRuntime:42",
+            "dispose:routerSessionCustomRouters:43",
+            "dispose:compaction:48",
+            "dispose:sessionTitleProvider:50",
+            "dispose:lspService:45",
+            "dispose:executionWorld:46",
+            "dispose:routerRuntime:44",
+            "dispose:modelRuntime:41",
+            "dispose:memoryBundle:52"
+          ],
+          "runtimes": {
+            "a": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "b": {
+              "id": 13,
+              "state": "disposed",
+              "leases": 0
+            },
+            "sameA": {
+              "id": 1,
+              "state": "disposed",
+              "leases": 0
+            },
+            "sameB": {
+              "id": 13,
+              "state": "disposed",
+              "leases": 0
+            },
+            "newA": {
+              "id": 41,
+              "state": "disposed",
+              "leases": 0
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
