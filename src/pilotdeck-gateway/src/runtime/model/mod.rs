@@ -7,6 +7,7 @@ pub mod health;
 pub mod http;
 mod json_walk;
 mod jsonrepair;
+pub mod provider_registry;
 pub(crate) mod providers;
 pub mod router;
 pub mod stats;

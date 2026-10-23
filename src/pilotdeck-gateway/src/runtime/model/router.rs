@@ -349,6 +349,14 @@ impl RouterRuntime {
         self
     }
 
+    /// ProjectRouterRuntimeBundle.dispose: close router-owned usage state.
+    /// The invocation registry has a separate model-family owner.
+    pub fn shutdown(&self) {
+        self.stats.lock().expect("router stats").dispose();
+        self.health.dispose();
+        self.store.clear();
+    }
+
     pub fn config(&self) -> &RouterConfig {
         &self.config
     }

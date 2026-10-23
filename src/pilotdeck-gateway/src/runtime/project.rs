@@ -107,6 +107,7 @@ pub trait ProjectRuntimeFactory: Send + Sync {
 /// The production factory (`buildRuntime`): config read and resource-family
 /// staging with the baseline's rollback order.
 mod factory;
+pub mod model;
 pub use factory::{
     ConfigSource, Families, Family, FamilyResource, InteractionProfile, InteractionProfileName,
     NativeConfigSource, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,
