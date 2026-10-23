@@ -2638,6 +2638,423 @@
       }
     },
     {
+      "name": "prepare_metadata_raw_route_invalid",
+      "turn": {
+        "sessionId": "session",
+        "turnId": "turn",
+        "workspaceId": "workspace",
+        "storageConfigVersion": "storage-v1",
+        "operationDeadline": "deadline"
+      },
+      "script": {
+        "metadata": {
+          "maxContextTokens": 0,
+          "maxOutputTokens": 8192,
+          "tokenLimits": {
+            "maxContextTokens": 200000,
+            "maxOutputTokens": 8192
+          },
+          "protocol": "anthropic",
+          "supportsPromptCache": true
+        },
+        "prepares": [
+          {
+            "ok": {
+              "request": {
+                "provider": "provider-a",
+                "model": "model-a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "systemPrompt": "fixture-system"
+              },
+              "provider": {
+                "toString": null
+              },
+              "model": "model-a"
+            }
+          }
+        ],
+        "streams": []
+      },
+      "calls": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-40",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "model",
+            "payload": {
+              "operation": "prepare",
+              "preparationId": "raw-invalid",
+              "request": {
+                "provider": "provider-a",
+                "model": "model-a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "systemPrompt": "fixture-system"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-40",
+            "inReplyTo": "call-40",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Host model metadata returned an invalid maxContextTokens."
+            }
+          },
+          "portCalls": [
+            {
+              "op": "prepare",
+              "request": {
+                "provider": "provider-a",
+                "model": "model-a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "systemPrompt": "fixture-system"
+              },
+              "context": {
+                "sessionId": "session",
+                "turnId": "turn",
+                "runId": "run",
+                "operationId": "operation",
+                "operationDeadline": "deadline",
+                "workspaceId": "workspace",
+                "storageConfigVersion": "storage-v1"
+              }
+            },
+            {
+              "op": "metadata.maxContextTokens",
+              "args": [
+                {
+                  "toString": null
+                },
+                "model-a"
+              ]
+            },
+            {
+              "op": "metadata.maxOutputTokens",
+              "args": [
+                {
+                  "toString": null
+                },
+                "model-a"
+              ]
+            },
+            {
+              "op": "metadata.tokenLimits",
+              "args": [
+                {
+                  "toString": null
+                },
+                "model-a"
+              ]
+            },
+            {
+              "op": "metadata.protocol",
+              "args": [
+                {
+                  "toString": null
+                }
+              ]
+            },
+            {
+              "op": "metadata.supportsPromptCache",
+              "args": [
+                {
+                  "toString": null
+                },
+                "model-a"
+              ]
+            }
+          ]
+        },
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-41",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "model",
+            "payload": {
+              "operation": "materialize_prepared_request",
+              "preparationId": "raw-invalid",
+              "request": {
+                "provider": "provider-b",
+                "model": "model-b",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "systemPrompt": "fixture-system"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-41",
+            "inReplyTo": "call-41",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar model call contains an invalid canonical request."
+            }
+          },
+          "portCalls": []
+        }
+      ],
+      "dispose": {
+        "portCalls": []
+      }
+    },
+    {
+      "name": "prepare_metadata_raw_route_valid",
+      "turn": {
+        "sessionId": "session",
+        "turnId": "turn",
+        "workspaceId": "workspace",
+        "storageConfigVersion": "storage-v1",
+        "operationDeadline": "deadline"
+      },
+      "script": {
+        "metadata": {
+          "maxContextTokens": 200000,
+          "maxOutputTokens": 8192,
+          "tokenLimits": {
+            "maxContextTokens": 200000,
+            "maxOutputTokens": 8192
+          },
+          "protocol": "anthropic",
+          "supportsPromptCache": true
+        },
+        "prepares": [
+          {
+            "ok": {
+              "request": {
+                "provider": "provider-a",
+                "model": "model-a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "systemPrompt": "fixture-system"
+              },
+              "provider": {
+                "toString": null
+              },
+              "model": 42
+            }
+          }
+        ],
+        "streams": []
+      },
+      "calls": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-42",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "model",
+            "payload": {
+              "operation": "prepare",
+              "preparationId": "raw-ok",
+              "request": {
+                "provider": "provider-a",
+                "model": "model-a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "systemPrompt": "fixture-system"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-42",
+            "inReplyTo": "call-42",
+            "requestId": "callback-request",
+            "ok": true,
+            "payload": {
+              "prepared": {
+                "request": {
+                  "provider": "provider-a",
+                  "model": "model-a",
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "hello"
+                        }
+                      ]
+                    }
+                  ],
+                  "systemPrompt": "fixture-system"
+                },
+                "provider": {
+                  "toString": null
+                },
+                "model": 42
+              },
+              "metadata": {
+                "provider": {
+                  "toString": null
+                },
+                "model": 42,
+                "maxContextTokens": 200000,
+                "maxOutputTokens": 8192,
+                "tokenLimits": {
+                  "maxContextTokens": 200000,
+                  "maxOutputTokens": 8192
+                },
+                "protocol": "anthropic",
+                "supportsPromptCache": true
+              }
+            }
+          },
+          "portCalls": [
+            {
+              "op": "prepare",
+              "request": {
+                "provider": "provider-a",
+                "model": "model-a",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hello"
+                      }
+                    ]
+                  }
+                ],
+                "systemPrompt": "fixture-system"
+              },
+              "context": {
+                "sessionId": "session",
+                "turnId": "turn",
+                "runId": "run",
+                "operationId": "operation",
+                "operationDeadline": "deadline",
+                "workspaceId": "workspace",
+                "storageConfigVersion": "storage-v1"
+              }
+            },
+            {
+              "op": "metadata.maxContextTokens",
+              "args": [
+                {
+                  "toString": null
+                },
+                42
+              ]
+            },
+            {
+              "op": "metadata.maxOutputTokens",
+              "args": [
+                {
+                  "toString": null
+                },
+                42
+              ]
+            },
+            {
+              "op": "metadata.tokenLimits",
+              "args": [
+                {
+                  "toString": null
+                },
+                42
+              ]
+            },
+            {
+              "op": "metadata.protocol",
+              "args": [
+                {
+                  "toString": null
+                }
+              ]
+            },
+            {
+              "op": "metadata.supportsPromptCache",
+              "args": [
+                {
+                  "toString": null
+                },
+                42
+              ]
+            }
+          ]
+        }
+      ],
+      "dispose": {
+        "portCalls": []
+      }
+    },
+    {
       "name": "stream_operation",
       "turn": {
         "sessionId": "session",
@@ -2723,7 +3140,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-40",
+            "messageId": "call-43",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -2751,8 +3168,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-40",
-            "inReplyTo": "call-40",
+            "messageId": "host-module-call-43",
+            "inReplyTo": "call-43",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -2813,7 +3230,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-41",
+            "messageId": "call-44",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -2825,8 +3242,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-41",
-            "inReplyTo": "call-41",
+            "messageId": "host-module-call-44",
+            "inReplyTo": "call-44",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -2896,7 +3313,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-42",
+            "messageId": "call-45",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -2924,8 +3341,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-42",
-            "inReplyTo": "call-42",
+            "messageId": "host-module-call-45",
+            "inReplyTo": "call-45",
             "requestId": "callback-request",
             "ok": false,
             "code": "MODEL_STREAM",
@@ -2978,7 +3395,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-43",
+            "messageId": "call-46",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3006,8 +3423,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-43",
-            "inReplyTo": "call-43",
+            "messageId": "host-module-call-46",
+            "inReplyTo": "call-46",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -3035,7 +3452,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-44",
+            "messageId": "call-47",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3050,8 +3467,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-44",
-            "inReplyTo": "call-44",
+            "messageId": "host-module-call-47",
+            "inReplyTo": "call-47",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -3065,7 +3482,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-45",
+            "messageId": "call-48",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3077,8 +3494,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-45",
-            "inReplyTo": "call-45",
+            "messageId": "host-module-call-48",
+            "inReplyTo": "call-48",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -3354,7 +3771,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-46",
+            "messageId": "call-49",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3382,8 +3799,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-46",
-            "inReplyTo": "call-46",
+            "messageId": "host-module-call-49",
+            "inReplyTo": "call-49",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -3444,7 +3861,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-47",
+            "messageId": "call-50",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3472,8 +3889,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-47",
-            "inReplyTo": "call-47",
+            "messageId": "host-module-call-50",
+            "inReplyTo": "call-50",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -3534,7 +3951,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-48",
+            "messageId": "call-51",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3562,8 +3979,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-48",
-            "inReplyTo": "call-48",
+            "messageId": "host-module-call-51",
+            "inReplyTo": "call-51",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -3624,7 +4041,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-49",
+            "messageId": "call-52",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3652,8 +4069,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-49",
-            "inReplyTo": "call-49",
+            "messageId": "host-module-call-52",
+            "inReplyTo": "call-52",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -3714,7 +4131,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-50",
+            "messageId": "call-53",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3742,8 +4159,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-50",
-            "inReplyTo": "call-50",
+            "messageId": "host-module-call-53",
+            "inReplyTo": "call-53",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -3804,7 +4221,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-51",
+            "messageId": "call-54",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3832,8 +4249,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-51",
-            "inReplyTo": "call-51",
+            "messageId": "host-module-call-54",
+            "inReplyTo": "call-54",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -3894,7 +4311,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-52",
+            "messageId": "call-55",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -3922,8 +4339,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-52",
-            "inReplyTo": "call-52",
+            "messageId": "host-module-call-55",
+            "inReplyTo": "call-55",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -3981,7 +4398,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-53",
+            "messageId": "call-56",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4009,8 +4426,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-53",
-            "inReplyTo": "call-53",
+            "messageId": "host-module-call-56",
+            "inReplyTo": "call-56",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4036,7 +4453,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-54",
+            "messageId": "call-57",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4064,8 +4481,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-54",
-            "inReplyTo": "call-54",
+            "messageId": "host-module-call-57",
+            "inReplyTo": "call-57",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4083,7 +4500,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-55",
+            "messageId": "call-58",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4111,8 +4528,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-55",
-            "inReplyTo": "call-55",
+            "messageId": "host-module-call-58",
+            "inReplyTo": "call-58",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -4126,7 +4543,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-56",
+            "messageId": "call-59",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4154,8 +4571,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-56",
-            "inReplyTo": "call-56",
+            "messageId": "host-module-call-59",
+            "inReplyTo": "call-59",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4213,7 +4630,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-57",
+            "messageId": "call-60",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4241,8 +4658,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-57",
-            "inReplyTo": "call-57",
+            "messageId": "host-module-call-60",
+            "inReplyTo": "call-60",
             "requestId": "callback-request",
             "ok": false,
             "code": "MODEL_NEXT",
@@ -4260,7 +4677,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-58",
+            "messageId": "call-61",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4288,8 +4705,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-58",
-            "inReplyTo": "call-58",
+            "messageId": "host-module-call-61",
+            "inReplyTo": "call-61",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -4303,7 +4720,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-59",
+            "messageId": "call-62",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4331,8 +4748,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-59",
-            "inReplyTo": "call-59",
+            "messageId": "host-module-call-62",
+            "inReplyTo": "call-62",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4382,7 +4799,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-60",
+            "messageId": "call-63",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4410,8 +4827,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-60",
-            "inReplyTo": "call-60",
+            "messageId": "host-module-call-63",
+            "inReplyTo": "call-63",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -4425,7 +4842,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-61",
+            "messageId": "call-64",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4453,8 +4870,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-61",
-            "inReplyTo": "call-61",
+            "messageId": "host-module-call-64",
+            "inReplyTo": "call-64",
             "requestId": "callback-request",
             "ok": false,
             "code": "MODEL_CREATE",
@@ -4501,7 +4918,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-62",
+            "messageId": "call-65",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4513,8 +4930,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-62",
-            "inReplyTo": "call-62",
+            "messageId": "host-module-call-65",
+            "inReplyTo": "call-65",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -4528,7 +4945,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-63",
+            "messageId": "call-66",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4556,8 +4973,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-63",
-            "inReplyTo": "call-63",
+            "messageId": "host-module-call-66",
+            "inReplyTo": "call-66",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4615,7 +5032,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-64",
+            "messageId": "call-67",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4643,8 +5060,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-64",
-            "inReplyTo": "call-64",
+            "messageId": "host-module-call-67",
+            "inReplyTo": "call-67",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4662,7 +5079,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-65",
+            "messageId": "call-68",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4690,8 +5107,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-65",
-            "inReplyTo": "call-65",
+            "messageId": "host-module-call-68",
+            "inReplyTo": "call-68",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4749,7 +5166,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-66",
+            "messageId": "call-69",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4761,8 +5178,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-66",
-            "inReplyTo": "call-66",
+            "messageId": "host-module-call-69",
+            "inReplyTo": "call-69",
             "requestId": "callback-request",
             "ok": false,
             "code": "MODEL_RETURN",
@@ -4780,7 +5197,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-67",
+            "messageId": "call-70",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4808,8 +5225,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-67",
-            "inReplyTo": "call-67",
+            "messageId": "host-module-call-70",
+            "inReplyTo": "call-70",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -4823,7 +5240,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-68",
+            "messageId": "call-71",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4835,8 +5252,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-68",
-            "inReplyTo": "call-68",
+            "messageId": "host-module-call-71",
+            "inReplyTo": "call-71",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4849,7 +5266,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-69",
+            "messageId": "call-72",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4877,8 +5294,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-69",
-            "inReplyTo": "call-69",
+            "messageId": "host-module-call-72",
+            "inReplyTo": "call-72",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4936,7 +5353,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-70",
+            "messageId": "call-73",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4948,8 +5365,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-70",
-            "inReplyTo": "call-70",
+            "messageId": "host-module-call-73",
+            "inReplyTo": "call-73",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -4966,7 +5383,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-71",
+            "messageId": "call-74",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -4994,8 +5411,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-71",
-            "inReplyTo": "call-71",
+            "messageId": "host-module-call-74",
+            "inReplyTo": "call-74",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -5009,7 +5426,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-72",
+            "messageId": "call-75",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5037,8 +5454,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-72",
-            "inReplyTo": "call-72",
+            "messageId": "host-module-call-75",
+            "inReplyTo": "call-75",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -5052,7 +5469,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-73",
+            "messageId": "call-76",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5064,8 +5481,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-73",
-            "inReplyTo": "call-73",
+            "messageId": "host-module-call-76",
+            "inReplyTo": "call-76",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -5121,7 +5538,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-74",
+            "messageId": "call-77",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5149,8 +5566,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-74",
-            "inReplyTo": "call-74",
+            "messageId": "host-module-call-77",
+            "inReplyTo": "call-77",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -5211,7 +5628,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-75",
+            "messageId": "call-78",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5223,8 +5640,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-75",
-            "inReplyTo": "call-75",
+            "messageId": "host-module-call-78",
+            "inReplyTo": "call-78",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -5237,7 +5654,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-76",
+            "messageId": "call-79",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5265,8 +5682,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-76",
-            "inReplyTo": "call-76",
+            "messageId": "host-module-call-79",
+            "inReplyTo": "call-79",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -5406,7 +5823,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-77",
+            "messageId": "call-80",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5434,8 +5851,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-77",
-            "inReplyTo": "call-77",
+            "messageId": "host-module-call-80",
+            "inReplyTo": "call-80",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -5496,7 +5913,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-78",
+            "messageId": "call-81",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5524,8 +5941,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-78",
-            "inReplyTo": "call-78",
+            "messageId": "host-module-call-81",
+            "inReplyTo": "call-81",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -5586,7 +6003,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-79",
+            "messageId": "call-82",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5614,8 +6031,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-79",
-            "inReplyTo": "call-79",
+            "messageId": "host-module-call-82",
+            "inReplyTo": "call-82",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -5676,7 +6093,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-80",
+            "messageId": "call-83",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5704,8 +6121,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-80",
-            "inReplyTo": "call-80",
+            "messageId": "host-module-call-83",
+            "inReplyTo": "call-83",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -5763,7 +6180,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-81",
+            "messageId": "call-84",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5791,8 +6208,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-81",
-            "inReplyTo": "call-81",
+            "messageId": "host-module-call-84",
+            "inReplyTo": "call-84",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -5850,7 +6267,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-82",
+            "messageId": "call-85",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -5878,8 +6295,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-82",
-            "inReplyTo": "call-82",
+            "messageId": "host-module-call-85",
+            "inReplyTo": "call-85",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -6030,7 +6447,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-83",
+            "messageId": "call-86",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -6058,8 +6475,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-83",
-            "inReplyTo": "call-83",
+            "messageId": "host-module-call-86",
+            "inReplyTo": "call-86",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -6125,7 +6542,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-84",
+            "messageId": "call-87",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -6153,8 +6570,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-84",
-            "inReplyTo": "call-84",
+            "messageId": "host-module-call-87",
+            "inReplyTo": "call-87",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -6204,7 +6621,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-85",
+            "messageId": "call-88",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -6232,8 +6649,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-85",
-            "inReplyTo": "call-85",
+            "messageId": "host-module-call-88",
+            "inReplyTo": "call-88",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -6298,7 +6715,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-86",
+            "messageId": "call-89",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -6326,8 +6743,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-86",
-            "inReplyTo": "call-86",
+            "messageId": "host-module-call-89",
+            "inReplyTo": "call-89",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -6471,7 +6888,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-87",
+            "messageId": "call-90",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -6499,8 +6916,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-87",
-            "inReplyTo": "call-87",
+            "messageId": "host-module-call-90",
+            "inReplyTo": "call-90",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -6566,7 +6983,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-88",
+            "messageId": "call-91",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -6594,8 +7011,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-88",
-            "inReplyTo": "call-88",
+            "messageId": "host-module-call-91",
+            "inReplyTo": "call-91",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -6645,7 +7062,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-89",
+            "messageId": "call-92",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -6673,8 +7090,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-89",
-            "inReplyTo": "call-89",
+            "messageId": "host-module-call-92",
+            "inReplyTo": "call-92",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -6740,7 +7157,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-90",
+            "messageId": "call-93",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -6768,8 +7185,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-90",
-            "inReplyTo": "call-90",
+            "messageId": "host-module-call-93",
+            "inReplyTo": "call-93",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -6874,7 +7291,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-91",
+            "messageId": "call-94",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -6907,8 +7324,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-91",
-            "inReplyTo": "call-91",
+            "messageId": "host-module-call-94",
+            "inReplyTo": "call-94",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -7015,7 +7432,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-92",
+            "messageId": "call-95",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7048,8 +7465,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-92",
-            "inReplyTo": "call-92",
+            "messageId": "host-module-call-95",
+            "inReplyTo": "call-95",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -7168,7 +7585,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-93",
+            "messageId": "call-96",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7201,8 +7618,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-93",
-            "inReplyTo": "call-93",
+            "messageId": "host-module-call-96",
+            "inReplyTo": "call-96",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -7366,7 +7783,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-94",
+            "messageId": "call-97",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7394,8 +7811,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-94",
-            "inReplyTo": "call-94",
+            "messageId": "host-module-call-97",
+            "inReplyTo": "call-97",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -7461,7 +7878,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-95",
+            "messageId": "call-98",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7489,8 +7906,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-95",
-            "inReplyTo": "call-95",
+            "messageId": "host-module-call-98",
+            "inReplyTo": "call-98",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -7540,7 +7957,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-96",
+            "messageId": "call-99",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7568,8 +7985,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-96",
-            "inReplyTo": "call-96",
+            "messageId": "host-module-call-99",
+            "inReplyTo": "call-99",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -7634,7 +8051,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-97",
+            "messageId": "call-100",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7662,8 +8079,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-97",
-            "inReplyTo": "call-97",
+            "messageId": "host-module-call-100",
+            "inReplyTo": "call-100",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -7733,7 +8150,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-98",
+            "messageId": "call-101",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7744,8 +8161,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-98",
-            "inReplyTo": "call-98",
+            "messageId": "host-module-call-101",
+            "inReplyTo": "call-101",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -7759,7 +8176,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-99",
+            "messageId": "call-102",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7771,92 +8188,13 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-99",
-            "inReplyTo": "call-99",
-            "requestId": "callback-request",
-            "ok": false,
-            "code": "HOST_MODULE_FAILED",
-            "error": {
-              "message": "Unsupported sidecar model operation: unknown"
-            }
-          },
-          "portCalls": []
-        },
-        {
-          "call": {
-            "kind": "request",
-            "method": "module_call",
-            "messageId": "call-100",
-            "requestId": "callback-request",
-            "runId": "run",
-            "operationId": "operation",
-            "module": "model",
-            "payload": {
-              "operation": "",
-              "preparationId": "prepared"
-            }
-          },
-          "response": {
-            "kind": "response",
-            "messageId": "host-module-call-100",
-            "inReplyTo": "call-100",
-            "requestId": "callback-request",
-            "ok": false,
-            "code": "HOST_MODULE_FAILED",
-            "error": {
-              "message": "Sidecar payload field operation must be a non-empty string."
-            }
-          },
-          "portCalls": []
-        },
-        {
-          "call": {
-            "kind": "request",
-            "method": "module_call",
-            "messageId": "call-101",
-            "requestId": "callback-request",
-            "runId": "run",
-            "operationId": "operation",
-            "module": "model",
-            "payload": {
-              "operation": "get_metadata",
-              "provider": "",
-              "model": "m"
-            }
-          },
-          "response": {
-            "kind": "response",
-            "messageId": "host-module-call-101",
-            "inReplyTo": "call-101",
-            "requestId": "callback-request",
-            "ok": false,
-            "code": "HOST_MODULE_FAILED",
-            "error": {
-              "message": "Host model metadata capability is unavailable."
-            }
-          },
-          "portCalls": []
-        },
-        {
-          "call": {
-            "kind": "request",
-            "method": "module_call",
-            "messageId": "call-102",
-            "requestId": "callback-request",
-            "runId": "run",
-            "operationId": "operation",
-            "module": "model",
-            "payload": {}
-          },
-          "response": {
-            "kind": "response",
             "messageId": "host-module-call-102",
             "inReplyTo": "call-102",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
             "error": {
-              "message": "Sidecar payload field operation must be a non-empty string."
+              "message": "Unsupported sidecar model operation: unknown"
             }
           },
           "portCalls": []
@@ -7871,13 +8209,92 @@
             "operationId": "operation",
             "module": "model",
             "payload": {
-              "operation": "stream"
+              "operation": "",
+              "preparationId": "prepared"
             }
           },
           "response": {
             "kind": "response",
             "messageId": "host-module-call-103",
             "inReplyTo": "call-103",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "portCalls": []
+        },
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-104",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "model",
+            "payload": {
+              "operation": "get_metadata",
+              "provider": "",
+              "model": "m"
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-104",
+            "inReplyTo": "call-104",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Host model metadata capability is unavailable."
+            }
+          },
+          "portCalls": []
+        },
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-105",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "model",
+            "payload": {}
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-105",
+            "inReplyTo": "call-105",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "Sidecar payload field operation must be a non-empty string."
+            }
+          },
+          "portCalls": []
+        },
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-106",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "model",
+            "payload": {
+              "operation": "stream"
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-106",
+            "inReplyTo": "call-106",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -7918,7 +8335,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-104",
+            "messageId": "call-107",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7931,8 +8348,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-104",
-            "inReplyTo": "call-104",
+            "messageId": "host-module-call-107",
+            "inReplyTo": "call-107",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -7986,7 +8403,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-105",
+            "messageId": "call-108",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -7999,8 +8416,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-105",
-            "inReplyTo": "call-105",
+            "messageId": "host-module-call-108",
+            "inReplyTo": "call-108",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -8120,7 +8537,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-106",
+            "messageId": "call-109",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -8148,8 +8565,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-106",
-            "inReplyTo": "call-106",
+            "messageId": "host-module-call-109",
+            "inReplyTo": "call-109",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -8215,7 +8632,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-107",
+            "messageId": "call-110",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -8243,8 +8660,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-107",
-            "inReplyTo": "call-107",
+            "messageId": "host-module-call-110",
+            "inReplyTo": "call-110",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -8291,7 +8708,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-108",
+            "messageId": "call-111",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -8319,8 +8736,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-108",
-            "inReplyTo": "call-108",
+            "messageId": "host-module-call-111",
+            "inReplyTo": "call-111",
             "requestId": "callback-request",
             "ok": false,
             "code": "HOST_MODULE_FAILED",
@@ -8334,7 +8751,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-109",
+            "messageId": "call-112",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -8362,8 +8779,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-109",
-            "inReplyTo": "call-109",
+            "messageId": "host-module-call-112",
+            "inReplyTo": "call-112",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -8515,7 +8932,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-110",
+            "messageId": "call-113",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -8550,8 +8967,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-110",
-            "inReplyTo": "call-110",
+            "messageId": "host-module-call-113",
+            "inReplyTo": "call-113",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -8617,7 +9034,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-111",
+            "messageId": "call-114",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -8645,8 +9062,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-111",
-            "inReplyTo": "call-111",
+            "messageId": "host-module-call-114",
+            "inReplyTo": "call-114",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -8736,7 +9153,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-112",
+            "messageId": "call-115",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -8764,8 +9181,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-112",
-            "inReplyTo": "call-112",
+            "messageId": "host-module-call-115",
+            "inReplyTo": "call-115",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -8811,7 +9228,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-113",
+            "messageId": "call-116",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -8839,8 +9256,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-113",
-            "inReplyTo": "call-113",
+            "messageId": "host-module-call-116",
+            "inReplyTo": "call-116",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -8897,7 +9314,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-114",
+            "messageId": "call-117",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -8925,8 +9342,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-114",
-            "inReplyTo": "call-114",
+            "messageId": "host-module-call-117",
+            "inReplyTo": "call-117",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -8972,7 +9389,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-115",
+            "messageId": "call-118",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -9000,8 +9417,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-115",
-            "inReplyTo": "call-115",
+            "messageId": "host-module-call-118",
+            "inReplyTo": "call-118",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -9065,7 +9482,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-116",
+            "messageId": "call-119",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -9093,8 +9510,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-116",
-            "inReplyTo": "call-116",
+            "messageId": "host-module-call-119",
+            "inReplyTo": "call-119",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -9145,7 +9562,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-117",
+            "messageId": "call-120",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -9173,8 +9590,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-117",
-            "inReplyTo": "call-117",
+            "messageId": "host-module-call-120",
+            "inReplyTo": "call-120",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -9233,7 +9650,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-118",
+            "messageId": "call-121",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -9261,8 +9678,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-118",
-            "inReplyTo": "call-118",
+            "messageId": "host-module-call-121",
+            "inReplyTo": "call-121",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -9308,7 +9725,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-119",
+            "messageId": "call-122",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -9336,8 +9753,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-119",
-            "inReplyTo": "call-119",
+            "messageId": "host-module-call-122",
+            "inReplyTo": "call-122",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -9392,7 +9809,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-120",
+            "messageId": "call-123",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -9420,8 +9837,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-120",
-            "inReplyTo": "call-120",
+            "messageId": "host-module-call-123",
+            "inReplyTo": "call-123",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -9467,7 +9884,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-121",
+            "messageId": "call-124",
             "requestId": "callback-request",
             "runId": "run",
             "operationId": "operation",
@@ -9495,8 +9912,8 @@
           },
           "response": {
             "kind": "response",
-            "messageId": "host-module-call-121",
-            "inReplyTo": "call-121",
+            "messageId": "host-module-call-124",
+            "inReplyTo": "call-124",
             "requestId": "callback-request",
             "ok": true,
             "payload": {
@@ -9728,7 +10145,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-122",
+            "messageId": "call-125",
             "requestId": "callback-request",
             "runId": 42,
             "operationId": null,
@@ -9813,7 +10230,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-123",
+            "messageId": "call-126",
             "requestId": "callback-request",
             "runId": null,
             "operationId": 42,
@@ -9898,7 +10315,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-124",
+            "messageId": "call-127",
             "requestId": "callback-request",
             "runId": false,
             "operationId": {},
@@ -9983,7 +10400,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-125",
+            "messageId": "call-128",
             "requestId": "callback-request",
             "runId": [],
             "operationId": true,
@@ -10068,7 +10485,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-126",
+            "messageId": "call-129",
             "requestId": "callback-request",
             "runId": 0,
             "operationId": false,
@@ -10152,7 +10569,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-127",
+            "messageId": "call-130",
             "requestId": "callback-request",
             "runId": {},
             "operationId": [],
@@ -10236,7 +10653,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-128",
+            "messageId": "call-131",
             "requestId": "callback-request",
             "runId": "",
             "operationId": "",
@@ -10320,7 +10737,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-129",
+            "messageId": "call-132",
             "requestId": "callback-request",
             "runId": null,
             "operationId": null,
@@ -10404,7 +10821,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-130",
+            "messageId": "call-133",
             "requestId": "callback-request",
             "runId": 42,
             "operationId": null,
@@ -10461,7 +10878,7 @@
           "call": {
             "kind": "request",
             "method": "module_call",
-            "messageId": "call-131",
+            "messageId": "call-134",
             "requestId": "callback-request",
             "runId": null,
             "operationId": 42,

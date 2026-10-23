@@ -1,6 +1,6 @@
 # Host model module TS fixtures
 
-固定基线 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。`oracle.json` 保存三份源码的 SHA-256、41 个顺序场景、131 次 model 调用的真实 TS 响应，以及每次调用实际进入假 model port 的参数；其中 121 次经过 `SidecarTurnProtocol.moduleResponseFor`，10 次直接调用 dispatcher；另有 9 组 `concurrency` 金样。dispatcher 场景的预期由真实 `createSidecarDefaultModuleDispatcher` 执行产生；`stickyUnstarted` 直接调用真实 composition 的 `bindTurn` execution。
+固定基线 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。`oracle.json` 保存三份源码的 SHA-256、43 个顺序场景、134 次 model 调用的真实 TS 响应，以及每次调用实际进入假 model port 的参数；其中 124 次经过 `SidecarTurnProtocol.moduleResponseFor`，10 次直接调用 dispatcher；另有 9 组 `concurrency` 金样。dispatcher 场景的预期由真实 `createSidecarDefaultModuleDispatcher` 执行产生；`stickyUnstarted` 直接调用真实 composition 的 `bindTurn` execution。
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
@@ -21,6 +21,7 @@ cargo test --locked --offline -p pilotdeck-gateway host::tests::model
 - `stream` 的完整 drain、request 覆盖、流内错误、错误后 preparation 仍保留；`stream_next` 的多步、done 清理、next 错误清理、创建错误不清理、缺少 request 的 canonical 错误、未知 preparation。
 - `close_stream` 的提前关闭、未知流、`return()` 报错后两表已清；`dispose` 对多个打开流的 `return()` 清理。
 - `get_metadata` 的完整/部分/空/缺失 metadata、安全整数边界、小数/零/负数/非有限/字符串/null、tokenLimits 字段（可选字段显式 undefined 与缺省一致）、非法 protocol、lookup 抛错、额外字段原样回传。
+- prepare 后的 metadata 分发（修复轮 6）：dispatcher 把 raw prepared 路由原样交给每个已定义 lookup（`sidecarDefaultModuleDispatcher.ts:88,445-450`）再校验返回值（`:451-470`），不做预转换、不因路由键转换抛错而跳过。raw 路由 `{toString:null}` / 数字原样进 lookup 参数日志；非法返回值（0）在五个 lookup 全部调用后才拒绝（`Host model metadata returned an invalid maxContextTokens.`）；合法返回值照常成功、`metadata.provider` 是 raw 对象；prepare 失败后 preparation 已存（`:84`），fallback materialize 再因非字符串路由被 canonical request 校验拒绝（`:443`）。
 - sticky 路由：prepare context 注入 `previousTier`/`previousProvider`/`previousModel`，首个流完成、出错或建流失败后清 tier，`orchestrating` 保留，空 sticky 注入空 metadata，空串不覆盖远端 metadata，sticky 返回 null 不注入。
 - 并发金样：dispose 同时启动所有关闭及单流关闭失败隔离；同流已受理 next 的 EOF；next/close 与未启动 sticky 流的关闭归属；建流期间 next→close、双 next→close（含关闭报错）；跨流 next/close 互不阻塞。Rust 侧 `next`/`return` 串行化，比较已受理响应、事件顺序与关闭归属，不比较 JS 调度时刻。建流等待由真实 async generator 的首次 next 内 gate 表达，`return()` 排在已受理 next 后；金样没有按 Rust 实现改写预期。
 - operation 字段边界与 unsupported 文本；所有 model 操作自带的 `preparationId`、`request`、`provider`、`model` 必填字段都由金样携带（#265 第 2 条）。Rust port trait 明确要求协作式异步、不得同步阻塞（#265 第 3 条）。
