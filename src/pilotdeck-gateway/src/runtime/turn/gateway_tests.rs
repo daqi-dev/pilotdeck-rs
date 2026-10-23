@@ -533,16 +533,19 @@ async fn replay_case(case: &Value) {
 async fn real_ts_gateway_frames_registry_replay_and_concurrency() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    let mut selected = 0;
     for case in oracle["cases"].as_array().unwrap() {
         if std::env::var("PDRS_GATEWAY_CASE")
             .is_ok_and(|name| name != case["name"].as_str().unwrap())
         {
             continue;
         }
+        selected += 1;
         tokio::time::timeout(Duration::from_secs(15), replay_case(case))
             .await
             .expect("gateway case deadlock");
     }
+    assert!(selected > 0, "PDRS_GATEWAY_CASE matched no scenario");
 }
 #[test]
 #[ignore = "requires the fixed TS baseline and tsx"]
@@ -811,4 +814,87 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
         1,
         "drop cancels queued serial timers"
     );
+}
+
+// Poll exactly at fixture observation points. This makes the abort await and
+// replacement deterministic without sleeps or assumptions about scheduler turns.
+#[tokio::test]
+async fn abort_waits_for_latest_real_ts_session_fence() {
+    crate::test_baseline::oracle(ORACLE);
+    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    for case in oracle["abortFenceCases"].as_array().unwrap() {
+        let host = empty_gateway_with_clock(30_000, Arc::new(Clock::default()));
+        let gateway = host.gateway.clone();
+        let steps = case["steps"].as_array().unwrap().clone();
+        let results = host
+            .call(async move {
+                let owner = &gateway.0.submitter.owner;
+                let key: JsString = "s".into();
+                let mut completions = HashMap::new();
+                let mut drains = HashMap::new();
+                let mut abort = None;
+                let mut ended = false;
+                let mut results = vec![];
+                for step in &steps {
+                    let step = step.as_str().unwrap();
+                    let run: JsString = step.chars().last().unwrap().to_string().into();
+                    if step.starts_with("begin-") {
+                        assert!(owner.begin_turn(&key, &run).is_some());
+                        completions.insert(run.clone(), owner.begin_completion(&key, &run));
+                        let identity = watch::channel(Some(RunRef {
+                            session_key: key.clone(),
+                            project_key: None,
+                            run_id: run.clone(),
+                        }))
+                        .1;
+                        drains.insert(run, gateway.track(identity));
+                    } else if step.starts_with("owner-done-") {
+                        owner.complete_turn(&key, &completions[&run]);
+                    } else if step.starts_with("finish-") {
+                        owner.complete_turn(&key, &completions[&run]);
+                        drop(drains.remove(&run));
+                    } else if step == "release-router" {
+                        // The owner await is released by finish-a; polling is
+                        // deliberately deferred until the same TS observation.
+                    } else if step.starts_with("abort-") {
+                        let params = if step == "abort-a" {
+                            js(&json!({"sessionKey":"s", "runId":"a"}))
+                        } else {
+                            js(&json!({"sessionKey":"s"}))
+                        };
+                        abort = Some(gateway.abort_on_close(params));
+                        // Start the request now, before any replacement steps.
+                        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+                        if let std::task::Poll::Ready(result) =
+                            abort.as_mut().unwrap().as_mut().poll(&mut context)
+                        {
+                            result.unwrap();
+                            ended = true;
+                        }
+                    } else {
+                        assert_eq!(step, "observe");
+                        if !ended {
+                            let mut context =
+                                std::task::Context::from_waker(std::task::Waker::noop());
+                            if let std::task::Poll::Ready(result) =
+                                abort.as_mut().unwrap().as_mut().poll(&mut context)
+                            {
+                                result.unwrap();
+                                ended = true;
+                            }
+                        }
+                        results.push(ended);
+                    }
+                }
+                results
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            json!(results),
+            case["results"],
+            "abort fence: {}",
+            case["name"]
+        );
+    }
 }

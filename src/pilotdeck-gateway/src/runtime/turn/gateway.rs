@@ -238,29 +238,58 @@ impl ConnectionGateway for ConnectionTurnGateway {
                 .ok_or_else(|| RequestError::new("sessionKey must be a string."))?;
             let run = params.get("runId").and_then(JsValue::as_string);
             let reason = params.get("reason").and_then(JsValue::as_string);
-            let active = self.0.submitter.owner.active_turn_run_id(key);
-            let wait_for: Vec<_> = self
-                .1
-                .lock()
-                .unwrap()
-                .active
-                .values()
-                .filter(|(identity, _)| {
-                    identity.borrow().as_ref().is_some_and(|submitted| {
-                        &submitted.session_key == key
-                            && Some(&submitted.run_id) == active.as_ref()
-                            && run.is_none_or(|run| run == &submitted.run_id)
+            // A stale explicit run must not wait for an unrelated submission.
+            // This check precedes the await; the completion selected below must
+            // instead be the latest session fence *after* owner abort drains.
+            if let Some(run) = run {
+                let active = self.0.submitter.owner.active_turn_run_id(key);
+                let matching = self
+                    .1
+                    .lock()
+                    .unwrap()
+                    .active
+                    .iter()
+                    .filter(|(_, (identity, _))| {
+                        identity
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|submitted| &submitted.session_key == key)
                     })
-                })
-                .map(|(_, done)| done.subscribe())
-                .collect();
+                    .max_by_key(|(id, _)| *id)
+                    .is_some_and(|(_, (identity, _))| {
+                        identity
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|submitted| &submitted.run_id == run)
+                    });
+                if active.as_ref() != Some(run) && !matching {
+                    return Ok(());
+                }
+            }
             self.0
                 .submitter
                 .owner
                 .abort_turn(key, run, reason)
                 .await
                 .map_err(|error| RequestError::new(error.to_string()))?;
-            for mut done in wait_for {
+            // InProcessGateway.abortTurn waits by session after router.abort.
+            // A replacement admitted during that await owns the current fence,
+            // even if its runId differs or admission has already been cleared.
+            let wait_for = self
+                .1
+                .lock()
+                .unwrap()
+                .active
+                .iter()
+                .filter(|(_, (identity, _))| {
+                    identity
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|submitted| &submitted.session_key == key)
+                })
+                .max_by_key(|(id, _)| *id)
+                .map(|(_, (_, done))| done.subscribe());
+            if let Some(mut done) = wait_for {
                 let _ = done.wait_for(|done| *done).await;
             }
             Ok(())
