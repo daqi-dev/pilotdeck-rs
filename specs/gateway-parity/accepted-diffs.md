@@ -668,3 +668,14 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **要求修** `A7-HOST-RESOURCE-001`：默认 300 秒本地超时修（另开单）；队列上限按已知差异接受。批准记录：人批 2026-10-23（未修子项接受为已知差异，不豁免判分）。
 - **接受（附运维约束）** `A6.2-TRANSCRIPT-LOCK-001`：切换前停掉 TS writer；不对 transcript 做硬链接。批准记录：人批 2026-10-23，接受为已知差异，不豁免判分。
 - **接受为已知差异（不豁免判分）**，中风险 14 条、低风险 11 条，批准记录：人批 2026-10-23：`A4-MIXED-BATCH-ORDER-001`、`A6-COLLATION-PUA-001`、`A6-JSVALUE-DEPTH-001`、`A6.2-TRANSCRIPT-COLLATION-001`、`A6.2-TRANSCRIPT-DOMAIN-001`、`A6.3-CONFIG-POLL-001`、`A6.4-CLOCK-TIMECLIP-001`、`A6.4-COUNT-CACHE-DEPTH-001`、`A6.4-JSONREPAIR-DEPTH-001`、`A6.4-MODEL-PROTOTYPE-001`、`A6.4-OPENAI-URL-001`、`A6.5-BASH-OUTPUT-001`、`A6.5-BASH-WNOWAIT-001`、`A6.5-MCP-DISPOSE-001`、`A6.5-MCP-OUTSCHEMA-SUPPORT-001`、`A6.5-TOOLS-CANCEL-001`、`A6.5-TOOLS-SCHEDULE-001`、`A6.6-FILEHISTORY-IO-001`、`A6.6-SNAPSHOT-CLOCK-001`、`A6.6-SNAPSHOT-COLLATION-001`、`A6.6-SNAPSHOT-IO-001`、`A6.7-HOOK-RESOURCE-001`、`A7-ADMISSION-FENCE-001`、`A7-LIFECYCLE-NFKC-001`、`A7-PROJECT-DISPOSE-001`。
+
+## 已知未对齐（未批准，待人批）· A7.2 turn 读面
+
+### A7.2-READ-LASTSEQ-DEPTH-001 · run_events 对极深嵌套 lastSeq 不复刻 V8 栈溢出
+
+- **类别**：运行时边界（V8 调用栈深度），与 A6-JSVALUE-DEPTH-001 同族。
+- **TS 依据**（cc7c4e6）：`src/gateway/client/InProcessGateway.ts:2541-2542` 对 `lastSeq` 做 JS 关系比较（ToPrimitive / ToNumber 递归）。PR #536 实现方真实 gateway 实测：包裹数字 1 的嵌套数组 2530 层成功（gap:true），2540 层抛 `RangeError: Maximum call stack size exceeded`；该临界层数随帧大小与容器形状变化，不是常数。
+- **Rust 行为**：`src/pilotdeck-gateway/src/runtime/turn/read.rs:164、183` 的读面转换用显式迭代、不设深度门限：约 2530 层以内与 TS 一致；更深时 Rust 成功转换，TS 抛 RangeError。Rust 自身不会栈溢出。
+- **范围**：仅持久化 run registry 快照中 `lastSeq` 为 2500 层以上嵌套容器的病态输入（正常为数字）；不放宽其他 lastSeq 取值（字符串、null、布尔、ToPrimitive 抛错等）的对拍。
+- **机器判据**：读面测试中 2000 / 2001 层场景与 TS 一致；病态深度只断言 Rust 有界返回、不崩溃，不钉 V8 临界层数（见 `_tmp/20261023-loop/card-v8-stack-depth.md`）。
+- **批准记录**：无；PR #536 codex r3 P1 指出，协调者按决策卡（AI 代批、待人复核）登记为已知未对齐；**已知未对齐（未批准）**。
