@@ -94,6 +94,13 @@ impl Handler {
         self.plan_todo = Some(handler);
         self
     }
+    /// Whether composition bound a tool execution port. TS types capability as
+    /// a mandatory module, so an unbound port is a host assembly error; the
+    /// router fails the manifest closed instead of advertising tool methods
+    /// (`dispatcher:153`).
+    pub fn is_installed(&self) -> bool {
+        self.ports.is_some()
+    }
     pub fn call(&self, call: JsValue) -> HostFuture<JsObject> {
         let handler = self.clone();
         Box::pin(async move {

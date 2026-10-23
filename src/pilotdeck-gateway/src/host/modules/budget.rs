@@ -86,6 +86,20 @@ impl Handler {
         }
         Some(methods)
     }
+    /// Whether composition installed a budget module. TS registers the
+    /// handler only for an installed module (`dispatcher:151`).
+    pub fn is_installed(&self) -> bool {
+        self.ports.is_some()
+    }
+    /// Manifest view of the bound ports (`modules.budget`, dispatcher:408-415).
+    pub fn inventory(&self) -> Option<super::manifest::BudgetInventory> {
+        let ports = self.ports.as_ref()?;
+        Some(super::manifest::BudgetInventory {
+            estimate_request_input: ports.estimate_request_input.is_some(),
+            evaluate_request_budget: ports.evaluate_request_budget.is_some(),
+            estimate_usage_cost: ports.estimate_usage_cost.is_some(),
+        })
+    }
 
     pub fn call(&self, call: JsValue) -> HostFuture<JsObject> {
         let handler = self.clone();

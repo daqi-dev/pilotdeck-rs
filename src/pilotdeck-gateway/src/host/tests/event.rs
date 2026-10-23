@@ -243,35 +243,23 @@ async fn module_router_reaches_the_event_handler() {
 #[tokio::test]
 async fn missing_sink_fails_closed_after_wire_validation() {
     let handler = Handler::default();
-    let unsupported = request(Some(parse_json(r#"{"operation":"x"}"#).unwrap()));
-    let response = module_response(&unsupported, handler.call(unsupported.clone()).await);
-    assert_eq!(
-        response.get("error").unwrap().get("message").unwrap(),
-        &JsValue::from("Unsupported sidecar event operation.")
-    );
-    let missing_operation = request(None);
-    let response = module_response(
-        &missing_operation,
-        handler.call(missing_operation.clone()).await,
-    );
-    assert_eq!(
-        response.get("error").unwrap().get("message").unwrap(),
-        &JsValue::from("Sidecar payload field operation must be a non-empty string.")
-    );
-    // The TS client rejects a null payload before dispatch (client:1086); at
-    // the module boundary it is the same missing-field case as a missing key.
-    let null_payload = request(Some(JsValue::Null));
-    let response = module_response(&null_payload, handler.call(null_payload.clone()).await);
-    assert_eq!(
-        response.get("error").unwrap().get("message").unwrap(),
-        &JsValue::from("Sidecar payload field operation must be a non-empty string.")
-    );
-    let emit = event_call(parse_json(r#"{"type":"x","sessionId":"session"}"#).unwrap());
-    let response = module_response(&emit, handler.call(emit.clone()).await);
-    assert_eq!(
-        response.get("error").unwrap().get("message").unwrap(),
-        &JsValue::from("Host did not provide an event sink.")
-    );
+    // An uninstalled module answers with the protocol's unregistered-module
+    // error before any payload parsing, like the TS client's handler lookup
+    // (agentLoopSidecarClient.ts:1155-1158).
+    for call in [
+        request(Some(parse_json(r#"{"operation":"x"}"#).unwrap())),
+        request(None),
+        // The TS client rejects a null payload before dispatch (client:1086);
+        // an uninstalled module still reports the missing handler first.
+        request(Some(JsValue::Null)),
+        event_call(parse_json(r#"{"type":"x","sessionId":"session"}"#).unwrap()),
+    ] {
+        let response = module_response(&call, handler.call(call.clone()).await);
+        assert_eq!(
+            response.get("error").unwrap().get("message").unwrap(),
+            &JsValue::from("Unsupported sidecar host module: event")
+        );
+    }
     assert!(handler.drain().is_empty());
 }
 

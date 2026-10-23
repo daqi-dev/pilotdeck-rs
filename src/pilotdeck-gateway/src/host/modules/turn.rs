@@ -75,6 +75,16 @@ impl Handler {
         }
         (!methods.is_empty()).then_some(methods)
     }
+    /// Manifest view of the bound turn callbacks (`input.drainSteerMessages`
+    /// and friends, dispatcher:417-427): the turn module is advertised only
+    /// while at least one callback is actually bound.
+    pub fn callbacks(&self) -> super::manifest::TurnCallbacks {
+        super::manifest::TurnCallbacks {
+            drain_steer_messages: self.ports.drain_steer.is_some(),
+            drain_or_close_steer_mailbox: self.ports.drain_or_close_steer.is_some(),
+            on_compact_persisted: self.ports.persist_compaction.is_some(),
+        }
+    }
     pub fn call(&self, call: JsValue) -> HostFuture<JsObject> {
         let handler = self.clone();
         Box::pin(async move {

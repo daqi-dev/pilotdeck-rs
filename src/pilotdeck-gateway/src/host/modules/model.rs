@@ -352,6 +352,23 @@ impl Handler {
     pub(super) fn preparation(&self, id: &JsString) -> Option<PreparedInvocation> {
         self.state.lock().unwrap().preparation(id)
     }
+    /// Whether composition bound a model execution port. TS types the module
+    /// as mandatory, so an unbound port is a host assembly error; the router
+    /// fails the manifest closed instead of advertising model methods
+    /// (`dispatcher:67`).
+    pub fn is_installed(&self) -> bool {
+        self.execution.is_some()
+    }
+    /// Manifest view of the bound ports: `materialize_prepared_request` is
+    /// advertised only while a materializer is actually bound
+    /// (`modules.model.materializeRequest`, dispatcher:401), and
+    /// `get_metadata` only while a lookup exists (`sidecarHostModulePorts.ts:320-322`).
+    pub fn inventory(&self) -> super::manifest::ModelInventory {
+        super::manifest::ModelInventory {
+            materialize_request: self.materializer.is_some(),
+            metadata: self.metadata.is_some(),
+        }
+    }
 
     pub fn call(&self, call: JsValue) -> HostFuture<JsObject> {
         // Clone the turn-owned ports and state so the future is `'static`.
