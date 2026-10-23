@@ -44,6 +44,11 @@ pub(super) struct Connection {
     closed: bool,
     #[cfg(test)]
     term_sent: Arc<AtomicUsize>,
+    // #542: unit tests keep EOF/TERM grace short on purpose, but the wait after
+    // SIGKILL is real OS scheduling (Tokio's SIGCHLD reaping). Tests may widen
+    // only that last wait. Production always uses `limits.close_timeout`.
+    #[cfg(test)]
+    reap_deadline: Option<std::time::Duration>,
 }
 
 impl Connection {
@@ -210,6 +215,8 @@ impl Connection {
             closed: false,
             #[cfg(test)]
             term_sent: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            reap_deadline: None,
         })
     }
 
@@ -327,6 +334,18 @@ impl Connection {
         self.term_sent.clone()
     }
 
+    // #542: the deadline for the only wait that depends on real OS scheduling
+    // (reaping after SIGKILL). A test may override just this segment; the
+    // product default is unchanged.
+    #[cfg(test)]
+    fn reap_deadline(&self) -> std::time::Duration {
+        self.reap_deadline.unwrap_or(self.limits.close_timeout)
+    }
+    #[cfg(not(test))]
+    fn reap_deadline(&self) -> std::time::Duration {
+        self.limits.close_timeout
+    }
+
     fn kill_group(&mut self) {
         crate::process_group::kill(self.group.take(), rustix::process::Signal::KILL);
     }
@@ -356,7 +375,7 @@ impl Connection {
             }
             let _ = self.child.start_kill();
         }
-        timeout(self.limits.close_timeout, self.child.wait())
+        timeout(self.reap_deadline(), self.child.wait())
             .await
             .map_err(|_| {
                 HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill.")
@@ -488,8 +507,15 @@ mod tests {
             ..Limits::default()
         }
     }
+    // #542: this module deliberately drives EOF/TERM grace with 50 ms. Only the
+    // wait after SIGKILL is real OS scheduling (Tokio's SIGCHLD reaping), so
+    // widen that single stage; the protocol deadlines stay short on purpose.
+    fn widen_reap(connection: &mut Connection) {
+        connection.reap_deadline = Some(Duration::from_secs(10));
+    }
     fn controlled_queue(capacity: usize) -> (Connection, mpsc::Receiver<WriteCommand>) {
         let mut connection = Connection::spawn(&mut peer("handshake-hang"), limits()).unwrap();
+        widen_reap(&mut connection);
         let (sender, receiver) = mpsc::channel(capacity);
         // Freeze only the writer; the private channel makes pressure deterministic.
         connection.pumps[1].abort();
@@ -500,6 +526,7 @@ mod tests {
     async fn ndjson_splits_batched_frames_and_preserves_cross_write_partial_frame() {
         let mut connection =
             Connection::spawn(&mut peer("batched-split-frames"), limits()).unwrap();
+        widen_reap(&mut connection);
         connection.send(&parse_json("{}").unwrap()).unwrap();
         for expected in [1.0, 2.0] {
             let frame = timeout(Duration::from_secs(2), connection.receive())
@@ -649,6 +676,7 @@ mod tests {
         let mut client = HostClient::spawn(&mut peer("terminal-then-exit"), None, limits())
             .await
             .unwrap();
+        widen_reap(&mut client.connection);
         let connection = &mut client.connection;
         connection.send(&parse_json(r#"{"kind":"request","messageId":"execute","method":"execute","runId":"run","operationId":"operation","requestId":"request","sessionId":"session","turnId":"turn","payload":{}}"#).unwrap()).unwrap();
         let accepted = connection.receive().await.unwrap();
@@ -694,6 +722,7 @@ mod tests {
                 ..limits()
             };
             let mut connection = Connection::spawn(&mut peer("frame-boundary"), bounded).unwrap();
+            widen_reap(&mut connection);
             if maximum == size {
                 connection.send(&value).unwrap();
                 let received = connection.receive().await.unwrap();
