@@ -1,7 +1,6 @@
 //! Session-owned operation persistence. No gateway route or host is wired here.
 //! The wire format remains the TS transcript JSONL format (no extra revision field).
-//! 基础恢复校验覆盖事件日志层；recorder 额外验证 model/tool 的 turn/step 域，
-//! 其余 SessionDomainValidation 生命周期留给后续 PR。
+//! 事件日志及完整 SessionDomainValidation 状态机由 adapter 与 recorder 共用。
 //! `run_registry` is the TS RunRegistry snapshot store; it is not wired into
 //! the host or gateway methods either.
 pub mod file_history;
@@ -9,6 +8,7 @@ mod ledger;
 mod projection;
 pub mod recorder;
 mod run_registry;
+mod session_domain;
 mod transcript;
 mod transcript_adapter;
 mod workspace_snapshot;

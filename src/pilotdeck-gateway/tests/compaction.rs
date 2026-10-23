@@ -135,9 +135,9 @@ impl Ctx {
 
 fn error_outcome(error: &RecorderError) -> JsValue {
     let (name, code) = match error {
-        RecorderError::State(_) | RecorderError::Store(_) | RecorderError::NodeHostRequired(_) => {
-            ("Error", None)
-        }
+        RecorderError::State(_)
+        | RecorderError::Store(_)
+        | RecorderError::ProjectionUnavailable(_) => ("Error", None),
         RecorderError::Domain { code, .. } => ("SessionDomainValidationError", Some(*code)),
         RecorderError::Envelope { code, .. } => ("SessionEventValidationError", Some(*code)),
         RecorderError::Type(_) => ("TypeError", None),

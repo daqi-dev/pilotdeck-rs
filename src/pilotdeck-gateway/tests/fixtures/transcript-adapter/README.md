@@ -27,7 +27,8 @@ Rust 默认测试 `real_ts_scenarios_match_outcomes_calls_and_bytes` 逐场景�
 | domain | 无 turn 状态下 durable message 的 `message` 为 undefined/null 抛 TypeError（V8 文案），legacy turn_result 通过 |
 | no-capabilities / replace-delete / read-limit | 可选能力缺省；replace 不重置 writer 序号；delete/deleteSession；`maxBytes` |
 | list / list-read-failure | 过滤（空、错误诊断、无摘要）、title/aiTitle/prompt 摘要优先级、metadata 合并（title 遇 null 保留、其它键 spread）、Date.parse 失败为 null、稳定降序、offset/limit 的负数/小数/0；读失败整体拒绝 |
-| node-only-* | 声明的缺口：turn_started 域校验、畸形条目 restore 投影、畸形 turn_result 列表投影。Rust 必须在第一处与 TS 分歧的步骤返回 `NodeHostRequired`，不得伪造结果 |
+| node-only-* | 历史命名保留，三个场景与其他场景一样逐字节对拍：turn_started 成功落盘、畸形 accepted_input 恢复成功、null turn_result 列表抛 TS TypeError |
+| domain-* | 真实 TS 域日志经过 recordEntry 校验、store 调用与 JSONL 落盘；另测失败不发布状态、恢复后继续 step、域校验失败、全日志 envelope 校验先于域校验 |
 
 `generate.mts <dir> --cross-ts-write` / `--cross-ts-verify` 由 Rust 忽略测试 `real_ts_and_rust_continue_each_others_transcripts` 调用：TS 写主记录与 sidechain 并留下坏尾 → Rust restore 后续写主记录、恢复 sidechain writer 后续写 → TS restore 校验序号、parent 链与 sidechain 后继续写 → Rust 再读。
 
@@ -37,3 +38,5 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway transc
 ```
 
 范围：只证明异步 transcript 适配器契约；未接 host、ProjectRuntimeRegistry 或 gateway method，不宣称本地化。替换事务、fork 复制、file-history/tool-result 制品能力与 NativeSessionStorageAdapter 校验留给后续 PR。
+
+#222：域用例输入与 `../session-domain/cases.mts` 共用；完整校验范围见其 README。尚未移植的恢复/列表投影形状返回 `ProjectionUnavailable`（A7.5），不能视为 TS 一致或已完成投影。

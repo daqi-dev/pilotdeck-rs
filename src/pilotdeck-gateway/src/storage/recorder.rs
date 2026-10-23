@@ -24,9 +24,9 @@
 //! recursively stripped from stream events, tool calls and tool results (never
 //! from a model request), matching `stripRawFields`.
 //!
-//! Not ported (unreachable through the durable ports, and they stay closed
-//! rather than guessed): question/permission/inbox lifecycle, instruction-layer
-//! snapshots, context materialization and `completeTurn` (`turn_result`).
+//! High-level question/permission/inbox and completeTurn recorder methods are
+//! outside this durable-port surface. Their transcript entries are validated by
+//! the complete shared session-domain state machine when written via the writer.
 //! `restore` only re-seeds the writer sequence/parent chain and the
 //! domain-validation state; a restored turn is not an active recorder turn and
 //! its pending compaction brackets are empty, exactly like constructing a fresh
@@ -38,9 +38,7 @@
 use super::{
     ledger::field,
     transcript::uuid,
-    transcript_adapter::{
-        AdapterError, TranscriptKey, TranscriptStore, TranscriptWriter, domain_supported,
-    },
+    transcript_adapter::{AdapterError, TranscriptKey, TranscriptStore, TranscriptWriter},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -71,8 +69,8 @@ pub enum RecorderError {
     },
     /// TS `TypeError` from a malformed value at a recorder call site.
     Type(String),
-    /// Unsupported lifecycle requires the Node host; it is never silently replayed.
-    NodeHostRequired(String),
+    /// Projection outside the currently ported read surface.
+    ProjectionUnavailable(String),
     Range(String),
     /// Host store failure, propagated unchanged.
     Store(super::LedgerError),
@@ -82,7 +80,7 @@ impl fmt::Display for RecorderError {
         match self {
             Self::State(message)
             | Self::Type(message)
-            | Self::NodeHostRequired(message)
+            | Self::ProjectionUnavailable(message)
             | Self::Range(message)
             | Self::Domain { message, .. }
             | Self::Envelope { message, .. } => f.write_str(message),
@@ -101,7 +99,7 @@ impl std::error::Error for RecorderError {
 fn state(message: impl Into<String>) -> RecorderError {
     RecorderError::State(message.into())
 }
-fn domain(code: &'static str, message: impl Into<String>) -> RecorderError {
+pub(super) fn domain(code: &'static str, message: impl Into<String>) -> RecorderError {
     RecorderError::Domain {
         code,
         message: message.into(),
@@ -114,7 +112,8 @@ impl From<AdapterError> for RecorderError {
             AdapterError::Validation { code, message } => Self::Envelope { code, message },
             AdapterError::Type(message) => Self::Type(message),
             AdapterError::Range(message) => Self::Range(message),
-            AdapterError::NodeHostRequired(message) => Self::NodeHostRequired(message),
+            AdapterError::ProjectionUnavailable(message) => Self::ProjectionUnavailable(message),
+            AdapterError::Domain { code, message } => Self::Domain { code, message },
             AdapterError::Store(error) => Self::Store(error),
         }
     }
@@ -669,7 +668,7 @@ fn lossy(value: &JsString) -> String {
     String::from_utf16_lossy(value.units())
 }
 /// Property access happens only after the entry's JSON round trips.
-fn call_id<'a>(value: &'a JsValue, key: &str) -> RecorderResult<&'a JsValue> {
+pub(super) fn call_id<'a>(value: &'a JsValue, key: &str) -> RecorderResult<&'a JsValue> {
     match value {
         JsValue::Undefined | JsValue::Null => Err(RecorderError::Type(format!(
             "Cannot read properties of {} (reading '{}')",
@@ -683,7 +682,7 @@ fn call_id<'a>(value: &'a JsValue, key: &str) -> RecorderResult<&'a JsValue> {
         _ => Ok(field(value, key)),
     }
 }
-fn display(value: &JsValue) -> RecorderResult<String> {
+pub(super) fn display(value: &JsValue) -> RecorderResult<String> {
     // JSON cannot contain callable own properties. Shadowing Object#toString
     // therefore makes String(id) fail; arrays coerce each non-null element.
     let mut pending = vec![value];
@@ -703,12 +702,12 @@ fn display(value: &JsValue) -> RecorderResult<String> {
 }
 /// JS Set uses SameValueZero, not deep equality. Each materialized entry owns
 /// fresh objects/arrays, so a new entry can never match a prior reference id.
-fn same_id(left: &JsValue, right: &JsValue) -> bool {
+pub(super) fn same_id(left: &JsValue, right: &JsValue) -> bool {
     !matches!(left, JsValue::Object(_) | JsValue::Array(_)) && left == right
 }
 /// JS truthiness for the raw `operationId`; the draft is typed but the domain
 /// log is validated exactly as TS reads it.
-fn truthy(value: &JsValue) -> bool {
+pub(super) fn truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
         JsValue::Bool(value) => *value,
@@ -717,13 +716,13 @@ fn truthy(value: &JsValue) -> bool {
         JsValue::Array(_) | JsValue::Object(_) => true,
     }
 }
-fn safe_integer(value: Option<f64>) -> bool {
+pub(super) fn safe_integer(value: Option<f64>) -> bool {
     value.is_some_and(|value| {
         value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0
     })
 }
 /// `String(entry.operationId || "(unknown)")` from the TS error templates.
-fn compaction_subject(operation: &JsValue) -> RecorderResult<String> {
+pub(super) fn compaction_subject(operation: &JsValue) -> RecorderResult<String> {
     if truthy(operation) {
         display(operation)
     } else {
@@ -731,7 +730,7 @@ fn compaction_subject(operation: &JsValue) -> RecorderResult<String> {
     }
 }
 /// SessionDomainValidation.ts:359-367.
-fn validate_compaction_started(entry: &JsValue) -> RecorderResult<()> {
+pub(super) fn validate_compaction_started(entry: &JsValue) -> RecorderResult<()> {
     let operation = field(entry, "operationId");
     let count = field(entry, "messageCount").as_number();
     if !truthy(operation) || !safe_integer(count) || count.is_some_and(|value| value < 0.0) {
@@ -760,7 +759,7 @@ fn validate_compaction_started(entry: &JsValue) -> RecorderResult<()> {
     Ok(())
 }
 /// SessionDomainValidation.ts:371-377.
-fn validate_compaction_completed(entry: &JsValue) -> RecorderResult<()> {
+pub(super) fn validate_compaction_completed(entry: &JsValue) -> RecorderResult<()> {
     let operation = field(entry, "operationId");
     let count = field(entry, "messageCount").as_number();
     if !truthy(operation) || !safe_integer(count) || count.is_some_and(|value| value < 0.0) {
@@ -777,7 +776,7 @@ fn validate_compaction_completed(entry: &JsValue) -> RecorderResult<()> {
 /// SessionDomainValidation.ts:379-384. `entry.error.length` throws for
 /// null/undefined and reads as zero for an empty string or array, or for any
 /// other value whose own `length` property is the number 0 (`{length: 0}`).
-fn validate_compaction_failed(entry: &JsValue) -> RecorderResult<()> {
+pub(super) fn validate_compaction_failed(entry: &JsValue) -> RecorderResult<()> {
     let operation = field(entry, "operationId");
     if !truthy(operation) {
         return Err(domain(
@@ -833,252 +832,5 @@ fn strip_raw_fields(value: &JsValue) -> JsValue {
             JsValue::Object(sanitized)
         }
         other => other.clone(),
-    }
-}
-
-/// SessionDomainValidation subset used by the durable model/tool and
-/// compaction ports. Owned by TranscriptWriter so two recorders also share
-/// validation state.
-#[derive(Clone, Default)]
-pub(super) struct DomainState {
-    turns: HashMap<JsString, DomainTurn>,
-}
-#[derive(Clone, Default)]
-struct DomainTurn {
-    last_step: u64,
-    open_step: Option<u64>,
-    model_requested: bool,
-    open_tool_calls: Vec<JsValue>,
-    compactions: Vec<JsValue>,
-}
-impl DomainState {
-    /// The old adapter's domain-free entries remain available. Once a durable
-    /// turn exists, messages claiming inbox work and turn closure need the
-    /// unported lifecycle; accepting them would invalidate this projection.
-    pub(super) fn validate_adapter_entry(&self, entry: &JsValue) -> Result<(), AdapterError> {
-        domain_supported(entry)?;
-        let active = field(entry, "turnId")
-            .as_string()
-            .is_some_and(|id| self.turns.contains_key(id));
-        let kind = field(entry, "type")
-            .as_string()
-            .map(lossy)
-            .unwrap_or_default();
-        let queued_message = matches!(
-            kind.as_str(),
-            "durable_message" | "assistant_message" | "tool_result_message"
-        ) && field(field(field(entry, "message"), "metadata"), "queueItemId")
-            .as_string()
-            .is_some_and(|id| !id.is_empty());
-        if active && (kind == "turn_result" || queued_message) {
-            return Err(AdapterError::NodeHostRequired(format!(
-                "Session domain validation for {kind} in an active turn requires the Node host."
-            )));
-        }
-        Ok(())
-    }
-
-    pub(super) fn next(&self, entry: &JsValue) -> RecorderResult<Self> {
-        let kind = field(entry, "type")
-            .as_string()
-            .map(lossy)
-            .unwrap_or_default();
-        if !matches!(
-            kind.as_str(),
-            "turn_started"
-                | "step_started"
-                | "step_completed"
-                | "model_request"
-                | "model_stream_event"
-                | "tool_call"
-                | "tool_result"
-                | "compaction_started"
-                | "compaction_completed"
-                | "compaction_failed"
-        ) {
-            // Other domain lifecycles are not part of this recorder port.
-            self.validate_adapter_entry(entry)?;
-            if kind == "turn_result" {
-                return Err(RecorderError::NodeHostRequired(
-                    "Session domain validation for turn_result entries requires the Node host."
-                        .into(),
-                ));
-            }
-            return Ok(self.clone());
-        }
-        let turn_id = field(entry, "turnId").as_string().ok_or_else(|| {
-            RecorderError::NodeHostRequired("Non-string turn ids require the Node host.".into())
-        })?;
-        let mut next = self.clone();
-        if kind == "turn_started" {
-            if next.turns.contains_key(turn_id) {
-                return Err(domain(
-                    "duplicate_turn_start",
-                    format!("Turn {} has already started.", lossy(turn_id)),
-                ));
-            }
-            if entry.get("inboxItemId").is_some() {
-                return Err(RecorderError::NodeHostRequired(
-                    "Queued turn starts require the Node host.".into(),
-                ));
-            }
-            next.turns.insert(turn_id.clone(), DomainTurn::default());
-            return Ok(next);
-        }
-        let turn = next.turns.get_mut(turn_id).ok_or_else(|| {
-            domain(
-                "event_outside_turn",
-                format!("{kind} requires an active turn {}.", lossy(turn_id)),
-            )
-        })?;
-        if matches!(
-            kind.as_str(),
-            "compaction_started" | "compaction_completed" | "compaction_failed"
-        ) {
-            let operation = field(entry, "operationId");
-            if kind == "compaction_started" {
-                validate_compaction_started(entry)?;
-                if turn.compactions.iter().any(|open| same_id(open, operation)) {
-                    return Err(domain(
-                        "invalid_compaction",
-                        format!("Compaction {} already started.", display(operation)?),
-                    ));
-                }
-                turn.compactions.push(operation.clone());
-            } else {
-                if kind == "compaction_completed" {
-                    validate_compaction_completed(entry)?;
-                } else {
-                    validate_compaction_failed(entry)?;
-                }
-                let position = turn
-                    .compactions
-                    .iter()
-                    .position(|open| same_id(open, operation));
-                let Some(position) = position else {
-                    return Err(domain(
-                        "invalid_compaction",
-                        format!(
-                            "Compaction {} has no open lifecycle bracket.",
-                            display(operation)?
-                        ),
-                    ));
-                };
-                turn.compactions.remove(position);
-            }
-            return Ok(next);
-        }
-        let step_value = field(entry, "step");
-        let step = step_value.as_number();
-        if kind == "step_started" {
-            if !step.is_some_and(|n| {
-                n.is_finite()
-                    && n.fract() == 0.0
-                    && n <= 9_007_199_254_740_991.0
-                    && n > turn.last_step as f64
-            }) {
-                return Err(domain(
-                    "invalid_step",
-                    format!(
-                        "Step {} must increase within turn {}.",
-                        display(step_value)?,
-                        lossy(turn_id)
-                    ),
-                ));
-            }
-            if let Some(open) = turn.open_step {
-                return Err(domain(
-                    "step_already_open",
-                    format!("Turn {} already has open step {open}.", lossy(turn_id)),
-                ));
-            }
-            let step = step.unwrap() as u64;
-            turn.last_step = step;
-            turn.open_step = Some(step);
-            turn.model_requested = false;
-            turn.open_tool_calls.clear();
-            return Ok(next);
-        }
-        if turn.open_step.is_none() || step != turn.open_step.map(|n| n as f64) {
-            return Err(domain(
-                "step_not_open",
-                format!(
-                    "{kind} requires open step {} in turn {}.",
-                    display(step_value)?,
-                    lossy(turn_id)
-                ),
-            ));
-        }
-        let step = turn.open_step.unwrap();
-        match kind.as_str() {
-            "model_request" => {
-                if turn.model_requested {
-                    return Err(domain(
-                        "duplicate_model_request",
-                        format!("Step {step} already has a model request."),
-                    ));
-                }
-                turn.model_requested = true;
-            }
-            "model_stream_event" if !turn.model_requested => {
-                return Err(domain(
-                    "model_request_missing",
-                    format!("Step {step} emitted a model event before its request."),
-                ));
-            }
-            "tool_call" => {
-                let id = call_id(field(entry, "call"), "id")?;
-                if !turn.model_requested {
-                    return Err(domain(
-                        "model_request_missing",
-                        format!(
-                            "Step {step} emitted tool call {} before its request.",
-                            display(id)?
-                        ),
-                    ));
-                }
-                if turn.open_tool_calls.iter().any(|open| same_id(open, id)) {
-                    return Err(domain(
-                        "duplicate_tool_call",
-                        format!("Tool call {} is already open.", display(id)?),
-                    ));
-                }
-                turn.open_tool_calls.push(id.clone());
-            }
-            "tool_result" => {
-                let id = call_id(field(entry, "result"), "toolCallId")?;
-                let position = turn
-                    .open_tool_calls
-                    .iter()
-                    .position(|open| same_id(open, id));
-                let Some(position) = position else {
-                    return Err(domain(
-                        "tool_result_without_call",
-                        format!(
-                            "Tool result {} has no open call in step {step}.",
-                            display(id)?
-                        ),
-                    ));
-                };
-                turn.open_tool_calls.remove(position);
-            }
-            "step_completed" => {
-                if field(entry, "outcome")
-                    .as_string()
-                    .is_some_and(|s| s.equals_str("completed"))
-                    && !turn.open_tool_calls.is_empty()
-                {
-                    return Err(domain(
-                        "step_has_open_tool_calls",
-                        format!("Step {step} completed with unresolved tool calls."),
-                    ));
-                }
-                turn.open_step = None;
-                turn.model_requested = false;
-                turn.open_tool_calls.clear();
-            }
-            _ => {}
-        }
-        Ok(next)
     }
 }
