@@ -317,43 +317,53 @@ fn child_source_boundary(source: &str) {
     }
     assert_eq!(
         lint_attributes.len(),
-        1,
-        "exactly one unsafe_code lint attribute"
+        2,
+        "exactly one unsafe_code lint attribute per approved function"
     );
-    let (start, end) = lint_attributes[0];
-    assert_eq!(
-        &tokens[start..end],
-        ["#", "[", "allow", "(", "unsafe_code", ")", "]"]
-    );
-    assert_eq!(
-        &tokens[end..end + 4],
-        ["pub", "fn", "install_child_signal_reset", "("]
-    );
-    assert_eq!(
-        tokens.iter().filter(|token| *token == "unsafe").count(),
-        1,
-        "exactly one unsafe keyword"
-    );
-    let start = tokens.iter().position(|token| token == "unsafe").unwrap() + 1;
-    assert_eq!(tokens[start], "{");
-    let mut depth = 1;
-    let mut end = start + 1;
-    while depth != 0 {
-        match tokens
-            .get(end)
-            .map(String::as_str)
-            .expect("closed unsafe block")
-        {
-            "{" => depth += 1,
-            "}" => depth -= 1,
-            _ => {}
-        }
-        end += 1;
+    for ((start, end), name) in lint_attributes
+        .iter()
+        .zip(["install_child_signal_reset", "install_child_detach_session"])
+    {
+        assert_eq!(
+            &tokens[*start..*end],
+            ["#", "[", "allow", "(", "unsafe_code", ")", "]"]
+        );
+        assert_eq!(&tokens[*end..*end + 4], ["pub", "fn", name, "("]);
     }
+    let unsafe_blocks: Vec<(usize, usize)> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| token.as_str() == "unsafe")
+        .map(|(start, _)| {
+            assert_eq!(tokens[start + 1], "{");
+            let mut depth = 1;
+            let mut end = start + 2;
+            while depth != 0 {
+                match tokens
+                    .get(end)
+                    .map(String::as_str)
+                    .expect("closed unsafe block")
+                {
+                    "{" => depth += 1,
+                    "}" => depth -= 1,
+                    _ => {}
+                }
+                end += 1;
+            }
+            (start, end)
+        })
+        .collect();
+    assert_eq!(
+        unsafe_blocks.len(),
+        2,
+        "exactly one unsafe keyword per approved function"
+    );
     // 改动闭包须同步更新此处并经评审。Pin the entire approved unsafe
-    // block, including the pre_exec call, rather than just counting keywords.
-    let expected = rust_tokens(
-        r#"
+    // blocks, including the pre_exec calls, rather than just counting
+    // keywords. Source order: the #386 signal reset, then the #552 setsid.
+    let expected = [
+        rust_tokens(
+            r#"
         command.pre_exec(|| {
             let mut action: libc::sigaction = std::mem::zeroed();
             action.sa_sigaction = libc::SIG_DFL;
@@ -371,12 +381,25 @@ fn child_source_boundary(source: &str) {
             Ok(())
         });
         "#,
-    );
-    assert_eq!(
-        tokens[start + 1..end - 1],
-        expected,
-        "approved pre_exec unsafe block token sequence changed"
-    );
+        ),
+        rust_tokens(
+            r#"
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+        "#,
+        ),
+    ];
+    for ((start, end), expected) in unsafe_blocks.iter().zip(expected) {
+        assert_eq!(
+            tokens[start + 2..*end - 1],
+            expected,
+            "approved pre_exec unsafe block token sequence changed"
+        );
+    }
     assert!(source.contains("#![cfg(unix)]"));
     for forbidden in ["macro_rules", "macro", "include", "mod"] {
         assert!(
