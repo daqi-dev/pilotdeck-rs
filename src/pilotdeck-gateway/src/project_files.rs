@@ -498,26 +498,37 @@ fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io:
             }
             // On Linux, unlinkat(AT_REMOVEDIR) on a regular file (or symlink)
             // whose parent directory is not writable returns EACCES rather than
-            // ENOTDIR, so the ENOTDIR arm above is never reached. Probe with
-            // statat to tell apart "non-directory entry → re-report as unlink"
-            // from "directory → keep as the rmdir error", matching Node's
-            // rmSync which lstat()s before choosing the syscall.
-            // Use lookup() to match EACCES exactly: std maps both EACCES and
-            // EPERM to PermissionDenied, and EPERM on a sticky directory must
-            // reach descends_after_rmdir below to recurse into child entries.
+            // ENOTDIR, so the ENOTDIR arm above is never reached. Similarly,
+            // EPERM is returned for files in sticky directories (S_ISVTX) or
+            // with immutable/append-only attributes. Probe with statat to tell
+            // apart "non-directory entry → re-report as unlink" from "directory
+            // → handle per error code", matching Node's rmSync which lstat()s
+            // before choosing the syscall.
+            // Use lookup() to match by code string: std maps both EACCES and
+            // EPERM to PermissionDenied so we must distinguish them explicitly.
             Err(e)
                 if crate::node_io::lookup(&e)
-                    .is_some_and(|(code, _)| code == "EACCES") =>
+                    .is_some_and(|(code, _)| code == "EACCES" || code == "EPERM") =>
             {
                 use rustix::fs::{AtFlags as AF2, statat};
                 let is_dir = statat(&directory, name, AF2::SYMLINK_NOFOLLOW)
                     .map(|st| (st.st_mode & libc::S_IFMT) == libc::S_IFDIR)
                     .unwrap_or(true); // unknown → treat as dir, preserve error
-                if is_dir {
+                if !is_dir {
+                    // Non-directory (regular file, symlink, …): re-report with
+                    // "unlink" syscall label to match Node's lstat-first rmSync.
+                    unlink(AtFlags::empty(), "unlink")?;
+                    continue;
+                }
+                // Directory + EACCES: return immediately (Node does not descend
+                // on EACCES, only on ENOTEMPTY/EEXIST/EPERM per descends_after_rmdir).
+                if crate::node_io::lookup(&e)
+                    .is_some_and(|(code, _)| code == "EACCES")
+                {
                     return Err(e);
                 }
-                unlink(AtFlags::empty(), "unlink")?;
-                continue;
+                // Directory + EPERM (sticky dir or immutable): fall through to
+                // the descends_after_rmdir arm which returns true for EPERM.
             }
             Err(e) if descends_after_rmdir(&e) => {}
             Err(e) => return Err(e),
