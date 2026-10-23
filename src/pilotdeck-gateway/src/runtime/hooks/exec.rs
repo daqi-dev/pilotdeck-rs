@@ -2,13 +2,14 @@
 //!
 //! Command hooks run the same shell shape as TS (`/bin/bash -c` on POSIX) in a
 //! new process group, so timeout/abort cleanup reaps descendants rather than
-//! only the shell. HTTP hooks use the workspace's existing hyper client: plain
-//! `http://` only, because adding a TLS crate is outside this change's
-//! dependency budget (a redirect to `https://` fails the same way). Redirects
-//! follow undici's default policy through `crate::fetch_redirect`. Prompt/agent execution needs a model runner (A7); this
-//! TLS gap ledger: specs/gateway-parity/accepted-diffs.md A6.7-HOOK-HTTPS-001
-//! (unapproved). This module keeps TS's explicit "not configured" result instead of inventing a
-//! different failure mode.
+//! only the shell. stdout/stderr are capped per stream at V8's
+//! `MAX_STRING_LENGTH` UTF-16 units, the same bound as the bash tool; a chunk
+//! that would not fit reports `Invalid string length`, the message of the
+//! `RangeError` TS's `stdout += text` throws in the shell runner's data
+//! listener. HTTP hooks use the same rustls connector as the model transport
+//! (`http://` and `https://`); redirects follow undici's default policy
+//! through `crate::fetch_redirect`. Prompt/agent execution needs a model
+//! runner (A7).
 use crate::hooks::protocol::{
     HookAsyncOutput, HookDecision, HookOutput, HookSpecificOutput, HookSyncOutput,
     PermissionDecision, PermissionHookDecision,
@@ -455,11 +456,34 @@ pub trait ShellPort: Send + Sync {
     fn execute(&self, request: ShellRequest) -> ShellFuture;
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct LocalShellPort;
+/// The default local shell. `output_limit` is per stream and counts UTF-16
+/// units like the JS string it becomes; tests lower it so the V8-length path
+/// is reachable without producing half a gigabyte.
+#[derive(Clone, Copy)]
+pub struct LocalShellPort {
+    output_limit: usize,
+}
+impl Default for LocalShellPort {
+    fn default() -> Self {
+        Self {
+            output_limit: crate::fetch_redirect::MAX_STRING_LENGTH,
+        }
+    }
+}
+impl LocalShellPort {
+    /// Test hook: a smaller per-stream UTF-16 limit than V8's
+    /// `MAX_STRING_LENGTH`.
+    #[doc(hidden)]
+    pub fn with_output_limit(limit: usize) -> Self {
+        Self {
+            output_limit: limit,
+        }
+    }
+}
 impl ShellPort for LocalShellPort {
     fn execute(&self, request: ShellRequest) -> ShellFuture {
-        Box::pin(async move { run_shell(request).await })
+        let output_limit = self.output_limit;
+        Box::pin(async move { run_shell(request, output_limit).await })
     }
 }
 
@@ -576,7 +600,7 @@ async fn observe_leader_exit(group: rustix::process::Pid) {
     }
 }
 
-async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
+async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellResult, JsString> {
     let env = env_object(request.env.as_ref());
     let shell = resolve_shell(&env)?;
     let mut command = Command::new(&shell);
@@ -621,13 +645,15 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
     // Both pipes are drained concurrently with the wait. A hook that writes
     // more than the OS pipe buffer (64 KiB on macOS) must not deadlock before
     // `wait` returns, and a grandchild that inherits either pipe keeps EOF
-    // pending: that is why the timers below outlive the leader.
-    let mut out_task = tokio::spawn(read_pipe(child.stdout.take()));
-    let mut err_task = tokio::spawn(read_pipe(child.stderr.take()));
+    // pending: that is why the timers below outlive the leader. Each stream is
+    // capped at `output_limit` UTF-16 units, like the bash tool's
+    // `StreamText`; the rest of the stream is still drained and discarded.
+    let mut out_task = tokio::spawn(read_pipe(child.stdout.take(), output_limit));
+    let mut err_task = tokio::spawn(read_pipe(child.stderr.take(), output_limit));
     let mut out_done = false;
     let mut err_done = false;
-    let mut stdout_bytes = Vec::new();
-    let mut stderr_bytes = Vec::new();
+    let mut stdout_pipe = PipeOutput::default();
+    let mut stderr_pipe = PipeOutput::default();
     // C6: the writer may block forever when the child does not read stdin but
     // a same-group grandchild keeps the read end open. It is aborted with the
     // rest of the process state instead of outliving the hook.
@@ -674,11 +700,11 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
                 leader_exited = true;
             }
             result = &mut out_task, if !out_done => {
-                stdout_bytes = result.unwrap_or_default();
+                stdout_pipe = result.unwrap_or_default();
                 out_done = true;
             }
             result = &mut err_task, if !err_done => {
-                stderr_bytes = result.unwrap_or_default();
+                stderr_pipe = result.unwrap_or_default();
                 err_done = true;
             }
             _ = &mut timeout_sleep, if !timed_or_cancelled => {
@@ -794,15 +820,15 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
     }
 
     if !out_done {
-        if let Ok(Ok(bytes)) = tokio::time::timeout(Duration::from_secs(1), &mut out_task).await {
-            stdout_bytes = bytes;
+        if let Ok(Ok(pipe)) = tokio::time::timeout(Duration::from_secs(1), &mut out_task).await {
+            stdout_pipe = pipe;
         }
         out_task.abort();
         let _ = out_task.await;
     }
     if !err_done {
-        if let Ok(Ok(bytes)) = tokio::time::timeout(Duration::from_secs(1), &mut err_task).await {
-            stderr_bytes = bytes;
+        if let Ok(Ok(pipe)) = tokio::time::timeout(Duration::from_secs(1), &mut err_task).await {
+            stderr_pipe = pipe;
         }
         err_task.abort();
         let _ = err_task.await;
@@ -813,13 +839,33 @@ async fn run_shell(request: ShellRequest) -> Result<ShellResult, JsString> {
         crate::process_group::wait_for_group_empty(group, KILL_GRACE).await;
     }
 
-    let mut stderr = stderr_bytes;
+    // V8's `stdout += text` throws `RangeError: Invalid string length` once a
+    // chunk does not fit (TS `tool/builtin/bash/commandRunner.ts:132`, probed
+    // in `_tmp/20261020-a65-pr7/probes/oom-rule.out`). A timeout/cancel keeps
+    // its own outcome and partial output, like TS's close-based result; a
+    // normal completion with an overflowing stream becomes the hook failure
+    // the executor's catch would have produced from that RangeError.
+    //
+    // Exit 2 keeps its blocking outcome even when a stream overflowed: exit 2
+    // is the hook's own refusal, and turning it into `non_blocking_error`
+    // would fail open. TS also resolves `exitCode: 2` when its data listener's
+    // RangeError is caught by an uncaughtException handler that keeps the
+    // process alive.
+    let blocking = exit_code == Some(2);
+    if !timed_or_cancelled
+        && !forced
+        && !blocking
+        && (stdout_pipe.truncated || stderr_pipe.truncated)
+    {
+        return Err(JsString::from("Invalid string length"));
+    }
+    let mut stderr = stderr_pipe.bytes;
     if forced {
         stderr.extend_from_slice(FORCE_RESOLVE_NOTE.as_bytes());
     }
     Ok(ShellResult {
         exit_code: if forced { None } else { exit_code },
-        stdout: stdout_bytes,
+        stdout: stdout_pipe.bytes,
         stderr,
         timed_out,
     })
@@ -829,13 +875,115 @@ fn duration_ms(value: f64) -> Duration {
     crate::runtime::network::node_timer_duration(value)
 }
 
-async fn read_pipe(pipe: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>) -> Vec<u8> {
+/// WHATWG `TextDecoder("utf-8")` in streaming mode: maximal-subpart U+FFFD
+/// substitution, an incomplete tail carried to the next chunk, and one
+/// leading BOM stripped (`ignoreBOM: false`). Same rules as the bash tool's
+/// decoder, kept here because that module is `cfg(unix)`-gated.
+#[derive(Default)]
+struct Utf8Decoder {
+    pending: Vec<u8>,
+    started: bool,
+}
+
+impl Utf8Decoder {
+    fn decode(&mut self, chunk: &[u8]) -> String {
+        let mut bytes = std::mem::take(&mut self.pending);
+        bytes.extend_from_slice(chunk);
+        let mut out = String::new();
+        let mut rest = bytes.as_slice();
+        loop {
+            match std::str::from_utf8(rest) {
+                Ok(valid) => {
+                    out.push_str(valid);
+                    break;
+                }
+                Err(error) => {
+                    let (valid, tail) = rest.split_at(error.valid_up_to());
+                    out.push_str(std::str::from_utf8(valid).unwrap_or_default());
+                    match error.error_len() {
+                        Some(length) => {
+                            out.push('\u{FFFD}');
+                            rest = &tail[length..];
+                        }
+                        None => {
+                            self.pending = tail.to_vec();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        self.strip_bom(out)
+    }
+    fn flush(&mut self) -> String {
+        let out = if self.pending.is_empty() {
+            String::new()
+        } else {
+            self.pending.clear();
+            "\u{FFFD}".into()
+        };
+        let out = self.strip_bom(out);
+        self.started = false;
+        out
+    }
+    fn strip_bom(&mut self, out: String) -> String {
+        if self.started || out.is_empty() {
+            return out;
+        }
+        self.started = true;
+        match out.strip_prefix('\u{FEFF}') {
+            Some(rest) => rest.to_owned(),
+            None => out,
+        }
+    }
+}
+
+/// One stream's retained bytes and whether a chunk was dropped at the cap.
+#[derive(Default)]
+struct PipeOutput {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+/// Reads one pipe with the bash tool's rule (`StreamText::push`): a decoded
+/// chunk that does not fit is dropped whole, later chunks that do fit are
+/// appended, and the pipe keeps draining so the child never blocks on a full
+/// OS buffer. `limit` counts UTF-16 units, matching the JS string the TS
+/// shell runner builds.
+async fn read_pipe(
+    pipe: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
+    limit: usize,
+) -> PipeOutput {
+    use tokio::io::AsyncReadExt;
+
     let Some(mut pipe) = pipe else {
-        return Vec::new();
+        return PipeOutput::default();
     };
-    let mut buffer = Vec::new();
-    let _ = tokio::io::AsyncReadExt::read_to_end(&mut pipe, &mut buffer).await;
-    buffer
+    let mut output = PipeOutput::default();
+    let mut decoder = Utf8Decoder::default();
+    let mut units = 0usize;
+    let mut chunk = vec![0u8; 64 * 1024];
+    loop {
+        let count = match pipe.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(count) => count,
+        };
+        let text = decoder.decode(&chunk[..count]);
+        append_capped(&mut output, &mut units, limit, &text);
+    }
+    let tail = decoder.flush();
+    append_capped(&mut output, &mut units, limit, &tail);
+    output
+}
+
+fn append_capped(output: &mut PipeOutput, units: &mut usize, limit: usize, text: &str) {
+    let count = text.encode_utf16().count();
+    if units.saturating_add(count) > limit {
+        output.truncated = true;
+        return;
+    }
+    *units += count;
+    output.bytes.extend_from_slice(text.as_bytes());
 }
 
 fn error_message(_: StackOverflow) -> String {
@@ -861,7 +1009,7 @@ pub struct CommandHookExecutor {
 impl Default for CommandHookExecutor {
     fn default() -> Self {
         Self {
-            shell: Arc::new(LocalShellPort),
+            shell: Arc::new(LocalShellPort::default()),
             session_cwd: None,
         }
     }
@@ -951,7 +1099,7 @@ pub struct HttpHookOptions {
 
 pub struct HttpHookExecutor {
     client: hyper_util::client::legacy::Client<
-        hyper_util::client::legacy::connect::HttpConnector,
+        hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
         http_body_util::Full<bytes::Bytes>,
     >,
     /// undici `headersTimeout` (per dispatch, so per redirect hop) and
@@ -973,15 +1121,26 @@ impl Default for HttpHookExecutor {
 }
 impl HttpHookExecutor {
     pub fn new() -> Self {
-        Self::with_timeout(HTTP_TIMEOUT)
+        // Node's fetch trusts its bundled CA store; `webpki-roots` is the
+        // equivalent Mozilla bundle the model transport already uses.
+        Self::with_config(crate::runtime::model::http::webpki_client_config())
+    }
+    /// Trust exactly `roots` (tests use the fixture's throwaway CA).
+    pub fn with_roots(roots: rustls::RootCertStore) -> Self {
+        Self::with_config(crate::runtime::model::http::rooted_client_config(roots))
     }
     pub fn with_timeout(timeout: Duration) -> Self {
+        let mut executor = Self::with_config(crate::runtime::model::http::webpki_client_config());
+        executor.timeout = timeout;
+        executor
+    }
+    fn with_config(config: rustls::ClientConfig) -> Self {
         let client =
             hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                .build_http();
+                .build(crate::runtime::model::http::https_connector(config));
         Self {
             client,
-            timeout,
+            timeout: HTTP_TIMEOUT,
             body_limit: crate::fetch_redirect::MAX_STRING_LENGTH,
         }
     }
@@ -1007,7 +1166,7 @@ impl HttpHookExecutor {
             let client = client.clone();
             crate::runtime::network::ExchangeFuture::io(async move {
                 let scheme = request.uri().scheme_str().unwrap_or_default();
-                if scheme != "http" {
+                if scheme != "http" && scheme != "https" {
                     return Err(JsString::from(format!(
                         "Unsupported HTTP hook URL scheme: {scheme}"
                     )));
@@ -1045,11 +1204,8 @@ impl HttpHookExecutor {
         let url_text = String::from_utf16_lossy(options.url.units());
         let url = url::Url::parse(&url_text)
             .map_err(|_| JsString::from(format!("Failed to parse URL from {url_text}")))?;
-        // https is a known gap (no TLS connector yet, #345). Other schemes
-        // are fetch network errors, reported at send like the TS side.
-        if url.scheme() == "https" {
-            return Err(JsString::from("Unsupported HTTP hook URL scheme: https"));
-        }
+        // Other schemes are fetch network errors, reported at send like the
+        // TS side; `follow` re-checks every redirect target.
         // `fetch` builds `Headers` from the plain object (node probes in
         // _tmp/20261019-a67-pr4/probe-p1/ and probe-r3/headers-*.mjs): the
         // WebIDL record conversion makes every key, then its value, a
@@ -1111,8 +1267,8 @@ impl HttpHookExecutor {
         // Default `fetch` follows redirects (undici, 20 hops). Every hop is its
         // own dispatch with its own headers timer (undici `headersTimeout`,
         // probe-r3/timeouts-3s.mjs); the abort signal spans the whole fetch.
-        // Only plain http is wired (no TLS connector), so a hop to https
-        // reports the same scheme error as an https hook URL.
+        // The TLS connector accepts both schemes, so a hop may upgrade or
+        // downgrade just like `fetch`.
         let response = crate::fetch_redirect::follow(
             url,
             hyper::Method::POST,
@@ -1776,7 +1932,7 @@ mod signal_tests {
             "PILOTDECK_SHELL_PATH".into(),
             probe.to_str().unwrap().into(),
         );
-        let result = LocalShellPort
+        let result = LocalShellPort::default()
             .execute(ShellRequest {
                 command: "report".into(),
                 cwd: probe.parent().unwrap().to_str().unwrap().into(),
