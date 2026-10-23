@@ -654,3 +654,4 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 的是 Rust 既有行为（期望值取自本 PR 之前的代码），不是 TS 对齐。机器判据：
 `src/pilotdeck-gateway/src/runtime/context/cache.rs` `runtime::context::cache::tests::depth_boundaries_match_pre_pr_rust_behavior` 与
 `src/pilotdeck-gateway/src/host/modules/context/request.rs` `host::modules::context::request::tests::deep_input_schema_fingerprints_reach_the_host_entry`。 判据依据决策卡 `_tmp/20261023-loop/card-v8-stack-depth.md`（AI 代批，待人复核）。**批准记录**：无；**已知未对齐（未批准）**。
+- **A6-JSVALUE-DEPTH-001 追加说明的更正（追加，不改上文；PR #539 Grok r3）**：上文「对象约 2100 层溢出」不准、且 runtime 路径也是**双向**差异。Grok r3 新进程实测：嵌套 `{x:…}` 对象 1887 层成功、1888 层抛 `RangeError: Maximum call stack size exceeded`。因此 runtime 路径（2000 容器门限）有两段差异：① 约 1888–1997 层对象 TS 溢出、Rust 正常出指纹；② 2000 层以上数组 TS 可成功（实测至 2398 层）、Rust 拒绝。host 路径（无门限）只有「约 1888 层以上对象 TS 溢出、Rust 成功」一段。以上层数是本机、指定入口、指定形状的观测；不同入口、调用栈深度与 JIT 预热会让边界下移，不能当常数使用（决策卡 `_tmp/20261023-loop/card-v8-stack-depth.md`）。
