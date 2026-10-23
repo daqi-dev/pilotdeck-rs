@@ -709,3 +709,12 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **范围**：workspace / global / 外部 workspace store 的读、写、edit、delete、deprecate、restore 与 repository 对应入口；不改变 store 根本身的可信身份；合法 id 的行为与 TS 对拍不变。
 - **机器判据**：`src/pilotdeck-gateway/tests/edgeclaw_entries.rs:723` `entry_paths_reject_escape_without_touching_outside_files`（各入口 × 越界形式，断言根外文件与全树原样）；负控：去掉校验 / 去掉符号链接检查 / 去掉批量预检均转红。
 - **批准记录**：无；协调者按决策卡 `_tmp/20261023-loop/card-edgeclaw-entry-traversal.md` 选 A 自决（依据人批先例 #496），AI 代批、待人复核；**已知未对齐（未批准）**。与 #508（MCP 读图越出 cwd）同类，#508 仍待人定。
+
+### A6.6-EDGECLAW-ENTRY-IDS-SHAPE-001 · 按 ids 批量操作的四个入口不接受非字符串 / 非数组 ids（接口边界）
+
+- **类别**：接口边界（已知未对齐，未批准）。
+- **TS 依据**：真实 TS 实测（PR #537 修复轮 5，金样 `tests/fixtures/edgeclaw-entries/oracle.json` 的 idAudit 部分）。TS 的 get 对六种非字符串元素返回 `[]`；delete/deprecate/restore 对 undefined/null 元素分别抛 `Cannot read properties of undefined (reading 'replace')` / `Cannot read properties of null (reading 'replace')`，其余四种抛 `relativePath.replace is not a function`（均 TypeError）。对这四个入口，TS ids 参数本身缺失/null 时分别抛 `Cannot read properties of undefined (reading 'filter')` / `Cannot read properties of null (reading 'filter')`；number/object/bool 参数抛 `ids.filter is not a function`，均 TypeError。Rust slice 参数无法表达这些形状。
+- **Rust 行为**：`runtime/memory/edgeclaw/storage/entries.rs` 的 `get_memory_records_by_ids`（:91）、`delete_memory_entries`（:223）、`deprecate_memory_entries`（:226）、`restore_memory_entries`（:229）签名为 `&[JsString]`，类型上无法收到上述形状；对应动态输入由将来的路由 / 适配层决定如何拒绝，本 PR 不在测试侧强转冒充同输入对拍。archive 与 edit 的动态形状已全部对拍通过，不在本条。
+- **范围**：仅上述四个入口的 ids 参数形状；字符串 ids 的行为已与 TS 对拍一致。接入客户端动态入口时须按本条补对拍，或在入口按 TS 文案抛 TypeError。
+- **机器判据**：暂无（强类型签名本身即边界）；接线时由接线 PR 以 idAudit 金样补判据。
+- **批准记录**：无；PR #537 修复轮 5 实现方列为残余差异候选，协调者核对后登记；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义。
