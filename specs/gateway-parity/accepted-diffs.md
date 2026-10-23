@@ -799,3 +799,9 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **TS 依据不变**：TS 探针里的 1000 ms 只是截断未返回的 TS 探针的预算，不是 Rust 通过上界（fixture README 已写明）。
 - **批准记录**：无；判据更正，不改判分语义、不新增豁免；R1–R3 的状态（AI 代批，待人复核）不变。
 
+### A6.5-MCP-HTTPS-001 · 当前状态（追加，不改上文；PR #361-3）
+
+- **当前状态**：已实现。streamable HTTP 与 SSE 的 https 初始 URL 复用 `runtime/model/http.rs` 的共享 webpki 连接器，connect 阶段（TCP + TLS 握手）包 10 s 期限（与 undici 默认 connectTimeout 一致；`ConnectDeadline` 从 hooks 移到共享位置，模型连接器自身行为不变）。
+- **机器判据**：`src/pilotdeck-gateway/tests/mcp_https.rs` 的 `replays_ts_mcp_https_over_local_tls`（本地 TLS 上回放真实 TS 金样：initialize / tools/list / tools/call、重定向、握手卡住、端口关闭）、`production_roots_do_not_trust_the_fixture_ca`、`mcp_https_fixtures_regenerate_identically_from_ts`（ignored，真实 TS 两次生成逐字节一致）。
+- **批准记录**：人批 2026-10-23「A6.5-MCP-HTTPS-001 … 修」；本条为修复完成的状态追加。
+
