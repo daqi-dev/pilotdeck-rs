@@ -25,6 +25,9 @@ struct Handler {
     cancel_from_module: bool,
     event_never: bool,
     large_response: bool,
+    /// Test gate for gated-event: the first non-final event waits here.
+    event_gate: Arc<Notify>,
+    gated_event: bool,
 }
 impl Handler {
     fn new(mode: &str) -> Arc<Self> {
@@ -62,6 +65,8 @@ impl Handler {
             cancel_from_module: mode.starts_with("cancel-before-"),
             event_never: matches!(mode, "event-queue-limit" | "event-byte-limit"),
             large_response: mode == "response-byte-limit",
+            event_gate: Arc::new(Notify::new()),
+            gated_event: mode == "gated-event",
         })
     }
 }
@@ -118,7 +123,13 @@ impl HostHandler for Handler {
         }
         self.release.notify_one();
         let slow = self.slow_event;
+        let gate = (self.gated_event
+            && event.get("final").and_then(JsValue::as_bool) != Some(true))
+        .then(|| self.event_gate.clone());
         Box::pin(async move {
+            if let Some(gate) = gate {
+                gate.notified().await;
+            }
             if never {
                 std::future::pending::<()>().await;
             }
@@ -140,7 +151,7 @@ impl Drop for ActiveCall {
 fn limits() -> Limits {
     Limits {
         handshake_timeout: Duration::from_secs(2),
-        execution_timeout: Duration::from_secs(2),
+        execution_timeout: Some(Duration::from_secs(2)),
         close_timeout: Duration::from_secs(1),
         ..Limits::default()
     }
@@ -149,7 +160,7 @@ fn limits() -> Limits {
 fn protocol_limits() -> Limits {
     Limits {
         handshake_timeout: Duration::from_secs(5),
-        execution_timeout: Duration::from_secs(10),
+        execution_timeout: Some(Duration::from_secs(10)),
         close_timeout: Duration::from_secs(5),
         ..limits()
     }
@@ -514,7 +525,7 @@ async fn zero_and_inconsistent_limits_are_rejected_before_spawn() {
         let mut bounded = limits();
         match field {
             "handshake_timeout" => bounded.handshake_timeout = Duration::ZERO,
-            "execution_timeout" => bounded.execution_timeout = Duration::ZERO,
+            "execution_timeout" => bounded.execution_timeout = Some(Duration::ZERO),
             "terminal_drain_timeout" => bounded.terminal_drain_timeout = Duration::ZERO,
             "io_timeout" => bounded.io_timeout = Duration::ZERO,
             "close_timeout" => bounded.close_timeout = Duration::ZERO,
@@ -612,7 +623,8 @@ async fn timeout_and_frame_limits_close_owned_processes() {
         .err()
         .unwrap();
     assert_eq!(error.kind, HostErrorKind::Limit);
-    bounded.execution_timeout = Duration::from_millis(100);
+    let execution_timeout = Duration::from_millis(100);
+    bounded.execution_timeout = Some(execution_timeout);
     let client = HostClient::spawn(&mut command("callback-timeout"), None, bounded)
         .await
         .unwrap();
@@ -624,7 +636,7 @@ async fn timeout_and_frame_limits_close_owned_processes() {
     })
     .await;
     assert!(!task.is_finished(), "timed out before callback started");
-    tokio::time::advance(bounded.execution_timeout + Duration::from_millis(1)).await;
+    tokio::time::advance(execution_timeout + Duration::from_millis(1)).await;
     // Resume the real clock only after the deadline is ready; child shutdown
     // still uses OS pipes, whose scheduling is independent of Tokio time.
     drop(clock);
@@ -634,6 +646,48 @@ async fn timeout_and_frame_limits_close_owned_processes() {
     assert_eq!(handler.active_calls.load(Ordering::SeqCst), 0);
     println!("HOST_REJECT callback-timeout: {error}");
 }
+
+#[tokio::test]
+async fn default_execution_timeout_is_unbounded_past_former_watchdog() {
+    let mode = "gated-event";
+    let handler = Handler::new(mode);
+    let (mut command, receipt) = peer("positive");
+    let client = HostClient::spawn(&mut command, None, Limits::default())
+        .await
+        .unwrap();
+    let clock = ManualClock::start();
+    let task = tokio::spawn(client.execute(request(), handler.clone()));
+    wait_for_event("first event blocked in handler", || {
+        handler.events.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    // The old default was 300 s. With no configured watchdog, 301 s of virtual
+    // time must leave a still-legitimate turn pending instead of truncating it.
+    tokio::time::advance(Duration::from_secs(301)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !task.is_finished(),
+        "default execution timeout truncated a 301s turn"
+    );
+    handler.event_gate.notify_one();
+    drop(clock);
+    let result = timeout(Duration::from_secs(10), task)
+        .await
+        .expect("unbounded execution did not resume after releasing the event")
+        .unwrap()
+        .unwrap();
+    assert!(matches!(result, ExecuteResult::Terminal(_)));
+    receipt.assert_pass("positive");
+    println!("HOST_PASS default-execution-timeout unbounded past 301s virtual time");
+}
+
+#[test]
+fn default_limits_disable_execution_watchdog() {
+    assert_eq!(Limits::default().execution_timeout, None);
+}
+
 #[test]
 fn duplicate_payload_comparison_preserves_js_wire_facts() {
     let parse = |payload: &str| {
@@ -782,7 +836,7 @@ async fn cancel_run(mode: &str) -> (Result<ExecuteResult, HostError>, Arc<Handle
     let timed = matches!(mode, "cancel-timeout" | "cancel-before-timeout");
     let mut bounded = protocol_limits();
     if timed {
-        bounded.execution_timeout = Duration::from_millis(400);
+        bounded.execution_timeout = Some(Duration::from_millis(400));
     }
     let client = HostClient::spawn(&mut command, None, bounded)
         .await
@@ -837,10 +891,10 @@ async fn accepted_then_final_failed_response_matches_ts_rejection() {
 }
 
 #[tokio::test]
-async fn maximum_execution_and_terminal_drain_durations_do_not_panic() {
+async fn unbounded_execution_and_maximum_terminal_drain_do_not_panic() {
     for bounded in [
         Limits {
-            execution_timeout: Duration::MAX,
+            execution_timeout: None,
             ..limits()
         },
         Limits {
@@ -1035,9 +1089,10 @@ async fn cancel_disconnect_and_timeout_preserve_unknown_progress() {
 async fn applied_terminal_bounds_pending_callback_drain() {
     let mode = "terminal-pending-callback";
     let (mut command, receipt) = peer(mode);
+    let execution_timeout = Duration::from_millis(200);
     let bounded = Limits {
         terminal_drain_timeout: Duration::from_millis(300),
-        execution_timeout: Duration::from_millis(200),
+        execution_timeout: Some(execution_timeout),
         ..protocol_limits()
     };
     let client = HostClient::spawn(&mut command, None, bounded)
@@ -1062,7 +1117,7 @@ async fn applied_terminal_bounds_pending_callback_drain() {
         std::task::Poll::Ready(())
     })
     .await;
-    tokio::time::advance(bounded.execution_timeout + Duration::from_millis(1)).await;
+    tokio::time::advance(execution_timeout + Duration::from_millis(1)).await;
     std::future::poll_fn(|cx| {
         assert!(
             std::future::Future::poll(execute.as_mut(), cx).is_pending(),
@@ -1071,7 +1126,7 @@ async fn applied_terminal_bounds_pending_callback_drain() {
         std::task::Poll::Ready(())
     })
     .await;
-    tokio::time::advance(bounded.terminal_drain_timeout - bounded.execution_timeout).await;
+    tokio::time::advance(bounded.terminal_drain_timeout - execution_timeout).await;
     let finished = tokio::select! {
         biased;
         result = &mut execute => Some(result),
@@ -1169,7 +1224,7 @@ async fn close_timeout_execute_timeout_drop_and_exited_leader_kill_grandchildren
         let (mut command, receipt) = peer(mode);
         let mut bounded = protocol_limits();
         if mode == "grandchild-timeout" {
-            bounded.execution_timeout = Duration::from_millis(100);
+            bounded.execution_timeout = Some(Duration::from_millis(100));
         }
         let client = HostClient::spawn(&mut command, None, bounded)
             .await

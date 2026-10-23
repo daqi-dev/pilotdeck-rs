@@ -27,10 +27,13 @@
 //! an independent bounded latest slot plus one in-flight frame, at most twice
 //! `max_frame_bytes` each; they cannot spend required-write capacity or budget.
 //!
-//! `execution_timeout` is a configurable local watchdog (default 300 seconds),
-//! not operationDeadline or a TS cancel timeout. Session hosts must configure it
-//! for their longest legitimate turn. After final application it is replaced by
-//! `terminal_drain_timeout`; unfinished cooperative callbacks are then dropped.
+//! `execution_timeout` is an optional local watchdog (default: unset, i.e. no
+//! local deadline), not operationDeadline or a TS cancel timeout. TS's execute
+//! loop waits for the peer without arming a local timer
+//! (agentLoopSidecarClient.ts:534-560), so the default must not cap a legitimate
+//! long turn. Session hosts may still configure a bound. After final application
+//! it is replaced by `terminal_drain_timeout`; unfinished cooperative callbacks
+//! are then dropped.
 //! Unix close/Drop kills the owned process group, including grandchildren that
 //! retain pipes. A subprocess that deliberately leaves that group is not owned.
 //! Abrupt host death that bypasses close/Drop has no descendant cleanup guarantee.
@@ -58,15 +61,17 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{process::Command, sync::watch, time::timeout};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub handshake_timeout: Duration,
-    /// Overall local resource bound, not an operationDeadline or cancel request.
-    pub execution_timeout: Duration,
+    /// Optional overall local resource bound, not an operationDeadline or cancel
+    /// request. `None` (the default) means no local execution deadline, matching
+    /// TS's uncapped execute wait; `Some` arms a watchdog for the entire wait.
+    pub execution_timeout: Option<Duration>,
     /// After a validated terminal is applied, allow callbacks this long to finish.
     pub terminal_drain_timeout: Duration,
     pub io_timeout: Duration,
@@ -87,7 +92,7 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             handshake_timeout: Duration::from_secs(10),
-            execution_timeout: Duration::from_secs(300),
+            execution_timeout: None,
             terminal_drain_timeout: Duration::from_millis(100),
             io_timeout: Duration::from_secs(5),
             close_timeout: Duration::from_secs(1),
@@ -101,14 +106,15 @@ impl Default for Limits {
 }
 impl Limits {
     fn validate(self) -> Result<(), HostError> {
-        if [
+        let zero_timeout = [
             self.handshake_timeout,
-            self.execution_timeout,
             self.io_timeout,
             self.terminal_drain_timeout,
             self.close_timeout,
         ]
         .contains(&Duration::ZERO)
+            || self.execution_timeout == Some(Duration::ZERO);
+        if zero_timeout
             || self.queue_capacity == 0
             || self.max_frame_bytes == 0
             || self.max_stderr_bytes == 0
@@ -116,6 +122,17 @@ impl Limits {
             || self.max_buffered_bytes == 0
         {
             return Err(HostError::protocol("Sidecar limits must be positive."));
+        }
+        // None is the explicit "no deadline" model; an explicit Some must be a
+        // duration the monotonic clock can represent, rather than silently
+        // degrading an overflowing checked_add into unbounded.
+        if self
+            .execution_timeout
+            .is_some_and(|timeout| Instant::now().checked_add(timeout).is_none())
+        {
+            return Err(HostError::protocol(
+                "Sidecar execution_timeout must be representable; use None for no local deadline.",
+            ));
         }
         // Bound allocations and keep channel capacities below Semaphore::MAX_PERMITS.
         for (name, value, maximum) in [
@@ -433,7 +450,8 @@ impl HostClient {
             .await
     }
     /// Cancellation is best-effort and never overrides a valid final. There is
-    /// no separate cancel timer in TS; execution_timeout bounds the entire wait.
+    /// no separate cancel timer in TS; a configured execution_timeout bounds the
+    /// entire wait, while the default (None) waits without a local deadline.
     pub async fn execute_cancellable(
         mut self,
         request: ExecuteRequest,
