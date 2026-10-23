@@ -1,0 +1,20 @@
+{
+  "results": [
+    {
+      "mutation": "markdown-identity-recheck",
+      "test": "lib:runtime::plugins::loader::markdown::tests::ancestor_replaced_with_symlink_after_check_is_skipped",
+      "exit": 0,
+      "killed": false,
+      "expectedMarkers": [
+        "expected only safe sibling"
+      ],
+      "matchedMarkers": false,
+      "targetFailed": false,
+      "failure": "",
+      "summary": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1189 filtered out; finished in 0.01s"
+    }
+  ],
+  "restoredSha256": {
+    "src/pilotdeck-gateway/src/runtime/plugins/loader/markdown.rs": "ecc771c7f993df00877e0b158a310133f371d4e9e0b7693d9a492ba1d95f67a1"
+  }
+}

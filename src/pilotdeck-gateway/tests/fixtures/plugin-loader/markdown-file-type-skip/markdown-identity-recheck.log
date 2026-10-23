@@ -1,0 +1,26 @@
+
+running 1 test
+test runtime::plugins::loader::markdown::tests::ancestor_replaced_with_symlink_after_check_is_skipped ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1189 filtered out; finished in 0.01s
+
+   Compiling pilotdeck-gateway v0.1.0 (/Users/da/ws/pilotdeck-rs/_build/wt-issue-564-plugin-toctou/src/pilotdeck-gateway)
+warning: unused import: `os::unix::fs::MetadataExt`
+   --> pilotdeck-gateway/src/runtime/plugins/loader/markdown.rs:195:25
+    |
+195 |     use std::{io::Read, os::unix::fs::MetadataExt};
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `before`
+   --> pilotdeck-gateway/src/runtime/plugins/loader/markdown.rs:197:14
+    |
+197 |     let Some(before) = std::fs::symlink_metadata(canonical)
+    |              ^^^^^^ help: if this is intentional, prefix it with an underscore: `_before`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pilotdeck-gateway` (lib test) generated 2 warnings (run `cargo fix --lib -p pilotdeck-gateway --tests` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.19s
+     Running unittests src/lib.rs (src/target/debug/deps/pilotdeck_gateway-698e86026072335b)
