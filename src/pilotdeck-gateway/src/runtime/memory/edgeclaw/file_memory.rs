@@ -483,6 +483,9 @@ impl Core {
         absolute(&self.root.join(relative))
     }
     fn within(&self, relative: &str) -> Result<bool> {
+        self.checked_path(relative).map(|_| true)
+    }
+    fn checked_path(&self, relative: &str) -> Result<(PathBuf, PathBuf)> {
         let denied = || FileMemoryError::Invalid(format!("Memory entry not found: {relative}"));
         if Path::new(relative).is_absolute() || relative.split(['/', '\\']).any(|part| part == "..")
         {
@@ -524,31 +527,163 @@ impl Core {
         // clear). Treat it as the trust boundary; only descendants are inputs.
         let root = fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
         match resolved(&path, &self.root, &root) {
-            Ok(path) if path.starts_with(root) => Ok(true),
+            Ok(path) if path.starts_with(&root) => Ok((root, path)),
             Ok(_) => Err(denied()),
             Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => Err(denied()),
             Err(e) => Err(crate::node_io::path_error(e, "realpath", &path).into()),
         }
     }
+    fn mutation_error(
+        &self,
+        relative: &str,
+        syscall: &'static str,
+        error: std::io::Error,
+    ) -> FileMemoryError {
+        if crate::project_files::nofollow_loop(&error) {
+            FileMemoryError::Invalid(format!("Memory entry not found: {relative}"))
+        } else {
+            // Normalize like the old path-based display: join("") would add a
+            // trailing separator and "./" would stay verbatim.
+            let display =
+                absolute(&self.root.join(relative)).unwrap_or_else(|_| self.root.join(relative));
+            crate::node_io::path_error(error, syscall, &display).into()
+        }
+    }
+    /// Check and resolve ordinary in-root links, then pin the root before the
+    /// test seam (or another process) can replace a checked descendant.
+    fn mutation_target(&self, relative: &str) -> Result<(fs::File, PathBuf)> {
+        let (root, target) = self.checked_path(relative)?;
+        let directory = crate::project_files::open_directory_beneath(&root, &root)
+            .map_err(|e| self.mutation_error(relative, "open", e))?;
+        let target = target
+            .strip_prefix(root)
+            .expect("checked boundary")
+            .to_path_buf();
+        #[cfg(test)]
+        mutation_test_hook::notify(relative);
+        Ok((directory, target))
+    }
+    fn mkdir(&self, relative: &str) -> Result<()> {
+        let (root, target) = self.mutation_target(relative)?;
+        crate::project_files::create_directories_at(
+            &root,
+            &target,
+            rustix::fs::Mode::from_raw_mode(0o777),
+        )
+        .map_err(|e| self.mutation_error(relative, "mkdir", e))
+    }
+    fn write_bytes(&self, relative: &str, content: impl AsRef<[u8]>) -> Result<()> {
+        let (root, target) = self.mutation_target(relative)?;
+        crate::project_files::create_directories_at(
+            &root,
+            target.parent().expect("file parent"),
+            rustix::fs::Mode::from_raw_mode(0o777),
+        )
+        .map_err(|e| self.mutation_error(relative, "mkdir", e))?;
+        crate::project_files::overwrite_at(&root, &target, content.as_ref())
+            .map_err(|e| self.mutation_error(relative, "open", e))
+    }
+    fn unlink(&self, relative: &str) -> Result<()> {
+        self.within(relative)?;
+        // unlink removes an allowed leaf symlink, not its canonical target.
+        let lexical = Path::new(relative);
+        if lexical.parent().is_none() {
+            // "" addresses the memory root itself; Node unlinkSync(2) on a
+            // directory reports EPERM (EISDIR on Linux) against the root path.
+            return self.unlink_root();
+        }
+        let parent = lexical.parent().expect("non-root parent");
+        let (canonical, target) = self.checked_path(parent.to_str().expect("UTF-8 path"))?;
+        let root = crate::project_files::open_directory_beneath(&canonical, &canonical)
+            .map_err(|e| self.mutation_error(relative, "unlink", e))?;
+        let target = target
+            .strip_prefix(canonical)
+            .expect("checked boundary")
+            .join(lexical.file_name().ok_or_else(|| {
+                FileMemoryError::Invalid(format!("Memory entry not found: {relative}"))
+            })?);
+        #[cfg(test)]
+        mutation_test_hook::notify(relative);
+        crate::project_files::unlink_at(&root, &target)
+            .map_err(|e| self.mutation_error(relative, "unlink", e))
+    }
+    /// Unlink the pinned memory root itself, keeping Node's directory error.
+    fn unlink_root(&self) -> Result<()> {
+        let parent = self
+            .root
+            .parent()
+            .ok_or_else(|| FileMemoryError::Invalid("Cannot unlink filesystem root".into()))?;
+        let canonical = fs::canonicalize(parent)?;
+        let directory = crate::project_files::open_directory_beneath(&canonical, &canonical)
+            .map_err(|e| self.mutation_error("", "unlink", e))?;
+        #[cfg(test)]
+        mutation_test_hook::notify("");
+        crate::project_files::unlink_at(
+            &directory,
+            Path::new(self.root.file_name().expect("root name")),
+        )
+        .map_err(|e| self.mutation_error("", "unlink", e))
+    }
     fn ensure_layout(&self) -> Result<()> {
-        io_mkdir(&self.root)?;
+        // Bootstrap a missing trusted root from its nearest existing canonical
+        // ancestor, using #596's mkdirat walk rather than recursive path mkdir.
+        let mut ancestor = self.root.as_path();
+        while !ancestor.exists() {
+            ancestor = ancestor.parent().ok_or_else(|| {
+                FileMemoryError::Invalid("Memory root has no existing ancestor".into())
+            })?;
+        }
+        let canonical = fs::canonicalize(ancestor)?;
+        let directory = crate::project_files::open_directory_beneath(&canonical, &canonical)?;
+        crate::project_files::create_directories_at(
+            &directory,
+            self.root.strip_prefix(ancestor).expect("ancestor"),
+            rustix::fs::Mode::from_raw_mode(0o777),
+        )
+        .map_err(|e| self.mutation_error("", "mkdir", e))?;
         if self.options.manage_user_profile {
             if let Some(path) = &self.options.user_profile_relative_path {
-                io_mkdir(self.path(path)?.parent().expect("absolute parent"))?;
+                // Retain validation of the full configured path, not only its parent.
+                self.within(path)?;
+                self.mkdir(
+                    Path::new(path)
+                        .parent()
+                        .expect("relative parent")
+                        .to_str()
+                        .expect("UTF-8 path"),
+                )?;
             }
             if let Some(path) = &self.options.user_notes_relative_dir {
-                io_mkdir(self.path(path)?)?;
+                self.mkdir(path)?;
             }
         }
         if self.options.manage_project_files {
             for dir in ["Project", "Feedback"] {
-                io_mkdir(self.root.join(dir))?;
+                self.mkdir(dir)?;
             }
         }
         if self.options.manage_project_meta && self.general() {
-            io_mkdir(self.root.join(GENERAL))?;
+            self.mkdir(GENERAL)?;
         }
         Ok(())
+    }
+    fn clear(&self) -> Result<()> {
+        // The root is a trusted input and TS unlinks a root symlink itself.
+        // Pin its parent, then remove the lexical leaf without following links.
+        let parent = self
+            .root
+            .parent()
+            .ok_or_else(|| FileMemoryError::Invalid("Cannot clear filesystem root".into()))?;
+        let canonical = fs::canonicalize(parent)?;
+        let directory = crate::project_files::open_directory_beneath(&canonical, &canonical)?;
+        #[cfg(test)]
+        mutation_test_hook::notify("");
+        crate::project_files::remove_tree_at(
+            &directory,
+            Path::new(self.root.file_name().expect("root name")),
+            &self.root,
+        )
+        .map_err(|e| self.mutation_error("", "rmdir", e))
     }
     fn parsed(&self, path: &str) -> Result<Option<(JsObject, String)>> {
         if !self.within(path)? {
@@ -711,9 +846,7 @@ impl Core {
         );
     }
     fn write(&self, path: &str, fm: &JsObject, body: &str) -> Result<JsObject> {
-        let absolute = self.path(path)?;
-        io_mkdir(absolute.parent().expect("absolute parent"))?;
-        io_write(absolute, render(fm, body))?;
+        self.write_bytes(path, render(fm, body))?;
         self.repair()?;
         self.records(&[path.into()], 5000.0)?
             .into_iter()
@@ -1044,8 +1177,8 @@ impl Core {
             description,
             "".into(),
         ]);
-        io_write(
-            self.path("project.meta.md")?,
+        self.write_bytes(
+            "project.meta.md",
             format!("{}\n", crate::metadata::js_trim(&lines.join("\n"))),
         )?;
         self.repair()?;
@@ -1182,7 +1315,7 @@ impl Core {
                 String::new()
             };
             if next != prev {
-                io_write(path, next)?;
+                self.write_bytes("MEMORY.md", next)?;
                 (1, "Rebuilt workspace memory manifest.")
             } else {
                 (0, "Workspace memory manifest already up to date.")
@@ -1602,9 +1735,7 @@ impl Core {
                 let mut changed = vec![];
                 for path in array(input, "relativePaths") {
                     if self.within(&path)? && self.path(&path)?.exists() {
-                        let absolute = self.path(&path)?;
-                        fs::remove_file(&absolute)
-                            .map_err(|e| crate::node_io::path_error(e, "unlink", &absolute))?;
+                        self.unlink(&path)?;
                         changed.push(path);
                     }
                 }
@@ -1703,7 +1834,7 @@ impl Core {
             }
             "exportSnapshotFiles" => objects(self.snapshot()?),
             "clearAllData" => {
-                super::node_fs::rm_sync(&self.root)?;
+                self.clear()?;
                 self.ensure_layout()?;
                 if !matches!(input.get("rebuildManifest"), Some(JsValue::Bool(false))) {
                     self.repair()?;
@@ -1841,9 +1972,7 @@ impl Core {
                     for r in records.iter().skip(1) {
                         let path = text(r, "relativePath");
                         if self.path(&path)?.exists() {
-                            let absolute = self.path(&path)?;
-                            fs::remove_file(&absolute)
-                                .map_err(|e| crate::node_io::path_error(e, "unlink", &absolute))?;
+                            self.unlink(&path)?;
                             deleted.push(path);
                         }
                     }
@@ -1899,6 +2028,320 @@ fn relative_path(from: &Path, to: &Path) -> String {
             .map(|p| p.as_os_str().to_string_lossy().into_owned()),
     );
     parts.join("/")
+}
+
+/// Per-thread, path-filtered seam after validation and root pinning. RAII
+/// removes callbacks even when an assertion panics; tests never share hooks.
+#[cfg(test)]
+mod mutation_test_hook {
+    use super::*;
+    type Hook = Box<dyn Fn(&str)>;
+    thread_local! { static HOOK: RefCell<Option<Hook>> = RefCell::default(); }
+    pub struct Guard;
+    pub fn set(hook: impl Fn(&str) + 'static) -> Guard {
+        HOOK.with(|slot| {
+            assert!(slot.borrow().is_none());
+            *slot.borrow_mut() = Some(Box::new(hook));
+        });
+        Guard
+    }
+    pub fn notify(path: &str) {
+        HOOK.with(|slot| {
+            if let Some(hook) = slot.borrow().as_ref() {
+                hook(path);
+            }
+        });
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            HOOK.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod mutation_security_tests {
+    use super::*;
+    use std::{cell::Cell, os::unix::fs::symlink, rc::Rc};
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let p = std::env::temp_dir().join(format!("pdrs-597-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&p).unwrap();
+            Self(fs::canonicalize(p).unwrap())
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    fn store(root: &Path) -> FileMemoryStore {
+        FileMemoryStore::new(
+            root,
+            FileMemoryStoreOptions {
+                enable_manifest: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+    fn install(
+        root: &Path,
+        outside: &Path,
+        target: &str,
+        component: &str,
+    ) -> (mutation_test_hook::Guard, Rc<Cell<bool>>) {
+        let fired = Rc::new(Cell::new(false));
+        let (root, outside, target, component) = (
+            root.to_owned(),
+            outside.to_owned(),
+            target.to_owned(),
+            component.to_owned(),
+        );
+        let flag = fired.clone();
+        let guard = mutation_test_hook::set(move |path| {
+            if path != target || flag.replace(true) {
+                return;
+            }
+            fs::rename(root.join(&component), root.join("saved")).unwrap();
+            symlink(&outside, root.join(&component)).unwrap();
+        });
+        (guard, fired)
+    }
+    fn denied(error: FileMemoryError, path: &str) {
+        assert!(
+            matches!(error, FileMemoryError::Invalid(_)),
+            "unexpected error: {error:?}"
+        );
+        // The error message anchor is generated by the real TS editEntry call.
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/edgeclaw-memory-write/oracle.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            oracle["missingMessage"]
+                .as_str()
+                .unwrap()
+                .replace("missing", path)
+        );
+    }
+    #[test]
+    fn mutation_matches_real_ts_writes_and_unlink() {
+        let raw = include_str!("../../../../tests/fixtures/edgeclaw-memory-write/oracle.json");
+        crate::test_baseline::oracle(raw);
+        let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let scratch = Scratch::new();
+        let mut store = store(&scratch.0.join("memory"));
+        store.core.clock = Arc::new(|| "2026-10-22T00:00:00.000Z".into());
+        for write in oracle["writes"].as_array().unwrap() {
+            let path = write["relativePath"].as_str().unwrap();
+            if path.ends_with("alias.md") {
+                symlink("note.md", store.core.root.join(path)).unwrap();
+            }
+            let fm = pilotdeck_protocol::parse_json(&write["frontmatter"].to_string()).unwrap();
+            store
+                .core
+                .write(
+                    path,
+                    fm.as_object().unwrap(),
+                    write["body"].as_str().unwrap(),
+                )
+                .unwrap();
+            assert_eq!(
+                fs::read_to_string(store.core.root.join(path)).unwrap(),
+                write["bytes"].as_str().unwrap(),
+                "real TS bytes: {path}"
+            );
+        }
+        store
+            .delete_entries(&obj(&[(
+                "relativePaths",
+                strings(&["Project/nested/alias.md".into()]),
+            )]))
+            .unwrap();
+        assert!(!store.core.root.join("Project/nested/alias.md").is_symlink());
+        assert_eq!(
+            fs::read_to_string(store.core.root.join("Project/nested/note.md")).unwrap(),
+            oracle["afterUnlink"].as_str().unwrap()
+        );
+    }
+    #[test]
+    fn mutation_race_write() {
+        for existing in [false, true] {
+            let scratch = Scratch::new();
+            let store = store(&scratch.0.join("memory"));
+            let root = &store.core.root;
+            let outside = scratch.0.join("outside");
+            fs::create_dir(&outside).unwrap();
+            let path = "Project/new.md";
+            if existing {
+                fs::write(root.join(path), "inside").unwrap();
+            }
+            fs::write(outside.join("new.md"), "outside sentinel").unwrap();
+            let (_hook, fired) = install(root, &outside, path, "Project");
+            let result = store.core.write(path, &JsObject::new(), "replacement");
+            assert!(fired.get(), "target-filtered hook did not fire");
+            assert_eq!(
+                fs::read_to_string(outside.join("new.md")).unwrap(),
+                "outside sentinel",
+                "race wrote outside memory root"
+            );
+            denied(result.unwrap_err(), path);
+            assert!(!outside.join("MEMORY.md").exists());
+        }
+    }
+    #[test]
+    fn mutation_race_new_file() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        let (_hook, fired) = install(
+            &store.core.root,
+            &outside,
+            "Project/nested/new.md",
+            "Project",
+        );
+        let result = store
+            .core
+            .write("Project/nested/new.md", &JsObject::new(), "new");
+        assert!(fired.get());
+        assert!(
+            !outside.join("nested").exists(),
+            "race created directories outside memory root"
+        );
+        denied(result.unwrap_err(), "Project/nested/new.md");
+    }
+    #[test]
+    fn mutation_race_leaf_write() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::write(&outside, "outside sentinel").unwrap();
+        // A file leaf swap, independent of the directory-walk test.
+        let root = store.core.root.clone();
+        let victim = outside.clone();
+        let fired = Rc::new(Cell::new(false));
+        let flag = fired.clone();
+        let _hook = mutation_test_hook::set(move |path| {
+            if path == "project.meta.md" && !flag.replace(true) {
+                symlink(&victim, root.join(path)).unwrap();
+            }
+        });
+        let result = store
+            .core
+            .upsert_meta(&obj(&[("projectName", s("Race"))]), false);
+        assert!(fired.get());
+        assert_eq!(
+            fs::read_to_string(outside).unwrap(),
+            "outside sentinel",
+            "meta wrote through leaf link"
+        );
+        denied(result.unwrap_err(), "project.meta.md");
+    }
+    #[test]
+    fn mutation_race_manifest() {
+        let scratch = Scratch::new();
+        let mut store = store(&scratch.0.join("memory"));
+        store.core.options.enable_manifest = true;
+        let outside = scratch.0.join("outside");
+        fs::write(&outside, "outside sentinel").unwrap();
+        let root = store.core.root.clone();
+        let victim = outside.clone();
+        let fired = Rc::new(Cell::new(false));
+        let flag = fired.clone();
+        let _hook = mutation_test_hook::set(move |path| {
+            if path == "MEMORY.md" && !flag.replace(true) {
+                symlink(&victim, root.join(path)).unwrap();
+            }
+        });
+        let result = store.repair_manifests();
+        assert!(fired.get());
+        assert_eq!(
+            fs::read_to_string(outside).unwrap(),
+            "outside sentinel",
+            "manifest wrote through leaf link"
+        );
+        denied(result.unwrap_err(), "MEMORY.md");
+    }
+    #[test]
+    fn mutation_race_mkdir() {
+        let scratch = Scratch::new();
+        let mut store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        store.core.options.user_notes_relative_dir = Some("Project/nested".into());
+        let (_hook, fired) = install(&store.core.root, &outside, "Project/nested", "Project");
+        let result = store.core.ensure_layout();
+        assert!(fired.get());
+        assert!(
+            !outside.join("nested").exists(),
+            "layout mkdir escaped memory root"
+        );
+        denied(result.unwrap_err(), "Project/nested");
+    }
+    #[test]
+    fn mutation_race_delete() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(store.core.root.join("Project/victim.md"), "inside").unwrap();
+        fs::write(outside.join("victim.md"), "outside sentinel").unwrap();
+        let (_hook, fired) = install(&store.core.root, &outside, "Project/victim.md", "Project");
+        let result = store.delete_entries(&obj(&[(
+            "relativePaths",
+            strings(&["Project/victim.md".into()]),
+        )]));
+        assert!(fired.get());
+        assert_eq!(
+            fs::read_to_string(outside.join("victim.md")).unwrap(),
+            "outside sentinel",
+            "delete escaped memory root"
+        );
+        denied(result.unwrap_err(), "Project/victim.md");
+    }
+    #[test]
+    fn mutation_race_clear_parent() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("holder/memory"));
+        let outside = scratch.0.join("outside");
+        fs::create_dir_all(outside.join("memory")).unwrap();
+        fs::write(outside.join("memory/victim.md"), "outside sentinel").unwrap();
+        let (_hook, fired) = install(&scratch.0, &outside, "", "holder");
+        let result = store.core.clear();
+        assert!(fired.get());
+        assert_eq!(
+            fs::read_to_string(outside.join("memory/victim.md")).unwrap(),
+            "outside sentinel",
+            "clear escaped pinned parent"
+        );
+        result.unwrap();
+        // The pinned parent handle followed the rename, so clear removed the
+        // real (renamed) memory root instead of chasing the raced link target.
+        assert!(!scratch.0.join("saved/memory").exists());
+    }
+    #[test]
+    fn mutation_clear_does_not_follow_links() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("victim.md"), "outside sentinel").unwrap();
+        let (_hook, fired) = install(&store.core.root, &outside, "", "Project");
+        store
+            .clear_all_data(&obj(&[("rebuildManifest", JsValue::Bool(false))]))
+            .unwrap();
+        assert!(fired.get());
+        assert_eq!(
+            fs::read_to_string(outside.join("victim.md")).unwrap(),
+            "outside sentinel"
+        );
+        assert!(store.core.root.join("Project").is_dir());
+        assert!(!store.core.root.join("Project").is_symlink());
+    }
 }
 
 #[cfg(test)]

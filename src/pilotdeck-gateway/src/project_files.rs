@@ -124,12 +124,22 @@ pub(crate) fn create_new_beneath(root: &Path, canonical: &Path) -> io::Result<Fi
 /// and mkdir is relative to the pinned parent; no symlink is ever followed.
 #[cfg(unix)]
 pub(crate) fn create_directories_beneath(root: &Path, target: &Path) -> io::Result<()> {
-    use rustix::fs::{AtFlags, FileType, Mode, mkdirat, openat, statat};
     let relative = target
         .strip_prefix(root)
         .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
+    let parent = open_checked(root, root, true)?;
+    create_directories_at(&parent, relative, rustix::fs::Mode::from_raw_mode(0o700))
+}
+
+/// Descriptor variant of the #596 mkdir walk, shared by memory mutations.
+pub(crate) fn create_directories_at(
+    root: &File,
+    relative: &Path,
+    mode: rustix::fs::Mode,
+) -> io::Result<()> {
+    use rustix::fs::{AtFlags, FileType, Mode, mkdirat, openat, statat};
     let components: Vec<_> = relative.components().collect();
-    let mut parent = open_checked(root, root, true)?;
+    let mut parent = root.try_clone()?;
     for (index, component) in components.iter().enumerate() {
         let Component::Normal(name) = component else {
             return Err(io::Error::from_raw_os_error(libc::EACCES));
@@ -138,7 +148,7 @@ pub(crate) fn create_directories_beneath(root: &Path, target: &Path) -> io::Resu
         let open = || openat(&parent, name, directory_flags(), Mode::empty());
         let opened = match open() {
             Err(rustix::io::Errno::NOENT) => {
-                match mkdirat(&parent, name, Mode::from_raw_mode(0o700)) {
+                match mkdirat(&parent, name, mode) {
                     Ok(()) | Err(rustix::io::Errno::EXIST) => {}
                     Err(error) => return Err(error.into()),
                 }
@@ -154,7 +164,7 @@ pub(crate) fn create_directories_beneath(root: &Path, target: &Path) -> io::Resu
             {
                 let kind = FileType::from_raw_mode(stat.st_mode);
                 if kind == FileType::Symlink {
-                    return io::Error::from_raw_os_error(libc::EACCES);
+                    return io::Error::new(io::ErrorKind::PermissionDenied, NoFollowLoop);
                 }
                 if kind != FileType::Directory && index + 1 == components.len() {
                     return io::Error::from_raw_os_error(libc::EEXIST);
@@ -179,18 +189,27 @@ fn directory_flags() -> rustix::fs::OFlags {
 }
 
 fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Result<File> {
-    use rustix::fs::{Mode, OFlags, openat};
     let relative = canonical
         .strip_prefix(root)
         .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
-    // Walk the canonical root from / as well: a raced-in link in any
-    // ancestor must not redirect the root descriptor outside the project.
-    let mut file = File::open("/")?;
-    let components: Vec<_> = root
-        .components()
-        .chain(relative.components())
-        .filter(|c| !matches!(c, Component::RootDir))
-        .collect();
+    // Walk the canonical root from / as well, using the same NOFOLLOW walk
+    // as descriptor-relative consumers. No absolute path is reopened later.
+    let filesystem = File::open("/")?;
+    let relative = root
+        .strip_prefix("/")
+        .map_err(|_| io::ErrorKind::InvalidInput)?
+        .join(relative);
+    walk_beneath(&filesystem, &relative, search_directory)
+}
+
+pub(crate) fn open_directory_beneath(root: &Path, path: &Path) -> io::Result<File> {
+    open_checked(root, path, true)
+}
+
+fn walk_beneath(root: &File, relative: &Path, search_directory: bool) -> io::Result<File> {
+    use rustix::fs::{Mode, OFlags, openat};
+    let mut file = root.try_clone()?;
+    let components: Vec<_> = relative.components().collect();
     for (index, component) in components.iter().enumerate() {
         let Component::Normal(name) = component else {
             return Err(io::Error::from_raw_os_error(libc::EACCES));
@@ -203,11 +222,117 @@ fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Re
         file = File::from(
             openat(&file, *name, flags, Mode::empty())
                 .map_err(io::Error::from)
-                .map_err(checked_open_error)?,
+                .map_err(|e| {
+                    use rustix::fs::{AtFlags, FileType, statat};
+                    if e.raw_os_error() == Some(libc::ENOTDIR)
+                        && let Ok(stat) = statat(&file, *name, AtFlags::SYMLINK_NOFOLLOW)
+                        && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
+                    {
+                        return io::Error::new(io::ErrorKind::PermissionDenied, NoFollowLoop);
+                    }
+                    checked_open_error(e)
+                })?,
         );
     }
     Ok(file)
 }
+/// Node's default `w` semantics: open/create, verify the inode, then truncate.
+/// Never truncate before rejecting a raced symlink, FIFO, or shared hardlink.
+pub(crate) fn overwrite_at(root: &File, relative: &Path, bytes: &[u8]) -> io::Result<()> {
+    use rustix::fs::{FileType, Mode, OFlags, fstat, openat};
+    use std::io::Write;
+    let parent = walk_beneath(
+        root,
+        relative.parent().ok_or(io::ErrorKind::InvalidInput)?,
+        true,
+    )?;
+    let mut file = File::from(
+        openat(
+            &parent,
+            relative.file_name().ok_or(io::ErrorKind::InvalidInput)?,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::from_raw_mode(0o666),
+        )
+        .map_err(io::Error::from)
+        .map_err(checked_open_error)?,
+    );
+    let stat = fstat(&file)?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile || stat.st_nlink != 1 {
+        return Err(io::Error::from_raw_os_error(libc::EACCES));
+    }
+    file.set_len(0)?;
+    file.write_all(bytes)
+}
+
+pub(crate) fn unlink_at(root: &File, relative: &Path) -> io::Result<()> {
+    let parent = walk_beneath(
+        root,
+        relative.parent().ok_or(io::ErrorKind::InvalidInput)?,
+        true,
+    )?;
+    rustix::fs::unlinkat(
+        &parent,
+        relative.file_name().ok_or(io::ErrorKind::InvalidInput)?,
+        rustix::fs::AtFlags::empty(),
+    )?;
+    Ok(())
+}
+
+/// Recursive removal never follows a link, including one installed after stat.
+/// Diagnostics retain Node's syscall and the original display path.
+pub(crate) fn remove_tree_at(root: &File, relative: &Path, display: &Path) -> io::Result<()> {
+    let parent = walk_beneath(
+        root,
+        relative.parent().ok_or(io::ErrorKind::InvalidInput)?,
+        true,
+    )?;
+    remove_child_at(
+        &parent,
+        relative.file_name().ok_or(io::ErrorKind::InvalidInput)?,
+        display,
+    )
+}
+fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io::Result<()> {
+    use rustix::fs::{AtFlags, Dir, Mode, OFlags, openat, unlinkat};
+    let unlink = |flags, syscall| {
+        unlinkat(parent, name, flags)
+            .map_err(|e| crate::node_io::path_error(e.into(), syscall, display))
+    };
+    match unlink(AtFlags::REMOVEDIR, "rmdir") {
+        Ok(()) => return Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotADirectory => {
+            return unlink(AtFlags::empty(), "unlink");
+        }
+        Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+        Err(e) => return Err(e),
+    }
+    // Open for reading only here: enumeration, unlike traversal, needs it.
+    let dir = File::from(
+        openat(
+            parent,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(io::Error::from)
+        .map_err(checked_open_error)?,
+    );
+    let mut children = Dir::read_from(&dir)?
+        .map(|e| e.map(|e| e.file_name().to_owned()))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    children.sort();
+    for child in children {
+        if child.to_bytes() == b"." || child.to_bytes() == b".." {
+            continue;
+        }
+        use std::os::unix::ffi::OsStrExt;
+        let child = std::ffi::OsStr::from_bytes(child.to_bytes());
+        remove_child_at(&dir, child, &display.join(child))?;
+    }
+    unlink(AtFlags::REMOVEDIR, "rmdir")
+}
+
 pub(crate) fn native_stat(root: &Path, path: &Path) -> io::Result<(Stat, bool)> {
     use rustix::fs::{AtFlags, FileType, fstat, statat};
     let stat = if root == path {
