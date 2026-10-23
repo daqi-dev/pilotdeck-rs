@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Real-ledger regressions in bounded, disposable git repositories (no Cargo)."""
 import hashlib
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -79,7 +81,10 @@ class Ledger(unittest.TestCase):
     def test_empty_union_preserves_real_bytes_and_check_output(self):
         self.assertEqual(self.check('--print-ledger'),
                          (ROOT / SPEC / 'accepted-diffs.md').read_bytes())
-        self.assertEqual(self.check(), self.check('--base', self.base))
+        report = json.loads(self.check('--base', self.base))
+        self.assertEqual(json.loads(self.check()), {k: v for k, v in report.items() if k != 'notes'})
+        self.assertIn('notes', report)
+        self.assertIn('base 解析出的提交等于 HEAD', report['notes'][0])
 
     def test_new_files_sorted_and_readme_excluded_without_shared_edits(self):
         later = self.add('A7.2-LEDGER-TEST-002')
@@ -191,7 +196,48 @@ class Ledger(unittest.TestCase):
         self.commit('independent entry on advanced base')
         self.git('switch', 'main')
         self.add()
+        self.commit('independent entry on current branch')
         self.check('--base', 'other')
+
+    def test_descendant_base_fails_closed(self):
+        self.git('switch', '-c', 'advanced-base')
+        self.add()
+        self.commit('base has advanced beyond HEAD')
+        self.git('switch', 'main')
+        self.assertEqual(self.git('merge-base', 'HEAD', 'advanced-base').stdout.strip(),
+                         self.git('rev-parse', 'HEAD').stdout.strip())
+        self.check('--base', 'advanced-base', ok=False,
+                   reason='base 与 HEAD 同源，只追加对照无效')
+
+    def test_exact_head_base_passes_with_note(self):
+        # An annotated tag must resolve to its commit, not its tag object.
+        self.git('-c', 'user.name=Ledger Test', '-c', 'user.email=ledger@example.invalid',
+                 'tag', '-a', 'same-head', '-m', 'resolve tag to commit')
+        for base in ('HEAD', self.base, 'main', 'same-head'):
+            with self.subTest(base=base):
+                report = json.loads(self.check('--base', base))
+                self.assertEqual(report['status'], 'PASS')
+                self.assertIn('notes', report)
+                self.assertIn('base 解析出的提交等于 HEAD', report['notes'][0])
+                self.assertEqual(self.check('--base', base, '--print-ledger'),
+                                 (self.folder / 'accepted-diffs.md').read_bytes())
+
+    def test_exact_head_base_still_checks_worktree(self):
+        path = self.folder / 'accepted-diffs.md'
+        path.write_bytes(path.read_bytes() + b'\nunauthorized append\n')
+        self.register_legacy_hash()
+        self.check()
+        self.check('--base', 'HEAD', ok=False, reason='historical ledger differs from base')
+
+    def test_utf8_input_independent_of_locale(self):
+        manifest = self.folder / 'FROZEN.md'
+        manifest.write_bytes('# 冻结登记\n'.encode('utf-8') + manifest.read_bytes())
+        env = {**os.environ, 'LC_ALL': 'C', 'PYTHONUTF8': '0', 'PYTHONCOERCECLOCALE': '0',
+               'PYTHONIOENCODING': 'utf-8'}
+        result = subprocess.run([sys.executable, str(self.root / CHECKER), '--base', self.base],
+                                capture_output=True, timeout=30, env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)['status'], 'PASS')
 
     def test_invalid_base_fails_closed(self):
         self.check('--base', 'nonexistent-ref', ok=False, reason='cannot verify append-only')

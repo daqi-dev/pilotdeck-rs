@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-23 修复轮 2 重登记（#581 / PR #582，人批范围内）**：merge-base 等于 HEAD 且 base 解析提交不同于 HEAD 时拒绝无效的只追加对照；base 本身等于 HEAD 时保留工作树字节核验并注明（如空推送）。显式使用 UTF-8 读取文本及解码 Git 输出；仅更新 check_frozen.py 哈希。真实账本复算与回归、负控证据见 `_tmp/20261023-issue-581-ledger-split/RESULT.md`「修复轮 2」。
+
 > **2026-10-23 修复轮 1 重登记（#581 / PR #582，人批范围内）**：修补 gate1 boundary P1；--base 对照 merge-base 同时强制历史 accepted-diffs.md 逐字节一致（失败报告首个差异行）及其 FROZEN 哈希行原字节不变，既有 diffs/ 只追加保护继续生效。仅重登记 check_frozen.py 哈希，不改历史账本及其哈希行；真实 origin/main 账本复算、正负控原始输出见 `_tmp/20261023-issue-581-ledger-split/RESULT.md`「修复轮 1」。独立评审由协调者接续。
 
 > **2026-10-23 重登记（#581，人批账本拆文件规则）**：历史 accepted-diffs.md 原字节冻结、此后不再追加（其哈希行不变）；新条目与更正只新增 diffs/<ID>.md / <ID>-R<n>.md，六字段与 original / 决策文件存在性静态校验，--base 对照 merge-base 强制已有 diffs/ 文件逐字节不变。新增条目不改任何已有文件、不维护清单、不改 FROZEN。本次只重登记 check_frozen.py 哈希；模板与回滚见 diffs/README.md，真实复算由 #581 交付证据与两家非作者评审接续。
@@ -124,7 +126,7 @@
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
-93ce4b4d172548aefc6ded28e0f4b4930ef957c9c2715fafa279cb91af80f905  ../../scripts/gateway-parity/check_frozen.py
+e565167df638b8fd1659bf7b714c942a4873dd02ad3d77a62541c0de636e984b  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
 4ae7570b725bfb79fdef01b0860d67f0a36864582a667da5a1e53eba1ecb8436  ../../scripts/gateway-parity/compare.py
