@@ -1,5 +1,6 @@
 #![cfg(unix)]
-//! Runtime wiring and dispose durability, compared with the real TS byte log.
+//! Runtime wiring and complete disposed output, compared with the real TS byte log.
+//! The cfg(test) runtime unit test gates I/O to prove dispose waits for writes.
 #[path = "common/scratch.rs"]
 mod scratch;
 use pilotdeck_gateway::runtime::background::{
@@ -10,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::{fs, time::Duration};
 
 #[tokio::test]
-async fn configured_runtime_flushes_complete_ts_log_before_dispose_returns() {
+async fn configured_runtime_preserves_complete_ts_log_after_dispose() {
     tokio::time::timeout(Duration::from_secs(20), async {
         let scratch = scratch::Scratch::new("553-runtime");
         let state = scratch.path().join("state");
