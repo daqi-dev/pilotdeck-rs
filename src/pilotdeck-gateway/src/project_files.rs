@@ -340,16 +340,36 @@ pub(crate) fn read_at(root: &File, relative: &Path) -> io::Result<Vec<u8>> {
             Err(e) => return Err(e),
         };
         let name = relative.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-        File::from(
-            openat(
-                &parent,
-                name,
-                OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
-                Mode::empty(),
-            )
-            .map_err(io::Error::from)
-            .map_err(|e| leaf_open_error(&parent, name, e))?,
+        let open_result = openat(
+            &parent,
+            name,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
         )
+        .map_err(io::Error::from);
+        File::from(match open_result {
+            Ok(fd) => fd,
+            Err(e) => {
+                // On Linux, walk_beneath uses O_PATH which skips the x-bit
+                // check on each opened component; a directory ancestor with
+                // mode 0o600 (no x) is opened successfully but the *leaf*
+                // openat then returns EACCES. Probe with statat to tell
+                // apart "ancestor unreachable → report as missing" from
+                // "leaf exists but unreadable → keep the error", matching
+                // Node's existsSync-then-readFile semantics (existsSync
+                // swallows EACCES to false → no record, not a permission
+                // error). macOS O_SEARCH already fails at walk time and is
+                // mapped to ENOENT above; this probe is a no-op there.
+                if matches!(e.raw_os_error(), Some(libc::EACCES) | Some(libc::ENOTDIR)) {
+                    use rustix::fs::{AtFlags, statat};
+                    let reachable = statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW).is_ok();
+                    if !reachable {
+                        return Err(io::Error::from_raw_os_error(libc::ENOENT));
+                    }
+                }
+                return Err(leaf_open_error(&parent, name, e));
+            }
+        })
     };
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
