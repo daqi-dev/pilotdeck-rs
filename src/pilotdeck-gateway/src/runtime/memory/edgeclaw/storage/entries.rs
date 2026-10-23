@@ -148,10 +148,21 @@ impl EdgeClawFileStores {
     }
     pub fn edit_memory_entry(&self, input: &JsObject) -> Result<JsValue> {
         self.snapshot_operation(|| {
-            let id = input
-                .get("id")
-                .and_then(JsValue::as_string)
-                .ok_or_else(|| FileMemoryError::Invalid("id is required".into()))?;
+            // sqlite.ts:1845 routes through normalizeRelativePath before any IO.
+            let undefined = JsValue::Undefined;
+            let id = match input.get("id").unwrap_or(&undefined) {
+                JsValue::String(id) => id,
+                value => {
+                    let message = match value {
+                        JsValue::Undefined => {
+                            "Cannot read properties of undefined (reading 'replace')"
+                        }
+                        JsValue::Null => "Cannot read properties of null (reading 'replace')",
+                        _ => "relativePath.replace is not a function",
+                    };
+                    return Err(FileMemoryError::Type(message.into()));
+                }
+            };
             let is_global = global(id);
             let mut next = input.clone();
             next.insert(

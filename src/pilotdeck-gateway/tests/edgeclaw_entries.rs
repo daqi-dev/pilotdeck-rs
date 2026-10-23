@@ -328,6 +328,9 @@ fn error(e: FileMemoryError) -> Value {
         e @ FileMemoryError::Storage(StorageError::Sqlite(_)) => {
             json!({"error":"ERR_SQLITE_ERROR","message":String::from_utf16_lossy(e.js_message().units())})
         }
+        e @ FileMemoryError::Type(_) => {
+            json!({"error":"TypeError","message":String::from_utf16_lossy(e.js_message().units())})
+        }
         e => json!({"error":"Error","message":String::from_utf16_lossy(e.js_message().units())}),
     }
 }
@@ -576,6 +579,45 @@ fn locale(test: &str) -> bool {
             .success()
     );
     false
+}
+#[test]
+fn malformed_archive_ids_match_real_ts() {
+    let o = oracle();
+    let s = Scratch::new();
+    seed_rust(&s.0, false);
+    let r = open(&s.0, false);
+    let before = disk(&s.0);
+    let mut n = 0;
+    for audit in o["idAudit"].as_array().unwrap() {
+        if audit["method"] != "archiveTmpEntries" {
+            continue;
+        }
+        let id = js(&audit["input"])
+            .get("id")
+            .cloned()
+            .unwrap_or(JsValue::Undefined);
+        let mut input = JsObject::new();
+        input.insert(
+            "ids".into(),
+            if audit["container"] == true {
+                id
+            } else {
+                JsValue::Array(vec![id])
+            },
+        );
+        let actual = r
+            .archive_tmp_entries(&input)
+            .map(value)
+            .unwrap_or_else(error);
+        assert_eq!(actual, audit["result"], "{audit}");
+        assert_eq!(
+            disk(&s.0) == before,
+            audit["diskUnchanged"].as_bool().unwrap()
+        );
+        n += 1;
+    }
+    assert_eq!(n, 11);
+    r.close().unwrap();
 }
 #[test]
 fn ts_entries_and_failure_residue_replay() {

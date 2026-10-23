@@ -9,6 +9,7 @@ const edit=(id:string)=>({method:'editMemoryEntry',input:{id,name:' Edited ',des
 const selected=(method:string,which:string[]=['project','user'])=>({method,select:which});
 const clear=(method:string)=>({method});
 export const scenarios:any[]=[
+ {name:'edit-invalid-id-types',ops:[{}, {id:null}, {id:42}, {id:{}}, {id:[]}, {id:true}].map(input=>({method:'editMemoryEntry',input:{...input,name:'ignored',description:'ignored'}}))},
  {name:'entry-lifecycle',ops:[{method:'getProjectMeta'},{method:'ensureProjectMeta',input:{projectName:'ignored existing'}},{method:'editProjectMeta',input:{projectName:'Renamed',description:'new meta',status:'paused'}},selected('records',['user','project','project','missing']),{method:'records',ids:['',' ','external:', 'external: :x','external:unknown:Project/x.md','global\\UserIdentity\\user-profile.md'],maxLines:2},{...edit(''),select:['project']},{...edit(''),select:['user']},selected('deprecateMemoryEntries'),selected('deprecateMemoryEntries'),{method:'countMemoryEntries'},{method:'countMemoryEntries',input:{includeDeprecated:true,limit:1,offset:90}},{method:'records',select:['project','user'],maxLines:3},selected('restoreMemoryEntries'),selected('restoreMemoryEntries'),selected('deleteMemoryEntries',['project','project','user']),selected('restoreMemoryEntries'),selected('deleteMemoryEntries'),{method:'getProjectMeta'},{method:'getSnapshotVersion'}]},
  {name:'invalid-entry-operations',ops:[...['missing','../escape','external:unknown:x','global/missing'].map(id=>edit(id)),{method:'editMemoryEntry',select:['project'],input:{name:'',description:'',fields:{rule:' rule ',notes:['a','a','b']}}},...['deprecateMemoryEntries','restoreMemoryEntries','deleteMemoryEntries'].map(method=>({method,ids:['missing','external:unknown:x','global/missing','']})),{method:'archiveTmpEntries',input:{ids:['missing'],targetProjectId:'x'}},{method:'editProjectMeta',input:{projectId:'unknown',projectName:'bad',description:'bad',status:'bad'}},{method:'getSnapshotVersion'}]},
  {name:'counts-and-version',ops:[...[{}, {scope:'global'},{scope:'project'},{kinds:[]},{kinds:['feedback']},{query:'PROJECT'},{query:'no match'},{projectId:'missing'},{includeTmp:true,includeDeprecated:true}].map(input=>({method:'countMemoryEntries',input})),...['',null,2,false,{x:1}].flatMap(value=>[{method:'state',key:'lastDreamAt',value},{method:'getSnapshotVersion'}]),{method:'state',key:'recentCaseTraces',value:{bad:true}},{method:'getSnapshotVersion'},{method:'raw',path:'memory/MEMORY.md',content:'derived changed'},{method:'getSnapshotVersion'}]},
@@ -60,4 +61,26 @@ export function observe(Repo:any,root:string,c:any){
   observations.push({result:clean(result,root),disk:disk(root)});
  }
  if(second)second.close();r.close();return observations;
+}
+
+// Audit malformed id families at the actual repository boundary. Undefined is
+// represented by an omitted input property (and an omitted argument for lists).
+export function auditIds(Repo:any,root:string){
+ const r=open(Repo,root);seed(r);const before=JSON.stringify(disk(root)),out=[];
+ const values=[{}, {id:null}, {id:42}, {id:{}}, {id:[]}, {id:true}];
+ for(const method of ['getMemoryRecordsByIds','deleteMemoryEntries','deprecateMemoryEntries','restoreMemoryEntries','archiveTmpEntries']){
+  for(const input of values){
+   const ids=[input.id];let result;
+   try{result=method==='archiveTmpEntries'?r[method]({ids}):r[method](ids);}
+   catch(e:any){result={error:e.code??e.name,message:e.message};}
+   out.push({method,input,result:clean(result,root),diskUnchanged:JSON.stringify(disk(root))===before});
+  }
+  for(const input of values.filter(v=>!Array.isArray(v.id))){
+   let result;
+   try{result=method==='archiveTmpEntries'?r[method]({ids:input.id}):r[method](input.id);}
+   catch(e:any){result={error:e.code??e.name,message:e.message};}
+   out.push({method,container:true,input,result:clean(result,root),diskUnchanged:JSON.stringify(disk(root))===before});
+  }
+ }
+ r.close();return out;
 }
