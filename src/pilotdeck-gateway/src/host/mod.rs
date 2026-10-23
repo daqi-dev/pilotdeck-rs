@@ -19,7 +19,8 @@
 //! event application queue fails closed with `Limit` when full so a stalled
 //! consumer cannot indefinitely hide cancellation or input errors. Ledger:
 //! specs/gateway-parity/accepted-diffs.md A7-HOST-RESOURCE-001 (unapproved). TS's async
-//! generator instead pulls events serially (client:659-684). No event is dropped.
+//! generator instead pulls events serially (client:659-684). On cancellation,
+//! the exit bound below may stop unfinished event application.
 //! `max_buffered_bytes` counts retained NDJSON bytes, including partial input,
 //! queued/in-flight event copies, callback requests, completed responses/cache
 //! and required output. Allocator overhead, temporary JSON encoding/parsing and
@@ -44,7 +45,10 @@
 //! stdioAgentLoopSidecarConnection.ts:10) instead of the shorter
 //! `close_timeout`: a shorter bound would discard late-but-valid terminals that
 //! TS would still accept. A valid terminal that arrives inside the bound still
-//! wins.
+//! wins. This same absolute deadline covers reconnect and event application.
+//! If application stalls, cleanup drops unfinished cooperative callbacks while
+//! preserving the validated terminal result and the last actually applied cursor.
+//! Child shutdown and disposer then use their existing separate bounded waits.
 //! Unix close/Drop kills the owned process group, including grandchildren that
 //! retain pipes. A subprocess that deliberately leaves that group is not owned.
 //! Abrupt host death that bypasses close/Drop has no descendant cleanup guarantee.
@@ -403,6 +407,8 @@ pub struct HostClient {
     reconnect_command: Option<Command>,
     reconnect_attempted: bool,
     reconnect_succeeded: bool,
+    #[cfg(test)]
+    test_signals: tests::ExecutionSignals,
 }
 impl HostClient {
     /// Command is explicit so the caller controls args, cwd and isolated env.
@@ -434,6 +440,8 @@ impl HostClient {
                 reconnect_command: None,
                 reconnect_attempted: false,
                 reconnect_succeeded: false,
+                #[cfg(test)]
+                test_signals: tests::ExecutionSignals::default(),
             }),
             Err(mut error) => {
                 let _ = connection.close().await;
@@ -503,6 +511,14 @@ impl HostClient {
             &mut scope,
         )
         .await;
+        #[cfg(test)]
+        {
+            self.test_signals.last_applied_bits.store(
+                progress.last_applied_sequence.load(Ordering::SeqCst),
+                Ordering::SeqCst,
+            );
+            self.test_signals.loop_exited.store(true, Ordering::SeqCst);
+        }
         scope.stop_callbacks().await;
         // TS client:1143-1146: only a started but not successful reconnect
         // emits failure. Later replay/terminal errors cannot reverse success.

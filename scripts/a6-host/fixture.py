@@ -195,6 +195,9 @@ def module_call(number=1, padding=0):
 
 if mode in ('host-cancel-before-acceptance-hang', 'host-cancel-after-acceptance-hang',
             'host-cancel-no-terminal-hang'):
+    if os.environ.get('PDRS_HOST_CANCEL_PID_LOG'):
+        with open(os.environ['PDRS_HOST_CANCEL_PID_LOG'], 'a') as log:
+            log.write(str(os.getpid()) + '\n')
     # Post-cancel exit-bound probe: hold the connection open and never send a
     # terminal. The host must close us after its bounded deadline.
     assert receipt is not None
@@ -210,6 +213,11 @@ if mode in ('host-cancel-before-acceptance-hang', 'host-cancel-after-acceptance-
         assert 'cancel' not in received, received
     else:
         assert 'cancel' in received, received
+    receipt.with_suffix('.closing').write_text('stdin EOF; cleanup started\n')
+    until = time.monotonic() + 30
+    while not receipt.with_suffix('.close-release').exists():
+        assert time.monotonic() < until, 'close release not signaled'
+        time.sleep(0.002)
     write_receipt()
     sys.exit(0)
 
