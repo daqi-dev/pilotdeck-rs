@@ -424,6 +424,7 @@ try {
   await scenario('lock-stale-garbage', { initial: lockSnapshot, lock: { contents: 'not json', ageMs: 120_000 }, steps: [accept(ref('after-lock'), 'x')] });
   await scenario('lock-stale-live', { initial: lockSnapshot, lock: { contents: '{ "pid" :\u00a01 }', ageMs: 120_000 }, steps: [] });
 
+  assert.equal(scenarios.length, 25, 'run-registry oracle scenario count');
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, generatorPid: process.pid, dead: DEAD, huge: HUGE, scenarios }, null, 2) + '\n';
   // Fixtures are machine-independent: no generation path survives in the oracle.
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
