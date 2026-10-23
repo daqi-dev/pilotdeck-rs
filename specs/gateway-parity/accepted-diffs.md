@@ -655,3 +655,16 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 `src/pilotdeck-gateway/src/runtime/context/cache.rs` `runtime::context::cache::tests::depth_boundaries_match_pre_pr_rust_behavior` 与
 `src/pilotdeck-gateway/src/host/modules/context/request.rs` `host::modules::context::request::tests::deep_input_schema_fingerprints_reach_the_host_entry`。 判据依据决策卡 `_tmp/20261023-loop/card-v8-stack-depth.md`（AI 代批，待人复核）。**批准记录**：无；**已知未对齐（未批准）**。
 - **A6-JSVALUE-DEPTH-001 追加说明的更正（追加，不改上文；PR #539 Grok r3）**：上文「对象约 2100 层溢出」不准、且 runtime 路径也是**双向**差异。Grok r3 新进程实测：嵌套 `{x:…}` 对象 1887 层成功、1888 层抛 `RangeError: Maximum call stack size exceeded`。因此 runtime 路径（2000 容器门限）有两段差异：① 约 1888–1997 层对象 TS 溢出、Rust 正常出指纹；② 2000 层以上数组 TS 可成功（实测至 2398 层）、Rust 拒绝。host 路径（无门限）只有「约 1888 层以上对象 TS 溢出、Rust 成功」一段。以上层数是本机、指定入口、指定形状的观测；不同入口、调用栈深度与 JIT 预热会让边界下移，不能当常数使用（决策卡 `_tmp/20261023-loop/card-v8-stack-depth.md`）。
+
+## 人批记录 · #505（#502）补登的 32 条（2026-10-23）
+
+> 只追加，不改上文各条目原文。人批原话见 `state/decisions-20261023.md`「#505 补登 32 条批复」。「接受」= 承认差异、知情接受，**不豁免判分**，相关场景照常判分；「修」的条目修完后再追加更正。
+
+- **已消除、关闭**：`A6.7-HOOK-HTTPS-001`（PR #546 已实现，判据 `tests/hooks_https.rs::http_hooks_over_tls_match_real_ts`）。批准记录：人批 2026-10-23。
+- **要求修** `A6.5-MCP-HTTPS-001`：修：复用 hook 已有 TLS 连接器，正由 #361-3 实现。批准记录：人批 2026-10-23（未修子项接受为已知差异，不豁免判分）。
+- **要求修** `A6.5-MCP-HTTP-LIFETIME-001`：代理部分修（另开单）；关闭即丢流、首连失败不重试按已知差异接受。批准记录：人批 2026-10-23（未修子项接受为已知差异，不豁免判分）。
+- **要求修** `A6.5-BASH-OS-001`：setsid 部分修（另开单）；stdio 为 pipe 而非 socketpair 按已知差异接受。批准记录：人批 2026-10-23（未修子项接受为已知差异，不豁免判分）。
+- **要求修** `A6.5-BACKGROUND-PERSIST-001`：修（另开单）：spill + 快照持久化。批准记录：人批 2026-10-23（未修子项接受为已知差异，不豁免判分）。
+- **要求修** `A7-HOST-RESOURCE-001`：默认 300 秒本地超时修（另开单）；队列上限按已知差异接受。批准记录：人批 2026-10-23（未修子项接受为已知差异，不豁免判分）。
+- **接受（附运维约束）** `A6.2-TRANSCRIPT-LOCK-001`：切换前停掉 TS writer；不对 transcript 做硬链接。批准记录：人批 2026-10-23，接受为已知差异，不豁免判分。
+- **接受为已知差异（不豁免判分）**，中风险 14 条、低风险 11 条，批准记录：人批 2026-10-23：`A4-MIXED-BATCH-ORDER-001`、`A6-COLLATION-PUA-001`、`A6-JSVALUE-DEPTH-001`、`A6.2-TRANSCRIPT-COLLATION-001`、`A6.2-TRANSCRIPT-DOMAIN-001`、`A6.3-CONFIG-POLL-001`、`A6.4-CLOCK-TIMECLIP-001`、`A6.4-COUNT-CACHE-DEPTH-001`、`A6.4-JSONREPAIR-DEPTH-001`、`A6.4-MODEL-PROTOTYPE-001`、`A6.4-OPENAI-URL-001`、`A6.5-BASH-OUTPUT-001`、`A6.5-BASH-WNOWAIT-001`、`A6.5-MCP-DISPOSE-001`、`A6.5-MCP-OUTSCHEMA-SUPPORT-001`、`A6.5-TOOLS-CANCEL-001`、`A6.5-TOOLS-SCHEDULE-001`、`A6.6-FILEHISTORY-IO-001`、`A6.6-SNAPSHOT-CLOCK-001`、`A6.6-SNAPSHOT-COLLATION-001`、`A6.6-SNAPSHOT-IO-001`、`A6.7-HOOK-RESOURCE-001`、`A7-ADMISSION-FENCE-001`、`A7-LIFECYCLE-NFKC-001`、`A7-PROJECT-DISPOSE-001`。
