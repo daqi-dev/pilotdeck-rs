@@ -60,20 +60,32 @@ fn relative(base: &Path, target: &Path) -> String {
     parts.join("/")
 }
 
-// Bound both directory enumeration allocation and traversal work. Limits apply
-// to one configured contribution directory; exceeding either discards that
-// directory through PluginLoader's existing error-to-empty boundary.
+// Count only Markdown candidates after directory identity de-duplication.
+// Bundled scripts/assets must not consume the contribution budget. Limits apply
+// to one configured directory; exceeding either discards that entire directory.
 const MAX_MARKDOWN_ENTRIES: usize = 4096;
 const MAX_MARKDOWN_DEPTH: usize = 64;
+const TRAVERSAL_LIMIT: &str = "Plugin markdown traversal limit exceeded.";
 
 fn traversal_limit() -> PluginRuntimeError {
-    PluginRuntimeError::new("Plugin markdown traversal limit exceeded.")
+    PluginRuntimeError::new(TRAVERSAL_LIMIT)
 }
 
-fn markdown_entries(
-    directory: &Path,
-    remaining: &mut usize,
-) -> Result<Vec<PathBuf>, PluginRuntimeError> {
+pub(super) fn warn_if_traversal_limit(base: &Path, error: &PluginRuntimeError) {
+    // TS PluginLoader catches per-directory errors without logging. Keep that
+    // result boundary, but make our additional safety rejection observable.
+    if error.message == TRAVERSAL_LIMIT {
+        eprintln!(
+            "[plugins] Markdown directory '{}' discarded: {} (maxMarkdownCandidates={}, maxDepth={})",
+            base.display(),
+            error.message,
+            MAX_MARKDOWN_ENTRIES,
+            MAX_MARKDOWN_DEPTH
+        );
+    }
+}
+
+fn markdown_entries(directory: &Path) -> Result<Vec<PathBuf>, PluginRuntimeError> {
     // Like TS collectMarkdownFiles: unreadable directories contribute nothing.
     let Ok(entries) = std::fs::read_dir(directory) else {
         return Ok(Vec::new());
@@ -83,10 +95,6 @@ fn markdown_entries(
         let Ok(entry) = entry else {
             return Ok(Vec::new());
         };
-        if *remaining == 0 {
-            return Err(traversal_limit());
-        }
-        *remaining -= 1;
         names.push(entry.file_name());
     }
     names.sort();
@@ -138,7 +146,7 @@ pub(super) fn load_plugin_commands_with_root(
     let mut visited = HashSet::new();
     visited.insert(directory_identity(&metadata, &canonical));
     let mut remaining = MAX_MARKDOWN_ENTRIES;
-    let mut pending: Vec<_> = markdown_entries(base, &mut remaining)?
+    let mut pending: Vec<_> = markdown_entries(base)?
         .into_iter()
         .rev()
         .map(|p| (p, 1))
@@ -165,7 +173,7 @@ pub(super) fn load_plugin_commands_with_root(
                 return Err(traversal_limit());
             }
             pending.extend(
-                markdown_entries(&path, &mut remaining)?
+                markdown_entries(&path)?
                     .into_iter()
                     .rev()
                     .map(|p| (p, depth + 1)),
@@ -174,6 +182,10 @@ pub(super) fn load_plugin_commands_with_root(
             .file_name()
             .is_some_and(|s| s.to_string_lossy().to_ascii_lowercase().ends_with(".md"))
         {
+            if remaining == 0 {
+                return Err(traversal_limit());
+            }
+            remaining -= 1;
             output.push(load_markdown_source(
                 &canonical,
                 &path,

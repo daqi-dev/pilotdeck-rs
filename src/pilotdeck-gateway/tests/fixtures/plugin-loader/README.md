@@ -46,6 +46,10 @@ MCP/LSP 从 manifest 到 LoadedPlugin 及 runtime 合并保持现有协议类型
 
 修复轮 1 的独立金样 `traversal.json` 由 `generate-traversal.mts` 生成，原 `oracle.json` / `regressions.json` 字节保持不变。沿用上面的 Node / PDRS_BASELINE / LANG 设置，分别执行两次 `generate-traversal.mts <输出目录>`，比较两个 `traversal.json`。样本记录真实 TS 对 k=3/7/10/20 互链团的 1000ms 限时观察、目录/文件/链式越界链接、不可读条目、65 层目录、4097 条目、合法目录别名的完整贡献路径，以及含孤立代理的 MCP serverName。TS 的超时记录只声称在截止时仍未返回。
 
-Rust 明确应用本轮授权的安全差异：每次贡献目录遍历用全局 dev+ino 集合（Unix）只展开首次遇到的物理目录；非 Unix 使用规范化路径身份。无环别名也去重，保留首次访问的词法命名与路径；不再声称与 TS 的双别名重复贡献等价。条目预算为 4096，目录深度为 64；超限返回 `Plugin markdown traversal limit exceeded.`，配置目录入口沿用错误转空贡献的 TS 处理边界，整目录丢弃，绝不发布截断结果。规范化后的条目必须位于规范化插件根内，否则跳过；直接调用两参数 `load_plugin_commands` 时以 base 本身为根。插件三个贡献族和 style-only 入口均传入实际插件根。旧金样的两条越界贡献由 `plugin_loader.rs::root_boundary_expected` 精确排除，仅用于兑现本轮安全期望，未改 TS 原始金样。
+Rust 明确应用本轮授权的安全差异：每次贡献目录遍历用全局 dev+ino 集合（Unix）只展开首次遇到的物理目录；非 Unix 使用规范化路径身份。无环别名也去重，保留首次访问的词法命名与路径；不再声称与 TS 的双别名重复贡献等价。预算为 4096 个 Markdown 候选（全局目录去重、根边界检查之后，技能过滤之前；目录与非 Markdown 资产不计数），目录深度为 64；超限返回 `Plugin markdown traversal limit exceeded.`，配置目录入口沿用错误转空贡献的 TS 处理边界，整目录丢弃，绝不发布截断结果。预算超限另向 stderr 输出被丢弃的目录、原因和两项限额；TS `PluginLoader.ts:93` 本身静默 catch→[]，其他读取错误仍按原边界处理。规范化后的条目必须位于规范化插件根内，否则跳过；直接调用两参数 `load_plugin_commands` 时以 base 本身为根。插件三个贡献族和 style-only 入口均传入实际插件根。旧金样的两条越界贡献由 `plugin_loader.rs::root_boundary_expected` 精确排除，仅用于兑现本轮安全期望，未改 TS 原始金样。
 
 `plugin_traversal` 的四个独立子进程测试要求各自 1 秒内完成；Drop 在全部退出路径 kill + wait。负控 `markdown-cycle` 临时恢复祖先集合算法并撤去总预算，必须命中 k=10 的 1 秒超时；另有目录越界、文件越界、链接链越界、配置根、深度、条目、首次别名路径、serverName 保真的独立负控。`negative-controls.py` 给每个 case 配固定的预期失败文本，并同时要求选定测试的 FAILED 行；失败文本不匹配、编译错误、无测试执行与外部超时都不算击杀。
+
+修复轮 2 的独立金样 `budget.json` 由 `generate-budget.mts` 生成；沿用上述 Node 命令分别生成两次并逐字节比较。包含 3 个 skill、每个经 `node_modules` 链接访问 1600 个 `.js` 资产的插件（文件只写到临时 `assets-*` 目录，不通过任何 `node_modules` 路径写入）、12 层双别名 DAG、简单兄弟互链。全部期望来自真实 TS：资产场景完整回放 skills；图场景记录原始贡献数，并按唯一正文投影 TS 首次路径。DAG 每个物理目录正文唯一，投影可用于验证 Rust 保留首次词法路径；简单环的 TS 首次路径已含多次回边，只比较正文集合并单独披露路径/重复数差异。TS 在这个简单环中经 ELOOP 截止后成功返回，不能概括为「所有环都不返回」。Rust 另测 24 层 DAG：子进程内遍历限 1 秒，父进程含启动限 5 秒并在退出路径 kill + wait。
+
+新增负控 `markdown-all-entry-budget` 原样恢复按全部枚举条目扣预算，资产回放必须红；`markdown-dag-no-dedup` / `markdown-simple-cycle-no-dedup` 去掉全局去重，分别命中 DAG 预算错误与简单环重复贡献断言；`markdown-limit-no-diagnostic` 关闭诊断后，commands / skills / output-styles / style-only 的 stderr 观测必须红。诊断正控同时覆盖候选数与深度超限、仅丢弃出错配置目录、保留同一数组里的正常目录。

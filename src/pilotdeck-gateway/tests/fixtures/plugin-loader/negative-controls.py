@@ -96,8 +96,7 @@ ANCESTOR_TRAVERSAL = r'''pub(super) fn load_plugin_commands_with_root(
 ) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
     let mut ancestors = HashSet::new();
     if let Ok(path) = base.canonicalize() { ancestors.insert(path); }
-    let mut remaining = usize::MAX;
-    let mut pending: Vec<_> = markdown_entries(base, &mut remaining)?.into_iter().rev().map(|p| (p, false)).collect();
+    let mut pending: Vec<_> = markdown_entries(base)?.into_iter().rev().map(|p| (p, false)).collect();
     let mut output = Vec::new();
     while let Some((path, leaving)) = pending.pop() {
         if leaving { ancestors.remove(&path); continue; }
@@ -106,7 +105,7 @@ ANCESTOR_TRAVERSAL = r'''pub(super) fn load_plugin_commands_with_root(
             let Ok(canonical) = path.canonicalize() else { continue; };
             if !ancestors.insert(canonical.clone()) { continue; }
             pending.push((canonical, true));
-            pending.extend(markdown_entries(&path, &mut remaining)?.into_iter().rev().map(|p| (p, false)));
+            pending.extend(markdown_entries(&path)?.into_iter().rev().map(|p| (p, false)));
         } else if path.file_name().is_some_and(|s| s.to_string_lossy().to_ascii_lowercase().ends_with(".md")) {
             output.push(load_markdown(&path, get_plugin_command_name(plugin_name, &path, base))?);
         }
@@ -116,6 +115,22 @@ ANCESTOR_TRAVERSAL = r'''pub(super) fn load_plugin_commands_with_root(
 
 '''
 ENTRY_GUARD = '        if !canonical.starts_with(&root) {\n            continue;\n        }'
+# Restore the old enumeration budget exactly: debit every enumerated entry,
+# including scripts/assets, instead of debiting Markdown candidates at load.
+def replace_once(text, old, new):
+    assert text.count(old) == 1, f'unique repair-2 mutation anchor required: {old!r}'
+    return text.replace(old, new)
+
+ALL_ENTRY_BUDGET = replace_once(markdown_source,
+    'fn markdown_entries(directory: &Path)',
+    'fn markdown_entries(directory: &Path, remaining: &mut usize)')
+ALL_ENTRY_BUDGET = replace_once(ALL_ENTRY_BUDGET,
+    '        names.push(entry.file_name());',
+    '        if *remaining == 0 { return Err(traversal_limit()); }\n        *remaining -= 1;\n        names.push(entry.file_name());')
+for old, new in [('markdown_entries(base)?', 'markdown_entries(base, &mut remaining)?'),
+                 ('markdown_entries(&path)?', 'markdown_entries(&path, &mut remaining)?'),
+                 ('            if remaining == 0 {\n                return Err(traversal_limit());\n            }\n            remaining -= 1;\n', '')]:
+    ALL_ENTRY_BUDGET = replace_once(ALL_ENTRY_BUDGET, old, new)
 CASES += [
     ('markdown-cycle', MARKDOWN, GLOBAL_TRAVERSAL, ANCESTOR_TRAVERSAL, 'traversal:plugin_markdown_clique_10'),
     ('markdown-alias', MARKDOWN, 'path: path.into(),', 'path: source.into(),', 'traversal:plugin_markdown_alias_first_path'),
@@ -126,6 +141,10 @@ CASES += [
     ('markdown-chain-boundary', MARKDOWN, ENTRY_GUARD, '        if !canonical.starts_with(&root) && !path.components().any(|c| c.as_os_str() == "chain") { continue; }', 'traversal:plugin_markdown_root_boundary'),
     ('markdown-configured-root', MARKDOWN, '    if !canonical.starts_with(&root) {\n        return Ok(Vec::new());\n    }', '    let root = canonical.clone();', 'traversal:plugin_markdown_root_boundary'),
     ('mcp-server-name-lossy', CONTRIBUTIONS, '        for (server_name, raw) in obj.own_entries() {', '        for (server_name, raw) in obj.own_entries() {\n            let server_name = &JsString::from(String::from_utf16_lossy(server_name.units()));', 'traversal:plugin_mcp_server_names_utf16'),
+    ('markdown-all-entry-budget', MARKDOWN, markdown_source, ALL_ENTRY_BUDGET, 'traversal:plugin_markdown_non_markdown_assets'),
+    ('markdown-dag-no-dedup', MARKDOWN, 'if !visited.insert(directory_identity(&metadata, &canonical)) {', 'if false && !visited.insert(directory_identity(&metadata, &canonical)) {', 'traversal:plugin_markdown_alias_dag'),
+    ('markdown-simple-cycle-no-dedup', MARKDOWN, 'if !visited.insert(directory_identity(&metadata, &canonical)) {', 'if false && !visited.insert(directory_identity(&metadata, &canonical)) {', 'traversal:plugin_markdown_simple_cycle'),
+    ('markdown-limit-no-diagnostic', MARKDOWN, 'if error.message == TRAVERSAL_LIMIT {', 'if false && error.message == TRAVERSAL_LIMIT {', 'traversal:plugin_markdown_limit_diagnostics'),
 ]
 # Every kill needs its own expected panic text AND the selected test's failed
 # outcome. Generic failures, compiler errors, and external timeouts do not count.
@@ -267,7 +286,11 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'markdown-chain-boundary': ['root boundary skips directory/file/chain leaks: commands',
                              'String("p:chain:leak")'],
  'markdown-configured-root': ['configured base cannot escape root'],
- 'mcp-server-name-lossy': ['server names retain UTF-16 identity and sort order']}
+ 'mcp-server-name-lossy': ['server names retain UTF-16 identity and sort order'],
+ 'markdown-all-entry-budget': ['non-Markdown assets do not consume Markdown budget'],
+ 'markdown-dag-no-dedup': ['alias DAG must use linear physical-directory work'],
+ 'markdown-simple-cycle-no-dedup': ['simple cycle removes TS ELOOP-truncated duplicates'],
+ 'markdown-limit-no-diagnostic': ['budget rejection must be observable for all four configured loader paths']}
 
 assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
 assert set(EXPECTED_FAILURES) == {c[0] for c in CASES}, "every case needs failure markers"

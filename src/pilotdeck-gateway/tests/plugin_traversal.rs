@@ -28,6 +28,17 @@ fn case(id: &str) -> Value {
         .unwrap()
         .clone()
 }
+fn budget_case(id: &str) -> Value {
+    let value = baseline::oracle(include_str!("fixtures/plugin-loader/budget.json"));
+    let value: Value = serde_json::from_str(&stringify_json(&value).unwrap().unwrap()).unwrap();
+    value["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == id)
+        .unwrap()
+        .clone()
+}
 fn commands(commands: &[loader::LoadedPluginCommand], root: &Path) -> Value {
     json!(commands.iter().map(|c| json!({"name":c.name,"path":c.path.to_string_lossy().replace(root.to_str().unwrap(),"<root>"),"content":c.content,"frontmatter":c.frontmatter,"isSkill":c.is_skill})).collect::<Vec<_>>())
 }
@@ -266,6 +277,222 @@ fn plugin_markdown_depth_budget() {
         "Plugin markdown traversal limit exceeded.",
         "depth budget must fail, not truncate"
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_non_markdown_assets() {
+    let observed = budget_case("node-modules-assets");
+    let scratch = Scratch::new("484-assets");
+    let root = scratch.path().join("assets-plugin");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("plugin.json"), r#"{"name":"assets-plugin"}"#).unwrap();
+    let count = observed["input"]["skillCount"].as_u64().unwrap();
+    let assets = observed["input"]["assetsPerSkill"].as_u64().unwrap();
+    for i in 0..count {
+        let asset_dir = root.join(format!("assets-{i}"));
+        let skill = root.join(format!("skills/skill-{i}"));
+        fs::create_dir(&asset_dir).unwrap();
+        fs::create_dir_all(&skill).unwrap();
+        for j in 0..assets {
+            fs::write(asset_dir.join(format!("{j}.js")), "asset").unwrap();
+        }
+        fs::write(skill.join("SKILL.md"), format!("skill-{i}")).unwrap();
+        std::os::unix::fs::symlink(format!("../../assets-{i}"), skill.join("node_modules"))
+            .unwrap();
+    }
+    let plugin = loader::load_plugin_from_path(&root, PluginSource::Global).unwrap();
+    assert_eq!(
+        commands(&plugin.skills, scratch.path()),
+        observed["result"],
+        "non-Markdown assets do not consume Markdown budget"
+    );
+}
+
+#[cfg(unix)]
+fn alias_dag(base: &Path, levels: usize) {
+    fs::create_dir(base).unwrap();
+    for i in 0..=levels {
+        let dir = base.join(format!("d{i:02}"));
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("z.md"), format!("node-{i}")).unwrap();
+        if i < levels {
+            for name in ["a", "b"] {
+                std::os::unix::fs::symlink(format!("../d{:02}", i + 1), dir.join(name)).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_alias_dag() {
+    let observed = budget_case("alias-dag");
+    let levels = observed["input"]["levels"].as_u64().unwrap() as usize;
+    let scratch = Scratch::new("484-dag");
+    let base = scratch.path().join("dag");
+    alias_dag(&base, levels);
+    let loaded = loader::load_plugin_commands("p", &base)
+        .expect("alias DAG must use linear physical-directory work");
+    assert!(observed["result"]["commandCount"].as_u64().unwrap() > 4096);
+    assert_eq!(
+        commands(&loaded, scratch.path()),
+        observed["result"]["firstVisitCommands"],
+        "alias DAG retains each physical contribution's first TS path"
+    );
+    // A larger DAG would have over 67 million TS paths. Run in a reaped
+    // subprocess so removing de-duplication cannot wedge the test process.
+    let base = scratch.path().join("deep-dag");
+    alias_dag(&base, 24);
+    let start = Instant::now();
+    let mut child = ReapedChild(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "plugin_markdown_alias_dag_child", "--ignored"])
+            .env("PDRS_PLUGIN_DAG_BASE", &base)
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            assert!(status.success(), "alias DAG child failed");
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "alias DAG child exceeded 5s including startup"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+#[ignore = "subprocess helper for bounded alias DAG test"]
+fn plugin_markdown_alias_dag_child() {
+    let base = std::env::var_os("PDRS_PLUGIN_DAG_BASE").expect("only invoked by parent");
+    let start = Instant::now();
+    assert_eq!(
+        loader::load_plugin_commands("p", Path::new(&base))
+            .unwrap()
+            .len(),
+        25,
+        "alias DAG expands each physical directory once"
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "alias DAG traversal exceeded 1s"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_simple_cycle() {
+    let observed = budget_case("simple-cycle");
+    let scratch = Scratch::new("484-simple-cycle");
+    let base = scratch.path().join("simple-cycle");
+    fs::create_dir(&base).unwrap();
+    for (name, target) in [("a", "b"), ("b", "a")] {
+        let dir = base.join(name);
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("z.md"), name).unwrap();
+        std::os::unix::fs::symlink(format!("../{target}"), dir.join("link")).unwrap();
+    }
+    let loaded = loader::load_plugin_commands("p", &base).unwrap();
+    let mut actual: Vec<_> = loaded.iter().map(|c| c.content.clone()).collect();
+    let mut expected: Vec<_> = observed["result"]["firstVisitCommands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["content"].as_str().unwrap().to_owned())
+        .collect();
+    actual.sort();
+    expected.sort();
+    assert!(observed["result"]["commandCount"].as_u64().unwrap() > expected.len() as u64);
+    assert_eq!(
+        actual, expected,
+        "simple cycle removes TS ELOOP-truncated duplicates"
+    );
+}
+
+#[test]
+fn plugin_markdown_limit_diagnostics() {
+    let scratch = Scratch::new("484-diagnostics");
+    for mode in ["entries", "depth"] {
+        let root = scratch.path().join(mode);
+        let oversized = root.join("oversized");
+        let good = root.join("good");
+        fs::create_dir_all(&oversized).unwrap();
+        fs::create_dir(&good).unwrap();
+        fs::write(good.join("SKILL.md"), "good").unwrap();
+        if mode == "entries" {
+            for i in 0..4097 {
+                fs::write(oversized.join(format!("{i:05}.md")), "partial").unwrap();
+            }
+        } else {
+            // A root contribution before the excessive depth must be discarded.
+            fs::write(oversized.join("a.md"), "partial").unwrap();
+            let mut leaf = oversized.clone();
+            for _ in 0..65 {
+                leaf = leaf.join("d");
+            }
+            fs::create_dir_all(leaf).unwrap();
+        }
+        fs::write(root.join("plugin.json"), r#"{"name":"p","commands":["oversized","good"],"skills":["oversized","good"],"outputStyles":["oversized","good"]}"#).unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "plugin_markdown_limit_diagnostics_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("PDRS_PLUGIN_DIAGNOSTIC_ROOT", &root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "diagnostic child failed: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(
+            stderr.matches("[plugins] Markdown directory '").count(),
+            4,
+            "budget rejection must be observable for all four configured loader paths: {stderr}"
+        );
+        assert_eq!(
+            stderr
+                .matches(&format!("{}' discarded:", oversized.display()))
+                .count(),
+            4,
+            "diagnostic identifies rejected directory"
+        );
+        assert_eq!(stderr.matches("Plugin markdown traversal limit exceeded. (maxMarkdownCandidates=4096, maxDepth=64)").count(), 4, "diagnostic includes cause and limits");
+    }
+}
+
+#[test]
+#[ignore = "subprocess helper for configured-directory diagnostics"]
+fn plugin_markdown_limit_diagnostics_child() {
+    let root = std::env::var_os("PDRS_PLUGIN_DIAGNOSTIC_ROOT").expect("only invoked by parent");
+    let root = Path::new(&root);
+    let plugin = loader::load_plugin_from_path(root, PluginSource::Global).unwrap();
+    let styles = loader::load_plugin_output_styles_from_path(root, PluginSource::Global).unwrap();
+    for commands in [
+        &plugin.commands,
+        &plugin.skills,
+        &plugin.output_styles,
+        &styles.output_styles,
+    ] {
+        assert_eq!(
+            commands.len(),
+            1,
+            "only rejected configured directory is discarded"
+        );
+        assert_eq!(
+            commands[0].content, "good",
+            "partial results are never published"
+        );
+    }
 }
 
 #[tokio::test]
