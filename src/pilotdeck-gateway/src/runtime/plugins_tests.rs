@@ -98,6 +98,96 @@ fn disposable(name: &str, dispose: loader::DisposeFn) -> Arc<LoadedPlugin> {
 }
 
 #[tokio::test]
+async fn disposal_notify_between_first_and_spawned_poll_is_retained() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    for notify_all in [true, false] {
+        for leased in [false, true] {
+            let notify = Arc::new(Notify::new());
+            let entered = Arc::new(AtomicUsize::new(0));
+            let completed = Arc::new(AtomicUsize::new(0));
+            let notify_cb = Arc::clone(&notify);
+            let entered_cb = Arc::clone(&entered);
+            let completed_cb = Arc::clone(&completed);
+            let plugin = disposable(
+                "notify-window",
+                Box::new(move || {
+                    let notify = Arc::clone(&notify_cb);
+                    let entered = Arc::clone(&entered_cb);
+                    let completed = Arc::clone(&completed_cb);
+                    Box::pin(async move {
+                        entered.fetch_add(1, Ordering::SeqCst);
+                        notify.notified().await;
+                        completed.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                }),
+            );
+            let runtime = empty_runtime();
+            runtime
+                .state
+                .lock()
+                .await
+                .registry
+                .replace_all(vec![plugin])
+                .unwrap();
+            let mut lease = if leased {
+                let lease = runtime.acquire_command_catalog().await.unwrap();
+                runtime.refresh().await.unwrap();
+                Some(lease)
+            } else {
+                None
+            };
+            let (first_tx, first_rx) = mpsc::channel();
+            let (notified_tx, notified_rx) = mpsc::channel();
+            let notifier = std::thread::spawn(move || {
+                first_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                if notify_all {
+                    notify.notify_waiters();
+                } else {
+                    notify.notify_one();
+                }
+                notified_tx.send(()).unwrap();
+            });
+            let entered_hook = Arc::clone(&entered);
+            runtime
+                .state
+                .lock()
+                .await
+                .registry
+                .after_disposal_first_poll = Some(Box::new(move |pending| {
+                assert!(pending, "the callback must register its Notified waiter");
+                assert_eq!(entered_hook.load(Ordering::SeqCst), 1);
+                // This hook runs before tokio::spawn, so the notification
+                // must finish while only the noop waker is registered.
+                first_tx.send(()).unwrap();
+                notified_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            }));
+            let result = tokio::time::timeout(Duration::from_secs(5), async {
+                if let Some(lease) = &mut lease {
+                    lease.release().await
+                } else {
+                    runtime.dispose().await
+                }
+            })
+            .await;
+            notifier.join().unwrap();
+            result
+                .expect("disposal lost the notification between first and spawned poll")
+                .unwrap();
+            assert_eq!(entered.load(Ordering::SeqCst), 1);
+            assert_eq!(completed.load(Ordering::SeqCst), 1);
+            runtime.dispose().await.unwrap();
+            println!(
+                "notify_all={notify_all} leased={leased}: first=Pending; notification before spawn; disposal completed"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn retired_plugin_disposes_once_across_refresh_and_shutdown() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let calls = Arc::new(AtomicUsize::new(0));
