@@ -310,18 +310,55 @@ impl TurnRunRegistry for Registry {
         }
     }
 }
-#[derive(Default)]
-struct Text(Mutex<Vec<String>>);
+struct Text(Mutex<Vec<String>>, watch::Sender<u64>);
+impl Default for Text {
+    fn default() -> Self {
+        Self(Mutex::new(vec![]), watch::channel(0).0)
+    }
+}
+impl Text {
+    fn changed(&self) {
+        self.1.send_modify(|generation| *generation += 1);
+    }
+    async fn observation_ready(&self, frames: usize, ended: bool, consumer: &AtomicBool) {
+        let mut changed = self.1.subscribe();
+        loop {
+            changed.borrow_and_update();
+            if self.0.lock().unwrap().len() >= frames && (!ended || consumer.load(Ordering::SeqCst))
+            {
+                return;
+            }
+            changed.changed().await.unwrap();
+        }
+    }
+}
 impl GatewayTextConnection for Text {
     fn send_text(&self, text: String) {
         if serde_json::from_str::<Value>(&text).unwrap()["type"] != "hello_ok" {
             self.0.lock().unwrap().push(text);
+            self.changed();
         }
     }
     fn close(&self, code: u16, reason: &str) {
         panic!("unexpected close {code}:{reason}");
     }
 }
+#[test]
+fn transport_observation_waits_for_delivery_and_receive_completion() {
+    let text = Text::default();
+    let ended = AtomicBool::new(false);
+    let mut observation = Box::pin(text.observation_ready(2, true, &ended));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(observation.as_mut().poll(&mut context).is_pending());
+    text.send_text(r#"{"type":"event"}"#.into());
+    assert!(observation.as_mut().poll(&mut context).is_pending());
+    text.send_text(r#"{"type":"response"}"#.into());
+    assert!(observation.as_mut().poll(&mut context).is_pending());
+    ended.store(true, Ordering::SeqCst);
+    text.changed();
+    assert!(observation.as_mut().poll(&mut context).is_ready());
+}
+
 async fn settle(host: &TurnGateway, registry: &Registry) {
     for _ in 0..4 {
         host.call(async {
@@ -394,9 +431,11 @@ async fn replay_case(case: &Value) {
     let first = request("a", &case["input"]);
     let ended = Arc::new(AtomicBool::new(false));
     let done = ended.clone();
+    let progress = text.clone();
     let consumer = tokio::spawn(async move {
         running.receive(first).await.unwrap();
         done.store(true, Ordering::SeqCst);
+        progress.changed();
     });
     let mut closing = None;
     let mut actual_run = "r".to_string();
@@ -422,6 +461,24 @@ async fn replay_case(case: &Value) {
             "abort" => connection.receive(json!({"type":"request","id":"stop","method":"abort_turn","params":{"sessionKey":"s","runId":actual_run}}).to_string()).await.unwrap(),
             other => panic!("unknown step {other}"),
         }
+        // A scheduler yield is not a dispatch or I/O barrier: on Linux the
+        // submit task may not even have enqueued its first host job yet. Wait
+        // for transport delivery (or receive completion), then inspect bytes.
+        let expected = &case["results"][index];
+        let ready = tokio::time::timeout(
+            Duration::from_secs(5),
+            text.observation_ready(
+                expected["frames"].as_array().unwrap().len(),
+                expected["ended"].as_bool().unwrap(),
+                &ended,
+            ),
+        )
+        .await;
+        assert!(
+            ready.is_ok(),
+            "transport observation did not arrive: {} step {step}",
+            case["name"]
+        );
         settle(&host, &registry).await;
         let gateway = host.gateway.clone();
         let active = host
@@ -820,42 +877,77 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
 // replacement deterministic without sleeps or assumptions about scheduler turns.
 #[tokio::test]
 async fn abort_waits_for_latest_real_ts_session_fence() {
+    replay_abort_fences(None).await;
+}
+
+#[tokio::test]
+async fn abort_snapshots_before_ungated_cleanup_replacement() {
+    replay_abort_fences(Some("ungated-cleanup-replacement")).await;
+}
+
+async fn replay_abort_fences(only: Option<&str>) {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    let mut selected = 0;
     for case in oracle["abortFenceCases"].as_array().unwrap() {
+        if only.is_some_and(|name| case["name"] != name) {
+            continue;
+        }
+        selected += 1;
         let host = empty_gateway_with_clock(30_000, Arc::new(Clock::default()));
         let gateway = host.gateway.clone();
         let steps = case["steps"].as_array().unwrap().clone();
         let results = host
             .call(async move {
                 let owner = &gateway.0.submitter.owner;
-                let key: JsString = "s".into();
                 let mut completions = HashMap::new();
+                let mut reservations = HashMap::new();
+                let mut router_released = steps.iter().any(|step| step == "ungated");
                 let mut drains = HashMap::new();
                 let mut abort = None;
                 let mut ended = false;
                 let mut results = vec![];
                 for step in &steps {
-                    let step = step.as_str().unwrap();
+                    let raw_step = step.as_str().unwrap();
+                    let (step, session) = raw_step.split_once('@').unwrap_or((raw_step, "s"));
+                    let key: JsString = session.into();
                     let run: JsString = step.chars().last().unwrap().to_string().into();
                     if step.starts_with("begin-") {
-                        assert!(owner.begin_turn(&key, &run).is_some());
-                        completions.insert(run.clone(), owner.begin_completion(&key, &run));
-                        let identity = watch::channel(Some(RunRef {
+                        reservations.insert(
+                            (key.clone(), run.clone()),
+                            owner.begin_turn(&key, &run).unwrap(),
+                        );
+                        completions.insert(
+                            (key.clone(), run.clone()),
+                            owner.begin_completion(&key, &run),
+                        );
+                        let drain = gateway.track();
+                        drain.observer()(&RunRef {
                             session_key: key.clone(),
                             project_key: None,
                             run_id: run.clone(),
-                        }))
-                        .1;
-                        drains.insert(run, gateway.track(identity));
+                        });
+                        drains.insert((key, run), drain);
+                    } else if step.starts_with("reject-") {
+                        assert!(owner.begin_turn(&key, &run).is_none());
+                        // Identity resolution and a rejected consumer do not
+                        // begin a completion and must not overwrite the slot.
+                        drains.insert((key, run), gateway.track());
                     } else if step.starts_with("owner-done-") {
-                        owner.complete_turn(&key, &completions[&run]);
+                        owner.end_turn(
+                            &key,
+                            Some(&run),
+                            reservations.get(&(key.clone(), run.clone())),
+                        );
                     } else if step.starts_with("finish-") {
-                        owner.complete_turn(&key, &completions[&run]);
-                        drop(drains.remove(&run));
+                        if let Some(completion) = completions.get(&(key.clone(), run.clone())) {
+                            owner.complete_turn(&key, completion);
+                        }
+                        drop(drains.remove(&(key, run)));
+                    } else if step == "ungated" {
+                        assert!(router_released);
                     } else if step == "release-router" {
-                        // The owner await is released by finish-a; polling is
-                        // deliberately deferred until the same TS observation.
+                        router_released = true;
                     } else if step.starts_with("abort-") {
                         let params = if step == "abort-a" {
                             js(&json!({"sessionKey":"s", "runId":"a"}))
@@ -873,7 +965,7 @@ async fn abort_waits_for_latest_real_ts_session_fence() {
                         }
                     } else {
                         assert_eq!(step, "observe");
-                        if !ended {
+                        if !ended && router_released {
                             let mut context =
                                 std::task::Context::from_waker(std::task::Waker::noop());
                             if let std::task::Poll::Ready(result) =
@@ -897,4 +989,5 @@ async fn abort_waits_for_latest_real_ts_session_fence() {
             case["name"]
         );
     }
+    assert!(selected > 0, "abort fence selection matched no scenario");
 }

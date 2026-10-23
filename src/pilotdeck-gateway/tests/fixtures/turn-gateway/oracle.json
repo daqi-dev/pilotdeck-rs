@@ -2579,6 +2579,158 @@
       ]
     },
     {
+      "name": "abort-after-busy",
+      "setup": {},
+      "steps": [
+        "observe",
+        "second",
+        "abort"
+      ],
+      "input": {
+        "sessionKey": "s",
+        "projectKey": "p",
+        "runId": "r",
+        "message": "hello",
+        "channelKey": "test"
+      },
+      "native": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "r"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"b\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"session_busy\",\"detail\":{\"message\":\"Session s already has an active turn.\",\"code\":\"session_busy\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Wait for the current turn to finish or stop it before sending another message.\",\"scope\":\"session\",\"source\":\"gateway\"}}}",
+            "{\"type\":\"event\",\"id\":\"b\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"error\",\"runId\":\"r2\",\"code\":\"session_busy\",\"message\":\"Session s already has an active turn.\",\"recoverable\":true,\"userHint\":\"Wait for the current turn to finish or stop it before sending another message.\"}}",
+            "{\"type\":\"event\",\"id\":\"b\",\"seq\":2,\"final\":true,\"event\":{\"type\":\"error\",\"runId\":\"r2\",\"code\":\"session_busy\",\"message\":\"Session s already has an active turn.\",\"recoverable\":true,\"userHint\":\"Wait for the current turn to finish or stop it before sending another message.\"}}"
+          ],
+          "active": true,
+          "ended": false
+        },
+        {
+          "frames": [
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"turn_started\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"b\",\"seq\":0,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"session_busy\",\"detail\":{\"message\":\"Session s already has an active turn.\",\"code\":\"session_busy\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Wait for the current turn to finish or stop it before sending another message.\",\"scope\":\"session\",\"source\":\"gateway\"}}}",
+            "{\"type\":\"event\",\"id\":\"b\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"error\",\"runId\":\"r2\",\"code\":\"session_busy\",\"message\":\"Session s already has an active turn.\",\"recoverable\":true,\"userHint\":\"Wait for the current turn to finish or stop it before sending another message.\"}}",
+            "{\"type\":\"event\",\"id\":\"b\",\"seq\":2,\"final\":true,\"event\":{\"type\":\"error\",\"runId\":\"r2\",\"code\":\"session_busy\",\"message\":\"Session s already has an active turn.\",\"recoverable\":true,\"userHint\":\"Wait for the current turn to finish or stop it before sending another message.\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":1,\"final\":false,\"event\":{\"type\":\"input_accepted\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":2,\"final\":false,\"event\":{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":3,\"final\":false,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"aborted_streaming\",\"runId\":\"r\"}}",
+            "{\"type\":\"event\",\"id\":\"a\",\"seq\":4,\"final\":true,\"event\":{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"aborted_streaming\",\"runId\":\"r\"}}",
+            "{\"type\":\"response\",\"id\":\"stop\",\"ok\":true,\"result\":{\"ok\":true}}"
+          ],
+          "active": false,
+          "ended": true
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "turn_started",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "aborted_streaming",
+            "runId": "r"
+          }
+        }
+      ],
+      "replay": {
+        "active": false,
+        "sessionKey": "s",
+        "runId": "r",
+        "events": [
+          {
+            "type": "turn_started",
+            "runId": "r"
+          },
+          {
+            "type": "input_accepted",
+            "runId": "r"
+          },
+          {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          },
+          {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "aborted_streaming",
+            "runId": "r"
+          }
+        ],
+        "terminal": true
+      },
+      "hostCalls": [
+        "refresh",
+        "prepare",
+        "submit",
+        "release",
+        "session_abort",
+        "commit",
+        "release",
+        "after",
+        "session_dispose"
+      ]
+    },
+    {
       "name": "abort-generated-run-id",
       "setup": {
         "generatedRunId": true
@@ -3556,6 +3708,174 @@
         "finish-a"
       ],
       "results": [
+        true
+      ]
+    },
+    {
+      "name": "completed-slot-does-not-refill",
+      "steps": [
+        "begin-a",
+        "owner-done-a",
+        "begin-b",
+        "owner-done-b",
+        "finish-b",
+        "abort-session",
+        "release-router",
+        "observe",
+        "finish-a",
+        "observe"
+      ],
+      "results": [
+        true,
+        true
+      ]
+    },
+    {
+      "name": "completed-slot-explicit-old-run",
+      "steps": [
+        "begin-a",
+        "owner-done-a",
+        "begin-b",
+        "owner-done-b",
+        "finish-b",
+        "abort-a",
+        "observe",
+        "finish-a",
+        "observe"
+      ],
+      "results": [
+        true,
+        true
+      ]
+    },
+    {
+      "name": "replacement-during-session-abort",
+      "steps": [
+        "begin-a",
+        "abort-session",
+        "observe",
+        "finish-a",
+        "begin-b",
+        "release-router",
+        "observe",
+        "owner-done-b",
+        "observe",
+        "finish-b",
+        "observe"
+      ],
+      "results": [
+        false,
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "name": "absent-turn-session-abort",
+      "steps": [
+        "abort-session",
+        "release-router",
+        "observe"
+      ],
+      "results": [
+        true
+      ]
+    },
+    {
+      "name": "absent-turn-explicit-abort",
+      "steps": [
+        "abort-a",
+        "observe"
+      ],
+      "results": [
+        true
+      ]
+    },
+    {
+      "name": "other-session-does-not-replace",
+      "steps": [
+        "begin-a",
+        "owner-done-a",
+        "begin-b@other",
+        "abort-session",
+        "release-router",
+        "observe",
+        "finish-a",
+        "observe",
+        "finish-b@other"
+      ],
+      "results": [
+        false,
+        true
+      ]
+    },
+    {
+      "name": "other-session-does-not-refill",
+      "steps": [
+        "begin-a@other",
+        "begin-b",
+        "finish-b",
+        "abort-session",
+        "release-router",
+        "observe",
+        "finish-a@other"
+      ],
+      "results": [
+        true
+      ]
+    },
+    {
+      "name": "rejected-run-does-not-replace-fence",
+      "steps": [
+        "begin-a",
+        "reject-b",
+        "owner-done-a",
+        "abort-a",
+        "release-router",
+        "observe",
+        "finish-a",
+        "observe",
+        "finish-b"
+      ],
+      "results": [
+        false,
+        true
+      ]
+    },
+    {
+      "name": "ungated-cleanup-replacement",
+      "steps": [
+        "ungated",
+        "begin-a",
+        "abort-a",
+        "observe",
+        "owner-done-a",
+        "begin-b",
+        "finish-a",
+        "observe",
+        "finish-b"
+      ],
+      "results": [
+        false,
+        true
+      ]
+    },
+    {
+      "name": "obsolete-drop-preserves-current-slot",
+      "steps": [
+        "begin-a",
+        "owner-done-a",
+        "begin-b",
+        "owner-done-b",
+        "finish-a",
+        "abort-session",
+        "release-router",
+        "observe",
+        "finish-b",
+        "observe"
+      ],
+      "results": [
+        false,
         true
       ]
     }

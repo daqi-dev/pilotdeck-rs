@@ -16,7 +16,7 @@ use std::{
 };
 
 use pilotdeck_protocol::{JsString, JsValue};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot};
 
 use super::{
     coordinator::TurnEventCoordinator,
@@ -238,18 +238,11 @@ enum Message {
 /// unpolled submission also retains the TS consumer-finally completion fence.
 /// A7.2-pr5/pr6 must uphold this transport cancellation contract.
 pub struct TurnSubmission {
-    identity: watch::Receiver<Option<RunRef>>,
     receiver: mpsc::UnboundedReceiver<Message>,
     consumed: Option<oneshot::Sender<()>>,
     result: Option<oneshot::Receiver<Result<(), SubmitError>>>,
 }
 impl TurnSubmission {
-    /// Resolved after normalization/validation, before durable acceptance. The
-    /// connection host uses this identity to await the admitted consumer on
-    /// abort, including when the caller omitted runId. It never allocates seq.
-    pub(super) fn identity(&self) -> watch::Receiver<Option<RunRef>> {
-        self.identity.clone()
-    }
     pub async fn next(&mut self) -> Result<Option<JsValue>, SubmitError> {
         match self.receiver.recv().await {
             Some(Message::Event(event)) => Ok(Some(event)),
@@ -269,18 +262,25 @@ impl TurnSubmission {
 }
 impl TurnSubmitter {
     pub fn submit(self: &Arc<Self>, input: JsValue) -> TurnSubmission {
+        self.submit_observed(input, |_| {})
+    }
+
+    /// Observe only a real completion begin, never a rejected/preflight run.
+    pub(super) fn submit_observed(
+        self: &Arc<Self>,
+        input: JsValue,
+        admitted: impl FnOnce(&RunRef) + Send + 'static,
+    ) -> TurnSubmission {
         let (send, receiver) = mpsc::unbounded_channel();
         let (consumed, barrier) = oneshot::channel();
         let (result, completion) = oneshot::channel();
-        let (identity, resolved_identity) = watch::channel(None);
         let submitter = self.clone();
         tokio::spawn(async move {
-            let outcome = submitter.run(input, &send, barrier, identity).await;
+            let outcome = submitter.run(input, &send, barrier, admitted).await;
             let _ = send.send(Message::End);
             let _ = result.send(outcome);
         });
         TurnSubmission {
-            identity: resolved_identity,
             receiver,
             consumed: Some(consumed),
             result: Some(completion),
@@ -292,7 +292,7 @@ impl TurnSubmitter {
         mut input: JsValue,
         send: &mpsc::UnboundedSender<Message>,
         barrier: oneshot::Receiver<()>,
-        identity: watch::Sender<Option<RunRef>>,
+        admitted: impl FnOnce(&RunRef) + Send,
     ) -> Result<(), SubmitError> {
         // Gateway normalization precedes validation and durable acceptance.
         let early = self.host.normalize(&mut input).await?;
@@ -329,7 +329,6 @@ impl TurnSubmitter {
                 .cloned()
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into()),
         };
-        identity.send_replace(Some(run.clone()));
         let acceptance = RunAcceptInput {
             run: run.clone(),
             request_material: request_material(&input)?.into(),
@@ -485,6 +484,7 @@ impl TurnSubmitter {
         }
         let completion = self.owner.begin_completion(&run.session_key, &run.run_id);
         cleanup.completion = Some(completion.clone());
+        admitted(&run);
         if sdk {
             let update = self.host.set_sdk_config(&input, &completion).await;
             let event = if completion.is_cancelled() {

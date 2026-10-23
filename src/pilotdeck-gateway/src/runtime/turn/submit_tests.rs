@@ -807,6 +807,7 @@ async fn unavailable_capabilities_are_explicitly_refused() {
     set(&mut oracle, "validationProbes", JsValue::Undefined);
     let oracle = json(&oracle);
     let base = &oracle["cases"][0];
+    let mut selected = 0;
     for (name, setup) in [
         ("failure-guard-unavailable", json!({"failureGuard":true})),
         (
@@ -828,6 +829,7 @@ async fn unavailable_capabilities_are_explicitly_refused() {
         {
             continue;
         }
+        selected += 1;
         let mut case = base.clone();
         case["name"] = name.into();
         case["setup"] = setup;
@@ -837,6 +839,7 @@ async fn unavailable_capabilities_are_explicitly_refused() {
             .await
             .unwrap();
     }
+    assert!(selected > 0, "PDRS_SUBMIT_CAPABILITY matched no scenario");
 }
 
 #[test]

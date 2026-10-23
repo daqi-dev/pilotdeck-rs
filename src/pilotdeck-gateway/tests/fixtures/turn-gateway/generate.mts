@@ -278,6 +278,7 @@ await run('finally-error-response', { finallyFailure: true });
 await run('registry-append-failed', { registryAppendFailure: true });
 await run('invalid-mode', { input: { mode: 'wrong' } }, ['observe']);
 await run('abort-active', {}, ['observe', 'accept', 'abort']);
+await run('abort-after-busy', {}, ['observe', 'second', 'abort']);
 await run('abort-generated-run-id', { generatedRunId: true }, ['observe', 'accept', 'abort']);
 await run('close-generated-run-id', { generatedRunId: true }, ['observe', 'accept', 'close']);
 
@@ -290,11 +291,22 @@ for (const [name, steps] of [
   ['latest-session-fence-only', ['begin-a', 'owner-done-a', 'begin-b', 'owner-done-b', 'abort-session', 'release-router', 'observe', 'finish-b', 'observe', 'finish-a']],
   ['replacement-after-wait-snapshot', ['begin-b', 'owner-done-b', 'abort-session', 'release-router', 'observe', 'begin-c', 'finish-b', 'observe', 'finish-c']],
   ['stale-run-does-not-wait', ['begin-a', 'owner-done-a', 'begin-b', 'abort-a', 'observe', 'finish-b', 'finish-a']],
+  ['completed-slot-does-not-refill', ['begin-a', 'owner-done-a', 'begin-b', 'owner-done-b', 'finish-b', 'abort-session', 'release-router', 'observe', 'finish-a', 'observe']],
+  ['completed-slot-explicit-old-run', ['begin-a', 'owner-done-a', 'begin-b', 'owner-done-b', 'finish-b', 'abort-a', 'observe', 'finish-a', 'observe']],
+  ['replacement-during-session-abort', ['begin-a', 'abort-session', 'observe', 'finish-a', 'begin-b', 'release-router', 'observe', 'owner-done-b', 'observe', 'finish-b', 'observe']],
+  ['absent-turn-session-abort', ['abort-session', 'release-router', 'observe']],
+  ['absent-turn-explicit-abort', ['abort-a', 'observe']],
+  ['other-session-does-not-replace', ['begin-a', 'owner-done-a', 'begin-b@other', 'abort-session', 'release-router', 'observe', 'finish-a', 'observe', 'finish-b@other']],
+  ['other-session-does-not-refill', ['begin-a@other', 'begin-b', 'finish-b', 'abort-session', 'release-router', 'observe', 'finish-a@other']],
+  ['rejected-run-does-not-replace-fence', ['begin-a', 'reject-b', 'owner-done-a', 'abort-a', 'release-router', 'observe', 'finish-a', 'observe', 'finish-b']],
+  ['ungated-cleanup-replacement', ['ungated', 'begin-a', 'abort-a', 'observe', 'owner-done-a', 'begin-b', 'finish-a', 'observe', 'finish-b']],
+  ['obsolete-drop-preserves-current-slot', ['begin-a', 'owner-done-a', 'begin-b', 'owner-done-b', 'finish-a', 'abort-session', 'release-router', 'observe', 'finish-b', 'observe']],
+
 ] as [string, string[]][]) {
   const router = new routerModule.SessionRouter({ createSession() { throw Error('unexpected session creation'); }, idleSweepIntervalMs: 0 });
   const routerGate = defer();
   const realAbort = router.abort.bind(router);
-  router.abort = async (...args: any[]) => { await realAbort(...args); await routerGate.promise; };
+  router.abort = async (...args: any[]) => { await realAbort(...args); if (!steps.includes('ungated')) await routerGate.promise; };
   const fence = new fenceModule.GatewayTurnCompletionFence();
   const gateway = Object.create(InProcessGateway.prototype);
   Object.assign(gateway, { router, turnCompletionFence: fence, abortedTurnReasons: new Map() });
@@ -302,16 +314,22 @@ for (const [name, steps] of [
   const results: boolean[] = [];
   let ended = false;
   let abort: Promise<void> | undefined;
-  for (const step of steps) {
+  for (const rawStep of steps) {
+    const [step, sessionKey = 's'] = rawStep.split('@');
     const runId = step.slice(-1);
+    const handleKey = `${sessionKey}:${runId}`;
     if (step.startsWith('begin-')) {
-      assert.ok(router.beginTurn('s', runId));
-      handles.set(runId, fence.begin('s', runId));
+      assert.ok(router.beginTurn(sessionKey, runId));
+      handles.set(handleKey, fence.begin(sessionKey, runId));
+    } else if (step.startsWith('reject-')) {
+      assert.equal(router.beginTurn(sessionKey, runId), false);
     } else if (step.startsWith('owner-done-')) {
-      router.endTurn('s', runId);
+      router.endTurn(sessionKey, runId);
     } else if (step.startsWith('finish-')) {
-      router.endTurn('s', runId);
-      fence.complete('s', handles.get(runId));
+      router.endTurn(sessionKey, runId);
+      if (handles.has(handleKey)) fence.complete(sessionKey, handles.get(handleKey));
+    } else if (step === 'ungated') {
+      // Exercise the real Router microtask boundary without an injected gate.
     } else if (step === 'release-router') {
       routerGate.resolve();
     } else if (step.startsWith('abort-')) {
