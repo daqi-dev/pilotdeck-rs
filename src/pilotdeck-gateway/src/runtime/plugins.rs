@@ -22,6 +22,10 @@
 //!   and all outstanding leases before completing.
 //! - Lease release waits for the disposal of every retired plugin held by that
 //!   lease. A release error reaches only the releaser, not the active runtime.
+//! - Disposal batches reserve each instance once under the state lock. Callback
+//!   construction and all polls run outside that lock, with panics converted to
+//!   disposal errors. Start barriers preserve batch order; callbacks resume
+//!   independently after every synchronous prologue in their batch has run.
 //! - Path and projectKey identity are preserved as UTF-8 (lone surrogates
 //!   round-trip via replacement character; that matches `String::from_utf16_lossy`
 //!   and is the same as Node's filesystem access from a JsString).
@@ -120,6 +124,9 @@ pub(super) struct PluginRegistry {
     // JS Map order also determines the outer AggregateError cause order.
     pending_disposals: Vec<PendingDisposal>,
     disposal_waiters: Vec<Arc<LoadedPlugin>>,
+    // Batches reserve instances under the state lock, but execute user code
+    // outside it. A start barrier preserves order across concurrent events.
+    disposal_start_receiver: Option<watch::Receiver<Option<()>>>,
     #[cfg(test)]
     after_disposal_first_poll: Option<Box<dyn FnOnce(bool) + Send>>,
     lease_counts: HashMap<usize, usize>,
@@ -158,6 +165,7 @@ impl PluginRegistry {
             retired_plugins: Vec::new(),
             pending_disposals: Vec::new(),
             disposal_waiters: Vec::new(),
+            disposal_start_receiver: None,
             #[cfg(test)]
             after_disposal_first_poll: None,
             lease_counts: HashMap::new(),
@@ -634,18 +642,17 @@ fn start_disposals(
     pending
 }
 
-// JS invokes each eligible callback synchronously up to its first await, while
-// leased instances wait independently. Preserve synchronous starts and lease
-// waiter order under the lock so Tokio scheduling cannot reorder callbacks or
-// start the same instance twice.
+// Reserve ready instances in TS waiter order while holding state. Never call
+// third-party code here: both DisposeFn invocation and future polling may panic
+// or re-enter the runtime. A separate start barrier serializes only prologues,
+// not completion, so one pending callback cannot block its peers.
 fn start_ready_disposals(
     registry: &mut PluginRegistry,
     state_mutex: &Arc<TokioMutex<PluginRuntimeState>>,
 ) {
-    // New callbacks run before continuations woken by the preceding lease
-    // notification. Still-referenced continuations rejoin the end of the wait
-    // queue, matching PluginRegistry.ts:148-150 and 169-175. Promise insertion
-    // order is separate: it must not change the AggregateError cause order.
+    let mut ready = Vec::new();
+    // New callbacks precede continuations woken by the lease notification.
+    // Still-referenced continuations rejoin the end (Registry.ts:148,169).
     for plugin in std::mem::take(&mut registry.disposal_waiters) {
         if registry.is_plugin_referenced(&plugin) {
             registry.disposal_waiters.push(plugin);
@@ -657,42 +664,79 @@ fn start_ready_disposals(
             .find(|pending| Arc::ptr_eq(&pending.plugin, &plugin))
             .unwrap();
         let tx = pending.sender.take().unwrap();
-        let callback_plugin = Arc::clone(&plugin);
-        let mut callback = Box::pin(async move {
-            if let Some(dispose) = &callback_plugin.dispose {
-                dispose().await.map_err(PluginRuntimeError::new)?;
-            }
-            Ok(())
-        });
-        // Pending futures keep their state (including Notified's notification).
-        // The spawned task unconditionally polls this same pinned future once,
-        // covering wakes sent to the noop waker before the task starts; later
-        // pending polls register the task's real waker.
-        let first = callback
-            .as_mut()
-            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
-        #[cfg(test)]
-        if let Some(hook) = registry.after_disposal_first_poll.take() {
-            hook(first.is_pending());
-        }
-        let state = Arc::clone(state_mutex);
-        tokio::spawn(async move {
-            // Finish the synchronous start batch before resuming any callback.
-            drop(state.lock().await);
-            let result = match first {
-                std::task::Poll::Ready(result) => result,
-                std::task::Poll::Pending => callback.await,
-            };
-            let mut st = state.lock().await;
-            let _ = tx.send(Some(result));
-            st.registry
-                .pending_disposals
-                .retain(|pending| !Arc::ptr_eq(&pending.plugin, &plugin));
-            st.registry
-                .retired_plugins
-                .retain(|p| !Arc::ptr_eq(p, &plugin));
-        });
+        ready.push((plugin, tx));
     }
+    if ready.is_empty() {
+        return;
+    }
+    let previous_start = registry.disposal_start_receiver.take();
+    let (started_tx, started_rx) = watch::channel(None);
+    registry.disposal_start_receiver = Some(started_rx);
+    #[cfg(test)]
+    let mut hook = registry.after_disposal_first_poll.take();
+    let state = Arc::clone(state_mutex);
+    tokio::spawn(async move {
+        if let Some(previous) = previous_start {
+            wait_watch(previous).await;
+        }
+        let mut started = Vec::new();
+        for (plugin, tx) in ready {
+            let callback_plugin = Arc::clone(&plugin);
+            let mut future = Box::pin(async move {
+                if let Some(dispose) = &callback_plugin.dispose {
+                    dispose().await.map_err(PluginRuntimeError::new)?;
+                }
+                Ok(())
+            });
+            // TS's async IIFE owns synchronous throws as rejected promises
+            // (PluginRegistry.ts:148-160). Catch both construction panics and
+            // panics on any poll, so all peers still start and settle.
+            let mut callback = Box::pin(std::future::poll_fn(move |cx| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| future.as_mut().poll(cx)))
+                    .unwrap_or_else(|payload| {
+                        let message = payload
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                            .unwrap_or_else(|| "Plugin dispose callback panicked.".to_owned());
+                        std::task::Poll::Ready(Err(PluginRuntimeError::new(message)))
+                    })
+            }));
+            // Keep this same pinned future: a notification delivered to the
+            // noop waker remains in its state. The spawned task unconditionally
+            // polls it once, then pending polls register the real task waker.
+            let first = callback
+                .as_mut()
+                .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+            #[cfg(test)]
+            if let Some(hook) = hook.take() {
+                hook(first.is_pending());
+            }
+            started.push((plugin, tx, callback, first));
+        }
+        // Every synchronous prologue has run before any callback can resume.
+        for (plugin, tx, callback, first) in started {
+            let state = Arc::clone(&state);
+            tokio::spawn(async move {
+                let result = match first {
+                    std::task::Poll::Ready(result) => {
+                        drop(callback);
+                        result
+                    }
+                    std::task::Poll::Pending => callback.await,
+                };
+                let mut st = state.lock().await;
+                let _ = tx.send(Some(result));
+                st.registry
+                    .pending_disposals
+                    .retain(|pending| !Arc::ptr_eq(&pending.plugin, &plugin));
+                st.registry
+                    .retired_plugins
+                    .retain(|p| !Arc::ptr_eq(p, &plugin));
+            });
+        }
+        let _ = started_tx.send(Some(()));
+    });
 }
 
 async fn settle_disposals(pending: Vec<DisposalReceiver>) -> Vec<PluginRuntimeError> {

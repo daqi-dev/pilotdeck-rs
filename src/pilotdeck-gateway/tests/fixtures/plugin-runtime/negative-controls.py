@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
 OUTPUT = Path(sys.argv[1]).resolve()
 OUTPUT.mkdir(parents=True, exist_ok=True)
-assert Path(os.environ['CARGO_TARGET_DIR']).resolve() == ROOT / 'src/target'
+assert Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'src/target')).resolve() == ROOT / 'src/target'
 BASE = SOURCE.read_bytes()
 TEXT = BASE.decode()
 # Fixed pre-#543 implementation: HEAD already contains the fix after commit or
@@ -36,16 +36,12 @@ def replace(old, new):
     assert TEXT.count(old) == 1, f'unique mutation anchor required: {old!r}'
     return TEXT.replace(old, new)
 
-serial = replace('    for plugin in std::mem::take(&mut registry.disposal_waiters) {',
-                 '    let mut previous: Option<DisposalReceiver> = None;\n    for plugin in std::mem::take(&mut registry.disposal_waiters) {')
-serial = serial.replace('        let tx = pending.sender.take().unwrap();',
-                        '        let tx = pending.sender.take().unwrap();\n        let preceding = previous.replace(pending.receiver.clone());')
-serial = serial.replace('        let mut callback = Box::pin(async move {',
-                        '        let mut callback = Box::pin(async move {\n            if let Some(preceding) = preceding { let _ = wait_watch(preceding).await; }')
-stop = replace('        let state = Arc::clone(state_mutex);\n        tokio::spawn(async move {',
-               '        let stop = matches!(&first, std::task::Poll::Ready(Err(_)));\n        let state = Arc::clone(state_mutex);\n        tokio::spawn(async move {')
-stop = stop.replace('                .retain(|p| !Arc::ptr_eq(p, &plugin));\n        });',
-                    '                .retain(|p| !Arc::ptr_eq(p, &plugin));\n        });\n        if stop { break; }')
+serial = replace('        for (plugin, tx) in ready {',
+                 '        let mut previous: Option<DisposalReceiver> = None;\n        for (plugin, tx) in ready {\n            let preceding = previous.replace(tx.subscribe());')
+serial = serial.replace('            let mut future = Box::pin(async move {',
+                        '            let mut future = Box::pin(async move {\n                if let Some(preceding) = preceding { let _ = wait_watch(preceding).await; }')
+stop = replace('            started.push((plugin, tx, callback, first));',
+               '            let stop = matches!(&first, std::task::Poll::Ready(Err(_)));\n            started.push((plugin, tx, callback, first));\n            if stop { break; }')
 CASES = [
     ('restore-old-order', OLD, 'runtime_dispose_retired_and_active_together', '"dispose-retired-and-active-together" calls'),
     ('serial-instead-of-parallel', serial, 'runtime_dispose_active_order_and_parallel', '"dispose-active-order-and-parallel" step 3'),

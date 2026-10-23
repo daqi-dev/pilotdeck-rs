@@ -15,7 +15,7 @@ cmp /tmp/pdrs-runtime-one/oracle.json src/pilotdeck-gateway/tests/fixtures/plugi
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --test plugin_runtime
 ```
 
-`tests/plugin_runtime.rs` 为原件的 24 场景、246 步逐一提供测试，回放磁盘操作、refresh/report、state/view、三种贡献租约、并发 start/await/pending/flush 和真实 Rust catalog bundle。每一步结果与错误严格比较，协作者调用按整场景顺序比较（JS microtask 与 tokio 可以把回调移到相邻 await/flush 的另一侧）。`start` 先在调用方轮询 future 一次，复现 JS async 函数到首个 await 前的同步准入，不使用睡眠推测状态。
+`tests/plugin_runtime.rs` 为原件的 25 场景、259 步逐一提供测试，回放磁盘操作、refresh/report、state/view、三种贡献租约、并发 start/await/pending/flush 和真实 Rust catalog bundle。每一步结果与错误严格比较，协作者调用按整场景顺序比较（JS microtask 与 tokio 可以把回调移到相邻 await/flush 的另一侧）。`start` 先在调用方轮询 future 一次，复现 JS async 函数到首个 await 前的同步准入，不使用睡眠推测状态。
 
 表示转换仅限临时根路径、对象字段的显式 undefined 标签，以及 TS 的 `Object.freeze` 元信息。旧 Rust snapshot 类型不暴露 `outputStyles`，当前两条 legacy acquire 期望均为空，测试先断言它们确为空再剔除此字段；将来出现非空样本会失败。此测试不声称验证 Rust 类型尚未提供的 legacy outputStyles 属性。
 
@@ -33,3 +33,11 @@ python3 src/pilotdeck-gateway/tests/fixtures/plugin-runtime/negative-controls.py
 脚本依次临时修改产品实现，要求指定测试出现对应行为断言失败，并在 `finally` 恢复原始字节；编译错误不算负控成功。总期限少于 10 分钟，每次只跑一个测试进程、`--test-threads=1`，复用启动器的本树 `src/target`。已有 `runtime-replay-generation` 负控仍位于 plugin-loader 的负控脚本。
 
 `restore-old-order` 固定读取修复前提交 `dbaa207c549eb42dd3dd01a78828085c8ee48f98` 的实现，不依赖当前 HEAD 或远端分支；需本地 Git 对象库保留该提交。启动测试前逐条断言变异字节与当前源码不同，结果记录各变异 SHA-256，避免提交或合入后出现空变异。
+
+修复轮 3 增加真实非 async dispose 同步抛错场景；TS 将抛错变为 promise 拒绝，继续同批其余清理并聚合错误。Rust 的 DisposeFn 构造、首 poll 与后续 poll 的 unwind 都走这一错误路径。锁内只预留实例，锁外按批次启动屏障依次首 poll，同批前奏全部执行后才恢复 Pending 回调；回调可访问 runtime state。
+
+```sh
+timeout 600 python3 src/pilotdeck-gateway/tests/fixtures/plugin-runtime/panic-negative.py /tmp/pdrs-543-panic-negative
+```
+
+该负控依次恢复固定提交 `6286ed744c4e04ffea76fd7458772316a2364040` 的旧逻辑、只捕获首 poll、恢复持 state 锁调用；前两条要求 5 秒 dispose 期限断言失败，第三条要求锁重入断言失败，finally 恢复字节。总期限低于 10 分钟，一次仅一个测试进程。

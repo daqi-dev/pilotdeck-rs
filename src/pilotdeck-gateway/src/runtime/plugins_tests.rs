@@ -97,6 +97,147 @@ fn disposable(name: &str, dispose: loader::DisposeFn) -> Arc<LoadedPlugin> {
     })
 }
 
+// Both waiters must be in the same lease-release batch. On the old code the
+// release task unwinds after taking the waiters, leaving the second stranded.
+#[tokio::test]
+async fn disposal_sync_panic_does_not_strand_other_waiters() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    for panic_stage in 0..3 {
+        let runtime = Arc::new(empty_runtime());
+        let completed = Arc::new(AtomicUsize::new(0));
+        let completed_cb = Arc::clone(&completed);
+        let panic_plugin = disposable(
+            "panic",
+            Box::new(move || {
+                if panic_stage == 0 {
+                    panic!("sync dispose failed");
+                }
+                Box::pin(async move {
+                    if panic_stage == 2 {
+                        tokio::task::yield_now().await;
+                    }
+                    panic!("sync dispose failed")
+                })
+            }),
+        );
+        let other = disposable(
+            "other",
+            Box::new(move || {
+                completed_cb.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(()) })
+            }),
+        );
+        runtime
+            .state
+            .lock()
+            .await
+            .registry
+            .replace_all(vec![panic_plugin, other])
+            .unwrap();
+        let mut lease = runtime.acquire_command_catalog().await.unwrap();
+        runtime.refresh().await.unwrap();
+        assert_eq!(
+            runtime.state.lock().await.registry.disposal_waiters.len(),
+            2
+        );
+        let shutdown_runtime = Arc::clone(&runtime);
+        let shutdown = tokio::spawn(async move { shutdown_runtime.dispose().await });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while runtime.lifecycle_state().await != RegistryState::Draining {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let release = tokio::spawn(async move { lease.release().await });
+        // Check shutdown first: the regression must fail at a bounded deadline,
+        // even if release itself panics. Dropping the test runtime aborts tasks.
+        let error = tokio::time::timeout(Duration::from_secs(5), shutdown)
+            .await
+            .expect("sync panic stranded a waiter: dispose deadline")
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(completed.load(Ordering::SeqCst), 1);
+        let released = tokio::time::timeout(Duration::from_secs(5), release)
+            .await
+            .unwrap()
+            .expect("release must report an error, not panic")
+            .unwrap_err();
+        assert_eq!(released.message, "sync dispose failed");
+        // Error shape comes from a real synchronous-throw callback in TS.
+        let expected = runtime_error_oracle("dispose-sync-throw-with-retired-peer");
+        fn record(error: &PluginRuntimeError) -> serde_json::Value {
+            if error.causes.is_empty() {
+                serde_json::json!({"name":"Error", "message":error.message})
+            } else {
+                serde_json::json!({"name":"AggregateError", "message":error.message,
+                    "errors":error.causes.iter().map(record).collect::<Vec<_>>()})
+            }
+        }
+        assert_eq!(record(&error), expected);
+        assert_eq!(runtime.lifecycle_state().await, RegistryState::Disposed);
+        assert!(
+            runtime
+                .state
+                .lock()
+                .await
+                .registry
+                .pending_disposals
+                .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn disposal_prologue_can_access_runtime_state() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    for leased in [false, true] {
+        let runtime = Arc::new(empty_runtime());
+        let observed = Arc::new(AtomicUsize::new(0));
+        let state = Arc::clone(&runtime.state);
+        let observed_cb = Arc::clone(&observed);
+        let plugin = disposable(
+            "reentrant",
+            Box::new(move || {
+                // A current-thread runtime makes try_lock a deterministic assertion
+                // about our caller, with no competing state operation in this test.
+                assert!(
+                    state.try_lock().is_ok(),
+                    "DisposeFn invoked under state lock"
+                );
+                let state = Arc::clone(&state);
+                let observed = Arc::clone(&observed_cb);
+                Box::pin(async move {
+                    assert!(state.try_lock().is_ok(), "callback polled under state lock");
+                    let _state = state.lock().await;
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            }),
+        );
+        runtime
+            .state
+            .lock()
+            .await
+            .registry
+            .replace_all(vec![plugin])
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            if leased {
+                let mut lease = runtime.acquire_command_catalog().await.unwrap();
+                runtime.refresh().await.unwrap();
+                lease.release().await.unwrap();
+            }
+            runtime.dispose().await.unwrap();
+        })
+        .await
+        .expect("reentrant prologue blocked disposal");
+        assert_eq!(observed.load(Ordering::SeqCst), 1);
+    }
+}
+
 #[tokio::test]
 async fn disposal_notify_between_first_and_spawned_poll_is_retained() {
     use std::sync::atomic::{AtomicUsize, Ordering};

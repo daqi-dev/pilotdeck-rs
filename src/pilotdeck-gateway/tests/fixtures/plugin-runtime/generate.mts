@@ -42,7 +42,7 @@ const { PluginRuntime } = await import(pathToFileURL(join(baseline, RUNTIME)).hr
 const { GatewayCommandCatalogBundle } = await import(pathToFileURL(join(baseline, CATALOG)).href);
 
 type Step = Record<string, any> & { op: string };
-type Builtin = { name: string; dir: string; dispose?: string; gate?: string; mcpServers?: Record<string, unknown> };
+type Builtin = { name: string; dir: string; dispose?: string; throwSync?: boolean; gate?: string; mcpServers?: Record<string, unknown> };
 type Scenario = {
   id: string;
   builtins?: Builtin[];
@@ -359,6 +359,22 @@ add('dispose-reactivated-retiree', { builtins: [
   { op: 'start', what: 'dispose', slot: 'd' },
   { op: 'await', slot: 'r' }, { op: 'await', slot: 'd' }, { op: 'state' },
 ]);
+// A non-async callback really throws before returning a promise. The registry's
+// async IIFE must own that rejection and continue the same retirement batch.
+add('dispose-sync-throw-with-retired-peer', { builtins: [
+  { name: 'panic', dir: 'builtin/panic', dispose: 'sync dispose failed', throwSync: true },
+  { name: 'other', dir: 'builtin/other', dispose: 'ok' },
+] }, [
+  { op: 'refresh' }, { op: 'acquire', kind: 'catalog', id: 'g1' },
+  w('builtin/panic/plugin.json', manifest({ name: 'panic' })),
+  w('builtin/other/plugin.json', manifest({ name: 'other' })),
+  { op: 'refresh' },
+  { op: 'start', what: 'dispose', slot: 'd' }, { op: 'flush' },
+  { op: 'pending', slot: 'd' },
+  { op: 'start', what: 'release', id: 'g1', slot: 'r' },
+  { op: 'await', slot: 'd' }, { op: 'await', slot: 'r' },
+  { op: 'calls' }, { op: 'state' },
+]);
 // GatewayCommandCatalogBundle.commandsList over the real runtime.
 add('catalog-lists-one-generation', {}, [
   w(`${P}/proj/plugin.json`, manifest({ name: 'proj' })),
@@ -488,7 +504,12 @@ try {
         manifest: { name: b.name },
       };
       if (b.mcpServers) plugin.mcpServers = b.mcpServers;
-      if (b.dispose) {
+      if (b.throwSync) {
+        plugin.dispose = () => {
+          event('dispose', { plugin: b.name });
+          throw new Error(b.dispose);
+        };
+      } else if (b.dispose) {
         plugin.dispose = async () => {
           event('dispose', { plugin: b.name });
           if (b.gate) {
