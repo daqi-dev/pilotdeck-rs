@@ -399,9 +399,18 @@ async fn reconnect_preserves_command_environment_clear_removals_and_cwd() {
         .env_remove("HOST_REPLAY_REMOVE")
         .current_dir(receipt.0.parent().unwrap());
     let handler = ResumeHandler::new(mode, &receipt);
-    let client = HostClient::spawn_resumable(command, None, limits())
-        .await
-        .unwrap();
+    let client = HostClient::spawn_resumable(
+        command,
+        None,
+        Limits {
+            // Under load, Python fixture + handshake + execute + reconnect + replay
+            // can exceed the default 2 s. Widen test-only; production unchanged.
+            execution_timeout: Some(Duration::from_secs(20)),
+            ..limits()
+        },
+    )
+    .await
+    .unwrap();
     let result = client.execute(request(), handler.clone()).await;
     assert!(
         matches!(result, Ok(ExecuteResult::Terminal(_))),

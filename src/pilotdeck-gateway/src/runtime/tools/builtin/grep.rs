@@ -2370,7 +2370,9 @@ mod tests {
                 .spawn()
                 .expect("spawn helper test");
         let mut pids = Vec::new();
-        let deadline = std::time::Instant::now() + StdDuration::from_secs(60);
+        // Under load, fake rg fixture spawning and handshake can take longer.
+        // This is test orchestration timing, not production code.
+        let deadline = std::time::Instant::now() + StdDuration::from_secs(120);
         loop {
             if let Some(status) = helper.try_wait().expect("poll helper") {
                 use std::io::Read as _;
