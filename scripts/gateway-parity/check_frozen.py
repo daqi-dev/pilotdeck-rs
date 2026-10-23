@@ -28,7 +28,7 @@ def ledger_bytes(folder):
 
 def check_diffs(folder, root):
     failures = []
-    old = (folder / 'accepted-diffs.md').read_text()
+    old = (folder / 'accepted-diffs.md').read_text(encoding='utf-8')
     ids = set(re.findall(rf'^#{{1,6}}\s+({ENTRY_ID}(?:-R[1-9][0-9]*)?)\b', old, re.M))
     parsed = []
     for path in sorted((folder / 'diffs').iterdir()) if (folder / 'diffs').exists() else []:
@@ -91,11 +91,19 @@ def git(root, *args):
                                    timeout=30)
 
 
-def check_append_only(root, base):
+def check_append_only(root, base, notes=None):
     """Freeze the legacy ledger/hash row and existing diffs at the merge-base."""
     failures = []
     try:
-        merge_base = git(root, 'merge-base', 'HEAD', base).decode().strip()
+        merge_base = git(root, 'merge-base', 'HEAD', base).decode(encoding='utf-8').strip()
+        head = git(root, 'rev-parse', 'HEAD').decode(encoding='utf-8').strip()
+        base_commit = git(root, 'rev-parse', '--verify', f'{base}^{{commit}}').decode(encoding='utf-8').strip()
+        if merge_base == head:
+            if base_commit != head:
+                return [f'base {base}: base 与 HEAD 同源，只追加对照无效 '
+                        '(merge-base == HEAD; base commit != HEAD)']
+            if notes is not None:
+                notes.append('base 解析出的提交等于 HEAD（如空推送）；继续核对工作树冻结字节')
         legacy = 'specs/gateway-parity/accepted-diffs.md'
         before = git(root, 'show', f'{merge_base}:{legacy}')
         path = root / legacy
@@ -124,11 +132,11 @@ def check_append_only(root, base):
         for entry in filter(None, entries):
             meta, raw_path = entry.split(b'\t', 1)
             mode, kind, oid = meta.split()
-            name = raw_path.decode('utf-8')
+            name = raw_path.decode(encoding='utf-8')
             path = root / name
             if (mode != b'100644' or kind != b'blob' or path.is_symlink()
                     or not path.is_file() or path.stat().st_mode & 0o111
-                    or path.read_bytes() != git(root, 'cat-file', 'blob', oid.decode())):
+                    or path.read_bytes() != git(root, 'cat-file', 'blob', oid.decode(encoding='utf-8'))):
                 failures.append(f'{name}: base file changed/deleted/renamed (append-only)')
     except (OSError, UnicodeError, ValueError, subprocess.SubprocessError) as error:
         failures.append(f'cannot verify append-only base {base}: {error}')
@@ -146,7 +154,7 @@ def main(argv=None):
     if not manifest.exists():
         print(json.dumps({'status': 'DRAFT', 'approved': False, 'reason': 'FROZEN.md absent; awaiting coordinator review'}, ensure_ascii=False))
         return 2
-    entries = re.findall(r'^([0-9a-f]{64})\s+([\w./-]+)\s*$', manifest.read_text(), re.M)
+    entries = re.findall(r'^([0-9a-f]{64})\s+([\w./-]+)\s*$', manifest.read_text(encoding='utf-8'), re.M)
     failures = []
     required = {'acceptance.md', 'normalization.md', 'accepted-diffs.md'}
     if not required.issubset({name for _, name in entries}) or len(entries) != len({name for _, name in entries}):
@@ -159,12 +167,16 @@ def main(argv=None):
         failures.extend(check_diffs(folder, ROOT))
     except (OSError, UnicodeError) as error:
         failures.append(f'cannot read ledger: {error}')
+    notes = []
     if args.base:
-        failures.extend(check_append_only(ROOT, args.base))
+        failures.extend(check_append_only(ROOT, args.base, notes))
     if args.print_ledger and not failures:
         sys.stdout.buffer.write(ledger_bytes(folder))
         return 0
-    print(json.dumps({'status': 'FAIL' if failures else 'PASS', 'failures': failures, 'entries': len(entries)}, ensure_ascii=False))
+    report = {'status': 'FAIL' if failures else 'PASS', 'failures': failures, 'entries': len(entries)}
+    if notes:
+        report['notes'] = notes
+    print(json.dumps(report, ensure_ascii=False))
     return int(bool(failures))
 
 
