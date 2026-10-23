@@ -420,8 +420,10 @@ impl SessionStorage {
     /// options) then SessionRuntime.restore, which validates the whole log
     /// before any state changes. Diagnostics do not fail the restore.
     pub fn restore(&self) -> AdapterResult<TranscriptRead> {
+        // Serialize the read and state installation with every producer.
+        let inner = self.transcript.lock();
         let read = self.read_transcript(None)?;
-        self.transcript.restore_entries(&read.entries)?;
+        self.transcript.restore_entries(&read.entries, inner)?;
         Ok(read)
     }
     pub fn read_transcript(&self, max_bytes: Option<u64>) -> AdapterResult<TranscriptRead> {
@@ -597,7 +599,11 @@ impl TranscriptWriter {
         inner.recorder_domain = DomainState::default();
         Ok(())
     }
-    fn restore_entries(&self, entries: &[JsValue]) -> AdapterResult<()> {
+    fn restore_entries(
+        &self,
+        entries: &[JsValue],
+        mut inner: MutexGuard<'_, WriterInner>,
+    ) -> AdapterResult<()> {
         // validateSessionEventLog runs over the whole log before domain checks.
         let (state, ids) = validate_event_log(entries)?;
         // Then validateSessionDomainLog; then storage.restore hydrates projections.
@@ -605,8 +611,9 @@ impl TranscriptWriter {
         for entry in entries {
             domain = domain.next(entry)?;
         }
-        // Hydration runs reducers, not conversation finalizers. In particular,
-        // accepted_input.messages is stored verbatim until a read projection.
+        // Hydration runs every registered reducer. Agent transcript reducers
+        // run over the whole log before WebHistory's file-artifact reducer;
+        // accepted_input.messages waits for conversation finalization.
         for entry in entries {
             if matches!(
                 lossy_value(field(entry, "type")).as_str(),
@@ -615,7 +622,15 @@ impl TranscriptWriter {
                 projection_supported(entry)?;
             }
         }
-        let mut inner = self.lock();
+        // WebHistory reads message.content.some even for incomplete turns.
+        for entry in entries {
+            if matches!(
+                lossy_value(field(entry, "type")).as_str(),
+                "assistant_message" | "tool_result_message" | "durable_message"
+            ) {
+                validate_hydrated_message(field(entry, "message"))?;
+            }
+        }
         inner.sequence = state.sequence;
         inner.last_entry_id = state.last_entry_id;
         inner.entry_ids = ids;
@@ -990,6 +1005,44 @@ pub(super) const DOMAIN_TYPES: &[&str] = &[
 fn plain_object(value: &JsValue) -> bool {
     value.as_object().is_some()
 }
+/// WebHistoryProjections.ts:79,321-324: messageContainsToolResult during
+/// hydrate. This is a JS `.some` call, not canonical-message validation:
+/// primitive blocks are allowed and a matching block stops further reads.
+fn validate_hydrated_message(message: &JsValue) -> AdapterResult<()> {
+    let property_error = |value: &JsValue, property: &str| {
+        AdapterError::Type(format!(
+            "Cannot read properties of {} (reading '{property}')",
+            if matches!(value, JsValue::Null) {
+                "null"
+            } else {
+                "undefined"
+            }
+        ))
+    };
+    if nullish(message) {
+        return Err(property_error(message, "content"));
+    }
+    let content = field(message, "content");
+    if nullish(content) {
+        return Err(property_error(content, "some"));
+    }
+    let JsValue::Array(blocks) = content else {
+        return Err(AdapterError::Type(
+            "message.content.some is not a function".into(),
+        ));
+    };
+    for block in blocks {
+        if nullish(block) {
+            return Err(property_error(block, "type"));
+        }
+        if is_str(field(block, "type"), "tool_result")
+            || is_str(field(block, "type"), "tool_result_reference")
+        {
+            break;
+        }
+    }
+    Ok(())
+}
 fn message_supported(message: &JsValue) -> bool {
     plain_object(message)
         && matches!(field(message, "content"), JsValue::Array(blocks) if blocks.iter().all(|block| {
@@ -1271,4 +1324,110 @@ pub(super) fn js_trim_units(units: &[u16]) -> &[u16] {
         .rposition(|u| !space(u))
         .map_or(start, |i| i + 1);
     &units[start..end]
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use std::{
+        sync::{Weak, mpsc},
+        thread,
+        time::Duration,
+    };
+
+    struct ReadGateStore {
+        entries: Mutex<Vec<JsValue>>,
+        owner: Mutex<Weak<SessionStorage>>,
+        entered: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+    impl TranscriptStore for ReadGateStore {
+        fn append(&self, _key: &TranscriptKey, entry: &JsValue) -> StoreResult<()> {
+            self.entries.lock().unwrap().push(entry.clone());
+            Ok(())
+        }
+        fn read(&self, _key: &TranscriptKey, _max: Option<u64>) -> StoreResult<TranscriptRead> {
+            let owner = self.owner.lock().unwrap().upgrade().unwrap();
+            // Deterministic regression assertion: the read itself must be
+            // inside the commit lock, independent of thread scheduling.
+            assert!(matches!(
+                owner.transcript.inner.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            let entries = self.entries.lock().unwrap().clone();
+            self.entered.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            Ok(TranscriptRead {
+                entries,
+                diagnostics: vec![],
+            })
+        }
+    }
+
+    #[test]
+    fn restore_serializes_read_and_state_installation_with_append() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let store = Arc::new(ReadGateStore {
+            entries: Mutex::new(vec![]),
+            owner: Mutex::new(Weak::new()),
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        });
+        let adapter =
+            AsyncTranscriptAdapter::new(store.clone(), Arc::new(|_| "/pdrs-fixture/chats".into()));
+        let storage = Arc::new(adapter.create_session_storage(SessionStorageInput {
+            project_root: "/pdrs-fixture/project".into(),
+            pilot_home: "/pdrs-fixture/home".into(),
+            session_id: "s1".into(),
+            now: Some(Arc::new(|| "2026-10-18T00:00:00.000Z".into())),
+        }));
+        *store.owner.lock().unwrap() = Arc::downgrade(&storage);
+        storage
+            .transcript
+            .record_session_event(&"s1".into(), &"t".into(), draft("turn_started"))
+            .unwrap();
+        thread::scope(|scope| {
+            let restore = scope.spawn(|| storage.restore());
+            entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let (started_tx, started_rx) = mpsc::channel();
+            let storage = &storage;
+            let append = scope.spawn(move || {
+                started_tx.send(()).unwrap();
+                let mut step = draft("step_started");
+                step.insert("step".into(), JsValue::Number(1.0));
+                storage
+                    .transcript
+                    .record_session_event(&"s1".into(), &"t".into(), step)
+            });
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            release_tx.send(()).unwrap();
+            assert_eq!(restore.join().unwrap().unwrap().entries.len(), 1);
+            append.join().unwrap().unwrap();
+        });
+        assert_eq!(storage.transcript.snapshot_state().sequence, 2);
+        let entries = store.entries.lock().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(field(&entries[1], "sequence"), &JsValue::Number(2.0));
+        assert_eq!(
+            field(&entries[1], "parentEntryId"),
+            field(&entries[0], "entryId")
+        );
+        drop(entries);
+        let mut step = draft("step_started");
+        step.insert("step".into(), JsValue::Number(2.0));
+        assert!(matches!(
+            storage
+                .transcript
+                .record_session_event(&"s1".into(), &"t".into(), step),
+            Err(AdapterError::Domain {
+                code: "step_already_open",
+                ..
+            })
+        ));
+    }
 }

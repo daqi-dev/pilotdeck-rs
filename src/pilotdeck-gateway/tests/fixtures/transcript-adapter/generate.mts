@@ -21,6 +21,9 @@ const SOURCES = [
   'src/session/persistence/JsonlSessionPersistence.ts',
   'src/session/transcript/TranscriptReader.ts',
   'src/session/projection/AgentTranscriptProjections.ts',
+  'src/session/projection/WebHistoryProjections.ts',
+  'src/session/projection/SessionProjectionDriver.ts',
+  'src/session/projection/BuiltinSessionProjections.ts',
   'src/pilot/paths.ts',
 ];
 const sourceSha256 = await baselineSourceHashes(baseline, SOURCES);
@@ -477,6 +480,43 @@ try {
     files: { 'x.jsonl': line(at(1, 'accepted_input', { messages: [user('x')] })) + line(at(2, 'turn_result', { result: null })) },
     steps: [{ op: 'list' }],
   }, ['error:TypeError']);
+
+  // Real restore/hydrate runs WebHistory's file-artifact reducer even for
+  // incomplete turns. Probe JS property access, .some, and its short circuit.
+  const messageShapes = [
+    ['content-string', { content: 'str' }],
+    ['content-null-block', { content: [null] }],
+    ['message-number', 5], ['message-null', null],
+    ['message-missing', undefined], ['message-string', 'str'],
+    ['message-boolean', false], ['message-array', []],
+    ['content-missing', {}], ['content-null', { content: null }],
+    ['content-number', { content: 5 }], ['content-boolean', { content: false }],
+    ['content-object', { content: {} }],
+    ['content-object-some', { content: { some: 1 } }],
+    ['content-late-null', { content: [{ type: 'text' }, null] }],
+    ['content-primitive-blocks', { content: [5, 'str', false, {}, []] }],
+    ['content-tool-short-circuit', { content: [{ type: 'tool_result' }, null] }],
+    ['content-reference-short-circuit', { content: [{ type: 'tool_result_reference' }, null] }],
+    ['content-empty', { content: [] }],
+    ['content-text-number', { content: [{ type: 'text', text: 5 }] }],
+  ] as const;
+  for (const type of ['assistant_message', 'tool_result_message', 'durable_message']) {
+    for (const [shape, message] of messageShapes) {
+      const name = `restore-message-${type}-${shape}`;
+      // No expected value is constructed here: capture the real TS result,
+      // including TypeError class and text, for byte comparison in Rust.
+      scenarios.push(await runScenario(scratch, name, {
+        files: { 's1.jsonl': line(at(1, type, { message })) },
+        steps: [open(), { op: 'restore' }],
+      }));
+    }
+  }
+
+  await scenario('restore-message-reducer-order', {
+    files: { 's1.jsonl': line(at(1, 'assistant_message', { message: { content: 'str' } }))
+      + line(at(2, 'turn_result', { result: null })) },
+    steps: [open(), { op: 'restore' }],
+  }, ['open:0', 'error:TypeError']);
 
   await scenario('domain-append-failure', {
     store: { failBefore: [1, 3] },

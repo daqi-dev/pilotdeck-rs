@@ -40,3 +40,7 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway transc
 范围：只证明异步 transcript 适配器契约；未接 host、ProjectRuntimeRegistry 或 gateway method，不宣称本地化。替换事务、fork 复制、file-history/tool-result 制品能力与 NativeSessionStorageAdapter 校验留给后续 PR。
 
 #222：域用例输入与 `../session-domain/cases.mts` 共用；完整校验范围见其 README。尚未移植的恢复/列表投影形状返回 `ProjectionUnavailable`（A7.5），不能视为 TS 一致或已完成投影。
+
+修复轮 1（#562）：`restore-message-*` 由真实 restore/hydrate 生成，覆盖三类 message 条目的 20 种形状：缺失/null/原始值 message，非数组 content，null block、原始值 block、空数组，以及 tool_result/tool_result_reference 的 `.some` 短路。比较完整输出与 TypeError 文案；不把 canonical-message 形状校验代替 JS reducer 语义。TS 来源 `WebHistoryProjections.ts:79,321-324`，另加一条 reducer 全日志执行顺序用例，总计新增 61 场景（336→397）。WebHistory、SessionProjectionDriver 与 BuiltinSessionProjections 源码也纳入逐文件溯源守卫。
+
+修复负控：在仓根运行 `python3 src/pilotdeck-gateway/tests/fixtures/session-domain/fix1-negative.py`。脚本核启动器 target、逐 cargo 核 slot、对子进程组设期限，实际修改产品源码后验证行为失败并在 finally 恢复。除消息错误、短路和原始值 block 外，还把 restore 的锁移到读盘之后，要求确定性的锁范围回归测试转红。
