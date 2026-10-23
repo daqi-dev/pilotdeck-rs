@@ -70,6 +70,19 @@ fn raced_load(
     swap: impl FnOnce(&Path, &Path) + 'static,
     before_lstat: bool,
 ) -> Result<Vec<LoadedPluginCommand>, PluginRuntimeError> {
+    raced_load_with(id, dir, base, swap, before_lstat, || {
+        load_plugin_commands("p", base)
+    })
+}
+
+fn raced_load_with<T>(
+    id: &str,
+    dir: &Path,
+    base: &Path,
+    swap: impl FnOnce(&Path, &Path) + 'static,
+    before_lstat: bool,
+    load: impl FnOnce() -> T,
+) -> T {
     let target = base.join("sub/b.md").canonicalize().unwrap();
     let fired = Rc::new(RefCell::new(None::<PathBuf>));
     let seen = Rc::clone(&fired);
@@ -84,7 +97,7 @@ fn raced_load(
         &BEFORE_OPEN
     };
     window.with(|h| *h.borrow_mut() = Some((target.clone(), hook)));
-    let result = load_plugin_commands("p", base);
+    let result = load();
     window.with(|h| h.borrow_mut().take());
     assert_eq!(
         fired.borrow().as_deref(),
@@ -234,5 +247,94 @@ fn deleted_after_check_propagates_error() {
     assert!(
         err.contains(case["deleted"]["code"].as_str().unwrap()),
         "error matches TS: {err}"
+    );
+}
+
+fn replace_ancestor_with_file(dir: &Path, base: &Path) {
+    fs::rename(base.join("sub"), dir.join("saved-sub")).unwrap();
+    fs::write(base.join("sub"), "ordinary file").unwrap();
+    assert!(fs::symlink_metadata(base.join("sub")).unwrap().is_file());
+}
+
+fn ancestor_file_error(before_lstat: bool) {
+    let case = pre_lstat_case("ancestor-file-after-check");
+    assert_eq!(case["replaced"]["rejected"], true, "TS readFile rejects");
+    let (scratch, dir, base) = layout("ancestor-file-after-check");
+    assert_eq!(
+        project(&load_plugin_commands("p", &base).unwrap(), scratch.path()),
+        case["checked"]
+    );
+    let result = raced_load(
+        "ancestor-file-after-check",
+        &dir,
+        &base,
+        replace_ancestor_with_file,
+        before_lstat,
+    );
+    assert!(
+        result.is_err(),
+        "ordinary-file ancestor must propagate ENOTDIR"
+    );
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains(case["replaced"]["code"].as_str().unwrap()),
+        "error matches TS: {err}"
+    );
+}
+
+/// Covers the ENOTDIR from openat(O_DIRECTORY), after the pre-open lstat.
+#[test]
+fn ancestor_file_after_lstat_propagates_error() {
+    ancestor_file_error(false);
+}
+
+/// The earlier window produces ENOTDIR at lstat and also must propagate it.
+#[test]
+fn ancestor_file_before_lstat_propagates_error() {
+    ancestor_file_error(true);
+}
+
+/// Replay the full TS PluginLoader boundary: lose a.md with its failed dir,
+/// retain another configured commands dir and the other contribution families.
+#[test]
+fn ancestor_file_rejects_only_its_configured_directory() {
+    use super::super::{LoadedPlugin, PluginSource, load_plugin_from_path};
+    let case = pre_lstat_case("ancestor-file-after-check");
+    let (scratch, dir, base) = layout("ancestor-file-after-check");
+    let plugin_path = dir.join("p");
+    fs::write(
+        plugin_path.join("plugin.json"),
+        r#"{"name":"p","version":"1.0.0","commands":["commands","other-commands"]}"#,
+    )
+    .unwrap();
+    for (directory, file, content) in [
+        ("other-commands", "c.md", "other"),
+        ("skills/s", "SKILL.md", "skill"),
+        ("output-styles", "style.md", "style"),
+    ] {
+        fs::create_dir_all(plugin_path.join(directory)).unwrap();
+        fs::write(plugin_path.join(directory).join(file), content).unwrap();
+    }
+    let project_plugin = |plugin: &LoadedPlugin| {
+        json!({
+            "commands": project(&plugin.commands, scratch.path()),
+            "skills": project(&plugin.skills, scratch.path()),
+            "outputStyles": project(&plugin.output_styles, scratch.path()),
+        })
+    };
+    let load = || load_plugin_from_path(&plugin_path, PluginSource::Global).unwrap();
+    assert_eq!(project_plugin(&load()), case["configuredChecked"]);
+    let raced = raced_load_with(
+        "ancestor-file-after-check",
+        &dir,
+        &base,
+        replace_ancestor_with_file,
+        false,
+        load,
+    );
+    assert_eq!(
+        project_plugin(&raced),
+        case["configuredRaced"],
+        "ordinary-file ancestor rejects exactly its configured directory like TS"
     );
 }

@@ -207,8 +207,8 @@ thread_local!(static BEFORE_LSTAT: std::cell::RefCell<Option<BeforeOpen>> = cons
 /// #564 / ROOT-001: never trust the checked path twice. Open it from `/` with
 /// NOFOLLOW at every component (`project_files::open_beneath`, shared with the
 /// #508 image sandbox), then require the handle to be the same regular file
-/// (dev, ino) that was checked. A replacement after the check is skipped like
-/// any out-of-root entry; any other open/read error propagates like the
+/// (dev, ino) that was checked. A proven link or changed file identity is
+/// skipped like any out-of-root entry; other open/read errors propagate like the
 /// pre-#564 path read and TS `readFile` (PluginCommandLoader.ts:68).
 #[cfg(unix)]
 fn read_markdown(
@@ -244,14 +244,14 @@ fn read_markdown(
     }
     let mut file = match crate::project_files::open_beneath(root, canonical) {
         Ok(file) => file,
-        // `canonical` had no links and only directories above the leaf, so
-        // NOFOLLOW's ELOOP or a non-directory ancestor (ENOTDIR, also a link
-        // under Linux O_PATH) proves a link raced in after the check. Every
-        // other error (ENOENT, EACCES, EMFILE, a socket's EOPNOTSUPP/ENXIO)
-        // propagates like TS readFile; it is never guessed to be a race.
+        // ELOOP identifies a refused link. O_DIRECTORY can also report ENOTDIR
+        // for either a link (Linux O_PATH) or an ordinary non-directory ancestor.
+        // Skip ENOTDIR only if lstat now proves an ancestor is a symlink;
+        // otherwise preserve the original error like TS readFile. This second
+        // observation never opens or reads through the replacement.
         Err(e)
             if crate::project_files::nofollow_loop(&e)
-                || e.raw_os_error() == Some(libc::ENOTDIR) =>
+                || (e.raw_os_error() == Some(libc::ENOTDIR) && has_symlink_ancestor(canonical)) =>
         {
             return Ok(None);
         }
@@ -269,6 +269,23 @@ fn read_markdown(
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(error)?;
     Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+// Inspect ancestors from / and stop at the first non-directory or failed
+// lookup. Only an observed symlink is positive evidence; a file, deletion, or
+// inaccessible path proves nothing. Further races can still change these names,
+// but this check only classifies a failed open and never reads file contents.
+#[cfg(unix)]
+fn has_symlink_ancestor(path: &Path) -> bool {
+    let ancestors: Vec<_> = path.ancestors().skip(1).collect();
+    for ancestor in ancestors.into_iter().rev() {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(metadata) => return metadata.file_type().is_symlink(),
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 /// Non-Unix keeps the pre-#564 path read: no openat + O_NOFOLLOW (unverified).

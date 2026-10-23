@@ -1,4 +1,4 @@
-// #564 repair 3: real TS observations for hardlink replacement and deletion
+// #564 repairs 3/4: real TS observations for hardlink, deletion and ancestor file
 // between traversal metadata and read. Source guard and all writes follow
 // generate-toctou.mts; no socket or listener is needed for these cases.
 import assert from 'node:assert/strict';
@@ -6,7 +6,7 @@ import {execFileSync} from 'node:child_process';
 import {realpathSync} from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
-import {link, mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {link, mkdir, mkdtemp, rename, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -14,6 +14,7 @@ import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.m
 
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const commandPath = 'src/extension/plugins/loading/PluginCommandLoader.ts';
+const loaderPath = 'src/extension/plugins/loading/PluginLoader.ts';
 {
   assert.ok(process.env.PDRS_BASELINE, 'PDRS_BASELINE required');
   assert.ok(process.argv[2], 'output directory required');
@@ -23,8 +24,9 @@ const commandPath = 'src/extension/plugins/loading/PluginCommandLoader.ts';
   bindSourceTree(baseline, sourceCommit, git);
   const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
   assert.equal(execFileSync(git, ['--no-replace-objects', '-C', baseline, 'status', '--porcelain', '--untracked-files=no'], {env: gitEnv}).toString(), '');
-  const sourceSha256 = sourceClosureSha256(baseline, sourceCommit, git, [commandPath]);
+  const sourceSha256 = sourceClosureSha256(baseline, sourceCommit, git, [commandPath, loaderPath]);
   const {loadPluginCommands} = await import(pathToFileURL(join(baseline, commandPath)).href);
+  const {loadPluginFromPath} = await import(pathToFileURL(join(baseline, loaderPath)).href);
   const output = resolve(process.argv[2]);
   assert.ok(output !== baseline && !output.startsWith(baseline + '/'), 'never write the baseline');
   // realpath: macOS tmpdir is under the /var -> /private/var link; Rust canonicalizes too.
@@ -86,10 +88,56 @@ const commandPath = 'src/extension/plugins/loading/PluginCommandLoader.ts';
       syncBuiltinESMExports();
     }
     cases.push({id: 'deleted-after-check', checked, deleted, control: await load(deletedLayout.base)});
+    // Exercise the real readFile after collection, then the real PluginLoader
+    // catch per configured directory. Keep a second commands dir plus skills /
+    // styles to observe the exact rejection boundary rather than infer it.
+    const fileLayout = await layout('ancestor-file-after-check');
+    const pluginPath = join(fileLayout.dir, 'p');
+    await writeFile(join(pluginPath, 'plugin.json'), JSON.stringify({name: 'p', version: '1.0.0', commands: ['commands', 'other-commands']}));
+    for (const [dir, file, content] of [['other-commands', 'c.md', 'other'], ['skills/s', 'SKILL.md', 'skill'], ['output-styles', 'style.md', 'style']]) {
+      await mkdir(join(pluginPath, dir), {recursive: true});
+      await writeFile(join(pluginPath, dir, file), content);
+    }
+    const projectPlugin = async () => {
+      const plugin = await loadPluginFromPath(pluginPath, 'global');
+      return normalize({commands: plugin.commands, skills: plugin.skills, outputStyles: plugin.outputStyles});
+    };
+    const fileChecked = await load(fileLayout.base);
+    const configuredChecked = await projectPlugin();
+    const swapDuringStat = async (run: () => Promise<any>) => {
+      let fired: string | undefined;
+      try {
+        fsPromises.stat = (async (...args: Parameters<typeof originalStat>) => {
+          const metadata = await originalStat(...args);
+          if (String(args[0]) === fileLayout.leaf) {
+            assert.equal(fired, undefined, 'ancestor-file hook fires once');
+            fired = String(args[0]);
+            await rename(join(fileLayout.base, 'sub'), join(fileLayout.dir, 'saved-sub'));
+            await writeFile(join(fileLayout.base, 'sub'), 'ordinary file');
+          }
+          return metadata;
+        }) as typeof originalStat;
+        syncBuiltinESMExports();
+        const result = await run();
+        assert.equal(fired, fileLayout.leaf, 'ancestor-file hook fires on sub/b.md itself');
+        return result;
+      } finally {
+        fsPromises.stat = originalStat;
+        syncBuiltinESMExports();
+      }
+    };
+    const replaced = await swapDuringStat(() => load(fileLayout.base).then(
+      result => ({rejected: false, result}),
+      (e: NodeJS.ErrnoException) => ({rejected: true, code: e.code, syscall: e.syscall})));
+    await rm(join(fileLayout.base, 'sub'));
+    await rename(join(fileLayout.dir, 'saved-sub'), join(fileLayout.base, 'sub'));
+    const configuredRaced = await swapDuringStat(projectPlugin);
+    cases.push({id: 'ancestor-file-after-check', checked: fileChecked, replaced, configuredChecked, configuredRaced});
+
   } finally {
     await rm(scratch, {recursive: true, force: true});
   }
   await mkdir(output, {recursive: true});
   await writeFile(join(output, 'pre-lstat.json'), JSON.stringify({sourceCommit, node: process.version, sourceSha256, cases}, null, 2) + '\n');
-  console.log(JSON.stringify(cases.map(c => ({id: c.id, checked: c.checked?.length, replaced: c.replaced?.map((x: any) => x.content), control: c.control.length, deleted: c.deleted}))));
+  console.log(JSON.stringify(cases.map(c => ({id: c.id, checked: c.checked?.length, replaced: Array.isArray(c.replaced) ? c.replaced.map((x: any) => x.content) : c.replaced, control: c.control?.length, configuredRaced: c.configuredRaced, deleted: c.deleted}))));
 }
