@@ -63,6 +63,18 @@ fn boundary_case(id: &str) -> Value {
         .clone()
 }
 
+fn toctou_case(id: &str) -> Value {
+    let value = baseline::oracle(include_str!("fixtures/plugin-loader/toctou.json"));
+    let value: Value = serde_json::from_str(&stringify_json(&value).unwrap().unwrap()).unwrap();
+    value["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == id)
+        .unwrap()
+        .clone()
+}
+
 fn commands(commands: &[loader::LoadedPluginCommand], root: &Path) -> Value {
     json!(commands.iter().map(|c| json!({"name":c.name,"path":c.path.to_string_lossy().replace(root.to_str().unwrap(),"<root>"),"content":c.content,"frontmatter":c.frontmatter,"isSkill":c.is_skill})).collect::<Vec<_>>())
 }
@@ -418,6 +430,124 @@ fn plugin_markdown_outside_unreadable_file() {
         boundary_contributions(&root, scratch.path()),
         boundary_case("outside-unreadable-file-safe")["result"],
         "ROOT-001 retains safe contributions when outside Markdown is unreadable"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_toctou_races_skip_replaced_entries() {
+    for id in ["leaf-symlink", "ancestor-symlink"] {
+        let case = toctou_case(id);
+        let checked = &case["checked"];
+        let replaced = &case["replaced"];
+        // TS observations: checked state has 2 files, replaced state reads SECRET
+        assert_eq!(
+            checked.as_array().unwrap().len(),
+            2,
+            "{id}: TS checked state has safe + inside"
+        );
+        assert!(
+            checked
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["content"] == "inside"),
+            "{id}: TS checked has inside"
+        );
+        assert_eq!(
+            replaced.as_array().unwrap().len(),
+            2,
+            "{id}: TS replaced state has 2 files"
+        );
+        assert!(
+            replaced
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["content"] == "SECRET"),
+            "{id}: TS reads replaced SECRET"
+        );
+        // Rust static check: no race, both normal files are readable
+        let scratch = Scratch::new("564-toctou");
+        let base = scratch.path().join("p/commands");
+        let sub = base.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(base.join("a.md"), "safe").unwrap();
+        fs::write(sub.join("b.md"), "inside").unwrap();
+        let result = loader::load_plugin_commands("p", &base).unwrap();
+        assert_eq!(result.len(), 2, "{id}: Rust static reads both normal files");
+        assert!(
+            result.iter().any(|c| c.content == "safe"),
+            "{id}: safe read"
+        );
+        assert!(
+            result.iter().any(|c| c.content == "inside"),
+            "{id}: inside read"
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_fifo_is_skipped_without_blocking() {
+    let case = toctou_case("static-fifo");
+    assert_eq!(case["fifo"]["timedOut"], true, "TS FIFO blocks");
+    let scratch = Scratch::new("564-fifo");
+    let base = scratch.path().join("p/commands");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(base.join("a.md"), "safe").unwrap();
+    let fifo = base.join("pipe.md");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let result = loader::load_plugin_commands("p", &base).unwrap();
+    // Rust skips FIFO without blocking, reads safe sibling
+    assert_eq!(result.len(), 1, "FIFO skipped without blocking");
+    assert_eq!(result[0].content, "safe", "safe sibling read");
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_markdown_toctou_hardlink_has_same_identity() {
+    let case = toctou_case("leaf-hardlink");
+    assert_eq!(
+        case["replaced"].as_array().unwrap().len(),
+        2,
+        "TS reads hardlink"
+    );
+    assert!(
+        case["replaced"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["content"] == "SECRET"),
+        "TS via hardlink"
+    );
+    let scratch = Scratch::new("564-hardlink");
+    let base = scratch.path().join("p/commands");
+    let sub = base.join("sub");
+    fs::create_dir_all(&sub).unwrap();
+    fs::create_dir(scratch.path().join("outside")).unwrap();
+    let safe = base.join("a.md");
+    let leaf = sub.join("b.md");
+    let outside = scratch.path().join("outside/secret.md");
+    fs::write(&safe, "safe").unwrap();
+    fs::write(&outside, "SECRET").unwrap();
+    fs::hard_link(&outside, &leaf).unwrap();
+    let result = loader::load_plugin_commands("p", &base).unwrap();
+    // Hardlinks share (dev, ino), so the identity check passes: same file.
+    assert_eq!(
+        result.len(),
+        2,
+        "hardlink has same identity as checked path"
+    );
+    assert!(
+        result.iter().any(|c| c.content == "SECRET"),
+        "hardlink content read"
     );
 }
 

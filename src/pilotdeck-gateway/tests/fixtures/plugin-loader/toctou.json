@@ -1,0 +1,163 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "sourceSha256": {
+    "src/extension/plugins/loading/PluginCommandLoader.ts": "e426e7ca2017732e9f3ac9bea835e723724b7b87b51521d6418d52b3fa4170dd"
+  },
+  "cases": [
+    {
+      "id": "leaf-symlink",
+      "checked": [
+        {
+          "name": "p:a",
+          "path": "<root>/leaf-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/leaf-symlink/p/commands/sub/b.md",
+          "content": "inside",
+          "frontmatter": {
+            "kind": "inside"
+          },
+          "isSkill": false
+        }
+      ],
+      "replaced": [
+        {
+          "name": "p:a",
+          "path": "<root>/leaf-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/leaf-symlink/p/commands/sub/b.md",
+          "content": "SECRET",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ],
+      "control": [
+        {
+          "name": "p:a",
+          "path": "<root>/leaf-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ]
+    },
+    {
+      "id": "leaf-hardlink",
+      "checked": [
+        {
+          "name": "p:a",
+          "path": "<root>/leaf-hardlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/leaf-hardlink/p/commands/sub/b.md",
+          "content": "inside",
+          "frontmatter": {
+            "kind": "inside"
+          },
+          "isSkill": false
+        }
+      ],
+      "replaced": [
+        {
+          "name": "p:a",
+          "path": "<root>/leaf-hardlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/leaf-hardlink/p/commands/sub/b.md",
+          "content": "SECRET",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ],
+      "control": [
+        {
+          "name": "p:a",
+          "path": "<root>/leaf-hardlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ]
+    },
+    {
+      "id": "ancestor-symlink",
+      "checked": [
+        {
+          "name": "p:a",
+          "path": "<root>/ancestor-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/ancestor-symlink/p/commands/sub/b.md",
+          "content": "inside",
+          "frontmatter": {
+            "kind": "inside"
+          },
+          "isSkill": false
+        }
+      ],
+      "replaced": [
+        {
+          "name": "p:a",
+          "path": "<root>/ancestor-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        },
+        {
+          "name": "p:sub:b",
+          "path": "<root>/ancestor-symlink/p/commands/sub/b.md",
+          "content": "SECRET",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ],
+      "control": [
+        {
+          "name": "p:a",
+          "path": "<root>/ancestor-symlink/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ]
+    },
+    {
+      "id": "static-fifo",
+      "fifo": {
+        "timeoutMs": 1000,
+        "timedOut": true
+      },
+      "control": [
+        {
+          "name": "p:a",
+          "path": "<root>/static-fifo/p/commands/a.md",
+          "content": "safe",
+          "frontmatter": {},
+          "isSkill": false
+        }
+      ]
+    }
+  ]
+}

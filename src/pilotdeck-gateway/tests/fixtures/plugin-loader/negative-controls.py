@@ -84,6 +84,8 @@ CASES += [
     ('utf16-lossy-surrogate', CONTRIBUTIONS, 'let mut trimmed = value.units();', 'let decoded = JsString::from(String::from_utf16_lossy(value.units())); let mut trimmed = decoded.units();', 'regressions:plugin_mcp_utf16_oracle'),
     ('utf16-trim', CONTRIBUTIONS, 'char::from_u32(u32::from(unit)).is_some_and(crate::metadata::js_space)', 'char::from_u32(u32::from(unit)).is_some_and(char::is_whitespace)', 'regressions:plugin_mcp_utf16_oracle'),
     ('runtime-replay-generation', PLUGINS, 'self.generation += 1;', 'self.generation += 2;', 'runtime:runtime_empty_directories'),
+    # #564 ROOT-001 negative control: pre-open file type check (post-open identity check is defense-in-depth, symlink races fail earlier at NOFOLLOW open).
+    ('markdown-file-type-skip', MARKDOWN, '    let Some(before) = std::fs::symlink_metadata(canonical)\n        .ok()\n        .filter(|m| m.is_file())', '    let Some(before) = std::fs::symlink_metadata(canonical)\n        .ok()\n        .filter(|_m| true)', 'lib:runtime::plugins::loader::markdown::tests::leaf_replaced_with_symlink_after_check_is_skipped'),
 ]
 # Each mutation restores one removed limit, or removes global directory de-dup.
 markdown_source = (ROOT/MARKDOWN).read_text()
@@ -281,7 +283,8 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'markdown-simple-cycle-no-dedup': ['simple cycle removes TS ELOOP-truncated duplicates'],
  'markdown-real-candidate-budget': ['real node_modules skills match TS'],
  'markdown-readme-candidate-budget': ['5000 README and 54000 JS preserve TS skills'],
- 'markdown-node-modules-depth-budget': ['deep node_modules matches TS across configured loaders']}
+ 'markdown-node-modules-depth-budget': ['deep node_modules matches TS across configured loaders'],
+ 'markdown-file-type-skip': ['expected only safe sibling']}
 
 assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
 assert set(EXPECTED_FAILURES) == {c[0] for c in CASES}, "every case needs failure markers"
@@ -308,7 +311,9 @@ try:
                 target, test_name = test.split(':', 1)
                 if target == 'lib':
                     target_args = ['--lib']
-                    test_name = 'runtime::plugins::tests::' + test_name
+                    # Unit tests already have a full module path if `::` appears.
+                    if '::' not in test_name:
+                        test_name = 'runtime::plugins::tests::' + test_name
                 else:
                     target_args = ['--test', {'regressions':'plugin_regressions','runtime':'plugin_runtime','traversal':'plugin_traversal'}[target]]
             else:
