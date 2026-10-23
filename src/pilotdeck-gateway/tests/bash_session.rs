@@ -5,6 +5,10 @@
 //! terminal (`script -q /dev/null`; see fixtures/bash-session/README.md).
 //! Plus a direct OS assertion that the shell leads a new session.
 #![cfg(unix)]
+// The real-TS replay below is macOS-only (the oracle is recorded on darwin); on other
+// Unix hosts only `detached_shell_leads_its_own_session` runs, so its replay helpers
+// are unused there (Linux CI lint, PR #573 codex r3).
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 #[path = "common/baseline.rs"]
 mod baseline;
 #[path = "common/scratch.rs"]
