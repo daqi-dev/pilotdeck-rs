@@ -729,7 +729,8 @@ mod tests {
         let JsValue::Array(cases) = field(&oracle, "scenarios") else {
             panic!("cases")
         };
-        assert!(cases.len() >= 283);
+        // Keep in sync with session-domain/generate.mts and its README.
+        assert_eq!(cases.len(), 304, "domain oracle scenario count");
         for case in cases {
             let name = field(case, "name");
             let JsValue::Array(entries) = field(case, "entries") else {
@@ -738,6 +739,7 @@ mod tests {
             let JsValue::Array(expected) = field(case, "outcomes") else {
                 panic!("outcomes")
             };
+            assert_eq!(entries.len(), expected.len(), "{name:?}: outcome count");
             let mut state = DomainState::default();
             for (entry, expected) in entries.iter().zip(expected) {
                 let next = state.next(entry);

@@ -69,7 +69,7 @@ try:
     if not selected or 'wrong-reducer-order' in selected:
         a = original.index('        for entry in entries {', original.index('        // Hydration runs every'))
         b = original.index('        // WebHistory reads', a)
-        c = original.index('        inner.sequence = state.sequence;', b)
+        c = original.index('        Ok(())', b)
         ADAPTER.write_text(original[:a] + original[b:c] + original[a:b] + original[c:])
         run('wrong-reducer-order', True)
         ADAPTER.write_text(original)
