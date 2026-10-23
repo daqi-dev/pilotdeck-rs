@@ -8,19 +8,23 @@ import {fileURLToPath} from 'node:url';
 import {join,dirname,resolve} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {checkSuffix} from './check_suffix.mjs';
-import {captureSourceIdentity,verifySourceIdentity} from './source_identity.mjs';
+import {captureSourceIdentity,verifySourceIdentity,assertBuildBinary} from './source_identity.mjs';
 const here=dirname(fileURLToPath(import.meta.url));
 if(process.argv.length!==5) throw Error('usage: node record.mjs BASELINE GATEWAY_BINARY NEW_OUTPUT');
 const root=resolve(here,'../../../..');
 const baseline=resolve(process.argv[2]),binary=resolve(process.argv[3]),out=resolve(process.argv[4]);
-const sourceBefore=captureSourceIdentity(root);
+if(!process.env.PDRS_SOURCE_IDENTITY_BUILD)throw Error('PDRS_SOURCE_IDENTITY_BUILD is required; prepare Cargo evidence with source_identity.mjs');
+const buildEvidence=JSON.parse(await readFile(process.env.PDRS_SOURCE_IDENTITY_BUILD,'utf8'));
+assertBuildBinary(root,binary,buildEvidence);
+const sourceBefore=captureSourceIdentity(root,buildEvidence);
 const candidateHead=sourceBefore.head;
-const sourceIdentity={version:1,before:sourceBefore,after:null,verified:false,artifactOrigin:'CALLER_CARGO_ARTIFACT_EVIDENCE_REQUIRED'};
+const sourceIdentity={version:2,before:sourceBefore,after:null,verified:false,artifactOrigin:'CALLER_BUILD_EVIDENCE_NOT_ATTESTATION'};
 const sha=async p=>createHash('sha256').update(await readFile(p)).digest('hex');
 const binaryBefore=await sha(binary);
 const baselineSourceBefore=await sha(join(baseline,'src/gateway/server/GatewayServer.ts'));
 const baselineDistBefore=await sha(join(baseline,'dist/src/gateway/server/GatewayServer.js'));
 await mkdir(dirname(out),{recursive:true});await mkdir(out,{recursive:false});
+await writeFile(join(out,'cargo-build.json'),JSON.stringify(buildEvidence,null,2)+'\n',{flag:'wx'});
 const runtime=join(out,'runtime');
 await writeFile(join(out, 'ts-observed.jsonl'), '', {flag: 'wx'});
 const events=[],children=[],sockets=new Set(),servers=[],cleanupErrors=[];
@@ -218,6 +222,7 @@ const inputPaths = {
  recorder: fileURLToPath(import.meta.url), observer: join(here, 'observe.mjs'),
  suffixChecker: join(here, 'check_suffix.mjs'),
  sourceIdentityHelper: join(here,'source_identity.mjs'),
+ cargoBuildEvidence: join(out,'cargo-build.json'),
  watcher: join(root, 'scripts/gateway-parity/watcher.mjs'), nodeExecutable: process.execPath,
  baselineCLI: join(baseline, 'dist/src/cli/pilotdeck.js'),
  baselineCLISource: join(baseline, 'src/cli/pilotdeck.ts'),
@@ -373,7 +378,7 @@ try{
    }), 'log flush', 3000, true);
   } catch (error) { cleanupErrors.push(String(error)); }
  }
- try{sourceIdentity.after=verifySourceIdentity(root,sourceBefore);sourceIdentity.verified=true;}
+ try{sourceIdentity.after=verifySourceIdentity(root,sourceBefore,buildEvidence);sourceIdentity.verified=true;}
  catch(e){status='FAIL';sourceIdentity.error={code:e.code??'SOURCE_IDENTITY_ERROR',message:String(e),details:e.details??null};error??='source identity verification failed';}
  let binaryAfter=null,baselineSourceAfter=null,baselineDistAfter=null;
  try{binaryAfter=await sha(binary);baselineSourceAfter=await sha(join(baseline,'src/gateway/server/GatewayServer.ts'));baselineDistAfter=await sha(join(baseline,'dist/src/gateway/server/GatewayServer.js'));}
@@ -392,7 +397,7 @@ try{
   if (binding.sha256Before !== binding.sha256After) { status = 'FAIL'; error ??= 'key input changed'; }
   }catch(e){status='FAIL';binding.verificationError=String(e);error??='key input hash unavailable';}
  }
- const artifactSHA256={};for(const name of ['inputs.json','ts-observed.jsonl',...children.map(child=>child.name+'.log')]){try{artifactSHA256[name]=await sha(join(out,name));}catch(e){status='FAIL';artifactSHA256[name]=null;cleanupErrors.push('artifact hash '+name+': '+String(e));}}
+ const artifactSHA256={};for(const name of ['inputs.json','cargo-build.json','ts-observed.jsonl',...children.map(child=>child.name+'.log')]){try{artifactSHA256[name]=await sha(join(out,name));}catch(e){status='FAIL';artifactSHA256[name]=null;cleanupErrors.push('artifact hash '+name+': '+String(e));}}
  const report={status,error,cleanupErrors,inputs,sourceIdentity,configurationBindings,artifactSHA256,suffixResults,routingResults,scope:'actual default baseline CLI/GatewayServer HTTP entry and exact candidate binary; initial Rust read ownership proved separately by scripted production-path unit tests',results,events,children:children.map(({name,p,argv})=>({name,pid:p.pid,argv,exitCode:p.exitCode,signalCode:p.signalCode,stopped:p.exitCode!==null||p.signalCode!==null})),candidateRoot:root,candidateHead,candidateBinary:binary,binarySha256Before:binaryBefore,binarySha256After:binaryAfter,baselineSourceSha256Before:baselineSourceBefore,baselineSourceSha256After:baselineSourceAfter,baselineDistSha256Before:baselineDistBefore,baselineDistSha256After:baselineDistAfter};
  await writeFile(join(out,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({status,cases:results.length+suffixResults.length+routingResults.length,upgradeCases:results.length,suffixCases:suffixResults.length,routingCases:routingResults.length,error}));if(status!=='PASS')process.exitCode=1;
 }
