@@ -43,6 +43,11 @@ regexTarget = "match"
 regexes = ['''MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFPHGUNt2ECuu2dlb''']
 
 [[allowlists]]
+description = "A6.5-MCP-HTTPS-001 夹具 untrusted-tls.json：openssl 一次性生成、仅给 127.0.0.1 本地 TLS 冒烟的自签叶子私钥（P-256，无 CA 签、不受任何信任库信任），不是凭据"
+regexTarget = "match"
+regexes = ['''MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgX2FIVINH3Qi2aPeD''']
+
+[[allowlists]]
 description = "A6.5-pr9b html-markdown 夹具：domino 2.2.0 lib/DOMTokenList.js 的 SHA-256，已用本地安装源码逐字节复算；文件名含 Token 触发 generic-api-key，不是凭据"
 regexTarget = "match"
 regexes = ['''d0454d191c3bd2e23fda13b0bde13cbbeb47e2fc26fa10e6b7403684b4adc59a''']
