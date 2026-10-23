@@ -2,16 +2,12 @@
 //! ProjectMcpRuntimeBundle.ts (mcp/runtime/ProjectMcpRuntimeProvider.ts:
 //! options assembly) and ProjectExecutionWorldBundle.ts.
 use super::*;
-use crate::{
-    runtime::{
-        mcp::{
-            registry::{
-                BuiltinMcpPaths, ProjectMcpRuntimeProvider, ProjectMcpRuntimeProviderOptions,
-            },
-            sdk::SystemEnvironment,
-        },
-        model::http::ProxySettings,
+use crate::runtime::{
+    mcp::{
+        registry::{BuiltinMcpPaths, ProjectMcpRuntimeProvider, ProjectMcpRuntimeProviderOptions},
+        sdk::SystemEnvironment,
     },
+    model::http::ProxySettings,
 };
 use pilotdeck_protocol::JsString;
 use std::{any::Any, sync::Arc};
