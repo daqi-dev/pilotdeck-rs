@@ -1,0 +1,74 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "sourceSha256": {
+    "src/extension/plugins/loading/PluginCommandLoader.ts": "e426e7ca2017732e9f3ac9bea835e723724b7b87b51521d6418d52b3fa4170dd"
+  },
+  "checked": {
+    "name": "skill",
+    "path": "<root>/checked/skill/SKILL.md",
+    "content": "\n# DOCX skill\n",
+    "isSkill": true
+  },
+  "cases": [
+    {
+      "id": "leaf-symlink",
+      "observed": {
+        "rejected": false,
+        "skill": {
+          "name": "skill",
+          "path": "<root>/leaf-symlink/skill/SKILL.md",
+          "content": "SECRET",
+          "isSkill": true
+        }
+      }
+    },
+    {
+      "id": "leaf-hardlink",
+      "observed": {
+        "rejected": false,
+        "skill": {
+          "name": "skill",
+          "path": "<root>/leaf-hardlink/skill/SKILL.md",
+          "content": "SECRET",
+          "isSkill": true
+        }
+      }
+    },
+    {
+      "id": "in-root-symlink",
+      "observed": {
+        "rejected": false,
+        "skill": {
+          "name": "skill",
+          "path": "<root>/in-root-symlink/skill/SKILL.md",
+          "content": "\n# In-root target\n",
+          "isSkill": true
+        }
+      }
+    },
+    {
+      "id": "static-fifo",
+      "observed": {
+        "timeoutMs": 1000,
+        "timedOut": true
+      }
+    },
+    {
+      "id": "static-socket",
+      "observed": {
+        "rejected": true,
+        "code": "Unknown system error -102",
+        "syscall": "open"
+      }
+    },
+    {
+      "id": "deleted-after-check",
+      "observed": {
+        "rejected": true,
+        "code": "ENOENT",
+        "syscall": "open"
+      }
+    }
+  ]
+}

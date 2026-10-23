@@ -1,5 +1,5 @@
 //! PluginCommandLoader's deliberately small line-based frontmatter parser.
-use super::{LoadedPluginCommand, read_text, sorted_entries};
+use super::{LoadedPluginCommand, sorted_entries};
 use crate::{js_value::string_to_number, metadata::js_trim, runtime::plugins::PluginRuntimeError};
 use serde_json::Value;
 use std::{
@@ -184,11 +184,58 @@ pub fn load_standalone_skill(
         .ok_or_else(|| {
             PluginRuntimeError::new(format!("Standalone skill '{name}' has no SKILL.md."))
         })?;
-    load_markdown(&file, name.into())
+    // #594 / ROOT-001: read the single SKILL.md through the same re-verified
+    // handle as plugin contributions, so a leaf swapped after discovery to an
+    // out-of-root link, a different inode, or a special file cannot redirect the
+    // read outside the skill directory. The lexical `file` is kept as the
+    // command path, mirroring TS `join(skillDir, entry)`.
+    load_markdown_source(&read_checked_skill(directory, &file)?, &file, name.into())
 }
 
-fn load_markdown(path: &Path, name: String) -> Result<LoadedPluginCommand, PluginRuntimeError> {
-    load_markdown_source(&read_text(path)?, path, name)
+/// #594: resolve the discovered SKILL.md beneath the skill directory and read it
+/// with `read_markdown` (shared with the plugin-command traversal). A standalone
+/// skill is a single file, so there is nothing to skip past: a refused read
+/// (out-of-root link, replaced inode, FIFO/socket) fails the whole skill, like
+/// TS `loadStandaloneSkill` rejecting when `readFile` fails
+/// (PluginCommandLoader.ts:37-42,:68). A concurrent deletion surfaces as the
+/// real ENOENT from `read_markdown`, matching TS readFile.
+#[cfg(unix)]
+fn read_checked_skill(directory: &Path, file: &Path) -> Result<String, PluginRuntimeError> {
+    let refused = || {
+        super::io_error(
+            "open",
+            file,
+            &std::io::Error::from_raw_os_error(libc::EACCES),
+        )
+    };
+    // The boundary check resolves the skill root and the leaf; a leaf whose
+    // realpath already escapes the root (static out-of-root link) fails the
+    // checked open with EACCES below. Values that no longer resolve were raced
+    // away after discovery; a path read could not trust them either.
+    let (Ok(root), Ok(canonical)) = (directory.canonicalize(), file.canonicalize()) else {
+        return Err(refused());
+    };
+    let Ok(metadata) = std::fs::metadata(&canonical) else {
+        return Err(refused());
+    };
+    // A SKILL.md that resolves to a directory (or a link to one) cannot leak
+    // out-of-root bytes through a read, so keep TS readFile's EISDIR rather than
+    // the generic refusal. FIFOs, sockets, raced-in links and replaced inodes
+    // still take the refusal path through `read_markdown`.
+    if metadata.is_dir() {
+        return Err(super::io_error(
+            "open",
+            file,
+            &std::io::Error::from_raw_os_error(libc::EISDIR),
+        ));
+    }
+    read_markdown(&root, &canonical, file_identity(&metadata))?.ok_or_else(refused)
+}
+
+/// Non-Unix keeps the pre-#564 path read: no openat + O_NOFOLLOW (unverified).
+#[cfg(not(unix))]
+fn read_checked_skill(_directory: &Path, file: &Path) -> Result<String, PluginRuntimeError> {
+    super::read_text(file)
 }
 
 // Test-only race point between the pre-open lstat and the checked open (#564).
@@ -295,7 +342,7 @@ fn read_markdown(
     canonical: &Path,
     _checked_identity: (),
 ) -> Result<Option<String>, PluginRuntimeError> {
-    read_text(canonical).map(Some)
+    super::read_text(canonical).map(Some)
 }
 
 // Symlink/socket races and the openat path exist only on Unix.

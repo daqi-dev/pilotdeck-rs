@@ -94,8 +94,8 @@ CASES += [
     # Pre-open regular-file filter: a socket .md would fail the open and the load.
     ('markdown-file-type-skip', MARKDOWN, '        Ok(m) if m.is_file() => m,', '        Ok(m) if true => m,', TOCTOU + 'socket_markdown_is_skipped'),
     # A: the pre-#564 path read (follows any raced-in link).
-    ('markdown-path-read', MARKDOWN, '    let mut file = match crate::project_files::open_beneath(root, canonical) {', '    if true {\n        return read_text(canonical).map(Some);\n    }\n    let mut file = match crate::project_files::open_beneath(root, canonical) {', TOCTOU + 'leaf_symlink_raced_after_check_is_skipped'),
-    ('markdown-path-read-ancestor', MARKDOWN, '    let mut file = match crate::project_files::open_beneath(root, canonical) {', '    if true {\n        return read_text(canonical).map(Some);\n    }\n    let mut file = match crate::project_files::open_beneath(root, canonical) {', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
+    ('markdown-path-read', MARKDOWN, '    let mut file = match crate::project_files::open_beneath(root, canonical) {', '    if true {\n        return super::read_text(canonical).map(Some);\n    }\n    let mut file = match crate::project_files::open_beneath(root, canonical) {', TOCTOU + 'leaf_symlink_raced_after_check_is_skipped'),
+    ('markdown-path-read-ancestor', MARKDOWN, '    let mut file = match crate::project_files::open_beneath(root, canonical) {', '    if true {\n        return super::read_text(canonical).map(Some);\n    }\n    let mut file = match crate::project_files::open_beneath(root, canonical) {', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
     # B: NOFOLLOW removed from the leaf / the ancestors (shared #508 helper).
     ('markdown-nofollow-leaf', PROJECT_FILES, 'OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK', 'OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK', TOCTOU + 'leaf_moved_outside_behind_symlink_is_skipped'),
     ('markdown-nofollow-ancestor', PROJECT_FILES, 'access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW', 'access | OFlags::DIRECTORY | OFlags::CLOEXEC', TOCTOU + 'ancestor_moved_outside_behind_symlink_is_skipped'),
@@ -116,6 +116,36 @@ CASES += [
     ('markdown-race-error', MARKDOWN, '        {\n            return Ok(None);\n        }\n        Err(e) => return Err(error(e)),', '        {\n            return Err(error(e));\n        }\n        Err(e) => return Err(error(e)),', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
     # Ordinary open errors on the unchanged file still propagate like TS readFile.
     ('markdown-open-error-skip', MARKDOWN, '        Err(e) => return Err(error(e)),\n    };', '        Err(_) => return Ok(None),\n    };', 'plugin_loader_hooks_paths'),
+]
+# #594: the standalone SKILL.md read goes through the same checked handle. Each
+# mutation reverts one guard; the matching standalone test fires on SKILL.md.
+CASES += [
+    # Route the single read back through a lexical path read: a static out-of-root
+    # leaf symlink is then followed to the secret instead of being refused.
+    ('standalone-path-read', MARKDOWN,
+     'load_markdown_source(&read_checked_skill(directory, &file)?, &file, name.into())',
+     'load_markdown_source(&super::read_text(&file)?, &file, name.into())',
+     TOCTOU + 'standalone_static_leaf_symlink_outside_is_refused'),
+    # A refused read (None) must fail the whole skill, not load empty content.
+    ('standalone-none-error', MARKDOWN,
+     'read_markdown(&root, &canonical, file_identity(&metadata))?.ok_or_else(refused)',
+     'Ok(read_markdown(&root, &canonical, file_identity(&metadata))?.unwrap_or_default())',
+     TOCTOU + 'standalone_static_fifo_is_refused_without_blocking'),
+    # Leaf NOFOLLOW under a race: revert to a path read after the swap fires.
+    ('standalone-raced-leaf-symlink', MARKDOWN,
+     '    let mut file = match crate::project_files::open_beneath(root, canonical) {',
+     '    if true {\n        return super::read_text(canonical).map(Some);\n    }\n    let mut file = match crate::project_files::open_beneath(root, canonical) {',
+     TOCTOU + 'standalone_leaf_symlink_raced_after_check_is_refused'),
+    # Post-open identity recheck under a race: drop it so a hardlinked inode loads.
+    ('standalone-raced-hardlink', MARKDOWN,
+     'if !after.is_file() || (after.dev(), after.ino()) != checked_identity {',
+     'if !after.is_file() {',
+     TOCTOU + 'standalone_leaf_hardlink_raced_after_check_is_refused'),
+    # Deletion after the check must keep TS's ENOENT, not the generic refusal.
+    ('standalone-deleted-code', MARKDOWN,
+     "        Err(e) => return Err(error(e)), // doesn't exist or other error: propagate",
+     '        Err(_) => return Ok(None), // negative control: deletion silently skipped',
+     TOCTOU + 'standalone_deleted_after_check_rejects_like_ts'),
 ]
 # Each mutation restores one removed limit, or removes global directory de-dup.
 markdown_source = (ROOT/MARKDOWN).read_text()
@@ -330,7 +360,12 @@ EXPECTED_FAILURES = {'builtin-disable': ['assertion `left == right` failed: buil
  'markdown-deletion-skip': ['deletion after check must propagate error'],
  'markdown-ancestor-file-open-skip': ['ordinary-file ancestor must propagate ENOTDIR'],
  'markdown-ancestor-file-lstat-skip': ['ordinary-file ancestor must propagate ENOTDIR'],
- 'markdown-ancestor-file-directory-skip': ['ordinary-file ancestor rejects exactly its configured directory like TS', 'String("safe")']}
+ 'markdown-ancestor-file-directory-skip': ['ordinary-file ancestor rejects exactly its configured directory like TS', 'String("safe")'],
+ 'standalone-path-read': ['out-of-root leaf symlink must be refused, not read'],
+ 'standalone-none-error': ['FIFO skill must be refused without blocking'],
+ 'standalone-raced-leaf-symlink': ['leaf symlink raced after check must be refused'],
+ 'standalone-raced-hardlink': ['hardlinked different inode must be refused by identity recheck'],
+ 'standalone-deleted-code': ['error matches TS code ENOENT']}
 
 
 assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
