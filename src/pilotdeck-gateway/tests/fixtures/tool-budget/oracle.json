@@ -655,8 +655,8 @@
   "node": "v22.22.0",
   "locale": "en-US",
   "counts": {
-    "cases": 37,
-    "steps": 40
+    "cases": 38,
+    "steps": 41
   },
   "cases": [
     {
@@ -2432,6 +2432,56 @@
           },
           "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result_reference\",\"toolCallId\":\"call-repeat\",\"path\":\"<fixture>/repeat-apply-cache/tool-results/session/turn-other-call-repeat.txt\",\"readFilePath\":\"repeat-apply-cache/tool-results/refs/result-0002.txt\",\"originalBytes\":11,\"preview\":\"repeat body\",\"hasMore\":false,\"mimeType\":\"text/plain\",\"reason\":\"tool_result_too_large\"}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result_reference\",\"toolCallId\":\"call-repeat\",\"path\":\"<fixture>/repeat-apply-cache/tool-results/session/turn-other-call-repeat.txt\",\"readFilePath\":\"repeat-apply-cache/tool-results/refs/result-0002.txt\",\"originalBytes\":11,\"preview\":\"repeat body\",\"hasMore\":false,\"mimeType\":\"text/plain\",\"reason\":\"tool_result_too_large\"}]}],\"diagnostics\":[]}",
           "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"},{\"path\":\"tool-results/refs\",\"kind\":\"dir\"},{\"path\":\"tool-results/refs/result-0001.txt\",\"kind\":\"file\",\"size\":11,\"sha256\":\"10bdaeaaa06fbc50ae5bcc41e864ab0885615f0270f4a1da2fe1cbbc50a054d2\",\"text\":\"repeat body\"},{\"path\":\"tool-results/refs/result-0002.txt\",\"kind\":\"file\",\"size\":11,\"sha256\":\"10bdaeaaa06fbc50ae5bcc41e864ab0885615f0270f4a1da2fe1cbbc50a054d2\",\"text\":\"repeat body\"},{\"path\":\"tool-results/session\",\"kind\":\"dir\"},{\"path\":\"tool-results/session/turn-other-call-repeat.txt\",\"kind\":\"file\",\"size\":11,\"sha256\":\"10bdaeaaa06fbc50ae5bcc41e864ab0885615f0270f4a1da2fe1cbbc50a054d2\",\"text\":\"repeat body\"},{\"path\":\"tool-results/session/turn-repeat-call-repeat.txt\",\"kind\":\"file\",\"size\":11,\"sha256\":\"10bdaeaaa06fbc50ae5bcc41e864ab0885615f0270f4a1da2fe1cbbc50a054d2\",\"text\":\"repeat body\"}]"
+        }
+      ]
+    },
+    {
+      "name": "existing-artifact",
+      "toolResultsDir": "<fixture>/existing-artifact/tool-results/session",
+      "budget": {
+        "maxResultSizeChars": 1,
+        "maxResultSizeTokens": 1000
+      },
+      "files": [
+        {
+          "path": "tool-results/session/turn-1-call-existing.txt",
+          "text": "original artifact\n"
+        }
+      ],
+      "steps": [
+        {
+          "input": {
+            "sessionId": "fixture-session",
+            "turnId": "turn-1",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "prior message"
+                  }
+                ]
+              }
+            ],
+            "toolResultMessage": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-existing",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "new tool result"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "outputJson": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"prior message\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result_reference\",\"toolCallId\":\"call-existing\",\"path\":\"<fixture>/existing-artifact/tool-results/session/turn-1-call-existing.txt\",\"readFilePath\":\"existing-artifact/tool-results/refs/result-0001.txt\",\"originalBytes\":15,\"preview\":\"new tool result\",\"hasMore\":false,\"mimeType\":\"text/plain\",\"reason\":\"tool_result_too_large\"}]}],\"appendedMessages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result_reference\",\"toolCallId\":\"call-existing\",\"path\":\"<fixture>/existing-artifact/tool-results/session/turn-1-call-existing.txt\",\"readFilePath\":\"existing-artifact/tool-results/refs/result-0001.txt\",\"originalBytes\":15,\"preview\":\"new tool result\",\"hasMore\":false,\"mimeType\":\"text/plain\",\"reason\":\"tool_result_too_large\"}]}],\"diagnostics\":[]}",
+          "filesJson": "[{\"path\":\"tool-results\",\"kind\":\"dir\"},{\"path\":\"tool-results/refs\",\"kind\":\"dir\"},{\"path\":\"tool-results/refs/result-0001.txt\",\"kind\":\"file\",\"size\":18,\"sha256\":\"f084e50f3d84cfc3a71cad0a4c2610fe42c87b5c78de5ff50bba3ac7c1b16ab8\",\"text\":\"original artifact\\n\"},{\"path\":\"tool-results/session\",\"kind\":\"dir\"},{\"path\":\"tool-results/session/turn-1-call-existing.txt\",\"kind\":\"file\",\"size\":18,\"sha256\":\"f084e50f3d84cfc3a71cad0a4c2610fe42c87b5c78de5ff50bba3ac7c1b16ab8\",\"text\":\"original artifact\\n\"}]"
         }
       ]
     },

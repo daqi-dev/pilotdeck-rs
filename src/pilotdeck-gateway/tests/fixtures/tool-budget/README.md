@@ -36,7 +36,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
   SHA-256、≤4096 字节文件的原文）。
 
 Rust 回放按 `Scratch` 独占临时目录重建同一布局，逐步比较完整 `outputJson` 与
-`filesJson` 的逐字节内容，条数精确断言（37 cases / 40 steps）。路径统一规范化为
+`filesJson` 的逐字节内容，条数精确断言（38 cases / 41 steps）。路径统一规范化为
 `<fixture>`；`locale` 固定 en-US。
 
 覆盖：
@@ -68,6 +68,7 @@ Rust 回放按 `Scratch` 独占临时目录重建同一布局，逐步比较完�
 - 两种目录布局：`.../tool-results/session`（refs 为兄弟目录）与普通 `spill`
   （refs 在目录内）；`readFilePath` 相对 workspace root；
 - 替换缓存：同一 turn/toolCallId 复用记录；不同 turnId 重新落盘并使用下一个别名；
+- spill 原文件已存在：`wx` 保留原字节，别名复制原文件，预览仍描述本轮工具结果；
 - 目标已有别名文件：`COPYFILE_EXCL` 返回 EEXIST 后顺延到 `result-0002`；
 - 写失败：父路径是普通文件（`ENOTDIR`）与目录 chmod 0555（`EACCES`，非 root
   环境）。TS 的 `applyToolResults` 把异常转成
@@ -84,3 +85,11 @@ Rust 回放按 `Scratch` 独占临时目录重建同一布局，逐步比较完�
 
 `hydrateReferences` 不在本 PR：Rust 宿主还没有 artifact-storage 缓存，恢复流程
 留给 storage owner。真实 provider 的媒体物化不在这里。
+
+## 写入竞态回归（#344）
+
+Unix 上原文件与别名目标都复用 `project_files::create_new_beneath`：目录逐级
+`openat + O_NOFOLLOW`，末级 `O_CREAT | O_EXCL`、0600，打开后 fstat。
+`tool_budget` 单元测试在 containment 后、open 前按目标路径触发钩子，把中间
+目录换成根外链接；断言钩子确实执行、根外为空、错误与预置链接完全相同。
+非 Unix 保持原有按路径 `create_new` 行为。
