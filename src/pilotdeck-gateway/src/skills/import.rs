@@ -14,6 +14,9 @@ use std::{
     os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt, symlink},
 };
 
+/// Production cap on total listed entries per tree_files call (#595).
+const TREE_FILES_CAP: usize = 8_388_608;
+
 impl SkillManager {
     /// SkillManager.ts:328–427.
     pub fn import(&self, input: &JsValue) -> Result<JsValue> {
@@ -134,7 +137,7 @@ impl SkillManager {
         // This holds only for scandir; fs.cp walks with opendir, which is
         // unsorted (see copy_entry).
         entries.sort_by_key(|e| e.file_name());
-        let current = scan_folder(&root, basename(&root));
+        let current = scan_folder(&root, basename(&root))?;
         let collator = node_collator(&self.locale)
             .map_err(|(code, message)| SkillError::host_failure(code, message))?;
         let mut children = vec![];
@@ -147,7 +150,7 @@ impl SkillManager {
                 _ => false,
             };
             if is_dir {
-                children.push(scan_folder(&path, &name));
+                children.push(scan_folder(&path, &name)?);
             }
         }
         // Folders with a SKILL.md first, then localeCompare (Array#sort is stable).
@@ -187,7 +190,7 @@ struct ScanFolder {
 }
 
 /// SkillManager.ts:663 buildSkillScanFolder.
-fn scan_folder(dir: &str, folder_name: &str) -> ScanFolder {
+fn scan_folder(dir: &str, folder_name: &str) -> Result<ScanFolder> {
     let has_skill_md = fs::metadata(join(dir, "SKILL.md")).is_ok();
     let meta = if has_skill_md {
         read_skill_meta(dir, &"user".into())
@@ -195,12 +198,12 @@ fn scan_folder(dir: &str, folder_name: &str) -> ScanFolder {
         JsValue::Null
     };
     let (file_count, total_size) = if has_skill_md {
-        tree_files(dir)
+        tree_files_capped(dir, TREE_FILES_CAP)?
     } else {
         (0.0, 0.0)
     };
     let pick = |key: &str| meta.get(key).cloned().unwrap_or(JsValue::Null);
-    ScanFolder {
+    Ok(ScanFolder {
         has_skill_md,
         name: folder_name.into(),
         value: object([
@@ -212,7 +215,7 @@ fn scan_folder(dir: &str, folder_name: &str) -> ScanFolder {
             ("fileCount", JsValue::Number(file_count)),
             ("totalSize", JsValue::Number(total_size)),
         ]),
-    }
+    })
 }
 
 /// `fs.readdir(dir, { recursive: true })` (promises readdirRecursive), then a
@@ -221,29 +224,45 @@ fn scan_folder(dir: &str, folder_name: &str) -> ScanFolder {
 /// link cycle unrolls until stat hits ELOOP; any listing failure rejects the
 /// whole readdir, which scan swallows as zero files. Measured with a real
 /// unreadable child in tests/record_runtime_boundaries.mts.
-fn tree_files(dir: &str) -> (f64, f64) {
+///
+/// #595: A total listed entry count cap prevents unbounded work on pathological
+/// inputs (e.g., two self-referencing symlinks). The production cap is 8,388,608.
+/// Tests call tree_files_capped directly with a smaller cap.
+fn tree_files_capped(dir: &str, cap: usize) -> Result<(f64, f64)> {
     let mut listed = vec![];
     let mut queue = vec![dir.to_owned()];
     while let Some(next) = queue.pop() {
-        let Ok(entries) = fs::read_dir(&next).and_then(|r| r.collect::<io::Result<Vec<_>>>())
-        else {
-            return (0.0, 0.0);
+        let Ok(entries) = fs::read_dir(&next) else {
+            return Ok((0.0, 0.0));
         };
         for entry in entries {
+            let Ok(entry) = entry else {
+                // TS readdir rejects on any child error; preserve that semantics.
+                return Ok((0.0, 0.0));
+            };
             let path = join(&next, &entry.file_name().to_string_lossy());
             if fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
                 queue.push(path.clone());
             }
             listed.push(path);
+            if listed.len() > cap {
+                return Err(SkillError::manager(
+                    "tree_files_limit_exceeded",
+                    format!(
+                        "Skill directory tree enumeration exceeded the limit of {} entries.",
+                        cap
+                    ),
+                ));
+            }
         }
     }
-    listed
+    Ok(listed
         .iter()
         .filter_map(|p| fs::metadata(p).ok())
         .filter(Metadata::is_file)
         .fold((0.0, 0.0), |(count, size), m| {
             (count + 1.0, size + m.len() as f64)
-        })
+        }))
 }
 
 // ------------------------------------------------------------------- fs.cp
@@ -500,6 +519,184 @@ fn dirname(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("pdrs-tree-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&dir).unwrap();
+            Self(dir)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn tree_files_respects_cap_133() {
+        let scratch = Scratch::new();
+        let dir = scratch.0.join("skill");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "---\nname: test\n---\n").unwrap();
+        for i in 0..132 {
+            fs::write(dir.join(format!("f{}.txt", i)), "abc").unwrap();
+        }
+        let result = tree_files_capped(dir.to_str().unwrap(), 133);
+        assert!(result.is_ok(), "133 entries at cap 133 should succeed");
+        let (count, size) = result.unwrap();
+        assert_eq!(count, 133.0); // 132 files + SKILL.md
+        assert_eq!(size, 396.0 + 19.0); // 132*3 + SKILL.md
+    }
+
+    #[test]
+    fn tree_files_exceeds_cap_132() {
+        let scratch = Scratch::new();
+        let dir = scratch.0.join("skill");
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "---\nname: test\n---\n").unwrap();
+        for i in 0..133 {
+            fs::write(dir.join(format!("f{}.txt", i)), "abc").unwrap();
+        }
+        let result = tree_files_capped(dir.to_str().unwrap(), 132);
+        assert!(result.is_err(), "134 entries at cap 132 should fail");
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "tree_files_limit_exceeded");
+    }
+
+    #[test]
+    fn tree_files_matches_ts_baseline() {
+        const ORACLE: &str = include_str!("../../tests/fixtures/skills-tree-files/oracle.json");
+        let oracle =
+            pilotdeck_protocol::parse_json(ORACLE).expect("oracle.json must be valid JSON");
+        crate::test_baseline::check(
+            &oracle,
+            std::env::var_os("PDRS_BASELINE")
+                .as_deref()
+                .map(std::path::Path::new),
+        );
+
+        let cases = match oracle.get("cases").unwrap() {
+            pilotdeck_protocol::JsValue::Array(arr) => arr,
+            _ => panic!("cases must be an array"),
+        };
+        for case in cases {
+            let name = match case.get("name").unwrap() {
+                pilotdeck_protocol::JsValue::String(s) => s.to_utf8().unwrap(),
+                _ => panic!("name must be a string"),
+            };
+            let expected_file_count = match case.get("fileCount").unwrap() {
+                pilotdeck_protocol::JsValue::Number(n) => *n,
+                _ => panic!("fileCount must be a number"),
+            };
+            let expected_total_size = match case.get("totalSize").unwrap() {
+                pilotdeck_protocol::JsValue::Number(n) => *n,
+                _ => panic!("totalSize must be a number"),
+            };
+
+            let scratch = Scratch::new();
+            let skill_root = scratch.0.join("skill");
+            fs::create_dir(&skill_root).unwrap();
+
+            // Reconstruct the tree according to oracle.json's embedded setup
+            setup_tree_for_case(&skill_root, &name);
+
+            let result = tree_files_capped(skill_root.to_str().unwrap(), TREE_FILES_CAP);
+            assert!(result.is_ok(), "{}: tree_files_capped should succeed", name);
+
+            let (file_count, total_size) = result.unwrap();
+            assert_eq!(
+                file_count, expected_file_count,
+                "{}: fileCount mismatch",
+                name
+            );
+            assert_eq!(
+                total_size, expected_total_size,
+                "{}: totalSize mismatch",
+                name
+            );
+        }
+    }
+
+    fn setup_tree_for_case(root: &std::path::Path, case: &str) {
+        use std::os::unix::fs::symlink;
+
+        match case {
+            "dag-10" => {
+                fs::write(root.join("SKILL.md"), "---\nname: dag-10\n---\n").unwrap();
+                for i in 0..10 {
+                    fs::create_dir(root.join(format!("d{}", i))).unwrap();
+                }
+                for i in 0..1024 {
+                    fs::write(root.join(format!("d{}/f{}.txt", i % 10, i)), "abc").unwrap();
+                }
+            }
+            "dag-15" => {
+                fs::write(root.join("SKILL.md"), "---\nname: dag-15\n---\n").unwrap();
+                for i in 0..100 {
+                    fs::create_dir(root.join(format!("d{}", i))).unwrap();
+                }
+                for i in 0..32768 {
+                    fs::write(root.join(format!("d{}/f{}.txt", i % 100, i)), "abc").unwrap();
+                }
+            }
+            "deep-300" => {
+                fs::write(root.join("SKILL.md"), "---\nname: deep-300\n---\n").unwrap();
+                let mut path = root.to_path_buf();
+                for _ in 0..299 {
+                    path = path.join("d");
+                    fs::create_dir(&path).unwrap();
+                }
+                fs::write(path.join("file.txt"), "deep").unwrap();
+            }
+            "linear-20" => {
+                fs::write(root.join("SKILL.md"), "---\nname: linear-20\n---\n").unwrap();
+                fs::write(root.join("f0.txt"), "abc").unwrap();
+                for i in 0..20 {
+                    fs::create_dir(root.join(format!("d{}", i))).unwrap();
+                    fs::write(root.join(format!("d{}/f{}.txt", i, i + 1)), "abc").unwrap();
+                }
+                for i in 0..19 {
+                    symlink(format!("d{}", i), root.join(format!("l{}", i))).unwrap();
+                }
+            }
+            "hops-20" => {
+                fs::write(root.join("SKILL.md"), "---\nname: hops-20\n---\n").unwrap();
+                fs::write(root.join("target.txt"), "end").unwrap();
+                symlink("target.txt", root.join("l0")).unwrap();
+                for i in 0..19 {
+                    symlink(format!("l{}", i), root.join(format!("l{}", i + 1))).unwrap();
+                }
+            }
+            "alias-10x5" => {
+                fs::write(root.join("SKILL.md"), "---\nname: alias-10x5\n---\n").unwrap();
+                fs::create_dir(root.join("target")).unwrap();
+                for i in 0..5 {
+                    fs::create_dir(root.join(format!("target/sub{}", i))).unwrap();
+                }
+                for i in 0..50 {
+                    fs::write(root.join(format!("target/sub{}/f{}.txt", i % 5, i)), "abc").unwrap();
+                }
+                for i in 0..10 {
+                    symlink("target", root.join(format!("link{}", i))).unwrap();
+                }
+            }
+            "mutual" => {
+                fs::write(root.join("SKILL.md"), "---\nname: mutual\n---\n").unwrap();
+                fs::create_dir(root.join("a")).unwrap();
+                fs::create_dir(root.join("b")).unwrap();
+                for i in 0..30 {
+                    let subdir = if i % 2 == 0 { "a" } else { "b" };
+                    fs::write(root.join(format!("{}/f{}.txt", subdir, i)), "abc").unwrap();
+                }
+                symlink("../b", root.join("a/linkb")).unwrap();
+                symlink("../a", root.join("b/linka")).unwrap();
+            }
+            _ => panic!("unknown test case: {}", case),
+        }
+    }
 
     #[test]
     fn directory_copy_does_not_use_native_stack_per_level() {
