@@ -11,6 +11,8 @@
 // Sections:
 //   clientRequests   TS client -> injected fetch: raw request bytes + happy-path value
 //   clientResponses  injected response -> TS client outcome (validation/transport)
+//   clientBodyFailures real TS client -> real raw server whose response body
+//                    fails after a complete head (disconnect/stall/oversized)
 //   handlerCases     raw Request -> TS handler status/body + store-call arguments
 //   socketRequests   real loopback TS server -> raw status/body for framing cases
 //   flow             real TS client <-> real TS server (fixed clock/uuid), with the
@@ -25,6 +27,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
+import { createServer as createTcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -385,6 +388,82 @@ await recordResponse('abort-reason', 'clear', { kind: 'abort' }, { timeoutMs: 30
 await recordResponse('ok-json-rejects', 'clear', { kind: 'jsonRejects', status: 200 });
 
 // ---------------------------------------------------------------------------
+// clientBodyFailures: real TS client against a real raw server that sends a
+// complete response head and then fails the body. TS
+// `response.json().catch(() => undefined)` swallows the body failure, so the
+// observable error is decided by the status code alone:
+//   2xx -> "returned an invalid response."
+//   non-2xx -> "failed: HTTP <status>"
+// `oversized` exceeds V8 MAX_STRING_LENGTH (0x1fffffe8); this is a real
+// 512 MiB loopback transfer, not an injected rejection.
+// ---------------------------------------------------------------------------
+const clientBodyFailures: any[] = [];
+{
+  async function recordBodyFailure(status: number, failure: 'disconnect' | 'stall' | 'oversized') {
+    const sockets = new Set<any>();
+    const server = createTcpServer((socket) => {
+      sockets.add(socket);
+      socket.on('error', () => {});
+      let request = Buffer.alloc(0);
+      const onData = (chunk: Buffer) => {
+        request = Buffer.concat([request, chunk]);
+        if (!request.includes('\r\n\r\n')) return;
+        socket.off('data', onData);
+        const reason = status === 200 ? 'OK' : 'Internal Server Error';
+        const declared = failure === 'oversized' ? 536_870_889 : 100;
+        socket.write(`HTTP/1.1 ${status} ${reason}\r\ncontent-type: application/json\r\ncontent-length: ${declared}\r\nconnection: close\r\n\r\n`);
+        if (failure === 'disconnect') {
+          socket.write('{"version":1');
+          setTimeout(() => socket.destroy(), 30);
+        } else if (failure === 'stall') {
+          socket.write('{"version":1');
+        } else {
+          const chunk = Buffer.alloc(1024 * 1024, 0x20);
+          let sent = 0;
+          const pump = () => {
+            while (sent < declared) {
+              const take = Math.min(chunk.length, declared - sent);
+              sent += take;
+              if (!socket.write(take === chunk.length ? chunk : chunk.subarray(0, take))) {
+                socket.once('drain', pump);
+                return;
+              }
+            }
+            socket.end();
+          };
+          pump();
+        }
+      };
+      socket.on('data', onData);
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once('error', rejectListen);
+      server.listen(0, '127.0.0.1', () => resolveListen());
+    });
+    const port = (server.address() as any).port;
+    const timeoutMs = failure === 'stall' ? 250 : 30_000;
+    const store = new HttpGatewayUserDialogStore({
+      url: `http://127.0.0.1:${port}/v1/gateway-user-dialog-store/`,
+      authorizationToken: TOKEN,
+      timeoutMs,
+    });
+    let outcome;
+    try {
+      outcome = await capture(() => store.clear(key));
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
+    clientBodyFailures.push({ name: `${failure}-${status}`, status, failure, timeoutMs, outcome });
+  }
+  for (const status of [200, 500]) {
+    for (const failure of ['disconnect', 'stall', 'oversized'] as const) {
+      await recordBodyFailure(status, failure);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // handlerCases: raw Request -> response bytes and store-call arguments
 // ---------------------------------------------------------------------------
 const handlerCases: any[] = [];
@@ -741,6 +820,7 @@ const oracle = {
   counts: {
     clientRequests: clientRequests.length,
     clientResponses: clientResponses.length,
+    clientBodyFailures: clientBodyFailures.length,
     handlerCases: handlerCases.length,
     socketRequests: socketRequests.length,
     flow: flow.length,
@@ -750,6 +830,7 @@ const oracle = {
   constructors,
   clientRequests,
   clientResponses,
+  clientBodyFailures,
   handlerCases,
   handlerConstruction,
   socketRequests,

@@ -28,7 +28,12 @@ use hyper_util::{
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{convert::Infallible, fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
-use tokio::{net::TcpListener, sync::Semaphore};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::{Semaphore, watch},
+    task::JoinSet,
+};
 use url::Url;
 
 pub const HTTP_STORE_VERSION: f64 = 1.0;
@@ -539,45 +544,35 @@ pub struct HttpGatewayUserDialogStoreOptions {
 }
 
 /// One outgoing fetch-shaped exchange. `authorization` already includes the
-/// `Bearer ` prefix; `content_type` is the fixed JSON media type.
+/// `Bearer ` prefix; `content_type` is the fixed JSON media type. `timeout` is
+/// the TS `AbortSignal` deadline for the whole exchange: headers plus body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpStoreTransportRequest {
     pub url: String,
     pub authorization: String,
     pub content_type: String,
     pub body: Vec<u8>,
+    pub timeout: Duration,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpStoreTransportResponse {
     pub status: u16,
     pub body: Vec<u8>,
 }
-/// Raw fetch failure text: `fetch failed` for network errors, an abort reason
-/// such as `gateway_user_dialog_store_timeout`, or any injected message.
-/// `invalid_response` carries the TS `response.json().catch(() => undefined)`
-/// path for a body over `MAX_STRING_LENGTH` back to `call`, which is the layer
-/// that knows the operation name for the exact `returned an invalid response.`
-/// text.
+/// Raw fetch failure text: `fetch failed` for network errors before the
+/// response head, or the abort reason `gateway_user_dialog_store_timeout`.
+/// A body failure after the head is not an error here: TS
+/// `response.json().catch(() => undefined)` turns it into an undefined body and
+/// `call` then decides by status code, exactly like any other undefined body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HttpStoreTransportError {
     pub message: String,
-    invalid_response: bool,
 }
 impl HttpStoreTransportError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            invalid_response: false,
         }
-    }
-    fn invalid_response() -> Self {
-        Self {
-            message: String::new(),
-            invalid_response: true,
-        }
-    }
-    fn is_invalid_response(&self) -> bool {
-        self.invalid_response
     }
 }
 
@@ -663,38 +658,44 @@ impl HttpStoreTransport for HyperHttpStoreTransport {
                     .map_err(|_| failed())?,
             );
             let client = self.client.clone();
-            let response = crate::fetch_redirect::follow(
-                url,
-                Method::POST,
-                headers,
-                Bytes::from(request.body),
-                failed,
-                move |request| {
-                    let client = client.clone();
-                    async move { client.request(request).await.map_err(|_| failed()) }
-                },
-            )
-            .await?;
-            let status = response.status().as_u16();
-            // `response.json()` goes through `text()`, which rejects a body over
-            // `buffer.constants.MAX_STRING_LENGTH`; TS catches that rejection as
-            // `undefined` and reports an invalid response. Read frame by frame
-            // so an endless/oversized body cannot grow memory without bound.
-            let body = match crate::fetch_redirect::read_body(
-                response.into_body(),
-                self.max_body_bytes,
-                None,
+            // `setTimeout(..., timeoutMs)` starts before the fetch and covers
+            // redirects, the response head and the body read.
+            let deadline = tokio::time::Instant::now() + request.timeout;
+            let response = match tokio::time::timeout_at(
+                deadline,
+                crate::fetch_redirect::follow(
+                    url,
+                    Method::POST,
+                    headers,
+                    Bytes::from(request.body),
+                    failed,
+                    move |request| {
+                        let client = client.clone();
+                        async move { client.request(request).await.map_err(|_| failed()) }
+                    },
+                ),
             )
             .await
             {
-                Ok(body) => body,
-                Err(crate::fetch_redirect::BodyError::TooLong) => {
-                    return Err(HttpStoreTransportError::invalid_response());
-                }
-                Err(
-                    crate::fetch_redirect::BodyError::Terminated
-                    | crate::fetch_redirect::BodyError::Aborted,
-                ) => return Err(failed()),
+                Ok(response) => response?,
+                Err(_) => return Err(HttpStoreTransportError::new(TIMEOUT_REASON)),
+            };
+            let status = response.status().as_u16();
+            // After a response head exists, TS does
+            // `response.json().catch(() => undefined)`: a body timeout,
+            // termination or the `MAX_STRING_LENGTH` ceiling is not a transport
+            // error, it leaves the body undefined. `call` then decides by the
+            // status code (2xx -> invalid response, otherwise `HTTP n`).
+            // Read frame by frame so an endless/oversized body cannot grow
+            // memory without bound.
+            let body = match tokio::time::timeout_at(
+                deadline,
+                crate::fetch_redirect::read_body(response.into_body(), self.max_body_bytes, None),
+            )
+            .await
+            {
+                Ok(Ok(body)) => body,
+                Ok(Err(_)) | Err(_) => Vec::new(),
             };
             Ok(HttpStoreTransportResponse { status, body })
         })
@@ -981,16 +982,20 @@ impl HttpGatewayUserDialogStore {
             authorization: format!("Bearer {}", self.authorization_token),
             content_type: "application/json".into(),
             body: text.into_bytes(),
+            timeout: self.timeout,
         };
-        let response = match tokio::time::timeout(self.timeout, self.transport.post(request)).await
-        {
+        // `HyperHttpStoreTransport` enforces the same deadline itself so a body
+        // that stalls after the head becomes an undefined body (TS
+        // `json().catch`), not a timeout message. This outer timer only aborts
+        // transports that never honour the request deadline; the extra grace
+        // keeps it from racing the body-phase deadline.
+        let outcome = tokio::time::timeout(
+            self.timeout + Duration::from_secs(1),
+            self.transport.post(request),
+        )
+        .await;
+        let response = match outcome {
             Ok(Ok(response)) => response,
-            Ok(Err(error)) if error.is_invalid_response() => {
-                return Err(DialogError::Invalid(format!(
-                    "Gateway user-dialog store {} returned an invalid response.",
-                    operation.name()
-                )));
-            }
             Ok(Err(error)) => return Err(DialogError::Invalid(error.message)),
             Err(_) => return Err(DialogError::Invalid(TIMEOUT_REASON.into())),
         };
@@ -1660,7 +1665,7 @@ fn store_key_value(key: &StoreKey) -> JsValue {
 
 pub struct GatewayUserDialogStoreHttpServer {
     url: String,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    shutdown: Option<watch::Sender<bool>>,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 impl fmt::Debug for GatewayUserDialogStoreHttpServer {
@@ -1674,12 +1679,13 @@ impl GatewayUserDialogStoreHttpServer {
     pub fn url(&self) -> &str {
         &self.url
     }
-    /// Stops accepting connections and waits for the accept loop. Like Node's
-    /// `server.close`, in-flight and idle keep-alive connections finish on their
-    /// own (dropping the client closes them).
+    /// Stops accepting new connections, closes idle keep-alive connections and
+    /// waits for in-flight requests to finish, like Node v22 `server.close()`
+    /// (which runs `closeIdleConnections()` before `net.Server.close()` and
+    /// invokes its callback once every connection has ended).
     pub async fn close(mut self) {
         if let Some(shutdown) = self.shutdown.take() {
-            let _ = shutdown.send(());
+            let _ = shutdown.send(true);
         }
         if let Some(task) = self.task.take() {
             let _ = task.await;
@@ -1743,25 +1749,30 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
     // hyper asserts `max_buf_size >= 8192`; keep that h1 minimum.
     let max_header_bytes = limits.max_header_bytes.max(8 * 1024);
     let connections = Arc::new(Semaphore::new(limits.max_connections));
-    let (shutdown, mut closed) = tokio::sync::oneshot::channel::<()>();
+    let (shutdown, shutdown_rx) = watch::channel(false);
     let task = tokio::spawn(async move {
+        let mut shutdown_rx = shutdown_rx;
+        let mut tasks = JoinSet::new();
         loop {
             tokio::select! {
-                _ = &mut closed => break,
+                _ = shutdown_rx.changed() => break,
                 accepted = listener.accept() => {
                     let Ok((stream, _)) = accepted else { continue };
                     // Node has no connection cap; this semaphore only bounds the
-                    // resources one process can pin down. A full server stops
-                    // accepting until a connection finishes.
-                    let permit = tokio::select! {
-                        _ = &mut closed => break,
-                        permit = connections.clone().acquire_owned() => match permit {
-                            Ok(permit) => permit,
-                            Err(_) => break,
-                        },
+                    // resources one process can pin down. Accept must never wait
+                    // on a permit: a full server answers the overflow
+                    // connection with an immediate 503 and keeps accepting, so
+                    // one peer cannot park the accept loop for headersTimeout.
+                    let Ok(permit) = connections.clone().try_acquire_owned() else {
+                        // Answer without holding the accept loop; the writer
+                        // runs as a short task so a peer that stops reading
+                        // cannot park accept either.
+                        tasks.spawn(reject_over_capacity(stream));
+                        continue;
                     };
                     let handler = handler.clone();
-                    tokio::spawn(async move {
+                    let mut connection_shutdown = shutdown_rx.clone();
+                    tasks.spawn(async move {
                         let _permit = permit;
                         let service = service_fn(move |request: Request<Incoming>| {
                             let handler = handler.clone();
@@ -1772,15 +1783,47 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                             .timer(TokioTimer::new())
                             .header_read_timeout(limits.headers_timeout)
                             // Node's `maxHeaderSize` (16 KiB) rejects with 431.
-                            // hyper's own default caps at 100 fields; Node's
-                            // `maxHeadersCount` is unlimited, so allow the
-                            // most fields 16 KiB can hold.
+                            // hyper's own default caps at 100 fields; Node
+                            // v22.22.0's runtime `maxHeadersCount` default is
+                            // `null` (unlimited; the 2000 in the docs is not
+                            // applied), so this is only a backstop above what
+                            // the 16 KiB buffer can hold.
                             .max_headers(4096)
                             .max_buf_size(max_header_bytes);
-                        let _ = builder
-                            .serve_connection(TokioIo::new(stream), service)
-                            .await;
+                        let connection =
+                            builder.serve_connection(TokioIo::new(stream), service);
+                        tokio::pin!(connection);
+                        tokio::select! {
+                            _ = wait_for_shutdown(&mut connection_shutdown) => {
+                                // Node `server.close()` closes idle
+                                // connections and lets an in-flight request
+                                // finish; hyper's graceful shutdown has the
+                                // same shape.
+                                connection.as_mut().graceful_shutdown();
+                                let _ = connection.await;
+                            }
+                            _ = &mut connection => {}
+                        }
                     });
+                }
+                Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
+            }
+        }
+        drop(listener);
+        // Node's close callback waits until every connection has ended. The
+        // per-connection request/header timeouts already bound an abandoned
+        // connection; the extra second only keeps a wedged task from hanging
+        // shutdown forever.
+        let deadline =
+            tokio::time::Instant::now() + limits.request_timeout + Duration::from_secs(1);
+        loop {
+            match tokio::time::timeout_at(deadline, tasks.join_next()).await {
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(_) => {
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                    break;
                 }
             }
         }
@@ -1790,6 +1833,33 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
         shutdown: Some(shutdown),
         task: Some(task),
     })
+}
+
+const SERVICE_UNAVAILABLE: &[u8] =
+    b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+
+/// Answer an over-capacity connection without holding the accept loop. The
+/// request bytes already queued by the peer are drained for a short bounded
+/// window before the socket closes; closing with unread data would send an RST
+/// that discards the 503 before the client can read it.
+async fn reject_over_capacity(mut stream: TcpStream) {
+    if stream.write_all(SERVICE_UNAVAILABLE).await.is_err() {
+        return;
+    }
+    let _ = stream.shutdown().await;
+    let mut buffer = [0u8; 1024];
+    let _ = tokio::time::timeout(Duration::from_millis(100), async {
+        while matches!(stream.read(&mut buffer).await, Ok(read) if read > 0) {}
+    })
+    .await;
+}
+
+/// Resolves when `close` starts (or the server handle is dropped).
+async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let _ = shutdown.changed().await;
 }
 
 #[derive(Debug)]
@@ -1840,10 +1910,13 @@ async fn serve(
         .get(header::HOST)
         .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
         .unwrap_or_else(|| "localhost".into());
-    // Node's `maxHeaderSize` is a byte count over every raw header field line
-    // (duplicates included). hyper's `max_buf_size` only backstops the read
-    // buffer, so enforce the observable 16 KiB ceiling here, before the handler
-    // runs, and answer like Node's 431.
+    // Node's `maxHeaderSize` counts header field name + value bytes (probed on
+    // v22.22.0: 2,500 fields of `aaaaa: x` pass, 2,800 fail; a 16,350-byte
+    // value passes, 16,380 fails). This raw-byte sum also counts separators and
+    // the request line, so it can reject a many-small-header request earlier
+    // than Node; that stricter direction is registered as an unapproved
+    // difference (see the A7.4-HTTPSTORE candidate note). hyper's
+    // `max_buf_size` already rejects anything past its 16 KiB read buffer.
     let header_bytes: usize = request
         .headers()
         .iter()
