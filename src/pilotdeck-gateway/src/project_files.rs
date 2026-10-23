@@ -132,6 +132,7 @@ pub(crate) fn create_directories_beneath(root: &Path, target: &Path) -> io::Resu
 }
 
 /// Descriptor variant of the #596 mkdir walk, shared by memory mutations.
+#[cfg(unix)]
 pub(crate) fn create_directories_at(
     root: &File,
     relative: &Path,
@@ -176,6 +177,7 @@ pub(crate) fn create_directories_at(
     Ok(())
 }
 
+#[cfg(unix)]
 fn directory_flags() -> rustix::fs::OFlags {
     use rustix::fs::OFlags;
     // Traversing a directory needs search permission, not read permission.
@@ -202,10 +204,24 @@ fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Re
     walk_beneath(&filesystem, &relative, search_directory)
 }
 
+/// The NOFOLLOW descriptor walk is the Unix-only hardening behind
+/// A4-FILE-TOCTOU-001 (specs/gateway-parity/accepted-diffs.md). Non-Unix keeps
+/// the measured Node behavior: a plain open of the realpath-checked path.
+#[cfg(not(unix))]
+fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Result<File> {
+    let _ = search_directory;
+    canonical
+        .strip_prefix(root)
+        .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
+    File::open(canonical)
+}
+
+#[cfg(unix)]
 pub(crate) fn open_directory_beneath(root: &Path, path: &Path) -> io::Result<File> {
     open_checked(root, path, true)
 }
 
+#[cfg(unix)]
 fn walk_beneath(root: &File, relative: &Path, search_directory: bool) -> io::Result<File> {
     use rustix::fs::{Mode, OFlags, openat};
     let mut file = root.try_clone()?;
@@ -224,6 +240,9 @@ fn walk_beneath(root: &File, relative: &Path, search_directory: bool) -> io::Res
                 .map_err(io::Error::from)
                 .map_err(|e| {
                     use rustix::fs::{AtFlags, FileType, statat};
+                    // Defensive only: NOFOLLOW|DIRECTORY on a symlink reports
+                    // ELOOP, so ENOTDIR denotes a plain non-directory. This
+                    // branch would catch a platform reporting ENOTDIR instead.
                     if e.raw_os_error() == Some(libc::ENOTDIR)
                         && let Ok(stat) = statat(&file, *name, AtFlags::SYMLINK_NOFOLLOW)
                         && FileType::from_raw_mode(stat.st_mode) == FileType::Symlink
@@ -238,6 +257,9 @@ fn walk_beneath(root: &File, relative: &Path, search_directory: bool) -> io::Res
 }
 /// Node's default `w` semantics: open/create, verify the inode, then truncate.
 /// Never truncate before rejecting a raced symlink, FIFO, or shared hardlink.
+/// The nlink/type check is a deliberate, registered divergence from TS's
+/// write-through: specs/gateway-parity/diffs/A6.6-EDGECLAW-WRITE-INODE-001.
+#[cfg(unix)]
 pub(crate) fn overwrite_at(root: &File, relative: &Path, bytes: &[u8]) -> io::Result<()> {
     use rustix::fs::{FileType, Mode, OFlags, fstat, openat};
     use std::io::Write;
@@ -264,6 +286,7 @@ pub(crate) fn overwrite_at(root: &File, relative: &Path, bytes: &[u8]) -> io::Re
     file.write_all(bytes)
 }
 
+#[cfg(unix)]
 pub(crate) fn unlink_at(root: &File, relative: &Path) -> io::Result<()> {
     let parent = walk_beneath(
         root,
@@ -280,6 +303,7 @@ pub(crate) fn unlink_at(root: &File, relative: &Path) -> io::Result<()> {
 
 /// Recursive removal never follows a link, including one installed after stat.
 /// Diagnostics retain Node's syscall and the original display path.
+#[cfg(unix)]
 pub(crate) fn remove_tree_at(root: &File, relative: &Path, display: &Path) -> io::Result<()> {
     let parent = walk_beneath(
         root,
@@ -292,8 +316,10 @@ pub(crate) fn remove_tree_at(root: &File, relative: &Path, display: &Path) -> io
         display,
     )
 }
+#[cfg(unix)]
 fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io::Result<()> {
     use rustix::fs::{AtFlags, Dir, Mode, OFlags, openat, unlinkat};
+    use std::os::unix::ffi::OsStrExt;
     let unlink = |flags, syscall| {
         unlinkat(parent, name, flags)
             .map_err(|e| crate::node_io::path_error(e.into(), syscall, display))
@@ -304,10 +330,26 @@ fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io:
         Err(e) if e.kind() == io::ErrorKind::NotADirectory => {
             return unlink(AtFlags::empty(), "unlink");
         }
-        Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+        // Node's rimraf descends on a non-empty rmdir however it is reported:
+        // ENOTEMPTY, EEXIST, or a sticky directory's EPERM (node_fs::rm_sync,
+        // measured from libuv: EACCES is never a reason to descend).
+        Err(e)
+            if e.kind() == io::ErrorKind::DirectoryNotEmpty
+                || e.kind() == io::ErrorKind::AlreadyExists
+                || crate::node_io::lookup(&e).is_some_and(|(code, _)| code == "EPERM") => {}
         Err(e) => return Err(e),
     }
     // Open for reading only here: enumeration, unlike traversal, needs it.
+    // Enumeration failures keep Node's scandir syscall and this directory's
+    // display path, like the path-based node_fs::rm_sync they replace; a
+    // raced link stays NoFollowLoop instead of gaining a scandir stage.
+    let scandir = |error: io::Error| {
+        if nofollow_loop(&error) {
+            error
+        } else {
+            crate::node_io::path_error(error, "scandir", display)
+        }
+    };
     let dir = File::from(
         openat(
             parent,
@@ -316,18 +358,27 @@ fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io:
             Mode::empty(),
         )
         .map_err(io::Error::from)
-        .map_err(checked_open_error)?,
+        .map_err(checked_open_error)
+        .map_err(scandir)?,
     );
-    let mut children = Dir::read_from(&dir)?
-        .map(|e| e.map(|e| e.file_name().to_owned()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut children = Dir::read_from(&dir)
+        .map_err(io::Error::from)
+        .and_then(|entries| {
+            entries
+                .map(|entry| {
+                    entry
+                        .map(|entry| entry.file_name().to_owned())
+                        .map_err(io::Error::from)
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()
+        })
+        .map_err(scandir)?;
     children.sort();
     for child in children {
-        if child.to_bytes() == b"." || child.to_bytes() == b".." {
+        let child = std::ffi::OsStr::from_bytes(child.to_bytes());
+        if child == std::ffi::OsStr::new(".") || child == std::ffi::OsStr::new("..") {
             continue;
         }
-        use std::os::unix::ffi::OsStrExt;
-        let child = std::ffi::OsStr::from_bytes(child.to_bytes());
         remove_child_at(&dir, child, &display.join(child))?;
     }
     unlink(AtFlags::REMOVEDIR, "rmdir")

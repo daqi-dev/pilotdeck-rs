@@ -539,18 +539,33 @@ impl Core {
         syscall: &'static str,
         error: std::io::Error,
     ) -> FileMemoryError {
+        self.mutation_error_at(relative, None, syscall, error)
+    }
+    /// Like [`mutation_error`], with an explicit display path for the syscall's
+    /// own target. TS's `ensureDir(dirname(absolutePath))` reports mkdir on the
+    /// parent directory, not on the file being written.
+    fn mutation_error_at(
+        &self,
+        relative: &str,
+        display: Option<&Path>,
+        syscall: &'static str,
+        error: std::io::Error,
+    ) -> FileMemoryError {
         if crate::project_files::nofollow_loop(&error) {
             FileMemoryError::Invalid(format!("Memory entry not found: {relative}"))
         } else {
-            // Normalize like the old path-based display: join("") would add a
-            // trailing separator and "./" would stay verbatim.
-            let display =
-                absolute(&self.root.join(relative)).unwrap_or_else(|_| self.root.join(relative));
+            let display = display.map_or_else(
+                // Normalize like the old path-based display: join("") would add
+                // a trailing separator and "./" would stay verbatim.
+                || absolute(&self.root.join(relative)).unwrap_or_else(|_| self.root.join(relative)),
+                |path| path.to_path_buf(),
+            );
             crate::node_io::path_error(error, syscall, &display).into()
         }
     }
     /// Check and resolve ordinary in-root links, then pin the root before the
     /// test seam (or another process) can replace a checked descendant.
+    #[cfg(unix)]
     fn mutation_target(&self, relative: &str) -> Result<(fs::File, PathBuf)> {
         let (root, target) = self.checked_path(relative)?;
         let directory = crate::project_files::open_directory_beneath(&root, &root)
@@ -564,50 +579,99 @@ impl Core {
         Ok((directory, target))
     }
     fn mkdir(&self, relative: &str) -> Result<()> {
-        let (root, target) = self.mutation_target(relative)?;
-        crate::project_files::create_directories_at(
-            &root,
-            &target,
-            rustix::fs::Mode::from_raw_mode(0o777),
-        )
-        .map_err(|e| self.mutation_error(relative, "mkdir", e))
+        #[cfg(unix)]
+        {
+            let (root, target) = self.mutation_target(relative)?;
+            crate::project_files::create_directories_at(
+                &root,
+                &target,
+                rustix::fs::Mode::from_raw_mode(0o777),
+            )
+            .map_err(|e| self.mutation_error(relative, "mkdir", e))
+        }
+        // Non-Unix keeps the origin/main path-based behavior.
+        #[cfg(not(unix))]
+        io_mkdir(self.path(relative)?)
     }
     fn write_bytes(&self, relative: &str, content: impl AsRef<[u8]>) -> Result<()> {
-        let (root, target) = self.mutation_target(relative)?;
-        crate::project_files::create_directories_at(
-            &root,
-            target.parent().expect("file parent"),
-            rustix::fs::Mode::from_raw_mode(0o777),
-        )
-        .map_err(|e| self.mutation_error(relative, "mkdir", e))?;
-        crate::project_files::overwrite_at(&root, &target, content.as_ref())
-            .map_err(|e| self.mutation_error(relative, "open", e))
+        #[cfg(unix)]
+        {
+            let (root, target) = self.mutation_target(relative)?;
+            // A root-addressed relative has no parent: Node's writeFileSync on
+            // a directory reports EISDIR at open, not a panic here.
+            let parent = target.parent().ok_or_else(|| {
+                self.mutation_error(
+                    relative,
+                    "open",
+                    std::io::Error::from_raw_os_error(libc::EISDIR),
+                )
+            })?;
+            let display = self.parent_display(parent);
+            crate::project_files::create_directories_at(
+                &root,
+                parent,
+                rustix::fs::Mode::from_raw_mode(0o777),
+            )
+            .map_err(|e| self.mutation_error_at(relative, Some(&display), "mkdir", e))?;
+            crate::project_files::overwrite_at(&root, &target, content.as_ref())
+                .map_err(|e| self.mutation_error(relative, "open", e))
+        }
+        // Non-Unix keeps the origin/main path-based behavior.
+        #[cfg(not(unix))]
+        {
+            let target = self.path(relative)?;
+            io_mkdir(target.parent().expect("absolute parent"))?;
+            io_write(target, content)
+        }
     }
     fn unlink(&self, relative: &str) -> Result<()> {
-        self.within(relative)?;
-        // unlink removes an allowed leaf symlink, not its canonical target.
-        let lexical = Path::new(relative);
-        if lexical.parent().is_none() {
-            // "" addresses the memory root itself; Node unlinkSync(2) on a
-            // directory reports EPERM (EISDIR on Linux) against the root path.
-            return self.unlink_root();
+        #[cfg(unix)]
+        {
+            self.within(relative)?;
+            // unlink removes an allowed leaf symlink, not its canonical target.
+            let lexical = Path::new(relative);
+            if lexical.parent().is_none() {
+                // "" addresses the memory root itself; Node unlinkSync(2) on a
+                // directory reports EPERM (EISDIR on Linux) against the root path.
+                return self.unlink_root();
+            }
+            let parent = lexical.parent().expect("non-root parent");
+            let (canonical, target) = self.checked_path(parent.to_str().expect("UTF-8 path"))?;
+            let root = crate::project_files::open_directory_beneath(&canonical, &canonical)
+                .map_err(|e| self.mutation_error(relative, "unlink", e))?;
+            let target = target
+                .strip_prefix(canonical)
+                .expect("checked boundary")
+                .join(lexical.file_name().ok_or_else(|| {
+                    FileMemoryError::Invalid(format!("Memory entry not found: {relative}"))
+                })?);
+            #[cfg(test)]
+            mutation_test_hook::notify(relative);
+            crate::project_files::unlink_at(&root, &target)
+                .map_err(|e| self.mutation_error(relative, "unlink", e))
         }
-        let parent = lexical.parent().expect("non-root parent");
-        let (canonical, target) = self.checked_path(parent.to_str().expect("UTF-8 path"))?;
-        let root = crate::project_files::open_directory_beneath(&canonical, &canonical)
-            .map_err(|e| self.mutation_error(relative, "unlink", e))?;
-        let target = target
-            .strip_prefix(canonical)
-            .expect("checked boundary")
-            .join(lexical.file_name().ok_or_else(|| {
-                FileMemoryError::Invalid(format!("Memory entry not found: {relative}"))
-            })?);
-        #[cfg(test)]
-        mutation_test_hook::notify(relative);
-        crate::project_files::unlink_at(&root, &target)
-            .map_err(|e| self.mutation_error(relative, "unlink", e))
+        // Non-Unix keeps the origin/main unlink: a root-addressed remove_file
+        // reports the platform's directory error, like unlink_root.
+        #[cfg(not(unix))]
+        {
+            self.within(relative)?;
+            let target = self.path(relative)?;
+            fs::remove_file(&target).map_err(|e| crate::node_io::path_error(e, "unlink", &target))
+        }
+    }
+    /// The display path of a mutation's parent directory, used by
+    /// ensureDir-style diagnostics. An empty relative denotes the root itself,
+    /// without the trailing separator that join("") would introduce.
+    fn parent_display(&self, parent: &Path) -> PathBuf {
+        let joined = if parent.as_os_str().is_empty() {
+            self.root.clone()
+        } else {
+            self.root.join(parent)
+        };
+        absolute(&joined).unwrap_or(joined)
     }
     /// Unlink the pinned memory root itself, keeping Node's directory error.
+    #[cfg(unix)]
     fn unlink_root(&self) -> Result<()> {
         let parent = self
             .root
@@ -625,30 +689,43 @@ impl Core {
         .map_err(|e| self.mutation_error("", "unlink", e))
     }
     fn ensure_layout(&self) -> Result<()> {
-        // Bootstrap a missing trusted root from its nearest existing canonical
-        // ancestor, using #596's mkdirat walk rather than recursive path mkdir.
-        let mut ancestor = self.root.as_path();
-        while !ancestor.exists() {
-            ancestor = ancestor.parent().ok_or_else(|| {
-                FileMemoryError::Invalid("Memory root has no existing ancestor".into())
-            })?;
+        #[cfg(unix)]
+        {
+            // Bootstrap a missing trusted root from its nearest existing canonical
+            // ancestor, using #596's mkdirat walk rather than recursive path mkdir.
+            let mut ancestor = self.root.as_path();
+            while !ancestor.exists() {
+                ancestor = ancestor.parent().ok_or_else(|| {
+                    FileMemoryError::Invalid("Memory root has no existing ancestor".into())
+                })?;
+            }
+            let canonical = fs::canonicalize(ancestor)?;
+            let directory = crate::project_files::open_directory_beneath(&canonical, &canonical)?;
+            crate::project_files::create_directories_at(
+                &directory,
+                self.root.strip_prefix(ancestor).expect("ancestor"),
+                rustix::fs::Mode::from_raw_mode(0o777),
+            )
+            .map_err(|e| self.mutation_error("", "mkdir", e))?;
         }
-        let canonical = fs::canonicalize(ancestor)?;
-        let directory = crate::project_files::open_directory_beneath(&canonical, &canonical)?;
-        crate::project_files::create_directories_at(
-            &directory,
-            self.root.strip_prefix(ancestor).expect("ancestor"),
-            rustix::fs::Mode::from_raw_mode(0o777),
-        )
-        .map_err(|e| self.mutation_error("", "mkdir", e))?;
+        // Non-Unix keeps the origin/main path-based recursive mkdir.
+        #[cfg(not(unix))]
+        io_mkdir(&self.root)?;
         if self.options.manage_user_profile {
-            if let Some(path) = &self.options.user_profile_relative_path {
+            // An empty configured path is absent in TS (falsy) and is skipped,
+            // instead of panicking on its missing parent.
+            if let Some(path) = self
+                .options
+                .user_profile_relative_path
+                .as_deref()
+                .filter(|path| !path.is_empty())
+            {
                 // Retain validation of the full configured path, not only its parent.
                 self.within(path)?;
                 self.mkdir(
                     Path::new(path)
                         .parent()
-                        .expect("relative parent")
+                        .unwrap_or(Path::new(""))
                         .to_str()
                         .expect("UTF-8 path"),
                 )?;
@@ -668,22 +745,28 @@ impl Core {
         Ok(())
     }
     fn clear(&self) -> Result<()> {
-        // The root is a trusted input and TS unlinks a root symlink itself.
-        // Pin its parent, then remove the lexical leaf without following links.
-        let parent = self
-            .root
-            .parent()
-            .ok_or_else(|| FileMemoryError::Invalid("Cannot clear filesystem root".into()))?;
-        let canonical = fs::canonicalize(parent)?;
-        let directory = crate::project_files::open_directory_beneath(&canonical, &canonical)?;
-        #[cfg(test)]
-        mutation_test_hook::notify("");
-        crate::project_files::remove_tree_at(
-            &directory,
-            Path::new(self.root.file_name().expect("root name")),
-            &self.root,
-        )
-        .map_err(|e| self.mutation_error("", "rmdir", e))
+        #[cfg(unix)]
+        {
+            // The root is a trusted input and TS unlinks a root symlink itself.
+            // Pin its parent, then remove the lexical leaf without following links.
+            let parent = self
+                .root
+                .parent()
+                .ok_or_else(|| FileMemoryError::Invalid("Cannot clear filesystem root".into()))?;
+            let canonical = fs::canonicalize(parent)?;
+            let directory = crate::project_files::open_directory_beneath(&canonical, &canonical)?;
+            #[cfg(test)]
+            mutation_test_hook::notify("");
+            crate::project_files::remove_tree_at(
+                &directory,
+                Path::new(self.root.file_name().expect("root name")),
+                &self.root,
+            )
+            .map_err(|e| self.mutation_error("", "rmdir", e))
+        }
+        // Non-Unix keeps the origin/main node_fs::rm_sync removal.
+        #[cfg(not(unix))]
+        super::node_fs::rm_sync(&self.root)
     }
     fn parsed(&self, path: &str) -> Result<Option<(JsObject, String)>> {
         if !self.within(path)? {
@@ -2166,6 +2249,20 @@ mod mutation_security_tests {
             fs::read_to_string(store.core.root.join("Project/nested/note.md")).unwrap(),
             oracle["afterUnlink"].as_str().unwrap()
         );
+        // Replay the generator's clear leg: the oracle's clearSentinel proves
+        // TS's rmSync did not follow the in-root link, and neither do we.
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("sentinel"), "outside sentinel").unwrap();
+        symlink(&outside, store.core.root.join("Project").join("outside")).unwrap();
+        store
+            .clear_all_data(&obj(&[("rebuildManifest", JsValue::Bool(false))]))
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(outside.join("sentinel")).unwrap(),
+            oracle["clearSentinel"].as_str().unwrap()
+        );
+        assert!(store.core.root.join("Project").is_dir());
     }
     #[test]
     fn mutation_race_write() {
@@ -2341,6 +2438,214 @@ mod mutation_security_tests {
         );
         assert!(store.core.root.join("Project").is_dir());
         assert!(!store.core.root.join("Project").is_symlink());
+    }
+    #[test]
+    fn mutation_write_rejects_a_hardlinked_leaf() {
+        // TS writeRecord writes through a hardlink (real-store probe), which
+        // would alias an outside inode into the memory root. Rust refuses the
+        // write before truncating: diffs/A6.6-EDGECLAW-WRITE-INODE-001.
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside.md");
+        fs::write(&outside, "outside sentinel").unwrap();
+        fs::hard_link(&outside, store.core.root.join("Project/hard.md")).unwrap();
+        let error = store
+            .core
+            .write("Project/hard.md", &JsObject::new(), "changed")
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "EACCES: permission denied, open '{}'",
+                store.core.root.join("Project/hard.md").display()
+            )
+        );
+        assert_eq!(
+            fs::read_to_string(&outside).unwrap(),
+            "outside sentinel",
+            "write truncated a hardlinked outside inode"
+        );
+    }
+    #[test]
+    fn mutation_race_hardlink_write() {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::write(&outside, "outside sentinel").unwrap();
+        let root = store.core.root.clone();
+        let victim = outside.clone();
+        let fired = Rc::new(Cell::new(false));
+        let flag = fired.clone();
+        let _hook = mutation_test_hook::set(move |path| {
+            if path == "Project/hard.md" && !flag.replace(true) {
+                fs::hard_link(&victim, root.join("Project/hard.md")).unwrap();
+            }
+        });
+        let error = store
+            .core
+            .write("Project/hard.md", &JsObject::new(), "changed")
+            .unwrap_err();
+        assert!(fired.get(), "target-filtered hook did not fire");
+        assert_eq!(
+            fs::read_to_string(&outside).unwrap(),
+            "outside sentinel",
+            "race wrote through a swapped-in hardlink"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "EACCES: permission denied, open '{}'",
+                store.core.root.join("Project/hard.md").display()
+            )
+        );
+    }
+    #[test]
+    fn mutation_race_fifo_write() {
+        // A no-reader FIFO open blocks (the TS behavior); with a held reader
+        // the writer open succeeds, so only the inode recheck can refuse it.
+        use std::os::unix::fs::OpenOptionsExt;
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let root = store.core.root.clone();
+        let fifo = root.join("Project/fifo.md");
+        let hooked = fifo.clone();
+        let fired = Rc::new(Cell::new(false));
+        let flag = fired.clone();
+        let reader = Rc::new(std::cell::RefCell::new(None));
+        let held = reader.clone();
+        let _hook = mutation_test_hook::set(move |path| {
+            if path == "Project/fifo.md" && !flag.replace(true) {
+                std::process::Command::new("mkfifo")
+                    .arg(&hooked)
+                    .status()
+                    .unwrap();
+                *held.borrow_mut() = Some(
+                    std::fs::OpenOptions::new()
+                        .read(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&hooked)
+                        .unwrap(),
+                );
+            }
+        });
+        // write_bytes, not write(): a broken recheck would let this succeed,
+        // and the wrapper's record read-back would then block on the FIFO.
+        let error = store
+            .core
+            .write_bytes("Project/fifo.md", "changed")
+            .unwrap_err();
+        assert!(fired.get(), "target-filtered hook did not fire");
+        assert_eq!(
+            error.to_string(),
+            format!("EACCES: permission denied, open '{}'", fifo.display())
+        );
+        use std::os::unix::fs::FileTypeExt;
+        assert!(fs::symlink_metadata(&fifo).unwrap().file_type().is_fifo());
+    }
+    #[test]
+    fn mutation_pin_precedes_hook() {
+        // The root handle is pinned before the test seam fires, so replacing
+        // the root itself afterwards redirects nothing: the write lands in the
+        // renamed directory and the raced link target stays untouched.
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let outside = scratch.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        let root = store.core.root.clone();
+        let moved = scratch.0.join("saved");
+        let renamed = moved.clone();
+        let linked = outside.clone();
+        let fired = Rc::new(Cell::new(false));
+        let flag = fired.clone();
+        let _hook = mutation_test_hook::set(move |path| {
+            if path == "Project/pinned.md" && !flag.replace(true) {
+                fs::rename(&root, &renamed).unwrap();
+                symlink(&linked, &root).unwrap();
+            }
+        });
+        store
+            .core
+            .write_bytes("Project/pinned.md", "pinned body")
+            .unwrap();
+        assert!(fired.get(), "target-filtered hook did not fire");
+        assert_eq!(
+            fs::read_to_string(moved.join("Project/pinned.md")).unwrap(),
+            "pinned body"
+        );
+        assert!(
+            !outside.join("Project").exists(),
+            "write escaped through the raced root link"
+        );
+    }
+    #[test]
+    fn mutation_clear_reports_ts_scandir_errors() {
+        // TS clearAllData on a 0300 directory reports scandir on that
+        // directory (real-store probe); the descriptor walk keeps the shape.
+        use std::os::unix::fs::PermissionsExt;
+        // Restore on unwind too: a failing assertion (negative control) must
+        // not leave a 0300 directory Scratch::drop cannot remove.
+        struct Unrestrict(PathBuf);
+        impl Drop for Unrestrict {
+            fn drop(&mut self) {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700));
+            }
+        }
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let secret = store.core.root.join("secret");
+        fs::create_dir(&secret).unwrap();
+        fs::write(secret.join("victim.md"), "v").unwrap();
+        fs::set_permissions(&secret, fs::Permissions::from_mode(0o300)).unwrap();
+        let _unrestrict = Unrestrict(secret.clone());
+        let error = store.core.clear().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("EACCES: permission denied, scandir '{}'", secret.display())
+        );
+    }
+    #[test]
+    fn mutation_mkdir_error_keeps_the_parent_display_path() {
+        // TS's ensureDir(dirname(absolutePath)) reports mkdir on the parent
+        // directory (real-store probe), not on the file being written.
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        fs::write(store.core.root.join("Project/file.md"), "file").unwrap();
+        let error = store
+            .core
+            .write_bytes("Project/file.md/entry.md", "body")
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "EEXIST: file already exists, mkdir '{}'",
+                store.core.root.join("Project/file.md").display()
+            )
+        );
+    }
+    #[test]
+    fn mutation_write_to_root_reports_eisdir() {
+        // A root-addressed write is Node's writeFileSync on a directory.
+        let scratch = Scratch::new();
+        let store = store(&scratch.0.join("memory"));
+        let error = store.core.write_bytes("", b"changed").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "EISDIR: illegal operation on a directory, open '{}'",
+                store.core.root.display()
+            )
+        );
+    }
+    #[test]
+    fn mutation_layout_skips_an_empty_profile_path() {
+        // TS treats an empty userProfileRelativePath as absent (falsy): the
+        // layout is built without touching the profile parent at all.
+        let scratch = Scratch::new();
+        let mut store = store(&scratch.0.join("memory"));
+        store.core.options.user_profile_relative_path = Some(String::new());
+        store.core.ensure_layout().unwrap();
+        assert!(store.core.root.join("Project").is_dir());
     }
 }
 
