@@ -7,6 +7,7 @@ pub mod fetch_tool;
 pub mod fetcher;
 mod html_dom;
 pub mod html_markdown;
+mod html_memory;
 pub mod network;
 pub mod preapproved_hosts;
 pub mod search;
