@@ -856,3 +856,10 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：暂无（回放金样只覆盖 IP 字面量；主机名分支变异下回放全绿，GLM r3 实测）。
 - **批准记录**：无；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义。
 
+### A7.2-SUBMIT-FAILURE-GUARD-001 · 当前状态（追加，不改上文；#558）：原能力拒绝已消除
+
+- **状态更正**：原条目保留。FailureGuard/classify 已移植，refresh 后 resolve 的启用配置不再返回 `FailureGuard runtime is unavailable; requires A7.2-pr4b.`；执行原生 submit，按真实 TS 对模型、工具和子代理错误计数，trip 后记录/发布 `run_policy_stopped` 并以 `run_policy:<code>` abort。新 turn 重置窗口，成功事件不清零；记录/abort 异常的 best-effort 行为与 TS 一致。
+- **TS 依据**：`FailureGuard.ts:14-91`、`classify.ts:3-32`、`InProcessGateway.ts:1346-1383,1702-1706,1776-1778,1841-1843,2080-2086`，均为固定 cc7c4e6。
+- **机器判据**：`runtime::turn::failure_guard::tests::real_ts_failure_guard_and_classify` / `real_ts_failure_guard_regenerates_identically`；`runtime::turn::submit::tests::real_ts_submit_scenarios` / `real_ts_turn_submit_regenerates_identically` 的 `guard-*` 14 场景，比较完整可见 JSON 字节流、状态记录字节、全部事件/宿主调用与重开后的 registry 持久化。夹具生成器两次一致，SHA 见本报告；负控必须检出阈值 ±1、分类错误、模型/工具/子代理漏 observe、trip 未 abort、计数残留、刷新前读配置和 wire 字段顺序变异。
+- **范围**：消除本条“启用 FailureGuard 即能力拒绝”的差异；其余 submit 行为不获豁免。A7.2-pr6 仍须验生产 host 提供配置快照、真实 LiveSession 的 abort/terminal 与宿主全链路，不能据本条宣称 A7.2 或生产宿主已整体验收。
+- **批准记录**：无；本条为状态更正（原能力拒绝已消除），原条目状态（已知未对齐，未批准）随之失效；不新增豁免、不改判分语义。
