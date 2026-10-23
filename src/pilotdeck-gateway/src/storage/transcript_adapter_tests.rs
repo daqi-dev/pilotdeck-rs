@@ -230,8 +230,13 @@ fn error_outcome(error: &AdapterError) -> JsValue {
             e.insert("name".into(), "RangeError".into());
             e.insert("message".into(), message.as_str().into());
         }
-        AdapterError::NodeHostRequired(message) => {
-            e.insert("name".into(), "NodeHostRequired".into());
+        AdapterError::ProjectionUnavailable(message) => {
+            e.insert("name".into(), "ProjectionUnavailable".into());
+            e.insert("message".into(), message.as_str().into());
+        }
+        AdapterError::Domain { code, message } => {
+            e.insert("name".into(), "SessionDomainValidationError".into());
+            e.insert("code".into(), (*code).into());
             e.insert("message".into(), message.as_str().into());
         }
         AdapterError::Store(error) => {
@@ -541,61 +546,6 @@ fn normalize(text: &str, dir: &Path) -> String {
     })
     .into_owned()
 }
-fn kind(o: &JsValue) -> String {
-    if let Some(e) = o.get("error") {
-        let code = e.get("code").unwrap_or_else(|| field(e, "name"));
-        return format!("error:{}", s(code));
-    }
-    if let Some(JsValue::Array(outcomes)) = o.get("outcomes") {
-        return format!(
-            "concurrent:{}",
-            outcomes.iter().map(kind).collect::<Vec<_>>().join("|")
-        );
-    }
-    let len = |v: &JsValue| match v {
-        JsValue::Array(a) => a.len(),
-        _ => 0,
-    };
-    if o.get("paths").is_some() {
-        return format!("open:{}", len(field(o, "capabilities")));
-    }
-    let seq = |st: &JsValue| field(st, "sequence").as_number().unwrap();
-    match (o.get("state"), o.get("entries")) {
-        (Some(st), Some(entries)) => {
-            return format!(
-                "restored:{}/{}@{}",
-                len(entries),
-                len(field(o, "diagnostics")),
-                seq(st)
-            );
-        }
-        (Some(st), None) => return format!("state:{}", seq(st)),
-        (None, Some(entries)) => {
-            return format!("read:{}/{}", len(entries), len(field(o, "diagnostics")));
-        }
-        _ => {}
-    }
-    if let Some(exists) = o.get("exists") {
-        return format!("exists:{}", exists.as_bool().unwrap());
-    }
-    if o.get("absent").is_some() {
-        return "absent".into();
-    }
-    if let Some(JsValue::Array(sessions)) = o.get("sessions") {
-        return format!(
-            "list:{}",
-            sessions
-                .iter()
-                .map(|x| s(field(x, "sessionId")))
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-    }
-    if o.get("relative").is_some() {
-        return "sidechain".into();
-    }
-    "ok".into()
-}
 fn setup(scenario: &JsValue, dir: &Path) -> Ctx {
     let chat_dir =
         PathBuf::from(s(field(scenario, "chatDir")).replace("<dir>", &dir.display().to_string()));
@@ -625,7 +575,6 @@ fn real_ts_scenarios_match_outcomes_calls_and_bytes() {
         scenarios.len()
     );
     let scratch = Scratch::new();
-    let mut gaps = 0;
     for scenario in scenarios {
         let name = s(field(scenario, "name"));
         let dir = scratch.0.join(&name);
@@ -634,27 +583,6 @@ fn real_ts_scenarios_match_outcomes_calls_and_bytes() {
         let JsValue::Array(steps) = field(scenario, "steps") else {
             panic!("steps")
         };
-        if name.starts_with("node-only-") {
-            // Declared gap: the first divergence must be an explicit refusal.
-            // Ledger: gateway accepted-diffs A6.2-TRANSCRIPT-DOMAIN-001 (unapproved).
-            let mut refused = false;
-            for step in steps {
-                let outcome = run_step(&mut ctx, step);
-                let expected = field(step, "outcome");
-                if kind(&outcome) != kind(expected) {
-                    assert_eq!(
-                        kind(&outcome),
-                        "error:NodeHostRequired",
-                        "{name}: {outcome:?}"
-                    );
-                    refused = true;
-                    break;
-                }
-            }
-            assert!(refused, "{name}: Rust must refuse what it cannot decide");
-            gaps += 1;
-            continue;
-        }
         let mut replayed = Vec::new();
         for step in steps {
             let outcome = run_step(&mut ctx, step);
@@ -688,7 +616,6 @@ fn real_ts_scenarios_match_outcomes_calls_and_bytes() {
             assert_eq!(actual, expected, "{name}");
         }
     }
-    assert_eq!(gaps, 3, "every declared gap scenario ran");
 }
 
 fn fresh(dir: &Path, store: Arc<dyn TranscriptStore>) -> (AsyncTranscriptAdapter, SessionStorage) {
@@ -792,39 +719,28 @@ fn concurrent_appends_commit_in_lock_order_and_failures_leave_no_gap() {
 }
 
 #[test]
-fn unported_domain_entries_fail_closed_before_the_store() {
+fn domain_restore_retains_validation_state() {
     let scratch = Scratch::new();
     let store = Arc::new(FaultStore::default());
     let (_adapter, storage) = fresh(&scratch.0, store.clone());
-    for kind in [
-        "turn_started",
-        "agent_turn_enqueued",
-        "tool_call",
-        "inbox_mutation",
-    ] {
-        let mut draft = JsObject::new();
-        draft.insert("type".into(), kind.into());
-        let error = storage
-            .transcript
-            .record_session_event(&"s1".into(), &"turn".into(), draft)
-            .unwrap_err();
-        assert!(
-            matches!(error, AdapterError::NodeHostRequired(_)),
-            "{kind}: {error}"
-        );
-    }
-    assert!(store.calls().is_empty(), "nothing reached the store");
-    assert_eq!(storage.transcript.snapshot_state(), WriterState::default());
-    // Restore refuses the same entries rather than certifying an unvalidated log.
     let entry = js(&format!(
         r#"{{"type":"turn_started","sessionId":"s1","turnId":"t","sequence":1,"createdAt":"{NOW}"}}"#
     ));
     store.inner.append(&storage_key(&storage), &entry).unwrap();
+    storage.restore().unwrap();
+    let before = storage.transcript.snapshot_state();
+    let mut event = JsObject::new();
+    event.insert("type".into(), "turn_started".into());
     assert!(matches!(
-        storage.restore(),
-        Err(AdapterError::NodeHostRequired(_))
+        storage
+            .transcript
+            .record_session_event(&"s1".into(), &"t".into(), event),
+        Err(AdapterError::Domain {
+            code: "duplicate_turn_start",
+            ..
+        })
     ));
-    assert_eq!(storage.transcript.snapshot_state(), WriterState::default());
+    assert_eq!(before, storage.transcript.snapshot_state());
 }
 #[test]
 fn deep_sequence_array_message_is_a_range_error_not_a_stack_overflow() {

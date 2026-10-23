@@ -173,9 +173,9 @@ impl Ctx {
 
 fn error_outcome(error: &RecorderError) -> JsValue {
     let (name, code) = match error {
-        RecorderError::State(_) | RecorderError::Store(_) | RecorderError::NodeHostRequired(_) => {
-            ("Error", None)
-        }
+        RecorderError::State(_)
+        | RecorderError::Store(_)
+        | RecorderError::ProjectionUnavailable(_) => ("Error", None),
         RecorderError::Domain { code, .. } => ("SessionDomainValidationError", Some(*code)),
         RecorderError::Envelope { code, .. } => ("SessionEventValidationError", Some(*code)),
         RecorderError::Type(_) => ("TypeError", None),
@@ -709,7 +709,7 @@ fn recorder_and_writer_concurrent_appends_share_one_chain() {
 }
 
 #[test]
-fn shared_writer_and_restore_fail_closed_for_unported_active_turn_lifecycles() {
+fn shared_writer_and_restore_validate_active_turn_lifecycles() {
     use pilotdeck_gateway::storage::AdapterError;
     let scratch = Scratch::new("unported-lifecycle");
     let ctx = Ctx::new(&scratch.0);
@@ -721,7 +721,6 @@ fn shared_writer_and_restore_fail_closed_for_unported_active_turn_lifecycles() {
         "durable_message",
         "assistant_message",
         "tool_result_message",
-        "turn_result",
     ] {
         let draft = object([
             ("type", text(kind)),
@@ -736,7 +735,10 @@ fn shared_writer_and_restore_fail_closed_for_unported_active_turn_lifecycles() {
                 &turn,
                 draft.as_object().unwrap().clone()
             ),
-            Err(AdapterError::NodeHostRequired(_))
+            Err(AdapterError::Domain {
+                code: "invalid_inbox_mutation",
+                ..
+            })
         ));
         let mut entry = draft.as_object().unwrap().clone();
         for (key, value) in [
@@ -751,7 +753,10 @@ fn shared_writer_and_restore_fail_closed_for_unported_active_turn_lifecycles() {
         entries.push(JsValue::Object(entry));
         assert!(matches!(
             ctx.recorder.restore(&entries),
-            Err(RecorderError::NodeHostRequired(_))
+            Err(RecorderError::Domain {
+                code: "invalid_inbox_mutation",
+                ..
+            })
         ));
         assert_eq!(ctx.recorder.snapshot_state(), before);
         assert_eq!(chain(&ctx.path).len(), 1);

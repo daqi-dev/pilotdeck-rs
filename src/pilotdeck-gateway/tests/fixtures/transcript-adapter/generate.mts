@@ -1,3 +1,4 @@
+import { cases as domainCases } from '../session-domain/cases.mts';
 import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 import { access, appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -464,8 +465,7 @@ try {
     steps: [{ op: 'list' }, { op: 'list' }],
   }, ['error:Error', 'list:b,a']);
 
-  // Declared gaps: the Rust adapter must refuse (NodeHostRequired) at the first
-  // step whose TS outcome depends on a module this PR does not port.
+  // Former Node-only gaps now participate in the same byte comparison.
   await scenario('node-only-turn-started', {
     steps: [open(), { op: 'event', turnId: 'turn-1', event: { type: 'turn_started' } }, { op: 'read' }],
   }, ['open:0', 'ok', 'read:1/0']);
@@ -478,6 +478,45 @@ try {
     steps: [{ op: 'list' }],
   }, ['error:TypeError']);
 
+  await scenario('domain-append-failure', {
+    store: { failBefore: [1, 3] },
+    steps: [open(),
+      {op:'event',turnId:'t',event:{type:'turn_started'}},
+      {op:'event',turnId:'t',event:{type:'turn_started'}},
+      {op:'event',turnId:'t',event:{type:'step_started',step:1}},
+      {op:'event',turnId:'t',event:{type:'step_started',step:1}},
+      {op:'state'},{op:'read'}],
+  }, ['open:0','error:Error','ok','error:Error','ok','state:2','read:2/0']);
+  await scenario('domain-restore-and-continue', {
+    steps: [open(),
+      {op:'event',turnId:'t',event:{type:'turn_started'}},
+      {op:'event',turnId:'t',event:{type:'step_started',step:1}},
+      {op:'event',turnId:'t',event:{type:'context_snapshot',step:1}},
+      open(),{op:'restore'},
+      {op:'event',turnId:'t',event:{type:'context_snapshot',step:1}},
+      {op:'event',turnId:'t',event:{type:'model_request',step:1}},
+      {op:'event',turnId:'t',event:{type:'step_completed',step:1,outcome:'completed'}},
+      {op:'turnResult',turnId:'t',result:turnResult},{op:'read'}],
+  }, ['open:0','ok','ok','ok','open:0','restored:3/0@3','error:duplicate_context_snapshot','ok','ok','ok','read:6/0']);
+  await scenario('domain-invalid-restore', {
+    files:{'s1.jsonl':line(at(1,'turn_started',{}))+line(at(2,'turn_started',{}))},
+    steps:[open(),{op:'restore'},{op:'state'}],
+  }, ['open:0','error:duplicate_turn_start','state:0']);
+  await scenario('domain-envelope-before-domain', {
+    files:{'s1.jsonl':line(at(1,'step_started',{step:1}))+line(at(0,'turn_started',{}))},
+    steps:[open(),{op:'restore'},{op:'state'}],
+  }, ['open:0','error:invalid_sequence','state:0']);
+
+  // Wrap event objects in recorded envelopes, then exercise real persistence.
+  // The standalone raw-null validator probe has no event envelope to wrap.
+  // Errors must neither reach the store nor advance sequence/parent state.
+  for (const [index, { name, entries }] of domainCases.filter(c => c.entries.every(entry => entry !== null)).entries()) {
+    const config = { steps: [open(), ...entries.map((entry, i) => ({ op: 'entry', entry: { sessionId: 's1', sequence: i + 1, createdAt: NOW, entryId: `domain-${i}`, ...entry } })), { op: 'state' }, { op: 'read' }] };
+    const r = await runScenario(scratch, `domain-${index.toString().padStart(3, "0")}-${name.replace(/[^a-zA-Z0-9-]/g, "_")}`, config);
+    scenarios.push(r);
+  }
+
+  assert.equal(new Set(scenarios.map(s => s.name)).size, scenarios.length, "scenario directories must be independent");
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
   assert.ok(!new RegExp(UUID.source).test(oracle), 'oracle.json contains an unnormalized UUID');

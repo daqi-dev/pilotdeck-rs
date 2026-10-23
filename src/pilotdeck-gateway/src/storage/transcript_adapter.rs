@@ -6,17 +6,13 @@
 //! parent and entry ids unpublished, so the next append reuses the sequence.
 //! Not wired into the host, ProjectRuntimeRegistry or gateway methods.
 //!
-//! Not ported here (fail closed, never silently accepted): SessionDomainValidation
-//! state for arbitrary turn/step/inbox entries (the recorder has a private
-//! validated model/tool path sharing this writer), the session projection reducers beyond
-//! the shapes checked by `projection_supported`, the replacement transaction,
-//! fork-copy, file-history and tool-result artifact capabilities (pr4).
-//! Ledger for domain/projection refusals: gateway accepted-diffs
-//! A6.2-TRANSCRIPT-DOMAIN-001 (unapproved).
+//! Domain validation is shared with the recorder. Full recovery projections
+//! remain A7.5; unsupported reducer shapes return ProjectionUnavailable.
 use super::{
     LedgerError, TranscriptRead, WriterState, invalid,
     ledger::field,
-    recorder::{DomainState, RecorderClock, RecorderError, RecorderResult, RecorderUuid},
+    recorder::{RecorderClock, RecorderError, RecorderResult, RecorderUuid},
+    session_domain::DomainState,
     transcript::{create_temporary, private_dirs, private_open, read_transcript_limited, uuid},
 };
 use crate::js_value;
@@ -45,8 +41,10 @@ pub enum AdapterError {
     /// TS RangeError: V8's too-deep `Array.prototype.join` while building a
     /// message (real TS evidence: tests/fixtures/runtime-boundaries.json).
     Range(String),
-    /// A TS module this adapter does not port would decide this input.
-    NodeHostRequired(String),
+    /// TS SessionDomainValidationError.
+    Domain { code: &'static str, message: String },
+    /// Recovery/list projection outside the currently ported read surface.
+    ProjectionUnavailable(String),
     /// Error from the host store, propagated unchanged (TS rethrows it).
     Store(LedgerError),
 }
@@ -56,7 +54,9 @@ impl fmt::Display for AdapterError {
             Self::Validation { message, .. } | Self::Type(message) | Self::Range(message) => {
                 f.write_str(message)
             }
-            Self::NodeHostRequired(message) => f.write_str(message),
+            Self::Domain { message, .. } | Self::ProjectionUnavailable(message) => {
+                f.write_str(message)
+            }
             Self::Store(error) => error.fmt(f),
         }
     }
@@ -72,8 +72,21 @@ impl std::error::Error for AdapterError {
 fn validation(code: &'static str, message: String) -> AdapterError {
     AdapterError::Validation { code, message }
 }
-fn node_only(message: String) -> AdapterError {
-    AdapterError::NodeHostRequired(message)
+impl From<RecorderError> for AdapterError {
+    fn from(error: RecorderError) -> Self {
+        match error {
+            RecorderError::Domain { code, message } => Self::Domain { code, message },
+            RecorderError::Envelope { code, message } => Self::Validation { code, message },
+            RecorderError::Type(message) => Self::Type(message),
+            RecorderError::Range(message) => Self::Range(message),
+            RecorderError::ProjectionUnavailable(message) => Self::ProjectionUnavailable(message),
+            RecorderError::State(message) => Self::ProjectionUnavailable(message),
+            RecorderError::Store(error) => Self::Store(error),
+        }
+    }
+}
+fn projection_unavailable(message: String) -> AdapterError {
+    AdapterError::ProjectionUnavailable(message)
 }
 
 /// TS GatewayAsyncTranscriptKey. `transcript_path` is the Gateway-local
@@ -339,8 +352,8 @@ impl AsyncTranscriptAdapter {
                 }
             }
             if sessions.iter().any(|(modified, _)| modified.is_nan()) {
-                return Err(node_only(
-                    "Session listing with a NaN lastModified requires the Node host sort.".into(),
+                return Err(projection_unavailable(
+                    "Session listing with a NaN lastModified is not implemented (A7.5).".into(),
                 ));
             }
             sessions.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
@@ -588,17 +601,25 @@ impl TranscriptWriter {
         // validateSessionEventLog runs over the whole log before domain checks.
         let (state, ids) = validate_event_log(entries)?;
         // Then validateSessionDomainLog; then storage.restore hydrates projections.
+        let mut domain = DomainState::default();
         for entry in entries {
-            domain_supported(entry)?;
+            domain = domain.next(entry)?;
         }
+        // Hydration runs reducers, not conversation finalizers. In particular,
+        // accepted_input.messages is stored verbatim until a read projection.
         for entry in entries {
-            projection_supported(entry)?;
+            if matches!(
+                lossy_value(field(entry, "type")).as_str(),
+                "turn_result" | "control_boundary" | "session_metadata"
+            ) {
+                projection_supported(entry)?;
+            }
         }
         let mut inner = self.lock();
         inner.sequence = state.sequence;
         inner.last_entry_id = state.last_entry_id;
         inner.entry_ids = ids;
-        inner.recorder_domain = DomainState::default();
+        inner.recorder_domain = domain;
         Ok(())
     }
     /// JsonlTranscriptWriter.close: later appends resolve without writing.
@@ -698,8 +719,7 @@ impl TranscriptWriter {
         Ok((now, uuid().map_err(|e| AdapterError::Store(e.into()))?))
     }
     fn adapter_domain(domain: &DomainState, entry: &JsValue) -> AdapterResult<DomainState> {
-        domain.validate_adapter_entry(entry)?;
-        Ok(domain.clone())
+        domain.next(entry).map_err(AdapterError::from)
     }
     fn append_with<E: From<AdapterError>>(
         &self,
@@ -940,7 +960,7 @@ fn validate_envelope(entry: &JsValue) -> AdapterResult<()> {
     }
     Ok(())
 }
-const DOMAIN_TYPES: &[&str] = &[
+pub(super) const DOMAIN_TYPES: &[&str] = &[
     "agent_turn_enqueued",
     "agent_turn_discarded",
     "turn_started",
@@ -967,36 +987,6 @@ const DOMAIN_TYPES: &[&str] = &[
     "plan_todo_progressed",
     "goal_changed",
 ];
-/// SessionDomainValidation.ts:84-112 for a state that never saw turn_started:
-/// turn-scoped entries are rejected (not ported), legacy turn_result passes,
-/// and durable messages only dereference `message.metadata`.
-pub(super) fn domain_supported(entry: &JsValue) -> AdapterResult<()> {
-    let kind = lossy_value(field(entry, "type"));
-    if DOMAIN_TYPES.contains(&kind.as_str()) {
-        return Err(node_only(format!(
-            "Session domain validation for {kind} entries requires the Node host."
-        )));
-    }
-    if matches!(
-        kind.as_str(),
-        "durable_message" | "assistant_message" | "tool_result_message"
-    ) {
-        match field(entry, "message") {
-            JsValue::Undefined => {
-                return Err(AdapterError::Type(
-                    "Cannot read properties of undefined (reading 'metadata')".into(),
-                ));
-            }
-            JsValue::Null => {
-                return Err(AdapterError::Type(
-                    "Cannot read properties of null (reading 'metadata')".into(),
-                ));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
 fn plain_object(value: &JsValue) -> bool {
     value.as_object().is_some()
 }
@@ -1024,6 +1014,16 @@ fn projection_supported(entry: &JsValue) -> AdapterResult<()> {
         }
         "turn_result" => {
             let result = field(entry, "result");
+            if matches!(result, JsValue::Null | JsValue::Undefined) {
+                return Err(AdapterError::Type(format!(
+                    "Cannot read properties of {} (reading 'usage')",
+                    if matches!(result, JsValue::Null) {
+                        "null"
+                    } else {
+                        "undefined"
+                    }
+                )));
+            }
             plain_object(result)
                 && plain_object(field(result, "usage"))
                 && matches!(field(result, "permissionDenials"), JsValue::Array(_))
@@ -1050,8 +1050,8 @@ fn projection_supported(entry: &JsValue) -> AdapterResult<()> {
     if ok {
         Ok(())
     } else {
-        Err(node_only(format!(
-            "Session projection of this {kind} entry shape requires the Node host."
+        Err(projection_unavailable(format!(
+            "Session projection of this {kind} entry shape is not implemented (A7.5)."
         )))
     }
 }
@@ -1133,7 +1133,7 @@ fn project_session_info(
     };
     let created_at = match field(&transcript.entries[0], "createdAt").as_string() {
         Some(text) => pilotdeck_transport::system_clock::parse_node22_date(text)
-            .map_err(|e| node_only(lossy(&e)))?
+            .map_err(|e| projection_unavailable(lossy(&e)))?
             .unwrap_or(f64::NAN),
         None => f64::NAN,
     };
@@ -1263,7 +1263,7 @@ fn lossy_value(value: &JsValue) -> String {
     value.as_string().map(lossy).unwrap_or_default()
 }
 /// String.prototype.trim on UTF-16 units (all JS whitespace is in the BMP).
-fn js_trim_units(units: &[u16]) -> &[u16] {
+pub(super) fn js_trim_units(units: &[u16]) -> &[u16] {
     let space = |u: &u16| matches!(*u, 0x09..=0x0d | 0x20 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff);
     let start = units.iter().position(|u| !space(u)).unwrap_or(units.len());
     let end = units
