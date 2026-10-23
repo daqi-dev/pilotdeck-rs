@@ -21,7 +21,10 @@ const HUGE: f64 = 2_147_483_648.0;
 const SHORT: Duration = Duration::from_millis(300);
 
 fn oracle() -> JsValue {
-    let text = fs::read_to_string(format!("{FIXTURES}/oracle.json")).unwrap();
+    let path = std::env::var_os("PDRS_RUN_REGISTRY_ORACLE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("{FIXTURES}/oracle.json")));
+    let text = fs::read_to_string(path).unwrap();
     assert!(
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"
@@ -272,7 +275,7 @@ fn real_ts_scenarios_match_outcomes_and_snapshot_bytes() {
     let JsValue::Array(scenarios) = field(&fixture, "scenarios") else {
         panic!("missing scenarios")
     };
-    assert!(scenarios.len() >= 20, "{}", scenarios.len());
+    assert_eq!(scenarios.len(), 25, "run-registry oracle scenario count");
     let own_pid = f64::from(std::process::id());
     for scenario in scenarios {
         let name = string(field(scenario, "name"));

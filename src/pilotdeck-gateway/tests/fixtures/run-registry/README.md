@@ -9,6 +9,16 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-ga
 
 生成器先断言基线 HEAD，并对 normal 与每个 quirk 场景逐步断言结果类别（created/duplicate/conflict/not_found/terminal/TypeError/record/absent/events:N/ok）及关键字段，防止步骤因引用写错而全部落空；`lock-stale-live` 场景要等满 TS 的 30 秒锁超时，整次生成约 30 秒。
 
+场景数固定为 **25**（normal / orphans / paging 各 1、quirk 10、bad 9、lock 3）。`generate.mts` 在发布 `oracle.json` 前、Rust `real_ts_scenarios_match_outcomes_and_snapshot_bytes` 在重放前都精确断言 25，增删场景必须同时更新两侧断言及本段。`count-negative.py` 复用 `../_shared/negative_control.py`，仅在 `/tmp` 副本对 Rust 读入的 oracle 和 TS 待发布的 scenarios 分别增加 / 删除 1 项，四项均须因计数错误失败；生成器失败不得发布 oracle，恢复后正控须通过。Rust 仅测试模块支持 `PDRS_RUN_REGISTRY_ORACLE` 指向副本，其余快照仍取本目录。负控不改受控源码、生成器或金样，沿用本树 `CARGO_TARGET_DIR`。
+
+```sh
+export PDRS_BASELINE=/absolute/path/to/PilotDeck
+timeout 600 python3 src/pilotdeck-gateway/tests/fixtures/run-registry/count-negative.py
+timeout 150 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/run-registry/verify-generation.mts /tmp/fresh-run-registry-output
+```
+
+双跑程序在同一个真实 Node 进程中独立执行两次生成器，保留相同活 pid；只为无参 `new Date()` 提供从固定起点逐毫秒递增、每次重置的快照时钟。`Date.now()`、锁超时、文件 mtime 和 pid 存活探测均保持真实行为。两次生成后逐文件逐字节比较并打印 oracle 与文件清单 SHA-256，不在生成后改写期望值。普通生成仍使用真实时间；两种方式的输出均由真实 TS registry 产生，消费测试仍按下述既有 pid / 时间归一化规则比较。
+
 `oracle.json.scenarios[]`：`initial`（起始快照文件，`null` 为全新）、`lock`（预置锁内容与 mtime 年龄）、`openError`（TS readiness 拒绝）、`steps[]`（accept/append/get/events/mark 的输入与 TS 结果）、`after`（TS 操作后的快照原字节）、`lockLeft`。Rust 默认测试 `real_ts_scenarios_match_outcomes_and_snapshot_bytes` 逐场景重放：结果按值比较，快照按字节比较，只屏蔽本次运行新写入的 `ownerPid`（等于本进程 pid 且不在起始文件中）与 `acceptedAt`/`updatedAt`（不在起始文件中）；Rust 新写的时间戳另验 ISO 格式。
 
 夹具与机器无关的两条归一化：
