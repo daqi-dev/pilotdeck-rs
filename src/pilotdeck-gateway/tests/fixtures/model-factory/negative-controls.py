@@ -93,6 +93,22 @@ controls = [
                 })?''',
      'tokio::runtime::Handle::current()',
      'model_family_resolve_without_tokio_returns_error_without_panic'),
+    ('native-provider-falsely-advertises-complete', registry,
+     'impl RouterModelInvocation for NativeModelInvocationProvider {',
+     'impl RouterModelInvocation for NativeModelInvocationProvider {\n    fn supports_complete(&self) -> bool { true }',
+     'native_registry_enabled_router_staging_matches_ts'),
+    ('complete-missing-provider-error-is-wrong', registry,
+     '''    fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
+        let lease = request
+            .get("provider")
+            .and_then(JsValue::as_string)
+            .ok_or_else(|| missing(&JsString::from("undefined")))''',
+     '''    fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
+        let lease = request
+            .get("provider")
+            .and_then(JsValue::as_string)
+            .ok_or_else(|| missing(&JsString::from("null")))''',
+     'empty_registry_complete_without_provider_matches_ts'),
 ]
 
 try:

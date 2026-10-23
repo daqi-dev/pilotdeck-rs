@@ -1037,6 +1037,11 @@ async fn empty_registry_router_staging_and_missing_judge_match_ts() {
 }
 
 #[tokio::test]
+async fn empty_registry_complete_without_provider_matches_ts() {
+    registry_router_case("empty-missing-provider").await;
+}
+
+#[tokio::test]
 async fn model_family_resolve_without_tokio_returns_error_without_panic() {
     let scratch = Scratch::new();
     let registry = Arc::new(registry(&scratch, families()));
