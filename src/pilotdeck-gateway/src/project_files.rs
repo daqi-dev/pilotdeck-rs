@@ -496,6 +496,23 @@ fn remove_child_at(parent: &File, name: &std::ffi::OsStr, display: &Path) -> io:
                 unlink(AtFlags::empty(), "unlink")?;
                 continue;
             }
+            // On Linux, unlinkat(AT_REMOVEDIR) on a regular file (or symlink)
+            // whose parent directory is not writable returns EACCES rather than
+            // ENOTDIR, so the ENOTDIR arm above is never reached. Probe with
+            // statat to tell apart "non-directory entry → re-report as unlink"
+            // from "directory → keep as the rmdir error", matching Node's
+            // rmSync which lstat()s before choosing the syscall.
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                use rustix::fs::{AtFlags as AF2, statat};
+                let is_dir = statat(&directory, name, AF2::SYMLINK_NOFOLLOW)
+                    .map(|st| (st.st_mode & libc::S_IFMT) == libc::S_IFDIR)
+                    .unwrap_or(true); // unknown → treat as dir, preserve error
+                if is_dir {
+                    return Err(e);
+                }
+                unlink(AtFlags::empty(), "unlink")?;
+                continue;
+            }
             Err(e) if descends_after_rmdir(&e) => {}
             Err(e) => return Err(e),
         }
