@@ -11,6 +11,11 @@ import subprocess
 import sys
 import time
 
+# As in plugin-loader/negative-controls.py: replay metadata validation stays on,
+# but skip the baseline git subprocess storm after every mutant recompilation.
+MUTANT_ENV = dict(os.environ)
+MUTANT_ENV.pop('PDRS_BASELINE', None)
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import run_owned, wait_for_slot
 
@@ -87,7 +92,7 @@ try:
             SOURCE.write_text(mutation)
             result = run_owned(['cargo', 'test', '--offline', '--manifest-path', str(ROOT/'src/Cargo.toml'),
                                 '-p', 'pilotdeck-gateway', '--test', 'plugin_runtime', test, '--', '--exact',
-                                '--nocapture', '--test-threads=1'], cwd=ROOT,
+                                '--nocapture', '--test-threads=1'], cwd=ROOT, env=MUTANT_ENV,
                                timeout=max(1, min(120, deadline-time.monotonic())))
             log = result.stdout + result.stderr
             (OUTPUT / f'{name}.log').write_text(log)
