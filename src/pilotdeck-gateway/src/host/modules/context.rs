@@ -97,6 +97,41 @@ impl Handler {
             signal,
         }
     }
+    /// An installed context module whose composition carried no execution port
+    /// (`modules.context.requestIdentity` only): TS still registers the
+    /// handler — every operation reports "does not support" — but advertises
+    /// nothing, because `contextMethods` reads the absent execution
+    /// (`dispatcher:422-429`).
+    pub fn without_runtime(
+        identity: ContextRequestIdentity,
+        config: JsObject,
+        signal: Option<Cancellation>,
+    ) -> Self {
+        Self {
+            recorder: None,
+            runtime: None,
+            identity: Some(identity),
+            config,
+            signal,
+        }
+    }
+    /// Whether composition installed a context module. TS registers the
+    /// handler only for an installed module (`dispatcher:190-195`); the
+    /// runtime port may still be absent.
+    pub fn is_installed(&self) -> bool {
+        self.identity.is_some() || self.runtime.is_some()
+    }
+    /// Manifest view of the bound runtime: None means no context module, an
+    /// all-false inventory means installed without a runtime.
+    pub fn inventory(&self) -> Option<super::manifest::ContextInventory> {
+        let runtime = self.runtime.as_ref()?;
+        Some(super::manifest::ContextInventory {
+            apply_tool_results: runtime.supports(Operation::ApplyToolResults),
+            recover_from_model_error: runtime.supports(Operation::RecoverFromModelError),
+            capture_turn: runtime.supports(Operation::CaptureTurn),
+            try_auto_compact: runtime.supports(Operation::TryAutoCompact),
+        })
+    }
     /// Session-owned durable compaction bracket. Completion is deferred until
     /// the existing turn persistence callback commits the replacement.
     pub fn with_recorder(mut self, recorder: Arc<crate::storage::recorder::Recorder>) -> Self {
@@ -118,6 +153,14 @@ impl Handler {
         budget: &budget::Handler,
         model: &model::Handler,
     ) -> HostFuture<JsObject> {
+        // An uninstalled module answers with the protocol's
+        // unregistered-module error before any payload parsing, like the TS
+        // client's handler lookup (`agentLoopSidecarClient.ts:1155-1158`).
+        if !self.is_installed() {
+            return Box::pin(async {
+                Err(ModuleError::new("Unsupported sidecar host module: context").into())
+            });
+        }
         let payload = call.get("payload").and_then(JsValue::as_object);
         let operation = wire::string_field(payload, "operation").cloned();
         let source = payload

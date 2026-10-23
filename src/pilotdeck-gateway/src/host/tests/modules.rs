@@ -1,7 +1,9 @@
 use super::*;
 use crate::host::{
     execution::module_response,
-    modules::{ModuleRouter, capability, wire},
+    modules::{
+        ModuleRouter, capability, context, event, lifecycle, permission, tool_context, wire,
+    },
 };
 
 // The TS X0 fixture installs an execution port whose catalog is empty. This
@@ -36,10 +38,89 @@ impl capability::CapabilityResultObserver for EmptyCapabilityPort {
         Box::pin(async { panic!("X0 calls must not reach the observer") })
     }
 }
+// X0 registers every optional module; only their ports stay empty, so every
+// operation reports "does not support" instead of the unregistered-module
+// error an absent module would answer with.
+struct PanicEnvironment;
+impl tool_context::TurnEnvironment for PanicEnvironment {
+    fn build(
+        &self,
+        _: Option<&JsValue>,
+        _: &JsString,
+        _: &JsString,
+        _: &JsString,
+    ) -> Result<JsObject, HostError> {
+        panic!("X0 context calls must fail before environment construction")
+    }
+}
+struct PanicPermission;
+impl capability::ToolCatalog for PanicPermission {
+    fn list(&self) -> HostFuture<Vec<Arc<dyn capability::ToolDefinition>>> {
+        Box::pin(async { panic!("X0 permission calls must fail before the catalog") })
+    }
+}
+impl permission::PermissionContext for PanicPermission {
+    fn prepare(&self, _value: JsValue) -> HostFuture<capability::RuntimeContext> {
+        Box::pin(async { panic!("X0 permission calls must fail before the context") })
+    }
+}
+impl permission::PermissionDecision for PanicPermission {
+    fn decide(
+        &self,
+        _tool: Arc<dyn capability::ToolDefinition>,
+        _input: JsValue,
+        _context: capability::RuntimeContext,
+        _tool_call_id: JsString,
+    ) -> HostFuture<JsValue> {
+        Box::pin(async { panic!("X0 permission calls must fail before the decision") })
+    }
+}
+struct PanicSink;
+impl event::EventSink for PanicSink {
+    fn emit(&self, _event: JsObject) -> Result<(), HostError> {
+        panic!("X0 event calls must fail validation before the sink")
+    }
+}
 fn fixture_router() -> ModuleRouter {
     let port = Arc::new(EmptyCapabilityPort);
+    let mut input = JsObject::new();
+    input.insert("sessionId".into(), "session".into());
+    input.insert("turnId".into(), "turn".into());
+    let binding = tool_context::TurnBinding {
+        config: JsObject::new(),
+        input,
+        checkpoint: tool_context::HostToolCheckpoint::default(),
+        abort_signal: None,
+        environment: Arc::new(PanicEnvironment),
+    };
+    let permission_port = Arc::new(PanicPermission);
     ModuleRouter {
         capability: capability::Handler::new(port.clone(), port.clone(), port),
+        permission: permission::Handler::new(
+            permission_port.clone(),
+            permission_port.clone(),
+            permission_port,
+        ),
+        context: context::Handler::without_runtime(
+            tool_context::ContextRequestIdentity::new(
+                binding,
+                tool_context::ToolContextPorts::default(),
+            ),
+            JsObject::new(),
+            None,
+        ),
+        lifecycle: lifecycle::Handler::null(lifecycle::Binding {
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+            cwd: "/fixture".into(),
+            permission_mode: None,
+            base_env: None,
+            signal: None,
+        }),
+        event: event::Handler::new(
+            event::TurnIdentity::new("session", "turn"),
+            Arc::new(PanicSink),
+        ),
         ..ModuleRouter::default()
     }
 }

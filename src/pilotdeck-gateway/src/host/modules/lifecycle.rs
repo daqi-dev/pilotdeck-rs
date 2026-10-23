@@ -48,9 +48,20 @@ impl Handler {
     pub fn null(binding: Binding) -> Self {
         Self::new(LifecycleRuntime::null(), binding)
     }
+    /// Whether composition installed a lifecycle module. TS registers the
+    /// handler only for an installed module (`dispatcher:196`).
+    pub fn is_installed(&self) -> bool {
+        self.ports.is_some()
+    }
     pub fn call(&self, call: JsValue) -> HostFuture<JsObject> {
         let handler = self.clone();
         Box::pin(async move {
+            // An uninstalled module answers with the protocol's
+            // unregistered-module error before any payload parsing, like the
+            // TS client's handler lookup (`agentLoopSidecarClient.ts:1155-1158`).
+            if handler.ports.is_none() {
+                return Err(ModuleError::new("Unsupported sidecar host module: lifecycle").into());
+            }
             let payload = call.get("payload").and_then(JsValue::as_object);
             let operation = wire::string_field(payload, "operation")?;
             if !operation.equals_str("dispatch") {
@@ -74,7 +85,8 @@ impl Handler {
             };
             let ports = handler
                 .ports
-                .ok_or_else(|| ModuleError::new("Host did not provide a lifecycle runtime."))?;
+                .as_ref()
+                .expect("presence checked before payload parsing");
             let base_input = base_input(&ports.binding);
             let env = build_turn_environment(
                 ports.binding.base_env.as_ref(),

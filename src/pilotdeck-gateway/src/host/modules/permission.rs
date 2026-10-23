@@ -44,14 +44,25 @@ impl Handler {
             }),
         }
     }
+    /// Whether composition installed a permission module. TS registers the
+    /// handler only for an installed module (`dispatcher:181-189`).
+    pub fn is_installed(&self) -> bool {
+        self.ports.is_some()
+    }
     pub fn call(&self, call: JsValue) -> HostFuture<JsObject> {
         let ports = self.ports.clone();
         Box::pin(async move {
+            // An uninstalled module answers with the protocol's
+            // unregistered-module error before any payload parsing, like the
+            // TS client's handler lookup (`agentLoopSidecarClient.ts:1155-1158`).
+            let Some(ports) = ports else {
+                return Err(ModuleError::new("Unsupported sidecar host module: permission").into());
+            };
             let payload = call.get("payload").and_then(JsValue::as_object);
             let operation = wire::string_field(payload, "operation")?;
-            let Some(ports) = ports.filter(|_| operation.equals_str("decide")) else {
+            if !operation.equals_str("decide") {
                 return Err(ModuleError::new("Unsupported sidecar permission operation.").into());
-            };
+            }
             let tool_name = wire::string_field(
                 payload
                     .and_then(|p| p.get("tool"))

@@ -2064,7 +2064,7 @@ async fn lifecycle_dispatch_matches_real_ts() {
         .unwrap_err();
     assert_eq!(
         module_message(error),
-        "Host did not provide a lifecycle runtime."
+        "Unsupported sidecar host module: lifecycle"
     );
     let handler = host_lifecycle::Handler::null(host_lifecycle::Binding {
         session_id: "s".into(),

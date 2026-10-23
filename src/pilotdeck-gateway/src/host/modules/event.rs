@@ -66,6 +66,11 @@ impl Handler {
             ports: Some(Ports { identity, sink }),
         }
     }
+    /// Whether composition installed an event module. TS registers the
+    /// handler only for an installed module (`dispatcher:197-201`).
+    pub fn is_installed(&self) -> bool {
+        self.ports.is_some()
+    }
     /// Validates and emits synchronously, before the returned future is
     /// polled: the host driver calls `module_call` in arrival order, so the
     /// sink sees events in the order the sidecar sent them even though the
@@ -76,15 +81,18 @@ impl Handler {
         Box::pin(async move { result })
     }
     fn emit_now(&self, call: &JsValue) -> Result<JsObject, HostError> {
+        // An uninstalled module answers with the protocol's
+        // unregistered-module error before any payload parsing, like the
+        // TS client's handler lookup (`agentLoopSidecarClient.ts:1155-1158`).
+        let ports = self
+            .ports
+            .as_ref()
+            .ok_or_else(|| ModuleError::new("Unsupported sidecar host module: event"))?;
         let payload = call.get("payload").and_then(JsValue::as_object);
         let operation = wire::string_field(payload, "operation")?;
         if !operation.equals_str("emit") {
             return Err(ModuleError::new("Unsupported sidecar event operation.").into());
         }
-        let ports = self
-            .ports
-            .as_ref()
-            .ok_or_else(|| ModuleError::new("Host did not provide an event sink."))?;
         let event = read_host_emitted_event(payload.and_then(|p| p.get("event")), &ports.identity)?;
         ports.sink.emit(event)?;
         let mut response = JsObject::new();

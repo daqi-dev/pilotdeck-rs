@@ -3,6 +3,7 @@ use pilotdeck_protocol::parse_json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::Instant};
 
+mod binding;
 mod cancel_exit;
 mod event;
 mod model;
