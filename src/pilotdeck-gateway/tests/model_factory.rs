@@ -1087,7 +1087,7 @@ async fn registry_router_case(name: &str) {
                     provider,
                     Arc::new(pilotdeck_gateway::runtime::model::http::HyperModelTransport::new()),
                 );
-                assert!(!native.supports_complete());
+                assert!(native.supports_complete());
                 Ok(vec![
                     Arc::new(native),
                     Arc::new(JudgeProvider { id: "b".into() }),
@@ -1143,18 +1143,13 @@ async fn registry_router_case(name: &str) {
             assert_eq!(JsValue::Object(value), *get(case, "error"));
         }
     } else {
-        // Staging matches TS; the existing native non-streaming HTTP gap
-        // still reports an invocation error, rather than breaking staging.
+        // #604: Native provider now implements complete() via http::complete_model.
         let lease = providers.acquire(&"a".into()).unwrap();
-        assert!(!lease.provider().supports_complete());
+        assert!(lease.provider().supports_complete());
         drop(lease);
-        let failure = bounded(providers.complete(get(&oracle, "request").clone(), None))
-            .await
-            .unwrap_err();
-        assert_eq!(
-            failure.message,
-            "Router judge invocation provider does not implement complete().".into()
-        );
+        // complete() should now succeed (or fail with HTTP errors, not "not implemented")
+        // Full oracle verification is in registryRouterCases; here we only verify
+        // supports_complete correctness.
     }
     bounded(registry.dispose()).await.unwrap();
 }
