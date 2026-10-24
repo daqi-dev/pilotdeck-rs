@@ -31,7 +31,7 @@ use super::{
     DisposeFuture, ProjectRuntimeFactory, ResourceBundle, RuntimeError, RuntimeResources,
     RuntimeResult,
 };
-use crate::config::{self, Env};
+use crate::{config::{self, Env}, runtime::plugins::PluginRuntimeOptions};
 use pilotdeck_protocol::JsValue;
 use std::{
     any::Any,
@@ -277,6 +277,10 @@ pub enum Resource {
     ModelProviders,
     TokenAccounting,
     Router,
+    /// Registered by A6.9-pr3e `PluginFamilySource`.
+    PluginRuntime,
+    /// Registered by A6.9-pr3e `CustomRouterFamilySource`.
+    RouterCustomRouters,
     Tools,
     ExecutionWorld,
     InstructionStorage,
@@ -293,6 +297,8 @@ impl Resource {
             Self::ModelProviders => "modelProviders",
             Self::TokenAccounting => "tokenAccounting",
             Self::Router => "router",
+            Self::PluginRuntime => "pluginRuntime",
+            Self::RouterCustomRouters => "routerSessionCustomRouters",
             Self::Tools => "tools",
             Self::ExecutionWorld => "executionWorld",
             Self::InstructionStorage => "instructionStorage",
@@ -438,6 +444,17 @@ impl Families {
         self
     }
 
+    /// Wire the plugin runtime and custom router registry (A6.9-pr3e).
+    /// The plugin runtime is constructed with the given options; the custom
+    /// router registry is backed by that same plugin runtime.
+    pub fn with_plugins(mut self, options: PluginRuntimeOptions) -> Self {
+        self.plugins = Arc::new(super::plugins::PluginFamilySource { options });
+        self.router_custom_routers = Some(Arc::new(
+            super::custom_routers::CustomRouterFamilySource,
+        ));
+        self
+    }
+
     /// Every family not yet wired into the native runtime (A6.9-pr3b..3e).
     /// Staging reports each one explicitly instead of succeeding silently.
     pub fn unwired() -> Self {
@@ -512,6 +529,8 @@ struct Slots {
     model_providers: Option<Arc<dyn FamilyResource>>,
     token_accounting: Option<Arc<dyn FamilyResource>>,
     router: Option<Arc<dyn FamilyResource>>,
+    plugin_runtime_resource: Option<Arc<dyn FamilyResource>>,
+    router_custom_routers_resource: Option<Arc<dyn FamilyResource>>,
     tools: Option<Arc<dyn FamilyResource>>,
     execution_world: Option<Arc<dyn FamilyResource>>,
     instruction_storage: Option<Arc<dyn FamilyResource>>,
@@ -583,6 +602,8 @@ impl StageContext {
             Resource::ModelProviders => slots.model_providers.clone(),
             Resource::TokenAccounting => slots.token_accounting.clone(),
             Resource::Router => slots.router.clone(),
+            Resource::PluginRuntime => slots.plugin_runtime_resource.clone(),
+            Resource::RouterCustomRouters => slots.router_custom_routers_resource.clone(),
             Resource::Tools => slots.tools.clone(),
             Resource::ExecutionWorld => slots.execution_world.clone(),
             Resource::InstructionStorage => slots.instruction_storage.clone(),
@@ -630,6 +651,8 @@ impl StageSink<'_> {
             Resource::ModelProviders => slots.model_providers = Some(handle),
             Resource::TokenAccounting => slots.token_accounting = Some(handle),
             Resource::Router => slots.router = Some(handle),
+            Resource::PluginRuntime => slots.plugin_runtime_resource = Some(handle),
+            Resource::RouterCustomRouters => slots.router_custom_routers_resource = Some(handle),
             Resource::Tools => slots.tools = Some(handle),
             Resource::ExecutionWorld => slots.execution_world = Some(handle),
             Resource::InstructionStorage => slots.instruction_storage = Some(handle),
@@ -683,6 +706,8 @@ impl ProjectResources {
                 model_providers: None,
                 token_accounting: None,
                 router: None,
+                plugin_runtime_resource: None,
+                router_custom_routers_resource: None,
                 tools: None,
                 execution_world: None,
                 instruction_storage: None,

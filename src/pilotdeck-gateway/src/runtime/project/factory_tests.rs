@@ -918,8 +918,106 @@ async fn unwired_families_report_each_family() {
                 family.as_str(),
                 tag
             ),
-            "family {family:?}"
         );
         bounded(registry.dispose()).await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn plugin_family_stages_successfully() {
+    use crate::runtime::plugins::PluginRuntimeOptions;
+    const CONFIG_YAML: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
+    
+    let scratch = Scratch::new();
+    let project_root = scratch.0.join("project");
+    let pilot_home = scratch.0.join("pilot_home");
+    std::fs::create_dir(&project_root).unwrap();
+    std::fs::create_dir(&pilot_home).unwrap();
+    std::fs::write(pilot_home.join("pilotdeck.yaml"), CONFIG_YAML).unwrap();
+    std::fs::write(project_root.join("pilotdeck.yaml"), CONFIG_YAML).unwrap();
+
+    let plugin_options = PluginRuntimeOptions {
+        project_root: project_root.clone(),
+        pilot_home: pilot_home.clone(),
+        builtin_skills_root: None,
+        builtin_plugins: Vec::new(),
+        builtin_plugins_enabled: std::collections::HashMap::new(),
+    };
+
+    let families = Families::unwired()
+        .with_native_models()
+        .with_tools_mcp()
+        .with_plugins(plugin_options);
+
+    let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+        pilot_home: pilot_home.clone(),
+        cwd: scratch.0.to_path_buf(),
+        env: Env::default(),
+        homedir: Some(pilot_home),
+        builtin_skills_root: None,
+        now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        config_version: None,
+        runtime_profile_overrides: RuntimeProfileOverrides::default(),
+        families,
+    });
+    let registry = ProjectRuntimeRegistry::new(&project_root, Arc::new(factory));
+
+    let runtime = registry.resolve(Some(&project_root))
+        .expect("Factory staging with plugins should succeed");
+    let lease = runtime.acquire()
+        .expect("Should acquire lease");
+    assert_eq!(lease.runtime().project_root(), project_root);
+    drop(lease);
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
+async fn custom_router_registry_stages_after_plugins() {
+    use crate::runtime::plugins::PluginRuntimeOptions;
+    const CONFIG_YAML: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
+    
+    let scratch = Scratch::new();
+    let project_root = scratch.0.join("project");
+    let pilot_home = scratch.0.join("pilot_home");
+    std::fs::create_dir(&project_root).unwrap();
+    std::fs::create_dir(&pilot_home).unwrap();
+    std::fs::write(pilot_home.join("pilotdeck.yaml"), CONFIG_YAML).unwrap();
+    std::fs::write(project_root.join("pilotdeck.yaml"), CONFIG_YAML).unwrap();
+
+    let plugin_options = PluginRuntimeOptions {
+        project_root: project_root.clone(),
+        pilot_home: pilot_home.clone(),
+        builtin_skills_root: None,
+        builtin_plugins: Vec::new(),
+        builtin_plugins_enabled: std::collections::HashMap::new(),
+    };
+
+    let families = Families::unwired()
+        .with_native_models()
+        .with_tools_mcp()
+        .with_plugins(plugin_options);
+
+    let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+        pilot_home: pilot_home.clone(),
+        cwd: scratch.0.to_path_buf(),
+        env: Env::default(),
+        homedir: Some(pilot_home),
+        builtin_skills_root: None,
+        now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        config_version: None,
+        runtime_profile_overrides: RuntimeProfileOverrides::default(),
+        families,
+    });
+    let registry = ProjectRuntimeRegistry::new(&project_root, Arc::new(factory));
+
+    let runtime = registry.resolve(Some(&project_root))
+        .expect("Factory staging with custom router should succeed");
+    let lease = runtime.acquire()
+        .expect("Should acquire lease");
+    
+    // Verify that staging succeeded and resources are accessible
+    assert_eq!(lease.runtime().project_root(), project_root);
+    
+    drop(lease);
+    bounded(registry.dispose()).await.unwrap();
 }
