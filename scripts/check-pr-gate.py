@@ -128,8 +128,9 @@ def _strip_inline(line: str) -> str:
 def strip_code(body: str) -> str:
     """去掉代码块（行首 ``` 或 ~~~ 围栏）与行内代码：文档里引用的标记写法不算标记。
     围栏只认行首（≤3 空格缩进），所以 HTML 注释里出现的 ``` 不会吞掉后面的真标记。
-    块级 HTML 注释起始行（行首 ≤3 空格的 <!--）及其内部行不计入 prose；
-    单行完整注释（<!-- ... -->）保留在输出中供 marker_lines 提取标记。"""
+    块级 HTML 注释起始行（行首 ≤3 空格的原始行，内容含 <!--）及其内部行丢弃；
+    单行完整注释（同行含 -->）保留供 marker_lines 提取标记，但 check() 里做 issue 关联
+    检查时会把注释内容挖空，所以注释里的 Closes/Refs 不触发检查。"""
     lines, fence, comment = [], None, False
     for line in body.splitlines():
         if comment:
@@ -147,10 +148,11 @@ def strip_code(body: str) -> str:
         if re.match(r"^(?: {4}|\t)", line):
             continue
         kept = _strip_inline(line)
+        # 块级注释起始：原始行首 ≤3 空格且含 <!--（不看行内代码剥除后的结果，避免
+        # 行内代码里的 <!-- 误触发；转义 \<!-- 在原始行里仍含 <!--，但它不是行首起点）
         is_comment_start = bool(re.match(r"^ {0,3}<!--", line))
         is_single_line_comment = is_comment_start and "-->" in line
         comment = is_comment_start and not is_single_line_comment
-        # 多行注释起始行丢弃；单行完整注释保留供 marker_lines 用
         if not (is_comment_start and not is_single_line_comment):
             lines.append(kept)
     return "\n".join(lines)
@@ -256,10 +258,10 @@ def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | No
             print(f"check-pr-gate: 豁免——{reason}")
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
-    # HTML 注释里的 Closes/Refs 不触发 issue 关联。strip_code 已丢弃跨行注释起始行与内部行，
-    # 但单行完整注释（<!-- ... -->）保留供 marker_lines 用——issue 关联检查前挖空其正文。
-    # 不加 re.S：只挖单行/行内同行闭合的注释，不跨行匹配，避免转义 \<!-- 误吞真实 Closes。
-    prose_for_link = re.sub(r"<!--.*?-->", "", prose)
+    # HTML 注释里的 Closes/Refs 不触发 issue 关联：用跨行正则挖空所有注释内容。
+    # (?<!\\) 排除转义 \<!-- 起点（它不是真注释）；re.S 跨行以处理行中开的注释；
+    # 替换为 <!-- --> 守卫避免两侧文本拼接造假匹配。
+    prose_for_link = re.sub(r"(?<!\\)<!--.*?-->", "<!-- -->", prose, flags=re.S)
     if not ISSUE_LINK.search(prose_for_link) and not NO_ISSUE.search(marks):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
     errs.extend(check_reviewers(body, head_ref, trailers))

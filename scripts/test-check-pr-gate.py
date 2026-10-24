@@ -305,7 +305,19 @@ def main() -> int:
     good = any("缺 issue 关联" in e for e in errs_inline)
     print(f"{'PASS' if good else 'FAIL'} 行内注释 Refs 不算 issue 关联（应 FAIL 无关联）")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 49} 例）")
+    # 行中开跨行注释里的 Closes 不算 issue 关联（P0 boundary r12）
+    body_midline = (GATE_BASE + "<!-- reviewers: glm,codex -->\n改用前 <!-- 旧方案：\nCloses #99\n--> 见新方案\n")
+    errs_midline = gate.check(body_midline, "", "deepseek/x")
+    good = any("缺 issue 关联" in e for e in errs_midline)
+    print(f"{'PASS' if good else 'FAIL'} 行中跨行注释内 Closes 不算 issue 关联（应 FAIL 无关联）")
+    fails += not good
+    # Re<!-- guard -->fs 拼接不构成 Refs（守卫阻断）
+    body_concat = (GATE_BASE + "<!-- reviewers: glm,codex -->\nRe<!-- guard -->fs #123\n")
+    errs_concat = gate.check(body_concat, "", "deepseek/x")
+    good = any("缺 issue 关联" in e for e in errs_concat)
+    print(f"{'PASS' if good else 'FAIL'} 注释守卫阻断 Re+fs 拼接（应 FAIL 无关联）")
+    fails += not good
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 51} 例）")
     return 1 if fails else 0
 
 
