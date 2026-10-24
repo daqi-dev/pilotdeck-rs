@@ -420,7 +420,8 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
     let completions = Arc::new(Mutex::new(Vec::new()));
     let options = field(sequence, "options");
     let tasks = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
-        background_task_state_dir: None,
+        disk_spill_dir: None,
+        snapshot_store: None,
         now: Some(Arc::new(|| FIXED_MS)),
         max_tasks: field(options, "maxTasks").as_number().map(|n| n as usize),
         on_completion: Some({
