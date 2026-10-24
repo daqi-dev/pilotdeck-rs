@@ -10,9 +10,11 @@
 //!
 //! HTTP redirects follow undici through `crate::fetch_redirect::follow`
 //! (#360-1), including the Google SDK transport. Not ported here: invocation
-//! audit staging (`options.invocation`, A6.4-pr10) and `PILOTDECK_DUMP_REQUEST`.
+//! audit staging (`options.invocation`, A6.4-pr10). Both provider paths
+//! support `PILOTDECK_DUMP_REQUEST` for inspecting outgoing request bodies.
 //! The outgoing HTTP proxy (`cli/proxy.ts`) is implemented here and wired into
-//! all HTTP transports (MCP, model, and hook call sites) via [`proxy_https_connector`].
+//! all provider-side HTTP transports (MCP, model, count, and hook call sites)
+//! via [`proxy_https_connector`].
 //! MCP clients pass the `pilotdeck.yaml` `proxy` source through [`ProxySettings`];
 //! `None` resolves the environment exactly as before.
 #![allow(clippy::result_large_err)]
@@ -1556,13 +1558,19 @@ async fn provider_exchange(
     }
 }
 
-/// Debug helper that writes the request body to a timestamped JSON file in /tmp
-/// when `PILOTDECK_DUMP_REQUEST=1`. Matches TS `streamModel.ts:196-203,395-401`.
-fn dump_request_to_file(final_body: &JsValue, original_request: &JsValue) {
-    use std::io::Write;
-
-    // Extract model name for the log message (from the original canonical request).
-    let model = field(original_request, "model")
+/// Debug helper that writes the request body to a JSON file under the OS
+/// temp directory when `PILOTDECK_DUMP_REQUEST=1`. Matches TS
+/// `streamModel.ts:196-203,395-401` in trigger, directory and log line. The
+/// file name and creation mode intentionally diverge from the TS
+/// `Date.now()` / `writeFileSync` pair: a dump carries the whole
+/// conversation, so it is created exclusively (never following a
+/// pre-existing symlink or truncating an existing file), with owner-only
+/// permissions, under a name unique to this process
+/// (specs/gateway-parity/diffs/A6.4-MODEL-DUMP-SECURE-001).
+fn dump_request_to_file(final_body: &JsValue, model: &JsValue) {
+    // Model name for the log message. The Google path carries its model in
+    // the URL, not in the outgoing JSON body, so callers pass it in.
+    let model = model
         .as_string()
         .and_then(|s| s.to_utf8().ok())
         .unwrap_or_else(|| "unknown".to_string());
@@ -1579,25 +1587,72 @@ fn dump_request_to_file(final_body: &JsValue, original_request: &JsValue) {
         _ => return, // Failed to serialize; skip the dump.
     };
 
-    // Write to /tmp/pilotdeck_request_<timestamp>.json
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let path = format!("/tmp/pilotdeck_request_{}.json", timestamp);
+    // Concurrent dumps never share a name: within this process the sequence
+    // is monotonic, and across processes the pid disagrees. TS uses
+    // `Date.now()` alone (`streamModel.ts:199-200`), where same-millisecond
+    // requests overwrite each other's dumps.
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let pid = std::process::id();
+    let mut next_name = || {
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        format!("pilotdeck_request_{timestamp}_{pid}_{sequence}.json")
+    };
+    if let Some(path) = write_dump_exclusively(&std::env::temp_dir(), &json, &mut next_name, 8) {
+        println!(
+            "[model-debug] Request dumped to {} (model={})",
+            path.display(),
+            model
+        );
+    }
+}
 
-    match std::fs::File::create(&path) {
-        Ok(mut file) => {
-            if let Err(e) = file.write_all(json.as_bytes()) {
-                eprintln!("[model-debug] Failed to write request dump: {}", e);
-            } else {
-                println!("[model-debug] Request dumped to {} (model={})", path, model);
+/// Writes `contents` under `dir` to the first candidate name from
+/// `next_name` that does not already exist (up to `candidates` tries).
+/// Creation is exclusive and owner-only: `O_CREAT|O_EXCL` refuses to follow
+/// a pre-existing symlink or truncate an existing file, so a predictable
+/// name cannot be used to overwrite other data, and owner-only permissions
+/// keep the dump unreadable to other users even in a shared temp directory.
+fn write_dump_exclusively(
+    dir: &std::path::Path,
+    contents: &str,
+    next_name: &mut dyn FnMut() -> String,
+    candidates: usize,
+) -> Option<std::path::PathBuf> {
+    use std::io::Write;
+    for _ in 0..candidates {
+        let path = dir.join(next_name());
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(mut file) => {
+                return match file.write_all(contents.as_bytes()) {
+                    Ok(()) => Some(path),
+                    Err(e) => {
+                        eprintln!("[model-debug] Failed to write request dump: {e}");
+                        None
+                    }
+                };
+            }
+            // A concurrent creator or pre-planted file with this name: move
+            // to the next candidate instead of truncating it.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                eprintln!("[model-debug] Failed to create dump file: {e}");
+                return None;
             }
         }
-        Err(e) => {
-            eprintln!("[model-debug] Failed to create dump file: {}", e);
-        }
     }
+    eprintln!("[model-debug] Failed to create dump file: every name candidate exists");
+    None
 }
 
 /// Replays the bytes already read for a completeness/shape check, optionally
@@ -1823,9 +1878,9 @@ async fn send_provider_request(
         .unwrap_or_default();
 
     // PILOTDECK_DUMP_REQUEST: debug aid that writes the provider request body
-    // to a timestamped file in /tmp (TS `streamModel.ts:196-203,395-401`).
+    // to a file under the OS temp directory (TS `streamModel.ts:196-203`).
     if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
-        dump_request_to_file(&final_body, body);
+        dump_request_to_file(&final_body, field(body, "model"));
     }
 
     let encoded = Bytes::from(encoded);
@@ -2247,6 +2302,13 @@ async fn send_google_request(
             )
         })?
         .unwrap_or_default();
+    // PILOTDECK_DUMP_REQUEST: debug aid that writes the provider request body
+    // to a file under the OS temp directory before the SDK send
+    // (TS `streamModel.ts:395-401`). Google carries its model in the URL, so
+    // the log line's model comes from the canonical request, not the body.
+    if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
+        dump_request_to_file(&final_body, model);
+    }
     let endpoint = providers::google::endpoint(provider, model).map_err(|error| (error, false))?;
     let (url, header_map) = build_http_request(&endpoint, &headers)
         .map_err(|error| (ModelStreamError::thrown("TypeError", error.message), false))?;
