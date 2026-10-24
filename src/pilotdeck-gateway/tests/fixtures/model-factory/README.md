@@ -28,9 +28,9 @@ registry adapter 与 TS 一样始终暴露 `complete()` 分派端口，混合注
 
 `empty-missing-provider` 金样刻意越过 TS 类型边界，删除 request 的 provider 属性后调用真实 registry adapter：端口仍存在、router staging 成功，调用返回 `provider_not_found` / `Provider undefined does not exist.`。Rust 新测试单独回放此项，覆盖 `missing("undefined")` 分支；既有 `empty`（provider=b）金样保留。
 
-#604 实现 HTTP complete()，native provider 返回 true。全 native 金样验证 enabled router staging 及 supports_complete 正确性；complete() 的完整 oracle 验证在 registryRouterCases。
+#604 实现 HTTP complete()，native provider 返回 true。全 native 金样只验证 enabled router staging 与 supports_complete；混合金样调用注入的 judge-b complete（不是 native HTTP complete），空表金样按设计返回 provider_not_found。native HTTP complete() 的完整 TS oracle 验证在 `tests/model_complete.rs`（`tests/fixtures/model-complete/`），不在本 fixture。
 
-补充金样：9 项 registry API 结果（空/空白/BOM provider id、重复注册、重复 lease.release、unregister、missing/closed 错误）；替换保留 JS Map 原插入位置的多错误清理及聚合；complete 调用在取消 settle 前保持 lease，whenDrained 的前后状态；原生 provider 默认构造分支（TS 只在调用层注入 fetch，router 使用保留的 model-runtime 兼容注入口）；4 组真实 `ensureRouterConfig` 默认与显式覆盖输入。源闭包共 728 个文件。新增 registryRouterCases 来自真实 ProjectModelRuntimeBundle / ProjectRouterRuntimeBundle：混合（native a + complete b，judge=b）、全 native（judge=a）、空表（合法配置声明 b，但注入返回空注册表，judge=b）；后两种中的全 native 只对照 staging，混合和空表另对照 registry port 的真实 complete 调用。每次使用真实配置加载器校验配置。
+补充金样：9 项 registry API 结果（空/空白/BOM provider id、重复注册、重复 lease.release、unregister、missing/closed 错误）；替换保留 JS Map 原插入位置的多错误清理及聚合；complete 调用在取消 settle 前保持 lease，whenDrained 的前后状态；原生 provider 默认构造分支（TS 只在调用层注入 fetch，router 使用保留的 model-runtime 兼容注入口）；4 组真实 `ensureRouterConfig` 默认与显式覆盖输入。源闭包共 728 个文件。新增 registryRouterCases 来自真实 ProjectModelRuntimeBundle / ProjectRouterRuntimeBundle：混合（native a + complete b，judge=b）、全 native（judge=a）、空表（合法配置声明 b，但注入返回空注册表，judge=b）；后两种中的全 native 只对照 staging；混合对照 registry port 对注入 judge-b 的 complete 调用，空表对照 provider_not_found；均不经过 native HTTP complete（后者见 `tests/model_complete.rs`）。每次使用真实配置加载器校验配置。
 
 上述命令的 PDRS_BASELINE 必须保留到 Rust replay；仅在设置该环境变量时，common/baseline.rs 才逐项比对真实源文件与 Git blob，默认未设置时只校验 fixture 的 commit 和哈希格式。
 

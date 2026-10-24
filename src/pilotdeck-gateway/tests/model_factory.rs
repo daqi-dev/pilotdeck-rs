@@ -1143,13 +1143,13 @@ async fn registry_router_case(name: &str) {
             assert_eq!(JsValue::Object(value), *get(case, "error"));
         }
     } else {
-        // #604: Native provider now implements complete() via http::complete_model.
+        // #604: native provider exposes complete() via http::complete_model.
+        // This fixture only checks enabled-router staging, supports_complete and
+        // the lease lifecycle; the native HTTP complete oracle lives in
+        // tests/model_complete.rs, not in registryRouterCases.
         let lease = providers.acquire(&"a".into()).unwrap();
         assert!(lease.provider().supports_complete());
         drop(lease);
-        // complete() should now succeed (or fail with HTTP errors, not "not implemented")
-        // Full oracle verification is in registryRouterCases; here we only verify
-        // supports_complete correctness.
     }
     bounded(registry.dispose()).await.unwrap();
 }

@@ -1,0 +1,2191 @@
+{
+ "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+ "sourceSha256": {
+  "src/model/errors/normalizeModelError.ts": "3ded965a305c5aef92f33f83e72b8a8cbe14cfe230677f3127ccc75d90f15f0e",
+  "src/model/errors/tokenLimitParsing.ts": "78493ea0639cfb145bf9511e0c0ecd8373e748cb8127fa4844a63ad47c473959",
+  "src/model/normalizeProviderBaseUrl.ts": "4c27bda64fedb25d251f667a87680f72fb23ca56e5337fd383cfe38dda7a46af",
+  "src/model/policy/RetryPolicy.ts": "66ceaf07267d2e813d4928a5c677c509a2f6186fb49a567113a8299b6d743110",
+  "src/model/policy/index.ts": "bc84e59059667b7dda7aeb420bff8b0ca6238880dcd008fdba62f787a14c70fc",
+  "src/model/protocol/canonical.ts": "fc2729987fb766a86d2330704a2078c3058ecbef2d68808741f0c5f51d3d0e4e",
+  "src/model/protocol/capabilities.ts": "604ef15f1f556474f6e5a2fd48f8f4ca08fb3bec6175e12b1929cb32ec0ea9c1",
+  "src/model/protocol/clone.ts": "fdf1defd56a453157a251b329e4f78aa0a471f8458ff78732e46b1d2ce7ced17",
+  "src/model/protocol/errors.ts": "109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf",
+  "src/model/protocol/multimodal.ts": "92e9e0391a14230cf4c12c0f0dc38b73c8729ed3e083273c3043c1b5f283cc74",
+  "src/model/protocol/timeline.ts": "c61354611b69bf2f856eaa5baaf907fd70bbbb1564500c99310aa99d244965d6",
+  "src/model/protocol/toolResultContent.ts": "1ea84ca676f80e935b6d7b5699adb97a185964fe0d77bc38b1f429e8a9e22f23",
+  "src/model/providerEndpoint.ts": "cd3d939c85bffdfa0fc8dc68c21cc421b16bb50736986d0ddfb0871fd247780c",
+  "src/model/providers/anthropic/request.ts": "8c0b30a2e016eede29e52282a1caf846895c320615d4298eaf61e2d180cb2907",
+  "src/model/providers/anthropic/response.ts": "834768ac8a1f3143f395cd8a238e8d445539c57dbc13b8ed66717436b4fa1b24",
+  "src/model/providers/anthropic/stream.ts": "3f53fc85c7a044800f7f2079ba6ab4eebe6e93eef2c2bfe72803d64ff68f82e0",
+  "src/model/providers/google/client.ts": "327d14c1490f818e1ce95b303ec1d05d1157afb3f3f913639a7d9d69d04ece35",
+  "src/model/providers/google/modelId.ts": "fd4c83c9ca441e9d338c2c70e3eb900e9522e7e6c8ec2ac82c19051a8808d2b4",
+  "src/model/providers/google/request.ts": "129a7d684b6e8f653c74b62bed0cec315f97f8f78a4985e1e18f72c431f5f8ef",
+  "src/model/providers/google/response.ts": "a4502d18ddba239e05f1f44d592d1151d1b3fb5ff93d2cd920414af36a962973",
+  "src/model/providers/google/schema.ts": "18128ea10abc57de9ff8c46723fa912d1e5f2b52f5681ac708a535de96e623e7",
+  "src/model/providers/google/stream.ts": "7d4a8209ba268d6920dea983e8fd162a17feba9b618b8d8c7399d57a694c11ba",
+  "src/model/providers/openai-responses/request.ts": "fc38d980ec728dc4651338760a964e4804f6b15c405af8a102f3930e9285aaad",
+  "src/model/providers/openai-responses/response.ts": "143623aad10247603c7d631ccd3abdc095b67a7df85f3cc56b26d769a5d87f37",
+  "src/model/providers/openai-responses/stream.ts": "dfeaf49e020b53785220d082d29fe7082a8b7067d62fd86620c02a0f381b9c85",
+  "src/model/providers/openai/request.ts": "e38de6a30cfc9e53e853d98218d342f80649cea5b3f5f8b608b6499a3f95352d",
+  "src/model/providers/openai/response.ts": "cc87c3284caed18f5a2b2c43c661e75d7578d41b197200918c29ea78038ee802",
+  "src/model/providers/openai/schema.ts": "cbcda4de9900b85e28e9e8f83f8a679b27cd64f3962cc695468d1e72698750b4",
+  "src/model/providers/openai/stream.ts": "8110c06e89b80ea9af8def4cb04b7a454f17a0c08101b175be7febb1ac9e9898",
+  "src/model/providers/toolResultReferenceText.ts": "7a279eda547943dee2878eca1fda3a350b514a40b78a0e229b5384a681253a7d",
+  "src/model/request/buildModelRequest.ts": "bf7e8e2a0684f64c30e456bc3dd66742231171faee106a230223709f98a63999",
+  "src/model/request/sanitizeProviderBody.ts": "910124e74b61039a1d609f092ea2ab61c6e39d49e7fbf272267ed2fcf1806eaa",
+  "src/model/request/speedMapping.ts": "ab5cad0b0529d882cf0e8e04d3859c6ce406dcc49930204f2b04fb4f71fa839f",
+  "src/model/request/validateModelRequest.ts": "4971c82e3acb56df411f5a03ad5ee42eedce295b949225789b8423e607dae4d1",
+  "src/model/response/normalizeFinishReason.ts": "a9e83a4ee1c549b4475097f028b7c130f72f83dd89268af1d942c04570ff85b1",
+  "src/model/response/normalizeUsage.ts": "14a6a513706a98c702265dfbb3fc3e26b58585d870ac02c200132491817d8cc6",
+  "src/model/response/parseModelResponse.ts": "22c792123e3822c694ebd15fbe14f2af7c7c57dc7479231d7e2a0a189a58ed8e",
+  "src/model/streaming/StreamingCheckpoint.ts": "471041a85be6b5102b7dbd92b84fd7670a75f26a2859da7f3be0ab52d8636068",
+  "src/model/streaming/continuationRequest.ts": "ec6a1612a82f82fadd26d00943c8b16709f36c52053312ed2ee425be1f068662",
+  "src/model/streaming/normalizeStreamEvent.ts": "e12249c29b111f7e8341fa540e2d145ddb5fbbe1b2d0ba445d07b2db24e37dd7",
+  "src/model/streaming/requestFingerprint.ts": "3b90e1a600f57158cb7e43b171cff11b680809e234a9bb491c9c210d0656cb77",
+  "src/model/streaming/streamModel.ts": "6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26",
+  "src/model/thinking/registry.ts": "ad0df7187839dfbf5e39acdc93141020acde65e9dbff664638a4aada0227ad7f",
+  "src/model/thinking/settings.ts": "219fc26bcd728ee864dfc0f06b4ddf74df8d6c62554d226fbf5f6021da766d05",
+  "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f",
+  "src/storage/invocationStorage.ts": "9d24114a71fd71177b36c05363559f3fd174d2b3b59f8dd58e31c933be6f3875"
+ },
+ "node": "v22.22.0",
+ "locale": "en-US",
+ "cases": [
+  {
+   "name": "anthropic-normal",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "text": "plan",
+      "signature": "sig=="
+     },
+     {
+      "type": "text",
+      "text": "hello"
+     },
+     {
+      "type": "tool_call",
+      "id": "toolu_1",
+      "name": "lookup",
+      "input": {
+       "q": "x"
+      },
+      "raw": {
+       "type": "tool_use",
+       "id": "toolu_1",
+       "name": "lookup",
+       "input": {
+        "q": "x"
+       }
+      }
+     }
+    ],
+    "usage": {
+     "inputTokens": 11,
+     "outputTokens": 7,
+     "cacheReadTokens": 3,
+     "cacheWriteTokens": 2,
+     "totalTokens": 23
+    },
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "msg_1",
+     "type": "message",
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "plan",
+       "signature": "sig=="
+      },
+      {
+       "type": "text",
+       "text": "hello"
+      },
+      {
+       "type": "tool_use",
+       "id": "toolu_1",
+       "name": "lookup",
+       "input": {
+        "q": "x"
+       }
+      }
+     ],
+     "stop_reason": "tool_use",
+     "usage": {
+      "input_tokens": 11,
+      "output_tokens": 7,
+      "cache_read_input_tokens": 3,
+      "cache_creation_input_tokens": 2
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig==\"},{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}],\"stop_reason\":\"tool_use\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7,\"cache_read_input_tokens\":3,\"cache_creation_input_tokens\":2}}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "anthropic-refusal",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "declined"
+     }
+    ],
+    "finishReason": "content_filter",
+    "raw": {
+     "id": "msg_2",
+     "type": "message",
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "declined"
+      }
+     ],
+     "stop_reason": "refusal"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"msg_2\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"declined\"}],\"stop_reason\":\"refusal\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-normal",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "text": "think",
+      "reasoningContent": "think"
+     },
+     {
+      "type": "thinking",
+      "text": "detail-a\ndetail-b\ndetail-c",
+      "reasoningContent": "detail-a\ndetail-b\ndetail-c"
+     },
+     {
+      "type": "text",
+      "text": "part1"
+     },
+     {
+      "type": "text",
+      "text": "part2"
+     },
+     {
+      "type": "tool_call",
+      "id": "call_1",
+      "name": "lookup",
+      "input": {
+       "q": "x"
+      },
+      "raw": {
+       "id": "call_1",
+       "type": "function",
+       "function": {
+        "name": "lookup",
+        "arguments": "{\"q\":\"x\"}"
+       }
+      }
+     },
+     {
+      "type": "tool_call",
+      "id": "call_chatcmpl-1_0_1",
+      "name": "lookup2",
+      "input": {
+       "q": "y"
+      },
+      "raw": {
+       "id": "call_1",
+       "type": "function",
+       "function": {
+        "name": "lookup2",
+        "arguments": "{\"q\":\"y\"}"
+       }
+      }
+     },
+     {
+      "type": "tool_call",
+      "id": "call_chatcmpl-1_0_2",
+      "name": "lookup3",
+      "input": {},
+      "raw": {
+       "type": "function",
+       "function": {
+        "name": "lookup3",
+        "arguments": "{}"
+       }
+      }
+     }
+    ],
+    "usage": {
+     "inputTokens": 85,
+     "outputTokens": 20,
+     "cacheReadTokens": 10,
+     "cacheWriteTokens": 5,
+     "totalTokens": 120,
+     "nativeCost": 0.02
+    },
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "chatcmpl-1",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "reasoning_content": "think",
+        "reasoning_details": [
+         {
+          "text": "detail-a"
+         },
+         {
+          "content": "detail-b"
+         },
+         {
+          "summary": "detail-c"
+         },
+         {}
+        ],
+        "content": [
+         {
+          "type": "text",
+          "text": "part1"
+         },
+         {
+          "type": "text",
+          "text": ""
+         },
+         {
+          "type": "image",
+          "image_url": {
+           "url": "ignored"
+          }
+         },
+         {
+          "type": "text",
+          "text": "part2"
+         }
+        ],
+        "tool_calls": [
+         {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+           "name": "lookup",
+           "arguments": "{\"q\":\"x\"}"
+          }
+         },
+         {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+           "name": "lookup2",
+           "arguments": "{\"q\":\"y\"}"
+          }
+         },
+         {
+          "type": "function",
+          "function": {
+           "name": "lookup3",
+           "arguments": "{}"
+          }
+         }
+        ]
+       },
+       "finish_reason": "tool_calls"
+      }
+     ],
+     "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 20,
+      "total_tokens": 120,
+      "prompt_tokens_details": {
+       "cached_tokens": 10,
+       "cache_write_tokens": 5
+      },
+      "cost": 0.02
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"reasoning_content\":\"think\",\"reasoning_details\":[{\"text\":\"detail-a\"},{\"content\":\"detail-b\"},{\"summary\":\"detail-c\"},{}],\"content\":[{\"type\":\"text\",\"text\":\"part1\"},{\"type\":\"text\",\"text\":\"\"},{\"type\":\"image\",\"image_url\":{\"url\":\"ignored\"}},{\"type\":\"text\",\"text\":\"part2\"}],\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}},{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup2\",\"arguments\":\"{\\\"q\\\":\\\"y\\\"}\"}},{\"type\":\"function\",\"function\":{\"name\":\"lookup3\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"total_tokens\":120,\"prompt_tokens_details\":{\"cached_tokens\":10,\"cache_write_tokens\":5},\"cost\":0.02}}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-string-content",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "plain"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "chatcmpl-2",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "plain"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-2\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"plain\"},\"finish_reason\":\"stop\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-reasoning-object",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "text": "fallback-think",
+      "reasoningContent": "fallback-think"
+     },
+     {
+      "type": "text",
+      "text": "nested ok"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "chatcmpl-2b",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "reasoning": {
+         "content": "fallback-think"
+        },
+        "content": "nested ok"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-2b\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"reasoning\":{\"content\":\"fallback-think\"},\"content\":\"nested ok\"},\"finish_reason\":\"stop\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-content-filter",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "blocked"
+     }
+    ],
+    "finishReason": "content_filter",
+    "raw": {
+     "id": "chatcmpl-3",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "blocked"
+       },
+       "finish_reason": "content_filter_results"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-3\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"blocked\"},\"finish_reason\":\"content_filter_results\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-unknown-finish",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "odd"
+     }
+    ],
+    "finishReason": "unknown",
+    "raw": {
+     "id": "chatcmpl-4",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "odd"
+       },
+       "finish_reason": "mystery"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-4\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"odd\"},\"finish_reason\":\"mystery\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-normal",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "Hi"
+     },
+     {
+      "type": "thinking",
+      "text": "why\nbecause"
+     },
+     {
+      "type": "tool_call",
+      "id": "call_a",
+      "name": "lookup",
+      "input": {
+       "q": "x"
+      },
+      "raw": {
+       "type": "function_call",
+       "call_id": "call_a",
+       "id": "fc_1",
+       "name": "lookup",
+       "arguments": "{\"q\":\"x\"}"
+      }
+     },
+     {
+      "type": "tool_call",
+      "id": "fc_2",
+      "name": "lookup2",
+      "input": {
+       "q": "y"
+      },
+      "raw": {
+       "type": "function_call",
+       "id": "fc_2",
+       "name": "lookup2",
+       "arguments": "{q: 'y',}"
+      }
+     }
+    ],
+    "usage": {
+     "inputTokens": 26,
+     "outputTokens": 10,
+     "cacheReadTokens": 4,
+     "totalTokens": 40
+    },
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "resp-1",
+     "output_text": "Hi",
+     "output": [
+      {
+       "type": "message",
+       "content": [
+        {
+         "type": "text",
+         "text": "Hi"
+        }
+       ]
+      },
+      {
+       "type": "reasoning",
+       "summary": [
+        {
+         "type": "summary_text",
+         "text": "why"
+        },
+        {
+         "type": "summary_text",
+         "output_text": "because"
+        },
+        {
+         "type": "summary_text",
+         "text": ""
+        }
+       ]
+      },
+      {
+       "type": "function_call",
+       "call_id": "call_a",
+       "id": "fc_1",
+       "name": "lookup",
+       "arguments": "{\"q\":\"x\"}"
+      },
+      {
+       "type": "function_call",
+       "id": "fc_2",
+       "name": "lookup2",
+       "arguments": "{q: 'y',}"
+      }
+     ],
+     "status": "completed",
+     "usage": {
+      "input_tokens": 30,
+      "output_tokens": 10,
+      "total_tokens": 40,
+      "input_tokens_details": {
+       "cached_tokens": 4
+      }
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-1\",\"output_text\":\"Hi\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"Hi\"}]},{\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"why\"},{\"type\":\"summary_text\",\"output_text\":\"because\"},{\"type\":\"summary_text\",\"text\":\"\"}]},{\"type\":\"function_call\",\"call_id\":\"call_a\",\"id\":\"fc_1\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"},{\"type\":\"function_call\",\"id\":\"fc_2\",\"name\":\"lookup2\",\"arguments\":\"{q: 'y',}\"}],\"status\":\"completed\",\"usage\":{\"input_tokens\":30,\"output_tokens\":10,\"total_tokens\":40,\"input_tokens_details\":{\"cached_tokens\":4}}}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-message-completed",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "Hello"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "resp-2",
+     "output_text": "Hello",
+     "output": [
+      {
+       "type": "message",
+       "content": [
+        {
+         "type": "output_text",
+         "text": "Hello"
+        }
+       ]
+      }
+     ],
+     "status": "completed"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-2\",\"output_text\":\"Hello\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}],\"status\":\"completed\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-incomplete",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "partial"
+     }
+    ],
+    "finishReason": "length",
+    "raw": {
+     "id": "resp-3",
+     "output": [
+      {
+       "type": "message",
+       "content": [
+        {
+         "type": "text",
+         "text": "partial"
+        }
+       ]
+      }
+     ],
+     "status": "incomplete"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-3\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"partial\"}]}],\"status\":\"incomplete\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-failed",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "error",
+    "raw": {
+     "id": "resp-4",
+     "output": [],
+     "status": "failed"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-4\",\"output\":[],\"status\":\"failed\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-queued",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": {
+     "id": "resp-5",
+     "output": [],
+     "status": "queued"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-5\",\"output\":[],\"status\":\"queued\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-reasoning-only",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "text": "think1\nthink2"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "resp-6",
+     "output": [
+      {
+       "type": "reasoning",
+       "summary": [
+        {
+         "type": "summary_text",
+         "text": "think1"
+        },
+        {
+         "type": "summary_text",
+         "text": "think2"
+        },
+        {
+         "type": "summary_text",
+         "text": ""
+        }
+       ]
+      }
+     ],
+     "status": "completed"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-6\",\"output\":[{\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"think1\"},{\"type\":\"summary_text\",\"text\":\"think2\"},{\"type\":\"summary_text\",\"text\":\"\"}]}],\"status\":\"completed\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "anthropic-empty-body",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": ""
+   },
+   "reply": {
+    "body": ""
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-empty-body",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": ""
+   },
+   "reply": {
+    "body": ""
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-empty-body",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": ""
+   },
+   "reply": {
+    "body": ""
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "anthropic-non-json",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": "not json"
+   },
+   "reply": {
+    "body": "not json"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-non-json",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": "<html>oops</html>"
+   },
+   "reply": {
+    "body": "<html>oops</html>"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-non-json",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": "[1,2"
+   },
+   "reply": {
+    "body": "[1,2"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "anthropic-429-retry-after",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "Number of request tokens has exceeded your per-minute rate limit",
+    "error": {
+     "provider": "p",
+     "protocol": "anthropic",
+     "code": "rate_limit_error",
+     "status": 429,
+     "message": "Number of request tokens has exceeded your per-minute rate limit",
+     "retryable": true,
+     "raw": {
+      "type": "error",
+      "error": {
+       "type": "rate_limit_error",
+       "message": "Number of request tokens has exceeded your per-minute rate limit"
+      }
+     },
+     "userHint": "Rate limited by the provider. Wait for the limit to reset, reduce concurrent requests, or switch provider/model in Settings."
+    }
+   },
+   "reply": {
+    "status": 429,
+    "headers": {
+     "retry-after": "7",
+     "content-type": "application/json"
+    },
+    "body": "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"Number of request tokens has exceeded your per-minute rate limit\"}}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-429-body-retry-after",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "slow down",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "rate_limit_error",
+     "status": 429,
+     "message": "slow down",
+     "retryable": true,
+     "raw": {
+      "error": {
+       "message": "slow down",
+       "retryAfterMs": 40,
+       "retryable": true
+      }
+     },
+     "userHint": "Rate limited by the provider. Wait for the limit to reset, reduce concurrent requests, or switch provider/model in Settings.",
+     "retryAfterMs": 40
+    }
+   },
+   "reply": {
+    "status": 429,
+    "headers": {
+     "retry-after": "1",
+     "content-type": "application/json"
+    },
+    "body": "{\"error\":{\"message\":\"slow down\",\"retryAfterMs\":40,\"retryable\":true}}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-invalid-tool-args",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "OpenAI tool call arguments are not valid JSON.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "invalid_tool_arguments",
+     "message": "OpenAI tool call arguments are not valid JSON.",
+     "retryable": true,
+     "raw": {
+      "id": "call_bad",
+      "type": "function",
+      "function": {
+       "name": "lookup",
+       "arguments": "{:}"
+      }
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-bad\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_bad\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{:}\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-invalid-tool-args",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "OpenAI Responses tool call arguments are not valid JSON.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai-responses",
+     "code": "invalid_tool_arguments",
+     "message": "OpenAI Responses tool call arguments are not valid JSON.",
+     "retryable": true,
+     "raw": {
+      "type": "function_call",
+      "call_id": "call_bad",
+      "name": "lookup",
+      "arguments": "{:}"
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-bad\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_bad\",\"name\":\"lookup\",\"arguments\":\"{:}\"}],\"status\":\"completed\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-body-parsed-as-openai",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "usage": {
+     "inputTokens": 26,
+     "outputTokens": 10,
+     "cacheReadTokens": 4,
+     "totalTokens": 40
+    },
+    "finishReason": "unknown",
+    "raw": {
+     "id": "resp-1",
+     "output_text": "Hi",
+     "output": [
+      {
+       "type": "message",
+       "content": [
+        {
+         "type": "text",
+         "text": "Hi"
+        }
+       ]
+      },
+      {
+       "type": "reasoning",
+       "summary": [
+        {
+         "type": "summary_text",
+         "text": "why"
+        },
+        {
+         "type": "summary_text",
+         "output_text": "because"
+        },
+        {
+         "type": "summary_text",
+         "text": ""
+        }
+       ]
+      },
+      {
+       "type": "function_call",
+       "call_id": "call_a",
+       "id": "fc_1",
+       "name": "lookup",
+       "arguments": "{\"q\":\"x\"}"
+      },
+      {
+       "type": "function_call",
+       "id": "fc_2",
+       "name": "lookup2",
+       "arguments": "{q: 'y',}"
+      }
+     ],
+     "status": "completed",
+     "usage": {
+      "input_tokens": 30,
+      "output_tokens": 10,
+      "total_tokens": 40,
+      "input_tokens_details": {
+       "cached_tokens": 4
+      }
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-1\",\"output_text\":\"Hi\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"Hi\"}]},{\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"why\"},{\"type\":\"summary_text\",\"output_text\":\"because\"},{\"type\":\"summary_text\",\"text\":\"\"}]},{\"type\":\"function_call\",\"call_id\":\"call_a\",\"id\":\"fc_1\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"},{\"type\":\"function_call\",\"id\":\"fc_2\",\"name\":\"lookup2\",\"arguments\":\"{q: 'y',}\"}],\"status\":\"completed\",\"usage\":{\"input_tokens\":30,\"output_tokens\":10,\"total_tokens\":40,\"input_tokens_details\":{\"cached_tokens\":4}}}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-body-parsed-as-responses",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "usage": {
+     "inputTokens": 85,
+     "outputTokens": 20,
+     "cacheReadTokens": 10,
+     "cacheWriteTokens": 5,
+     "totalTokens": 120,
+     "nativeCost": 0.02
+    },
+    "finishReason": "unknown",
+    "raw": {
+     "id": "chatcmpl-1",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "reasoning_content": "think",
+        "reasoning_details": [
+         {
+          "text": "detail-a"
+         },
+         {
+          "content": "detail-b"
+         },
+         {
+          "summary": "detail-c"
+         },
+         {}
+        ],
+        "content": [
+         {
+          "type": "text",
+          "text": "part1"
+         },
+         {
+          "type": "text",
+          "text": ""
+         },
+         {
+          "type": "image",
+          "image_url": {
+           "url": "ignored"
+          }
+         },
+         {
+          "type": "text",
+          "text": "part2"
+         }
+        ],
+        "tool_calls": [
+         {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+           "name": "lookup",
+           "arguments": "{\"q\":\"x\"}"
+          }
+         },
+         {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+           "name": "lookup2",
+           "arguments": "{\"q\":\"y\"}"
+          }
+         },
+         {
+          "type": "function",
+          "function": {
+           "name": "lookup3",
+           "arguments": "{}"
+          }
+         }
+        ]
+       },
+       "finish_reason": "tool_calls"
+      }
+     ],
+     "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 20,
+      "total_tokens": 120,
+      "prompt_tokens_details": {
+       "cached_tokens": 10,
+       "cache_write_tokens": 5
+      },
+      "cost": 0.02
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"reasoning_content\":\"think\",\"reasoning_details\":[{\"text\":\"detail-a\"},{\"content\":\"detail-b\"},{\"summary\":\"detail-c\"},{}],\"content\":[{\"type\":\"text\",\"text\":\"part1\"},{\"type\":\"text\",\"text\":\"\"},{\"type\":\"image\",\"image_url\":{\"url\":\"ignored\"}},{\"type\":\"text\",\"text\":\"part2\"}],\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}},{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup2\",\"arguments\":\"{\\\"q\\\":\\\"y\\\"}\"}},{\"type\":\"function\",\"function\":{\"name\":\"lookup3\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"total_tokens\":120,\"prompt_tokens_details\":{\"cached_tokens\":10,\"cache_write_tokens\":5},\"cost\":0.02}}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  }
+ ]
+}
