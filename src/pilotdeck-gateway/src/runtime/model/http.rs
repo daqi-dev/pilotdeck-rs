@@ -12,10 +12,9 @@
 //! (#360-1), including the Google SDK transport. Not ported here: invocation
 //! audit staging (`options.invocation`, A6.4-pr10) and `PILOTDECK_DUMP_REQUEST`.
 //! The outgoing HTTP proxy (`cli/proxy.ts`) is implemented here and wired into
-//! MCP's `streamable_http` / `sse` transports only; model and hook call sites
-//! still use [`https_connector`] and therefore stay direct. MCP clients pass
-//! the `pilotdeck.yaml` `proxy` source through [`ProxySettings`]; `None`
-//! resolves the environment exactly as before.
+//! all HTTP transports (MCP, model, and hook call sites) via [`proxy_https_connector`].
+//! MCP clients pass the `pilotdeck.yaml` `proxy` source through [`ProxySettings`];
+//! `None` resolves the environment exactly as before.
 #![allow(clippy::result_large_err)]
 
 use base64::Engine as _;
@@ -230,17 +229,17 @@ pub trait ModelHttpTransport: Send + Sync {
 /// hyper + rustls (ring, TLS 1.2/1.3), HTTP/1.1, `http` and `https`.
 #[derive(Clone)]
 pub struct HyperModelTransport {
-    client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>,
+    client: Client<hyper_rustls::HttpsConnector<ProxyConnect>, Full<Bytes>>,
 }
 impl HyperModelTransport {
     /// Mozilla roots (`webpki-roots`), like Node's bundled CA store; the OS
     /// trust store and `NODE_EXTRA_CA_CERTS` are not consulted.
     pub fn new() -> Self {
-        Self::from_config(webpki_client_config())
+        Self::from_config(webpki_client_config(), ProxyConfig::from_settings(None))
     }
     /// Trust exactly `roots` (tests use a throwaway CA).
     pub fn with_roots(roots: rustls::RootCertStore) -> Self {
-        Self::from_config(rooted_client_config(roots))
+        Self::from_config(rooted_client_config(roots), ProxyConfig::from_settings(None))
     }
     fn builder() -> rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier> {
         rustls::ClientConfig::builder_with_provider(Arc::new(
@@ -249,9 +248,9 @@ impl HyperModelTransport {
         .with_safe_default_protocol_versions()
         .expect("ring supports the default protocol versions")
     }
-    fn from_config(config: rustls::ClientConfig) -> Self {
+    fn from_config(config: rustls::ClientConfig, proxy: Option<ProxyConfig>) -> Self {
         Self {
-            client: Client::builder(TokioExecutor::new()).build(https_connector(config)),
+            client: Client::builder(TokioExecutor::new()).build(proxy_https_connector(config, proxy)),
         }
     }
 }
@@ -329,10 +328,8 @@ where
 //
 // The baseline installs an undici `EnvHttpProxyAgent` as the process-wide
 // dispatcher at CLI startup, so every `fetch` (model, hook, MCP) uses it. This
-// port keeps the agent semantics but exposes them as an opt-in connector: MCP
-// `streamable_http` / `sse` use [`proxy_https_connector`], model and hook
-// transports keep calling [`https_connector`] and stay direct until a separate
-// decision wires them.
+// port keeps the agent semantics and exposes them through [`proxy_https_connector`],
+// which all HTTP transports (MCP, model, and hook) now use.
 //
 // Sources and priority copied from `src/cli/proxy.ts:20-31` and
 // `pilotdeck.ts:28,48-51,150`:

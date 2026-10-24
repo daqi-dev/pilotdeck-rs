@@ -7,11 +7,11 @@
 //! `MAX_STRING_LENGTH` UTF-16 units, the same bound as the bash tool; a chunk
 //! that would not fit reports `Invalid string length`, the message of the
 //! `RangeError` TS's `stdout += text` throws in the shell runner's data
-//! listener. HTTP hooks use the same rustls connector as the model transport
-//! (`http://` and `https://`); the hook wraps that connector with undici's
-//! 10 s `connectTimeout` so the deadline covers the TLS handshake too, while
-//! the shared model connector's own timeout stays TCP-only. Redirects follow
-//! undici's default policy through `crate::fetch_redirect`. Prompt/agent
+//! listener. HTTP hooks use the same proxy-aware rustls connector as the model
+//! transport (`http://` and `https://`); the hook wraps that connector with
+//! undici's 10 s `connectTimeout` so the deadline covers the TLS handshake too,
+//! while the shared model connector's own timeout stays TCP-only. Redirects
+//! follow undici's default policy through `crate::fetch_redirect`. Prompt/agent
 //! execution needs a model runner (A7).
 use crate::hooks::protocol::{
     HookAsyncOutput, HookDecision, HookOutput, HookSpecificOutput, HookSyncOutput,
@@ -1117,7 +1117,9 @@ pub struct HttpHookOptions {
 pub struct HttpHookExecutor {
     client: hyper_util::client::legacy::Client<
         ConnectDeadline<
-            hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+            hyper_rustls::HttpsConnector<
+                crate::runtime::model::http::ProxyConnect,
+            >,
         >,
         http_body_util::Full<bytes::Bytes>,
     >,
@@ -1158,7 +1160,10 @@ impl HttpHookExecutor {
         // this hook-local wrapper adds undici's whole-connect deadline
         // (TCP + TLS handshake) without changing the shared transport.
         let connector = ConnectDeadline::new(
-            crate::runtime::model::http::https_connector(config),
+            crate::runtime::model::http::proxy_https_connector(
+                config,
+                crate::runtime::model::http::ProxyConfig::from_settings(None),
+            ),
             HOOK_CONNECT_TIMEOUT,
         );
         let client =
