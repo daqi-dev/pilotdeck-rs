@@ -19,6 +19,8 @@
 //! target through the tunnel is not repeated here: the CONNECT machinery is
 //! shared with the MCP transport and covered by tests/mcp_proxy.rs.
 
+#[path = "common/proxy_env.rs"]
+mod proxy_env;
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -27,6 +29,7 @@ use pilotdeck_gateway::runtime::model::{
     CountHttpRequest, HyperCountTransport, ProviderCountTransport,
 };
 use pilotdeck_protocol::{JsObject, parse_json, stringify_json};
+use proxy_env::PROXY_ENV_KEYS;
 use scratch::Scratch;
 use std::{
     convert::Infallible,
@@ -36,16 +39,6 @@ use std::{
     time::Duration,
 };
 use tokio::io::AsyncBufReadExt;
-
-const PROXY_ENV_KEYS: [&str; 7] = [
-    "PILOTDECK_PROXY",
-    "https_proxy",
-    "HTTPS_PROXY",
-    "http_proxy",
-    "HTTP_PROXY",
-    "no_proxy",
-    "NO_PROXY",
-];
 
 /// The scripted CONNECT proxy (same fixture as the MCP proxy replay).
 struct ProxyChild(tokio::process::Child);
