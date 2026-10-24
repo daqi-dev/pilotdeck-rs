@@ -5,6 +5,10 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 #[tokio::main]
 async fn main() -> Result<(), ProxyError> {
+    // Node's process-wide SIGXFSZ ignore (a write past RLIMIT_FSIZE reports
+    // EFBIG instead of killing the process); install the same disposition
+    // at startup so every fs write in this process matches Node (#621).
+    pilotdeck_child_signals::ignore_sigxfsz()?;
     let listen: SocketAddr = std::env::var("PILOTDECK_PROXY_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:28789".into())
         .parse()?;

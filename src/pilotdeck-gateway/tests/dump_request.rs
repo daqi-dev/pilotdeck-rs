@@ -205,11 +205,22 @@ fn dump_request_disabled_by_default() {
 /// only then removes it, so nothing leaks under the case root.
 struct NoAccessDir(std::path::PathBuf);
 
+/// This run's effective uid. The old probe — listing the freshly closed
+/// 0o000 directory to decide whether this run is privileged — also reads as
+/// "privileged" in environments that do not enforce DAC (rootless user
+/// namespaces, some network filesystems), silently skipping the EACCES case
+/// as a false pass; the euid is authoritative for whether the child's open
+/// can be expected to fail.
+fn effective_uid() -> u32 {
+    rustix::process::geteuid().as_raw()
+}
+
 impl NoAccessDir {
-    /// `None` when this run is privileged (euid 0): DAC does not apply, so
-    /// the child's open would succeed and EACCES cannot be provoked. Probed
-    /// by reading the freshly closed directory itself — only a privileged
-    /// process can list a 0o000 directory — which needs no extra dependency.
+    /// `None` only when this run's euid is 0: DAC does not apply, so the
+    /// child's open would succeed and EACCES cannot be provoked. A non-root
+    /// run whose freshly closed directory is still listable means DAC is not
+    /// enforced here — an EACCES assertion could not prove anything — so the
+    /// case fails loudly instead of being skipped.
     fn create(root: &std::path::Path) -> Option<Self> {
         let dir = root.join("noaccess-tmpdir");
         std::fs::create_dir(&dir).unwrap();
@@ -217,9 +228,18 @@ impl NoAccessDir {
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
-            if std::fs::read_dir(&dir).is_ok() {
+            if effective_uid() == 0 {
                 let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
                 return None;
+            }
+            if std::fs::read_dir(&dir).is_ok() {
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                panic!(
+                    "euid {} is not 0 yet can list a freshly 0o000 directory: DAC is not \
+                     enforced in this environment, so the EACCES dump case cannot be \
+                     exercised honestly; failing instead of silently skipping",
+                    effective_uid()
+                );
             }
         }
         Some(Self(dir))
@@ -375,6 +395,143 @@ fn dump_request_write_failure_semantics() {
     }
 }
 
+/// A dump write past `ulimit -f` (RLIMIT_FSIZE) must surface like TS, not
+/// kill the child: Node ignores SIGXFSZ process-wide, so its `writeFileSync`
+/// observes `EFBIG` (`errno -27`, syscall `write`, no path) and the attempt
+/// yields one non-retryable error event. Rust std ignores only SIGPIPE, so
+/// without the matching ignore the child dies with SIGXFSZ (exit 153) before
+/// any io::Error exists (probe: `_tmp/20261025-issue-621-takeover/xfsz-probe/`,
+/// rustc 1.99.0 vs node v22.22.0, `ulimit -f 1`, 4 KiB write); the dump path
+/// installs the ignore before writing, which is what this case pins.
+#[test]
+fn dump_request_write_over_file_size_limit_surfaces_efbig() {
+    let marker = format!(
+        "dump-marker-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let root = CaseRoot::acquire("xfsz");
+    // `ulimit -f 1` caps files at one block (1 KiB on this darwin, 512 B on
+    // linux): the exclusive create still succeeds, the write of the (much
+    // larger) dump does not.
+    let output = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("ulimit -f 1; exec \"$PDRS_CHILD_EXE\" --exact dump_child --ignored --nocapture")
+        .env("PDRS_CHILD_EXE", std::env::current_exe().unwrap())
+        .env("PDRS_DUMP_PROTOCOL", "google")
+        .env("PDRS_DUMP_MARKER", &marker)
+        .env("PDRS_DUMP_MODE", "write-fail")
+        .env("PILOTDECK_DUMP_REQUEST", "1")
+        .env("TMPDIR", &*root)
+        .output()
+        .expect("run isolated over-limit dump case");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    // Not killed by SIGXFSZ: a signal death has no exit code at all.
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "google/xfsz write-fail (a SIGXFSZ death reports 153 or no code):\n{stdout}\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("SENT_BODY="),
+        "google/xfsz: the SDK send must not run after a failed dump: {stdout}"
+    );
+    let line = |prefix: &str| {
+        stdout
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix))
+            .unwrap_or_else(|| panic!("google/xfsz: no {prefix} line: {stdout}"))
+    };
+    assert_eq!(line("ERROR_CODE="), "EFBIG", "error code");
+    assert_eq!(line("ERROR_RETRYABLE="), "false", "retryable");
+    assert_eq!(line("ERROR_RAW_ERRNO="), "-27", "raw errno (libuv sign)");
+    assert_eq!(line("ERROR_RAW_CODE="), "EFBIG", "raw code");
+    assert_eq!(line("ERROR_RAW_SYSCALL="), "write", "raw syscall");
+    assert_eq!(
+        line("ERROR_RAW_PATH="),
+        "MISSING",
+        "write-stage failures carry no path, like the TS probe"
+    );
+    assert_eq!(
+        line("ERROR_MESSAGE="),
+        "EFBIG: file too large, write",
+        "Node write-stage message shape"
+    );
+    // The partial file stays behind, like TS's `writeFileSync` under the same
+    // limit (probe: block-sized remnants from both runtimes).
+    let files = dump_files_in(&root);
+    assert_eq!(files.len(), 1, "exactly the truncated dump: {files:?}");
+    let partial = root.join(&files[0]);
+    let size = std::fs::metadata(&partial)
+        .unwrap_or_else(|error| panic!("stat partial dump {partial:?}: {error}"))
+        .len();
+    assert!(
+        size > 0 && size <= 1024,
+        "partial dump written up to the one-block ulimit, got {size} bytes"
+    );
+}
+
+/// An empty TMPDIR is skipped the way JS `||` skips it: Node's `os.tmpdir()`
+/// falls through to TMP, then TEMP, else `/tmp` (probe:
+/// `_tmp/20261025-issue-621-fix-r4/node-probe/`), while
+/// `std::env::temp_dir()` answers `""` for a set-but-empty TMPDIR and would
+/// drop the dump into the process's working directory. The child runs with
+/// its own exclusive working directory, so a cwd-relative dump cannot hide.
+#[test]
+fn dump_request_empty_tmpdir_never_lands_in_cwd() {
+    let marker = format!(
+        "dump-marker-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let root = CaseRoot::acquire("empty-tmpdir");
+    let cwd = CaseRoot::acquire("empty-tmpdir-cwd");
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "dump_child", "--ignored", "--nocapture"])
+        .env("PDRS_DUMP_PROTOCOL", "openai")
+        .env("PDRS_DUMP_MARKER", &marker)
+        .env("PDRS_DUMP_MODE", "ok")
+        .env("PILOTDECK_DUMP_REQUEST", "1")
+        .env("TMPDIR", "")
+        .env("TMP", &*root)
+        .env_remove("TEMP")
+        .current_dir(&*cwd)
+        .output()
+        .expect("run isolated empty-TMPDIR dump case");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(output.status.success(), "empty-tmpdir:\n{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("SENT_BODY="),
+        "empty-tmpdir: the send must still run: {stdout}"
+    );
+    assert!(
+        dump_files_in(&cwd).is_empty(),
+        "empty TMPDIR must never drop the dump into the working directory: {:?}",
+        &*cwd
+    );
+    let dumps = reported_dump_paths(&stdout);
+    assert_eq!(dumps.len(), 1, "expected exactly one dump: {stdout}");
+    assert_eq!(
+        dumps[0].parent(),
+        Some(&*root),
+        "empty TMPDIR must fall through to TMP (node os.tmpdir()): {:?}",
+        dumps[0]
+    );
+    assert_eq!(
+        dump_files_in(&root).len(),
+        1,
+        "the dump lands in the TMP directory, not the cwd"
+    );
+}
+
 /// TS `complete()` never dumps: `streamModel.ts:124` calls
 /// `sendProviderRequest` directly, outside the stream loop's dump gate at
 /// `:196`. The Rust send path is shared by `complete_model` and
@@ -431,7 +588,11 @@ async fn dump_child() {
     let request = parse_json(
         &json!({
             "provider": "dump-provider", "model": "dump-model",
-            "messages": [{"role": "user", "content": [{"type": "text", "text": "dump test"}]}]
+            // The body must clear one `ulimit -f` block (1 KiB on this
+            // darwin, 512 B on linux) so the over-limit case fails inside
+            // the write, not before it.
+            "messages": [{"role": "user", "content": [{"type": "text", "text":
+                format!("dump test {}", "x".repeat(4096))}]}]
         })
         .to_string(),
     )
