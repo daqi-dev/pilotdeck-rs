@@ -2408,24 +2408,21 @@ fn parse_openai_complete_response(raw: &JsValue, _provider_id: &JsValue) -> JsVa
     if let Some(reasoning) = field(message, "reasoning_content")
         .as_string()
         .or_else(|| field(message, "reasoning").as_string())
+        .filter(|s| !s.is_empty())
     {
-        if !reasoning.is_empty() {
-            content.push(object([
-                ("type", "thinking".into()),
-                ("text", JsValue::String(reasoning.clone())),
-                ("reasoningContent", JsValue::String(reasoning.clone())),
-            ]));
-        }
+        content.push(object([
+            ("type", "thinking".into()),
+            ("text", JsValue::String(reasoning.clone())),
+            ("reasoningContent", JsValue::String(reasoning.clone())),
+        ]));
     }
 
     // Handle text content
-    if let Some(text) = field(message, "content").as_string() {
-        if !text.is_empty() {
-            content.push(object([
-                ("type", "text".into()),
-                ("text", JsValue::String(text.clone())),
-            ]));
-        }
+    if let Some(text) = field(message, "content").as_string().filter(|s| !s.is_empty()) {
+        content.push(object([
+            ("type", "text".into()),
+            ("text", JsValue::String(text.clone())),
+        ]));
     }
 
     // Handle tool calls
