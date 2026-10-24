@@ -6,12 +6,10 @@
 //! provider's own cleanup.
 
 use super::{
-    DisposeFuture, FamilyResource, Family, Resource, ResourceFamilySource,
-    RuntimeError, RuntimeResult, StageContext, StageSink,
+    DisposeFuture, Family, FamilyResource, Resource, ResourceFamilySource, RuntimeError,
+    RuntimeResult, StageContext, StageSink,
 };
-use crate::runtime::memory::{
-    MemoryConfig, ProjectMemoryBundle, ProjectMemoryBundleOptions,
-};
+use crate::runtime::memory::{MemoryConfig, ProjectMemoryBundle, ProjectMemoryBundleOptions};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -38,11 +36,13 @@ impl ResourceFamilySource for MemoryBundleFamilySource {
             });
 
         // Parse agent model from snapshot
+        // config.agent.model is an object with "id" field, not a string
         let agent_model = snapshot
             .get("config")
             .and_then(|config| config.get("agent"))
             .and_then(|agent| agent.get("model"))
-            .and_then(|model| model.as_string())
+            .and_then(|model| model.get("id"))
+            .and_then(|id| id.as_string())
             .and_then(|s| s.to_utf8().ok());
 
         let options = ProjectMemoryBundleOptions {
@@ -56,9 +56,12 @@ impl ResourceFamilySource for MemoryBundleFamilySource {
         let bundle = Arc::new(ProjectMemoryBundle::new(options));
 
         // Register the bundle as dispose owner BEFORE staging (TS field assignment order)
-        sink.register_owner(Family::MemoryBundle, Arc::new(MemoryBundleResource {
-            bundle: Arc::clone(&bundle),
-        }));
+        sink.register_owner(
+            Family::MemoryBundle,
+            Arc::new(MemoryBundleResource {
+                bundle: Arc::clone(&bundle),
+            }),
+        );
 
         // Stage the bundle to get resources
         let resources = bundle.stage().map_err(|error| {

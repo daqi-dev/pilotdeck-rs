@@ -5,15 +5,15 @@
 //! only registers published resources through the sink.
 
 use super::{
-    FamilyResource, Family, Resource, ResourceFamilySource, RuntimeResult, StageContext,
-    StageSink,
+    Family, FamilyResource, Resource, ResourceFamilySource, RuntimeResult, StageContext, StageSink,
 };
+use crate::runtime::context::tool_budget::{ToolResultBudget, ToolResultBudgetOptions};
 use crate::runtime::context::{
     DefaultContextRuntime, InstructionDiscovery, Options as ContextOptions,
     RuntimeContextSurface as ContextRuntimeContextSurface,
 };
-use crate::runtime::context::tool_budget::{ToolResultBudget, ToolResultBudgetOptions};
 use std::any::Any;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
@@ -42,12 +42,15 @@ impl ResourceFamilySource for ContextStorageFamilySource {
                     None
                 } else {
                     // InstructionDiscovery needs project_root, cwd, pilot_home, managed_dir
-                    let cwd = std::env::current_dir().unwrap_or_else(|_| project_root.clone());
+                    // TS baseline passes projectRoot for both project_root and cwd
+                    let managed_dir = std::env::var("PILOTDECK_MANAGED_CONFIG")
+                        .ok()
+                        .map(PathBuf::from);
                     Some(InstructionDiscovery::new(
                         project_root.clone(),
-                        cwd,
+                        project_root.clone(),
                         pilot_home.clone(),
-                        None, // managed_dir from environment
+                        managed_dir,
                     ))
                 }
             });
@@ -55,7 +58,7 @@ impl ResourceFamilySource for ContextStorageFamilySource {
         // Tool result budget: requires tool_results_dir
         let tool_results_dir = project_root.join(".pilotdeck").join("tool-results");
         let tool_result_budget = Some(Arc::new(ToolResultBudget::new(
-            ToolResultBudgetOptions::new(tool_results_dir)
+            ToolResultBudgetOptions::new(tool_results_dir),
         )));
 
         // Build a clock adapter that converts SystemTime to f64 (ms since epoch)
@@ -74,7 +77,9 @@ impl ResourceFamilySource for ContextStorageFamilySource {
             truncate_first_keep_ratio: 0.5,
             extension: None,
             include_extensions_with_custom_system_prompt: false,
-            runtime_context_surface: convert_runtime_context_surface(profile.runtime_context_surface),
+            runtime_context_surface: convert_runtime_context_surface(
+                profile.runtime_context_surface,
+            ),
             instruction_discovery,
             prompt_contributions: None,
             tool_result_budget: tool_result_budget.clone(),
@@ -158,11 +163,7 @@ fn convert_runtime_context_surface(
     value: super::RuntimeContextSurface,
 ) -> ContextRuntimeContextSurface {
     match value {
-        super::RuntimeContextSurface::SystemPrompt => {
-            ContextRuntimeContextSurface::SystemPrompt
-        }
-        super::RuntimeContextSurface::UserMessage => {
-            ContextRuntimeContextSurface::UserMessage
-        }
+        super::RuntimeContextSurface::SystemPrompt => ContextRuntimeContextSurface::SystemPrompt,
+        super::RuntimeContextSurface::UserMessage => ContextRuntimeContextSurface::UserMessage,
     }
 }

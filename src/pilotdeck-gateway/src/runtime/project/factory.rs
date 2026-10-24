@@ -455,12 +455,12 @@ impl Families {
             router_runtime: unsupported(Family::RouterRuntime, "A6.9-pr3b"),
             lsp: None,
             execution_world: unsupported(Family::ExecutionWorld, "A6.9-pr3c"),
-            context_storage: Arc::new(super::context_storage::ContextStorageFamilySource),
+            context_storage: unsupported(Family::ContextStorage, "A6.9-pr3d"),
             compaction: None,
             prompt_cache_coordinator: None,
             session_title: None,
             mcp: unsupported(Family::McpProvider, "A6.9-pr3c"),
-            memory: Arc::new(super::memory_bundle::MemoryBundleFamilySource),
+            memory: unsupported(Family::MemoryBundle, "A6.9-pr3d"),
         }
     }
 }
