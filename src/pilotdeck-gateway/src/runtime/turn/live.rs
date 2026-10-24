@@ -404,8 +404,8 @@ impl HostHandler for StreamHandler {
 
 /// Turn lifecycle validation against the TurnRunner baseline. The host layer
 /// owns wire sequence/identity; this machine only tracks lifecycle order:
-/// turn_started opens the turn, input_accepted and turn_failed appear at most
-/// once each in that order, and the authoritative terminal is projected exactly
+/// turn_started opens the turn, input_accepted appears at most once, turn_failed
+/// follows it and may repeat before the error terminal (TurnRunner re-emits it), and the authoritative terminal is projected exactly
 /// once by the session from ExecuteResult. One instance observes the receive
 /// path (cut-off and contradiction gate); another observes only what the
 /// consumer was actually delivered (the terminal justification). It does not

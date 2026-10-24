@@ -1637,3 +1637,35 @@ async fn validate_event_rejection_is_never_acked_on_the_wire() {
     assert_reaped(pid).await;
     println!("HOST_REJECT {mode}: wire ACK record empty; applied=0; disposed=1; child reaped");
 }
+#[tokio::test]
+async fn ack_eof_recorder_records_a_real_ack() {
+    // Positive control for `validate_event_rejection_is_never_acked_on_the_wire`:
+    // the same recorder must see the ACK the host sends for an applied event,
+    // otherwise an always-empty record would make that negative test vacuous.
+    let mode = "ack-eof-recorder-positive";
+    let handler = Arc::new(RecordingHook::default());
+    let (mut command, receipt) = peer(mode);
+    let client = HostClient::spawn(&mut command, Some(&"fixture".into()), limits())
+        .await
+        .unwrap();
+    let pid = client.child_id().expect("owned peer pid");
+    client
+        .execute(request(), handler.clone())
+        .await
+        .expect("an applied event and a final must complete the execution");
+    let record = receipt.0.with_extension("acks");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut text = std::fs::read_to_string(&record).unwrap_or_default();
+    while text.is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+        text = std::fs::read_to_string(&record).unwrap_or_default();
+    }
+    let frames: serde_json::Value = serde_json::from_str(text.trim()).expect("ack record JSON");
+    assert!(
+        frames.as_array().is_some_and(|frames| frames
+            .iter()
+            .any(|frame| frame["method"] == "ack" && frame["lastAppliedSequence"] == 0)),
+        "recorder missed the host ACK for sequence 0: {text}"
+    );
+    assert_reaped(pid).await;
+}
