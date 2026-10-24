@@ -146,10 +146,15 @@ def strip_code(body: str) -> str:
         if re.match(r"^(?: {4}|\t)", line):
             continue  # 缩进代码块（≥4 空格或 tab）：其中的标记写法不算标记
         kept = _strip_inline(line)
-        lines.append(kept)
         # 只有块级注释起始（原始行首 ≤3 空格就是 <!--，CommonMark type-2 HTML 块）才开启跨行注释状态；
         # 行内的 <!--（含转义、属性值里、剥掉行内代码后拼出来的）只是文字，不能跳过下一行的围栏
-        comment = bool(re.match(r"^ {0,3}<!--", line)) and "-->" not in line
+        is_comment_start = bool(re.match(r"^ {0,3}<!--", line))
+        is_single_line_comment = is_comment_start and "-->" in line
+        comment = is_comment_start and not is_single_line_comment
+        # 注释起始行（多行 <!-- 开头）不计入 prose，避免起始行里的 Closes/Refs 触发 issue 关联检查。
+        # 单行完整注释（<!-- ... -->）照常加入，供 marker_lines 提取标记（结果块、no-issue 等）。
+        if not (is_comment_start and not is_single_line_comment):
+            lines.append(kept)
     return "\n".join(lines)
 
 

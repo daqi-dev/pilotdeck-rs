@@ -273,7 +273,27 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 39} 例）")
+    # 多行注释起始行里的 Closes 不能触发 issue 关联（P0 修复，2026-10-24）
+    # 用带真实结果块的 base（不是 waiver），这样 check() 才会验证 issue 关联
+    GATE_BASE = "<!-- pr-gate:v1 head=2b69e8d0 roles=sibling:PASS,concurrency:PASS,boundary:PASS,simplify:PASS p0=0 p1=0 diff_lines=100 scope=full runner=zai model=glm-5.3-mb readonly=tools -->\n"
+    body_multiline_comment = (GATE_BASE + "<!-- reviewers: glm,codex -->\n<!--\nCloses #999\n-->\n")
+    errs_multiline = gate.check(body_multiline_comment, "", "deepseek/x")
+    good = any("缺 issue 关联" in e for e in errs_multiline)
+    print(f"{'PASS' if good else 'FAIL'} 多行注释内 Closes 不算 issue 关联（应 FAIL 无关联）")
+    fails += not good
+    # 多行注释起始行（开口行）里的 Closes 不能触发 issue 关联
+    body_open_line = (GATE_BASE + "<!-- reviewers: glm,codex -->\n<!-- Closes #999\n-->\n")
+    errs_open = gate.check(body_open_line, "", "deepseek/x")
+    good = any("缺 issue 关联" in e for e in errs_open)
+    print(f"{'PASS' if good else 'FAIL'} 多行注释开口行 Closes 不算 issue 关联（应 FAIL 无关联）")
+    fails += not good
+    # prose 里真实的 Closes 应通过 issue 关联检查
+    body_real_closes = (GATE_BASE + "<!-- reviewers: glm,codex -->\nCloses #275\n")
+    errs_real = gate.check(body_real_closes, "", "deepseek/x")
+    has_issue_err = any("缺 issue 关联" in e for e in errs_real)
+    print(f"{'PASS' if not has_issue_err else 'FAIL'} prose 里真实 Closes 算 issue 关联（应不报 issue 错）")
+    fails += has_issue_err
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 43} 例）")
     return 1 if fails else 0
 
 
