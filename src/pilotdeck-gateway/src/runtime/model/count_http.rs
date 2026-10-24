@@ -1,5 +1,6 @@
 //! Async count transport. HTTPS uses the provider transport's rustls connector
-//! (`super::http::proxy_https_connector`, A6.4-pr5).
+//! (`super::http::proxy_https_connector`, A6.4-pr5); all provider-side HTTP
+//! clients share the same proxy-aware connector.
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{HeaderMap, Method, Request, Response, body::Body};
