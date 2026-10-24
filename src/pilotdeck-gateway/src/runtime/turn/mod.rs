@@ -2,6 +2,7 @@
 pub mod coordinator;
 pub mod failure_guard;
 pub mod gateway;
+pub mod live;
 pub mod projector;
 pub mod publish;
 pub mod read;
