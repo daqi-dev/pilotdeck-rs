@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Mutation negative controls for the model-complete TS oracle.
 
-Each control mutates this worktree only, compiles the integration test, and
-requires a real assertion failure ("test result: FAILED") from the mutated
-build. Compile errors do not count.
+Each control mutates this worktree only, compiles the selected target (the
+model_complete integration oracle, or a lib unit test for the cap maintenance
+controls), and requires a real assertion failure ("test result: FAILED") from
+the mutated build. Compile errors do not count.
 
 Recovery protocol (concurrency P2):
 - Before any mutation the original bytes and their SHA-256 are persisted to a
@@ -46,6 +47,10 @@ TEST = "native_complete_model_matches_real_ts_complete"
 RETRY_TEST = "complete_429_is_retryable_but_is_not_retried"
 TRANSPORT_TEST = "native_complete_transport_retry_matches_real_ts"
 TIMEOUT_TEST = "native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeout"
+LIB_CAP_BOUNDARY_TEST = (
+    "runtime::model::http::tests::complete_shape_probe_cap_boundary_is_exact_across_frames"
+)
+LIB_DEFAULT_LIMIT_TEST = "runtime::model::http::tests::shape_string_limit_defaults_to_v8_max"
 
 CARGO_CAP = int(os.environ.get("NEGCTL_CARGO_CAP", "4"))
 SLOT_WAIT_SECONDS = float(os.environ.get("NEGCTL_SLOT_WAIT_SECONDS", "1800"))
@@ -244,14 +249,61 @@ CONTROLS = [
                     });""",
         TEST,
     ),
+    (
+        # The main-loop cap boundary must reject exactly limit + 1 UTF-16
+        # units across frames. The target test also proves the over-limit
+        # prefix is discarded before a later body read error; widening the
+        # comparison keeps that prefix and fails the assertion.
+        "shape-probe-loop-cap-allows-limit-plus-one",
+        """                    units += text[start..].encode_utf16().count();
+                    if units > string_limit() {""",
+        """                    units += text[start..].encode_utf16().count();
+                    if units > string_limit() + 1 {""",
+        LIB_CAP_BOUNDARY_TEST,
+    ),
+    (
+        # Equivalent to the r5 off-tree M9 control, now on the single shared
+        # default tail. Both builds fall through to usize::MAX, so the pinned
+        # V8 literal assertion (not a constant-vs-itself comparison) fails.
+        "shape-probe-string-limit-default-removed",
+        """pub(crate) fn string_limit() -> usize {
+    #[cfg(test)]
+    {
+        if let Some(limit) = STRING_LIMIT.with(std::cell::Cell::get) {
+            return limit;
+        }
+    }
+    super::count_http::MAX_STRING_LENGTH
+}""",
+        """pub(crate) fn string_limit() -> usize {
+    #[cfg(test)]
+    {
+        if let Some(limit) = STRING_LIMIT.with(std::cell::Cell::get) {
+            return limit;
+        }
+    }
+    usize::MAX
+}""",
+        LIB_DEFAULT_LIMIT_TEST,
+    ),
 ]
+
+# These lib controls need a different cargo target than the integration
+# oracle controls. Keep the existing runner/recovery protocol unchanged.
+LIB_TESTS = {
+    "shape-probe-loop-cap-allows-limit-plus-one",
+    "shape-probe-string-limit-default-removed",
+}
 
 # These controls must fail on the newly pinned target case itself, not on some
 # unrelated assertion or a compile error. The case name is part of the panic
-# message (`<case>: request count` / `<case>: canonical response`).
+# message (`<case>: request count` / `<case>: canonical response`), and lib
+# test output repeats the full test path on its `... FAILED` line.
 TARGET_CASE = {
     "anthropic-shape-check-bypassed": "anthropic-200-empty-endpoint-fallback:",
     "responses-shape-check-bypassed": "responses-200-empty-endpoint-fallback:",
+    "shape-probe-loop-cap-allows-limit-plus-one": LIB_CAP_BOUNDARY_TEST,
+    "shape-probe-string-limit-default-removed": LIB_DEFAULT_LIMIT_TEST,
 }
 
 _active: dict | None = None
@@ -691,8 +743,9 @@ def run_bounded(cmd: list[str], timeout: float, env: dict | None = None) -> tupl
             untrack_proc(proc)
 
 
-def run_test(test_name: str) -> tuple[int, str]:
+def run_test(test_name: str, lib_target: bool = False) -> tuple[int, str]:
     # The cargo slot is checked before the mutation; do not mutate without it.
+    target = ["--lib"] if lib_target else ["--test", "model_complete"]
     command = [
         "cargo",
         "test",
@@ -700,8 +753,7 @@ def run_test(test_name: str) -> tuple[int, str]:
         str(MANIFEST),
         "-p",
         "pilotdeck-gateway",
-        "--test",
-        "model_complete",
+        *target,
         test_name,
         "--",
         "--exact",
@@ -841,7 +893,7 @@ def main(argv: list[str] | None = None) -> int:
         wait_for_slot()
         begin_mutation(name, mutated.encode())
         try:
-            code, output = run_test(test_name)
+            code, output = run_test(test_name, name in LIB_TESTS)
             caught = "test result: FAILED" in output and code != 0
             target = TARGET_CASE.get(name)
             if caught and target is not None:
@@ -849,6 +901,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{name}: {'caught' if caught else 'NOT CAUGHT'} (exit {code})")
             if target is not None:
                 print(f"  target case in output: {target in output}")
+            if caught and target is not None:
+                # Keep the real target FAILED / panic lines in the log; a bare
+                # "caught" is not by itself evidence of which assertion failed.
+                lines = output.splitlines()
+                for index, line in enumerate(lines):
+                    if target in line or "panicked at" in line:
+                        print("  " + line.strip())
+                        if "panicked at" in line:
+                            for extra in lines[index + 1 : index + 5]:
+                                print("  " + extra.strip())
             if not caught:
                 tail = "\n".join(output.splitlines()[-25:])
                 print(tail)

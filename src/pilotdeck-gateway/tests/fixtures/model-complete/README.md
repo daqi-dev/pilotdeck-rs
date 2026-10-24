@@ -116,8 +116,13 @@ r6 形状绕过负控：在 `http.rs` 的形状调用处分别把 Anthropic / Re
 判断按协议短路为真，使首候选 200 `{}` 被误接受；只有目标新例
 `anthropic-200-empty-endpoint-fallback` /
 `responses-200-empty-endpoint-fallback` 的 `request count`（或 canonical）
-断言失败才算抓住，输出必须含目标用例名。共 17 条，每个变异都先编译，只接受
-已编译测试的断言失败。
+断言失败才算抓住，输出必须含目标用例名。再加两个 r7 lib 负控（只走 `--lib`
+指定 full-path 测试，其余仍走 `model_complete` 集成 target）：主循环 cap
+比较由 `>` 放宽为 `> limit + 1`，目标跨帧测试的 limit+1 拒绝/不保留前缀断言
+必须失败；把 `string_limit()` 的唯一共享默认尾部改成 `usize::MAX`（等价 r5
+off-tree M9 控件），由钉死 `0x1fffffe8` 字面量的默认值断言抓住，不再用同一
+常量与自身比较。恢复、进程组回收与 cargo 槽位逻辑未改。共 19 条，每个变异都
+先编译，只接受已编译测试的断言失败。
 
 恢复：变异前把原始字节与 SHA-256 写到 worktree 外的状态目录（默认
 `$TMPDIR/pdrs-negctl-<worktree哈希>`），SIGTERM/SIGINT/SIGHUP 处理器同步恢复；

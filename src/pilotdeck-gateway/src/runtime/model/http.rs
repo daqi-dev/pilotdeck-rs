@@ -2148,22 +2148,34 @@ async fn read_frame(
 /// V8's string length limit (`MAX_STRING_LENGTH` UTF-16 units), shared by
 /// every cross-event string accumulator of the stream path and the non-stream
 /// shape probe.
-#[cfg(not(test))]
+///
+/// There is one function and one default tail expression for both builds. A
+/// test only overrides it explicitly through [`LimitGuard`]; with no override
+/// the test build runs the same `count_http::MAX_STRING_LENGTH` expression as
+/// production. The production build does not compile the override branch.
 pub(crate) fn string_limit() -> usize {
+    #[cfg(test)]
+    {
+        if let Some(limit) = STRING_LIMIT.with(std::cell::Cell::get) {
+            return limit;
+        }
+    }
     super::count_http::MAX_STRING_LENGTH
 }
 #[cfg(test)]
 thread_local! {
-    /// Tests shrink V8's string limit to exercise the cap without 512 MiB.
-    pub(crate) static STRING_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(super::count_http::MAX_STRING_LENGTH) };
+    /// `None` (the default) means "use the shared V8 limit"; only
+    /// [`LimitGuard`] sets a shrunken test limit, and nested guards restore the
+    /// previous value on drop.
+    pub(crate) static STRING_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 /// Restores a test's thread-local limit even if its assertion panics.
 #[cfg(test)]
-pub(crate) struct LimitGuard(usize);
+pub(crate) struct LimitGuard(Option<usize>);
 #[cfg(test)]
 impl LimitGuard {
     pub(crate) fn set(limit: usize) -> Self {
-        Self(STRING_LIMIT.with(|cell| cell.replace(limit)))
+        Self(STRING_LIMIT.with(|cell| cell.replace(Some(limit))))
     }
 }
 #[cfg(test)]
@@ -2171,10 +2183,6 @@ impl Drop for LimitGuard {
     fn drop(&mut self) {
         STRING_LIMIT.with(|cell| cell.set(self.0));
     }
-}
-#[cfg(test)]
-pub(crate) fn string_limit() -> usize {
-    STRING_LIMIT.with(std::cell::Cell::get)
 }
 #[cfg(not(test))]
 fn sse_limit() -> usize {
