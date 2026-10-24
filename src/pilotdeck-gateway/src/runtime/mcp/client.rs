@@ -692,6 +692,18 @@ fn join_normalized(base: &str, name: &str) -> String {
     }
 }
 
+/// Base directory for per-session MCP temp dirs: node's `os.tmpdir()` order,
+/// but a non-UTF-8 value is skipped like an unset one. The downstream path
+/// handling here is `&str`, so a lossy conversion would silently create a
+/// different `U+FFFD` directory; skipping keeps this call site's behavior from
+/// before the shared helper. Node itself keeps the raw bytes, so a non-UTF-8
+/// TMPDIR remains a residual deviation on this path (A6.4-MODEL-DUMP-SECURE-001).
+fn mcp_session_tmpdir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> String {
+    crate::node_io::node_tmpdir(|key| var(key).filter(|value| value.to_str().is_some()))
+        .into_string()
+        .expect("only UTF-8 candidates are selected")
+}
+
 /// `mkdirSync(path, { recursive: true })`; `''` fails like Node.
 fn mkdir_recursive(base: &str) -> Result<(), McpClientError> {
     if base.is_empty() {
@@ -985,12 +997,7 @@ impl McpClient {
                 if *per_session && storage_root.is_none_or(str::is_empty) {
                     let base = match env_value(env_ref, "PILOTDECK_SESSION_TMPDIR") {
                         Some(base) => base.to_string(),
-                        // Non-UTF-8 TMPDIR bytes stay selected here like
-                        // node's `os.tmpdir()`; only the (unrepresentable)
-                        // spelling is lossy for these string consumers.
-                        None => crate::node_io::node_tmpdir(|key| std::env::var_os(key))
-                            .to_string_lossy()
-                            .into_owned(),
+                        None => mcp_session_tmpdir(|key| std::env::var_os(key)),
                     };
                     mkdir_recursive(&base)?;
                     let prefix = join_normalized(&base, &format!("pilotdeck-mcp-{}-", spec.id));
@@ -1324,6 +1331,33 @@ fn null_property(method: &str) -> McpClientError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_session_tmpdir_skips_non_utf8_like_before() {
+        use std::os::unix::ffi::OsStringExt;
+        let env = |pairs: Vec<(&'static str, std::ffi::OsString)>| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| v.clone())
+            }
+        };
+        let bad = std::ffi::OsString::from_vec(b"/tmp/\xff".to_vec());
+        assert_eq!(
+            mcp_session_tmpdir(env(vec![("TMPDIR", bad.clone()), ("TMP", "/x".into())])),
+            "/x"
+        );
+        assert_eq!(mcp_session_tmpdir(env(vec![("TMPDIR", bad)])), "/tmp");
+        assert_eq!(
+            mcp_session_tmpdir(env(vec![("TMPDIR", "".into()), ("TEMP", "/t/".into())])),
+            "/t"
+        );
+        assert_eq!(
+            mcp_session_tmpdir(env(vec![("TMPDIR", "/a/b".into())])),
+            "/a/b"
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn close_leaves_pending_handshake_cleanup_for_dispose() {
