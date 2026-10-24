@@ -6,6 +6,7 @@ on:
     branches: [main]
   # merge queue：必需检查 check / gateway-schema-baseline 必须也在队列的临时合并提交上跑，否则进队 PR 永远等不到结果
   merge_group:
+  workflow_dispatch:
 
 jobs:
   metadata-observer:
