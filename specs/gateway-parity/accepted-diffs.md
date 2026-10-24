@@ -945,3 +945,13 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **机器判据**：真实 TS 用例“env http proxy 已装 → reload `ftp://` → 请求仍走 env 代理”；
   Rust 回放一致；负控改回“失败即直连”，CONNECT 日志必须转红。
 - **批准记录**：无；**已知未对齐（未批准，待人批）**，不新增豁免、不改判分语义；后续实现见跟进单。
+
+
+### A6.7-HOOK-TLS-TRUST-001 · 当前状态（追加，不改上文；#572 / PR #613）
+
+- **类别**：原信任源 / 代理差异的局部消除；未消除项仍为已知未对齐。
+- **当前状态**：HTTP hook 的 `HttpHookExecutor::with_config` 与模型的 `HyperModelTransport::from_config` 已接入共享 `proxy_https_connector`，以 `ProxyConfig::from_settings(None)` 读取环境代理并应用 NO_PROXY、HTTP CONNECT 与代理认证；原条目「不走代理」对受支持的 HTTP 代理已过期。共享 `ProxyConfig::tunnel` 使用 `tokio::net::TcpStream::connect(...).await`，并非阻塞 TCP 连接。
+- **TS 依据**：固定 cc7c4e6 的 `cli/pilotdeck.ts:28` 与 `cli/proxy.ts` 安装全局 undici 代理；本次只记录调用点接入状态，不扩大一致性结论。
+- **范围**：`src/pilotdeck-gateway/src/runtime/hooks/exec.rs` 与 `runtime/model/http.rs` 的环境 HTTP 代理路径。hook / model 构造点仍未接入 `pilotdeck.yaml` 的 `proxy` 配置；webpki 信任根仍不读取 `NODE_EXTRA_CA_CERTS`；共享连接器的 HTTPS / SOCKS 代理和非法 URL 回退限制仍存在（机制见 A6.5-MCP-PROXY-HTTPS-001 / SOCKS-001 / FALLBACK-001），不得据此宣称全部代理或私有 CA 已对齐。
+- **机器判据**：`src/pilotdeck-gateway/tests/mcp_proxy.rs::replays_ts_mcp_http_proxy_scenarios` 覆盖共享连接器的 CONNECT、NO_PROXY、认证与失败路径；`runtime/model/http.rs::proxy_tests` 覆盖代理来源和匹配规则。上述是共享连接器证据；hook / model 各自调用点的端到端代理回放尚未新增，不冒充完成该覆盖。异步 TCP 的依据为 `ProxyConfig::tunnel` 现有代码（由 d8545ca99 引入）。
+- **批准记录**：本轮用户明确要求追加实际实现状态；本条仅更正已实现部分，不新增豁免、不改冻结判分语义。剩余信任源与代理限制沿用未批准状态。

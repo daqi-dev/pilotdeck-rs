@@ -10,7 +10,8 @@
 //!
 //! HTTP redirects follow undici through `crate::fetch_redirect::follow`
 //! (#360-1), including the Google SDK transport. Not ported here: invocation
-//! audit staging (`options.invocation`, A6.4-pr10) and `PILOTDECK_DUMP_REQUEST`.
+//! audit staging (`options.invocation`, A6.4-pr10). Both provider paths support
+//! `PILOTDECK_DUMP_REQUEST` for inspecting outgoing request bodies.
 //! The outgoing HTTP proxy (`cli/proxy.ts`) is implemented here and wired into
 //! all HTTP transports (MCP, model, and hook call sites) via [`proxy_https_connector`].
 //! MCP clients pass the `pilotdeck.yaml` `proxy` source through [`ProxySettings`];
@@ -1452,11 +1453,11 @@ async fn provider_exchange(
 
 /// Debug helper that writes the request body to a timestamped JSON file in /tmp
 /// when `PILOTDECK_DUMP_REQUEST=1`. Matches TS `streamModel.ts:196-203,395-401`.
-fn dump_request_to_file(final_body: &JsValue, original_request: &JsValue) {
+fn dump_request_to_file(final_body: &JsValue, model: &JsValue) {
     use std::io::Write;
 
-    // Extract model name for the log message (from the original canonical request).
-    let model = field(original_request, "model")
+    // Google carries its model in the URL, not in the outgoing JSON body.
+    let model = model
         .as_string()
         .and_then(|s| s.to_utf8().ok())
         .unwrap_or_else(|| "unknown".to_string());
@@ -1513,7 +1514,7 @@ async fn send_provider_request(
     // PILOTDECK_DUMP_REQUEST: debug aid that writes the provider request body
     // to a timestamped file in /tmp (TS `streamModel.ts:196-203,395-401`).
     if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
-        dump_request_to_file(&final_body, body);
+        dump_request_to_file(&final_body, field(body, "model"));
     }
 
     let encoded = Bytes::from(encoded);
@@ -1849,6 +1850,10 @@ async fn send_google_request(
             )
         })?
         .unwrap_or_default();
+    if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
+        dump_request_to_file(&final_body, model);
+    }
+
     let endpoint = providers::google::endpoint(provider, model).map_err(|error| (error, false))?;
     let (url, header_map) = build_http_request(&endpoint, &headers)
         .map_err(|error| (ModelStreamError::thrown("TypeError", error.message), false))?;
