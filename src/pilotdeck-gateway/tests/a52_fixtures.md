@@ -43,11 +43,9 @@ finishReason、实时事件 runId、registry state 和磁盘记录 runId 四项�
 新增带标签断言时须同步补变异及 `ALL` 列表。raw 身份检查先于 API 查询，
 完整 record（含 result）及 events 再与独立读盘结果对齐。
 
-TS 映射以 `scripts/a5-19/preregistration-b.mjs` 为准：WireSequence / FinalReplica
-覆盖当前请求的 FRAME_SEQ，RunId 覆盖 SESSION_ISOLATION 的实时事件归属，
-RegistryRaw 覆盖当前查询 run 的 REGISTRY_RAW 完整 record/events 对齐。
-其余标签是原生成功轮次的不变量；这些局部断言不代表通过完整 TS 生产矩阵，
-不替代 journal、故障次序或跨会话验收。#625 是 A5.4 的一项前置，不单独证明该阶段完成。
+规则级负控、TS 对应关系及原生成功场景的适用边界，以
+`a52_fixtures.rs` 的 `ObserverRule` 枚举前注释为准（含 raw 正向与负控边界）。
+#625 是 A5.4 的一项前置，不单独证明该阶段完成。
 双连接竞争与 stale close 前均断言 abort 为零，避免错误的提前 abort 掩盖交错。
 每个 gate 的进入通知先于释放；15 秒仅是失败看门狗。
 冷启轮询只等子进程退出，20 秒到期 kill/wait 后失败，不用于挑选通过的交错。
