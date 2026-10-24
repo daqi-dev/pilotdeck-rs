@@ -21,7 +21,7 @@ def reference(path):
 def report(main_dir, side_dir, old_dir):
     main_path, side_path, old_path = [p / 'raw/manifest.json' for p in (main_dir, side_dir, old_dir)]
     main, side, old = [json.loads(p.read_text()) for p in (main_path, side_path, old_path)]
-    if main['expectedCases'] != main['executedCases'] or main['measurements'] != 170 or side['measurements'] != 5 or old['totalMeasurements'] != 360:
+    if main['expectedCases'] != main['executedCases'] or main['measurements'] != 170 or side['measurements'] != 20 or old['totalMeasurements'] != 360:
         raise ValueError('COVERAGE: incomplete collected manifest')
     # Refuse to attach stale measurements to a newer apparatus. This also
     # makes coordinator recollection after registration commit reviewable.
@@ -50,7 +50,7 @@ def report(main_dir, side_dir, old_dir):
                               'statuses': [e['event'] for e in observation['durable'][0]['entries'] if e['type'] == 'agent_status_message'],
                               'realFrames': observation['realtimeFrames'],
                               'spawnAndExit': [r for r in observation['timeline'] if r['kind'] in ('sidecar.spawn', 'sidecar.exit')]})
-    if len(evidence) != 170 or len(side_evidence) != 5:
+    if len(evidence) != 170 or len(side_evidence) != 20:
         raise ValueError('COVERAGE: missing observation files')
     validation = ROOT / '_tmp/a52b/validation'
     tests = (validation / 'test.log').read_text()
