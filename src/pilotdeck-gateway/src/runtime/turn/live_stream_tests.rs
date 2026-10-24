@@ -904,9 +904,9 @@ async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
     );
     tokio::time::sleep(POST_CANCEL_EXIT_TIMEOUT + Duration::from_secs(1)).await;
     // The deadline is already past; a blocked callback must not extend it.
-    // 3 s is well under a fresh POST_CANCEL_EXIT_TIMEOUT, so this alone proves
-    // the exit was not re-armed.
-    let error = timeout(Duration::from_secs(3), turn.next())
+    // Half a fresh POST_CANCEL_EXIT_TIMEOUT is enough to prove the exit was
+    // not re-armed.
+    let error = timeout(POST_CANCEL_EXIT_TIMEOUT / 2, turn.next())
         .await
         .expect("the cancel exit must stay bounded with a blocked callback")
         .unwrap_err();
