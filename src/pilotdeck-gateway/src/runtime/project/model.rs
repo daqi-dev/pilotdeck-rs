@@ -179,7 +179,9 @@ impl ResourceFamilySource for RouterFamilySource {
                 .as_any()
                 .downcast_ref::<super::custom_routers::CustomRouterResources>()
                 .ok_or_else(|| {
-                    RuntimeError::new("Custom router resource is not a native custom router family.")
+                    RuntimeError::new(
+                        "Custom router resource is not a native custom router family.",
+                    )
                 })?;
             deps.custom_routers = custom_router_resource.registry.clone();
         } else if let Some(custom) = &self.custom_routers {

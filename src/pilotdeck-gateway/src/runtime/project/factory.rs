@@ -31,7 +31,10 @@ use super::{
     DisposeFuture, ProjectRuntimeFactory, ResourceBundle, RuntimeError, RuntimeResources,
     RuntimeResult,
 };
-use crate::{config::{self, Env}, runtime::plugins::PluginRuntimeOptions};
+use crate::{
+    config::{self, Env},
+    runtime::plugins::PluginRuntimeOptions,
+};
 use pilotdeck_protocol::JsValue;
 use std::{
     any::Any,
@@ -449,9 +452,8 @@ impl Families {
     /// router registry is backed by that same plugin runtime.
     pub fn with_plugins(mut self, options: PluginRuntimeOptions) -> Self {
         self.plugins = Arc::new(super::plugins::PluginFamilySource { options });
-        self.router_custom_routers = Some(Arc::new(
-            super::custom_routers::CustomRouterFamilySource,
-        ));
+        self.router_custom_routers =
+            Some(Arc::new(super::custom_routers::CustomRouterFamilySource));
         self
     }
 
