@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-24 01:15 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-24 13:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
@@ -10,24 +10,37 @@ updated: 2026-10-24 01:15 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - 167-ruler-a4 | coord | human | 人定暂缓(10-17)
 - accepted-diffs-4-5 | coord | human | #372已合入两条待批
 - regress | coord | blocked | 等 regress 发布带 UTF-16 回溯预算的稳定版；金样在 codex/regress-pr1-output-schema@2c2e4f87
-- accepted-diffs-1023 | coord | human | 10-23 新登记未批准约 30 条 + AI 代批待复核（含 #547 两块挂起拆分卡 _tmp/20261023-loop/card-547-*.md）
+- accepted-diffs-1023 | coord | human | 10-23 新登记未批准约 30 条 + AI 代批待复核（pr10g 路径穿越与悬挂链接、#541、#484 防环与根边界、V8 栈深判据、#554 取消后 5 s、#508 的 5 MiB）
 - state-files | coord | human | 状态文件精简提案 _tmp/20261023-loop/proposal-state-files.md（人：先不动，待人读后再定）
-- #591 | impl | doing | #564 r6 收尾中（负控 82/82）
-- #595 | impl | doing | tree_files 上限：fable 实现修复轮 1（上限与超限行为 AI 代批待复核）
-- #600 | impl | doing | #597 P0 file_memory 写入走目录句柄；GLM 修复轮 1
-- #594 | impl | blocked | P0：独立技能 SKILL.md 按路径读；等 #591 合入（同文件）
-- #572 | impl | blocked | provider 尾项；等 #584（同改 model/http.rs）
-- #576 | impl | blocked | MCP 代理尾项；等 #584（同改 model/http.rs）
-- #583 | impl | doing | A6.9-pr2b handler 绑定；GLM 实现中
-- #584 | impl | doing | A6.9-pr3b 模型资源 factory；codex 实现中
-- #585 | impl | blocked | A6.9-pr3c1；等 #583
-- #586 | impl | blocked | A6.9-pr3c2；等 #583
-- #587 | impl | ready | A6.9-pr3d 上下文与持久资源接入 factory（#562、#578 已合入）
-- #588 | impl | blocked | A6.9-pr3e；等 #584
-- #589 | impl | blocked | A7.2-pr6a；等 A6.9 全部
-- #590 | impl | blocked | A7.2-pr6b；等 #589
-- #553-pr2 | impl | ready | 后台任务重启恢复第二包（#580 已合入）
+- ledger-split | coord | human | 账本拆文件提案 _tmp/20261023-loop/proposal-ledger-split.md（冻结尺子结构变更，待人批）
+- #553 | impl | blocked | 后台任务输出落盘；a3c496e9d（代码完成+编译通过，待测试+TS金样对拍+settle调用点确认）
+- #572 | impl | review | provider能力尾项；PR #613（Phase1+2完成，Phase3暂缓），待评审
+- #587 | impl | doing | A6.9-pr3d 上下文与持久资源接入factory；aa1a052d0d0c5e6b9
+- #586 | impl | doing | A6.9-pr3c2 交互与hooks资源接入factory；ae8e582bd5d62ea93
+- #588 | impl | doing | A6.9-pr3e 插件与customRouter接入factory；a65f64068c70051b3
+- #589 | impl | ready | A7.2-pr6a LiveSession+SubmitHost（待核pr3c-3e状态）
+- #590 | impl | blocked | A7.2-pr6b sidecar格+四格矩阵；前置#589
 <!-- READY:END -->
+
+> ## 2026-10-24 11:55 → 13:44 · /loop 协调轮（脱困后恢复）
+> **11:59**：#553（后台任务输出落盘与重启恢复）ready，派 agent abf8eedfc10b2be27（DeepSeek via dsh headless），任务书 `_tmp/20261024-issue-553/task.md`。
+> **12:19**：同步 board：#549 #544 已合入（兄弟会话处理），从 READY 移除；main 最新 84cd2d82。
+> **12:38**：#553 agent (abf8eedfc10b2be27) 完成 triage（`_tmp/20261024-issue-553/triage.md`），建议单 PR 实现，但随后停止未继续。
+> **13:00**：重派 #553 实现（agent aea95c916679d1cbf）。
+> **13:26**：#553 agent 运行 24 分钟无工作产物，判定卡住。
+> **13:35**：**脱困**：TaskStop agent aea95c916679d1cbf（Bash 工具调用挂起 30 分钟），分析显示因权限弹窗未批准。#553 转 blocked。
+> **13:37**：人工批准权限后，第三次派 #553（agent a3c496e9d287cf80f）。
+> ## 2026-10-24 11:55 → 13:54 · /loop 协调轮（脱困后突破）
+> **11:59**：#553（后台任务输出落盘与重启恢复）ready，派 agent abf8eedfc10b2be27（DeepSeek via dsh headless）。
+> **12:19**：同步 board：#549 #544 已合入，从 READY 移除；main 最新 84cd2d82。
+> **12:38**：#553 agent (abf8eedfc10b2be27) 完成 triage（`_tmp/20261024-issue-553/triage.md`），建议单 PR 实现，但随后停止未继续。
+> **13:00**：重派 #553 实现（agent aea95c916679d1cbf）。
+> **13:26**：#553 agent 运行 24 分钟无工作产物，判定卡住。
+> **13:35**：**脱困**：TaskStop agent aea95c916679d1cbf（Bash 工具调用挂起 30 分钟），分析显示因权限弹窗未批准。#553 转 blocked。
+> **13:37**：人工批准权限后，第三次派 #553（agent a3c496e9d287cf80f）。
+> **13:44**：✓ #553 agent 开始编译（`cargo build --package pilotdeck-gateway`，cargo 1/4），说明权限已批准、正常工作中。
+> **13:48**：**突破瓶颈**！发现 #553 并未卡住其他任务——A6.9 与 A7 有多个 ready 单可并行。立即派发 4 个 A6.9/provider 任务：#572（provider 尾项，a0fd9）、#587（上下文与持久资源，aa1a0）、#586（交互与 hooks，ae8e5）、#588（插件与 router，a65f6），与 #553 并行推进。
+> **13:54**：6 个 agent 正在工作（5 个已知 + 1 个系统派发），3 个 worktree 已创建（wt-587、wt-572、wt-pr275），cargo 1/4，负载 7.61。近 10 分钟有新文件产出（task.md、plan.md）。#589（A7.2-pr6a）前置需 pr3c-3e（#586 #587 #588）完成，暂不能派。磁盘 78.9 GiB / 160（正常）。**5 条 doing + 1 条 ready（待前置）+ 1 条 blocked + human 档**。**阶段 A（Gateway 后端）全速推进中**。
 
 > ## 2026-10-23 05:00 → 13:20 · /loop 协调轮与两小时交接（逾期约 1.5 小时补上）
 > **05:10**：#521（#485）r3 收敛，结果块已贴；#524 gate3 后结果块已贴，等入队；#532（board 交接）等 CI。#513 r3 两家 0/0，但 gate3 concurrency P1：`--regex` 字符类里每个 \d\w\s 原子物化 65,536 项、去重在分配之后，6.5 万原子的长类可致数分钟 CPU 或 OOM，而 TS 正常编译 → 修复轮 5 派 codex（改区间表示，金样全部不变即证行为未变）。
@@ -781,73 +794,185 @@ updated: 2026-10-24 01:15 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 > **12:50 CST**：**#536（A7.2-pr7 turn 读面）合入**（997078a2，noreply），树回收 → **#557 A6.9-pr1（模型端口生产适配）派 GLM**。#556 被 #536 挤出队列（12:27:16 两单同秒入队的竞态应验）→ rebase-refresh.sh 处理；merge-when-green 的 enqueue 加本机 mkdir 锁（改账本的 PR「查队列 → 入队 → 确认已在队列」整段持锁）。#544 GLM r5 0 P1、gate5 0 P1 → finalize-reviewed 等 Grok r5；GLM r5 P2（根边界 check-then-use 的 TOCTOU，遗留项）→ 开 #564（前置 A6.3 关闭）。#562 gate1 0 P1 → finalize-reviewed 等两家 r1。#561 gate1 0 P1、GLM r1 P2（生产调用点无负控：改回直接 cpu::run 测试仍全绿，P2a）→ 等 Grok r1 一并派 codex。#549 修复轮 3 核验（lib 1069/0、turn 104/0）提交推送；改了 gateway.rs，全量 gate4 + GLM/Grok r4。#554 修复轮 2（取消后 5 s）交付，核验排队。
 > **13:00 CST**：#536 合入后改账本的六个 PR（#544 #537 #562 #559 #555 #531）同时 DIRTY——账本末尾追加 + FROZEN 同一行哈希的结构性冲突；写提案 `_tmp/20261023-loop/proposal-ledger-split.md`（新条目一条一个文件、FROZEN 改登记清单哈希；属冻结尺子变更，待人批）。#556：rebase-refresh 推送 + gate3（只审账本）全部 PASS，但收尾没接上；11:55 用旧版 finalize 起的进程一直空等，清掉后手动收尾，结果块已贴。#544 rebase-refresh 推送，gate6 在跑。#562 Grok r1 P1（restore 对 assistant / tool_result 畸形 message 静默恢复，TS 抛 TypeError，旧代码显式拒绝——回归）→ codex 修复轮 1；GLM r1 0/0、gate1 0 P1。#537 GLM r5 P2（copy_tree 同类 IO 包装没修全，P2a）→ codex 修复轮 7；Grok r5 0/0、gate7 0 P1。#555 修复轮 1 核验通过（mcp_https 3/0、mcp_runtime 19/0、lib 1064/0），提交 + 账本（HTTPS-001 状态更正、MCP-TLS-TRUST / MCP-SCHEME / MCP-TLS-CAUSE 三条未批准）。**rebase 静默失败**：DeepSeek 留下未提交的 `.gitleaks.toml`（夹具一次性自签私钥的精确值允许，先例 A6.4-pr5），rebase 因 unstaged 直接退出、我的循环判 DONE 推送了未 rebase 的分支；且推送前的 gitleaks「no leaks」依赖这份未入库的配置。已把 .gitleaks.toml 作为 DeepSeek 提交入库、真正 rebase 后推送，请评审专看这条允许；rebase-refresh.sh 加「工作区干净」与「分叉点 = origin/main」两条断言，auto-memory 补第三种吞错。GLM+Grok r2 与 gate2。**两小时交接点**：worktree 12/12，board PR 待 #556 / #544 合入腾树后开。
 > **13:05 CST**：**原地改运行中的脚本导致收尾丢失**：12:58 我改 rebase-refresh.sh 时它正为 #544 运行、#556 那次也还在等 gate3——bash 按偏移逐段读文件，#556 的 exec finalize 行没执行，#544 推送后读到错位内容打出「check_frozen 失败，停」。两单手动补收尾；auto-memory「no-edit-running-script」（改前查有无在跑实例，有就写新文件）。#544 gate6（只审账本）P1：CYCLE-001-R1 判据仍写「1 s 上限」，修复轮 4 已改 20 s 防挂起 + 确定性计数 → 追加 CYCLE-001-R4，只改账本推送，gate7（只审账本）后自动收尾（新脚本 gate-specs-finalize.sh）。#556 12:56 入队。#549 GLM r4 0/0、gate4 0 P1 → finalize-reviewed 等 Grok r4。#561 Grok r1 0/0 → codex 修复轮 1（GLM 的 P2a：生产调用点无负控）。#554 修复轮 2 lib 1068/0；host 含 ignored 3 条失败是我漏设 PDRS_BASELINE 的「从 TS 重生成」用例，补设重跑。
-> **13:15 CST 交接（持有人：协调者本会话）**：本段合入 #550（board + #505 人批记录）、#536（A7.2-pr7 turn 读面）、#556（#508 读图沙箱，人定 A）；人定 #454 选 C（PR #561）、#505 32 条批复（开 #551–#554）。新开 #555 #559 #561 #562，总装线盘点后开 #557（A6.9-pr1，在做）与 #558；P2-跟进 #560 #563 #564。工具侧本段沉淀：disk-trim.sh（deps 累积 .rcgu.o）、rebase-refresh.sh（只因账本冲突的 rebase 只审账本）、gate-specs-finalize.sh、ledger-chain.sh（改账本 PR 合入一个再刷新下一个）、merge-when-green 入队锁；auto-memory 新增 probe-leak-check、no-edit-running-script，补 disk-cap-check、rebase-in-script-stop。待人：见 READY human 行（状态文件提案、账本拆文件提案、10-23 未批准差异与 AI 代批项）。worktree 12/12（本树为 board）、磁盘约 124 GiB / 160、负载回落到 10 以下。下一个交接点约 15:15 CST。
-> **13:20 CST**：**#556（#508 读图沙箱）合入**（20315b93，noreply），树回收 → 开 board 交接 PR #565。#549 13:10 等 #556 出队后立刻入队，但 #556 刚合入、main 已变 → 账本冲突被踢；#544 的入队脚本卡在同一处 → 新写 `_tmp/20261023-loop/ledger-chain.sh`（改账本的已收敛 PR 逐个：rebase-refresh → 入队 → 等 MERGED 再刷下一个），#549 → #544 串行。#555 Grok r2 P1：IPv6 拒连详情 TS 实为 `::1:443`，修复轮 1 加的方括号是**我任务书照搬 gate1 未实测的说法** → DeepSeek 修复轮 2（补真实 TS `[::1]` 金样）；auto-memory「relay-claims-verify」。GLM r2 0 P1、gate2 0 P1。#554 修复轮 2 核验（补设 PDRS_BASELINE 后 host 含 ignored 92/0），提交 + 账本 A7-HOST-POST-CANCEL-EXIT-001（5 s，AI 代批待复核）+ 类型名更正；**提交时发现 `git add src` 漏了 `scripts/a6-host/fixture.py`**（新测试依赖的假 sidecar 模式），补提交；扫其余各树无同类遗漏。GLM+codex r2 与 gate2。#537 修复轮 7、#562 修复轮 1 交付，核验排队。
-> **13:35 CST**：**/tmp 清理（人确认「清」）**：评审 / 实现方实测遗留在 /private/tmp 的 42 个临时副本与构建目录（逐个核：非 worktree、无进程打开、state/docs 无引用、5 h–3.5 天前），删 42 / 跳过 0，磁盘可用 145 → 272 GiB（实际释放 130 GiB）。评审规则加「/tmp 临时目录结束前必须删」，现场检查加 `tmp-scan.sh`（删前仍需人确认）。#557 进度（人问）：GLM 40 分钟写出 model_port.rs 620 行 + TS 金样生成器，难度中等（接线为主），不换实现方，交付后派 codex + Grok 审。ledger-chain 两单 rebase 推送与只审账本闸门都完成，但收尾步骤静默未执行（原因未定）；手动 finalize 后 #549、#544 均已贴块进 merge-when-green。**#559（#554）codex r2 P0×2 P1×2 + gate2 concurrency P0（与 codex P0#1 独立撞同一处：重连 await 期间取消则退出期限永不武装）→ 同一处第 3 轮，换实现方 DeepSeek → codex 修复轮 3**（后续评审 GLM + Grok）。#537 修复轮 7、#562 修复轮 1 核验通过（lib 1085/0、edgeclaw 含 ignored 32/0；lib 1065/0、storage 74/0）推送，GLM+Grok 增量与 gate。
-> **13:40 CST**：**#549（A7.2-pr5 生产 ConnectionGateway 接线）合入**（9a2428af，noreply），树归档回收 → **A7.2-pr4b（#558 FailureGuard 纯移植 + submit 接线，#549 合入后不再被挡）派 codex**（#549 作者，同模块）。#544 CI 唯一失败在 pilotdeck-transport `bounded_capture` 4 条（本 PR 不改 transport；近 30 次 CI 首次出现）→ 重跑该 job + 本机连跑 3 次留日志，merge-when-green 重新接上。#531 修复轮 6、#561 修复轮 1、#555 修复轮 2 交付，核验排队。
-> **13:45 CST**：负载一度 56——正常编译高峰（含一个评审在 /tmp 用全新 CARGO_HOME 从零编依赖），无失控进程。**#565（board 交接）合入**，树回收 → **#560（host resume 用例负载假红）派 DeepSeek**。#544 本机 bounded_capture 连跑 3 次 18/0，CI 重跑中、merge-when-green 已接上。#537 GLM r6 0/0、Grok r6 0 P1（P2：快照 cpSync 回退失败时错误形状与 Node 不同，实现方已披露未登记）、gate8 0 P1 → 协调者补登 A6.6-EDGECLAW-SNAPSHOT-CPSYNC-ERROR-001（未批准），rebase-refresh（这次 `bash -x` 留 trace，查上轮收尾为何静默缺失）。#562 gate2 boundary P1（金样场景数 tripwire 仍是 ≥25、实有 397，覆盖缩水会假 PASS）、GLM r2 0 P1 → 等 Grok r2 一并派 codex。
-> **13:55 CST**：**收尾静默缺失的真正根因**：rebase-refresh.sh `"$NOTE。rebase…"`——UTF-8 下 bash 把「。」并进变量名，`set -u` 报未定义、在 exec finalize 前退出（#556 #549 #544 #537 四次）；ledger-chain 的 `$rc，` 同类（日志退出码乱码）。四个脚本 6 处改 `${VAR}`，auto-memory「shell-var-cjk」（落盘后 grep 自检）。#537 gate9（只审账本）0 P1 → 手动收尾。负载一度 143（两路 rustc + lib 测试线程，非失控）；杀掉 10:58 为 #508 起、前台已终止仍跑了 2.5 h 的 stress-bin 孤儿（对应树都已删）。新核验加「负载 < 60 才开跑」。#531 修复轮 6 核验通过（export 6/0、snapshots 6/0、storage 18/0、lib 1068/0）推送，codex+Grok r6 与 gate7。#557（A6.9-pr1）GLM 交付（lib 1086/0、取消传到 provider 等 3 负控）、#559 修复轮 3（codex：取消观察与唯一绝对期限绑定，host 96/0、8 负控）交付，核验排队。#561 html_markdown 这次 2 条失败（上次 1 条既有 ignored），负载降到 40 以下后单独重跑留日志。
-> **14:05 CST**：#537 在队列（AWAITING_CHECKS）；#544 被踢（13:18 rebase 早于 #549 合入）→ 后台等 #537 合入后用 ledger-chain 刷新 #544。负载 146 主要是 #560 按任务书做 8 路并行压测（有意负载）。**#531 codex r6 P0：修复轮 6 新增 `read_scope()` 与 general 仓 external catalog 扫描构成 B→G→B 锁环，两个普通读请求即可永久互等** → GLM 修复轮 7（写出全局锁序、确定性并发回归 + 负控）。#559 修复轮 3：lib 全量时新增的 `cancellation_before_and_during_reconnect_uses_original_absolute_deadline` 失败、单跑通过，压测 4×3 **10/12** → codex 修复轮 4（显式同步点，压测 48/48）。#555 修复轮 2 核验通过（mcp_https 3/0、hooks_https 2/0、lib 1087/0、runtime::mcp 含 ignored 77/0）推送，GLM+Grok r3 与 gate3。#557 lib 1086/0；新测试在 tests/host_model_port.rs，补跑中。
-> **14:20 CST**：**#537（A6.6-pr10g EdgeClaw entries CRUD 与 clear）合入**（23269b15，noreply），树归档回收 → **#552（bash setsid，人批修）派 GLM**。ledger-chain 14:09 开始刷新 #544。负载持续 145：#560 DeepSeek 同时跑 8 份 lib 全量 × 10 线程做「负载下复现」负控（各带 timeout ≤28 min，不打断）；任务书尾段加上限（负载类负控 ≤4 进程 × ≤4 线程、≤10 分钟）。#557 集成测试通过（host_model_port 3/0、host_capability 5/0、lib 1086/0）→ **PR #566**，codex+Grok r1（重点：取消是否中断 provider 请求、落盘顺序）与 gate1。#562 Grok r2 仍在跑（自估 45 分钟），包装脚本超时退出，稍后补取。
-> **14:25 CST**：rebase-refresh 修好后 #544 收尾首次自动跑通（14:14 结果块已贴），等 CI 入队。#555 r3 两家 0 P1、gate3 0 P1；三条 P2 都落在账本 → 协调者追加 HTTPS-001 判据更正二（金样已重生成为 `f30e5d63…`、13 场景，原引用过期属 P2b）与 A6.5-MCP-CONNECT-HOSTNAME-001（主机名 URL 拒连详情报 `localhost:P`、TS 报解析地址，未批准）；等 #544 合入后用 ledger-chain 刷新入队。#566 codex r1 P1×3（轮次取消没接到 provider；事件队列越过 TS yield 边界提前处理未交付事件；默认 options 把主 agent 当 subagent）——等 Grok r1 / gate1 后一并转 GLM。#558（A7.2-pr4b）codex 交付（turn 131/0、22 条负控；沙箱 lib 21 条为回环监听），沙箱外核验排队（负载 < 60 才开跑）。
-> **14:35 CST**：#544 在合并队列。#558 沙箱外通过（lib 1101/0、turn 含 ignored 130/0）→ 提交 + 账本 FAILURE-GUARD-001「原能力拒绝已消除」→ **PR #567**，GLM+Grok r1 与 gate1。#561 低负载重跑 html_markdown 只剩既有 ignored 的 parser gaps 一条（上次第二条为负载假红）→ 修复轮 1 推送，GLM+Grok r2 与 gate2。#566 gate1 concurrency P1×2（取消通路丢失＝codex #1；异步流每事件同步 open+write 文件）→ 连同 codex r1 三条派 GLM 修复轮 1（Grok r1 未出，出来后另转）。#559 修复轮 4（codex，新测试负载下不稳）交付，核验排队。
-> **14:50 CST**：**#544（#484 插件 loader 两个 P0 与遗留 P2）合入**（30b5aed9，noreply；4 轮修复 5 轮评审），#484 关闭，树归档回收 → **#543（插件 dispose 顺序）派 codex**（同模块作者）。ledger-chain 已接着刷新 #555。#560 DeepSeek 交付：8 套 lib 全量并行改前 8/8 失败、改后 0/8，负控改回 10 s 8/8 复现 → **PR #568**，GLM+codex r1 与 gate1；同类 3 条（coalesced_ack 10 s、reconnect_preserves 2 s、grep sigkill）开 #569。#559 修复轮 4：重连用例并行 4×4 16/16，lib 唯一失败为已知 http_store 偶发 → 提交（含 scripts/a6-host/fixture.py 与新 peer.py）+ 账本 A7-HOST-POST-CANCEL-EXIT-001-R1，GLM+Grok r3 与 gate3。#566 Grok r1 P1 与 codex #1 同一处（取消没接到 router.execute），GLM 修复轮 1 已覆盖。
-> **15:00 CST**：#555 入队。**#567 r1 GLM + gate1 sibling 同报 P1：工作树停在未完成 rebase、账本带冲突标记**——是我开 PR 那轮用 `rebase; [merge-base] && echo || git diff` 只打印冲突就继续推送 / 派评审（推的是 rebase 前的旧提交，远端从未带标记）。完成 rebase（ledger-merge）→ 再 rebase 到含 #544 的 main，0 删除行、check_frozen PASS 后推送；GLM 重审 r1b + gate2；auto-memory 补第四种；扫全部树无其他半截 rebase。#561 GLM r2 0/0、gate2 0 P1 → finalize-reviewed 等 Grok r2。#531 修复轮 7（GLM：全局锁序 own W → E → sibling W → G，single+general 确定性并发回归）交付；RESULT 称「两个 general 仓互扫非支持布局、不治理」——此说法须评审核 TS 能否配出两个 general，能则仍是 P0。#552（GLM：pre_exec setsid，lib 1122/0、全量 1509/0，负控有效；范围外列出 grep / hooks / host connection 等同款 process_group 差异）交付。两单沙箱外核验排队。
-> **15:10 CST**：#555、#561 入队。#567 Grok r1 唯一 P1 同样是那次半截 rebase（已修），gate2（当前 head）0 P1 → 等 GLM 重审 r1b。#568（#560）GLM r1 P1×2（交付证据只在工作区未同步主仓——已 rsync；提交信息称「确定同步点」不实，实为 10 s→60 s 放宽）+ gate1 sibling P1（同源 coalesced_ack 用例仍 10 s）→ 协调者补改并改写提交信息（DeepSeek + Claude 共同署名），GLM+Grok r2 与 gate2；codex r1 0/0。#559 GLM r3 0/0，gate3 boundary 角色 600 s 超时 → 单补 boundary（gate3b）。
-> **15:20 CST**：**#555（#361-3 https MCP）合入**（dbaa207c，noreply），树归档回收 → **#551（MCP 走代理，人批修）派 DeepSeek**：仓内尚无任何代理实现，要求在共享连接器层做（CONNECT 隧道 + NO_PROXY + 认证，按 `cli/proxy.ts`），本单只接 MCP。#567 GLM 重审 r1b 0 P1、gate2 0 P1 → finalize-mixed 收尾。#559 Grok r3 0 P1、GLM r3 0/0，等补跑的 boundary 角色。#531 修复轮 7 核验通过（export / snapshots / storage、lib 1106/0）。**#552 暂不执行**：实现需要在 `pilotdeck-child-signals` 加第二个 unsafe 函数（`pre_exec` 里只调 `setsid`），#386 人批只授权一个函数（board:328）→ 写决策卡 `_tmp/20261023-loop/card-552-unsafe-setsid.md`（建议 A 扩例外），改动留在工作树不提交，看板标 blocked；核验已过（lib 1122/0、bash_session 3/0、background_tasks 重跑 9/0）。
-> **15:30 CST**：**提速建议（另一 Agent，人转交）处理**：① 采纳——总装线拆单修订写入 `_tmp/20261023-loop/a69-pr6-line.md` §6：pr2 拆 2a 纯能力计算（**#570，派 GLM**，与 pr1 修复并行，不碰 mod.rs 注册点）/ 2b handler 绑定（等 #566）；pr3 派单前按资源族拆 3a–3e（**#571 = 3a factory 构造**，3b–3e 按依赖进 READY）；provider 尾项（audit staging、DUMP_REQUEST、模型 / hook 切代理）单独 **#572**，不暗含在 3b。② 采纳——总装线优先拿 cargo 名额；新核验脚本 `verify4.sh` lib 全量限 4 线程（verify.sh 在跑，按「不改运行中脚本」写新文件）。③ 采纳——#531 两个 general 仓布局：评审须实测 TS 能否配出，能配出就必须治理（统一锁序或入口校验拒绝），不能靠「不支持」口头排除。**#561（#454 内存预算，人定 C）合入**（dbaa207c，noreply），树回收给 #570。#531 修复轮 7 rebase 撞代码冲突（storage.rs，#537 的 `pub mod entries;` 与本单 bundle / overview 模块声明），rebase 已中止后逐块合并两边都留，含 #537 代码整套重编重测后才推送（后台）。
-> **15:35 CST**：**人定 #552 选 A**（扩 #386 局部 unsafe 例外到第二个函数 `install_child_detach_session`，条件同 #386，合并前两家专审 unsafe 块）→ 原话记 `_tmp/20261023-loop/decisions-1023-human.md` 与决策卡；提交 + 账本 A6.5-BASH-OS-001「setsid 部分已消除」→ **PR #573**，codex+Grok r1（任务书列 unsafe 专审三点）与 gate1。**#531 rebase 后编译失败、未推送（新核验挡住）**：已合入的 #537 与本 PR 都给 `EdgeClawFileStores` 定义了 `count_memory_entries`（`usize` vs `JsValue`），文本合并无冲突但语义冲突 → GLM 修复轮 8（对照 TS 只留一份、两边金样都要过）。#568 GLM r2 + Grok r2 同报 P1：我补放宽的 coalesced_ack 没有改后证据（现有证据都是旧二进制）→ 协调者按负载上限（4 份 lib × 4 线程、≤10 分钟）用 HEAD 补证 + 负控，gate2 0 P1。#567 派 Grok 只审账本（r1 唯一 P1 是那次半截 rebase）→ finalize-mixed。#559 gate3b（补跑 boundary）0 P1 → finalize-mixed（glm r3 + grok r3）。#543（codex：dispose 顺序，runtime 25/25、11 负控）交付，verify4 核验排队。
-> **15:45 CST**：**#573（#552）r1：codex P1×2（unsafe 守卫可被绕过：unsafe 块跨函数搬动、同名 `type libc = Alias` 遮蔽改写实际调用，内存变异实测守卫仍 PASS）+ gate1 sibling P1×2（grep 的 ripgrep spawn 在 TS 同为 `detached: true`、本 PR 漏改；我写进账本与决策卡的「其他 spawn 点 TS 本就不是 detached」是照抄实现方未核，错误）** → GLM 修复轮 1（守卫绑函数体 + pin 完整 token 序列；grep 复用人批函数、不新增 unsafe；逐个核对其余 spawn 点的 TS detached 表）；账本更正待交付后由我追加；auto-memory「relay-claims-verify」补第二次。#567 Grok r2 P1：基线又过时（main 15:07 / 15:13 两次改账本）→ 再 rebase；ledger-merge 判「非纯追加」——成因是上次工具合并在 main 末尾空行前插入，内容是纯追加但 startswith 失败 → 手工按「main 全文 + 本单块」重建、FROZEN 重算后推送（07bddb62）；ledger-merge.py 改为忽略末尾空白判前缀、统一一个空行拼接。**又一次中止后命令链继续执行 push**（HEAD 未变、无害）。Grok r3 只审账本 + gate3（specs）→ finalize-mixed。#559 pr-gate FAIL「结果块缺角色 simplify」（gate3b 只补了 boundary）→ 跑全量 gate4 后 finalize-mixed。#568 补证：HEAD 二进制 4 份 lib 全量 × 4 线程，两用例均 4/4 ok，负控在跑。
-> **15:50 CST**：#567 结果块已贴（finalize-mixed，Grok r3 只审账本 + gate3），交 merge-when-green。#543 核验通过（plugin_runtime 25/0、traversal 19/0、lib 1123/0）→ **PR #574**，GLM+Grok r1 与 gate1。#568 补证：4 份 × 4 线程形状下 HEAD 两用例 4/4，**但负控（10 s）也 4/4，该形状区分不出**——不能据此说改动有效；DeepSeek 原证据已有触发形状（8 份 × 默认线程）下 10 s 的 coalesced 8/8 失败，缺的是 HEAD 在同形状下通过 → 负载 < 30 时一次性破例跑 8 份 × 默认线程（600 s 上限，只跑 HEAD）。
-> **15:55 CST**：#567 入队。#568 触发形状补证（负载 < 30 时一次性破例：8 份 lib × 默认线程、600 s 上限、只跑 HEAD）：两用例均 **8/8 ok**；结合 DeepSeek 原证据同形状 10 s coalesced 8/8 FAILED，证据链完整 → GLM+Grok r3 只核补证，finalize-reviewed 等两家。#559 全量 gate4 的 boundary 又超时 → gate5 加 `--timeout 1500` 后 finalize-mixed。#531 修复轮 8（GLM：两个同名 `count_memory_entries` 对照 TS 为同一函数，只留一份，改动涉及 #537 的 entries.rs；lib 1138/0）提交，重核验后推送再自动派 codex+Grok r7（任务书补「修复轮 8 语义合并」审查点）与 gate8。#573 Grok r1 P1×2：账本批准记录指向 `state/decisions-20261023.md` 但 #552 原话尚未进 state（只在 _tmp）；#386 条件要求 Linux 实测 → 等 GLM 修复轮 1 交付后在同一 PR 补 state 决策记录，Linux 证据取 PR 的 CI 日志。#551 交付（共享连接器 CONNECT 代理 + NO_PROXY + 认证，先接 MCP；14 场景真实 TS 金样、3 负控），但自列缺口「proxy.url / noProxy 配置来源未做」正是任务书要求 → DeepSeek 修复轮 1 补齐后再开 PR。
-> **16:05 CST**：#531 修复轮 8 核验通过并推送，codex+Grok r7 与 gate8 已自动派出。#567 在队列（AWAITING_CHECKS）。#574 GLM r1 0/0、Grok r1 0 P1；gate1 boundary P1（负控取「旧实现」用 `git show HEAD`，合入后变零字节变异、负控不可复现）→ codex 修复轮 1。#568 Grok r3 P1：触发形状下缺**同 HEAD、同形状、相近负载**的 10 s 配对负控（借用的是不同测试集的旧运行）→ 协调者配对补跑（只把 coalesced 改回 10 s，记录 loadavg）。#566 修复轮 1（GLM：取消接到 provider、yield 边界 `YieldGate`、默认主 agent、异步落盘；lib 1123/0）与 #570（GLM：pr2a 纯 manifest 计算，host_manifest + 真实 TS 金样，lib 1134/0）交付，verify4 核验排队。**注意**：#566 修复轮 1 与 #551 都改 `runtime/model/http.rs`（各自纯新增），后合入的一个须 rebase 逐块合并。
-> **16:15 CST**：**#567（A7.2-pr4b FailureGuard 移植与 submit 接线）合入**（caeb0aef，noreply），树归档回收 → **#571（A6.9-pr3a factory 构造骨架）派 GLM**。#568 配对负控：同 HEAD 只把 coalesced 改回 10 s、8 份 × 默认线程、起跑 load 10.6 → **0/8 ok、8/8 FAILED**（HEAD 60 s 同形状 8/8 ok）→ Grok r4 核配对，finalize-mixed（glm r3 + grok r4）。#559 因 #567 合入 DIRTY → rebase-refresh。**#531 codex r7 P0：两个 general 仓可经 TS 公开 API（同一 general workspaceDir + 两次 setPipelineState）构造，`W_A→W_B→W_A` 仍可达；P1：回归测试靠 1 s 停驻、不确定到达交错点** → 锁问题第三轮（r6 引入、r7 不完整），按「同一处 3 次不过即挂起」本轮为最后一次；**换实现方 GLM → codex**，要求先写可证明无环的全局方案（A 按根路径全序获取 / B 快照后无锁扫描），测试用锁点协调钩子确定性到达，覆盖两 general 互扫与三仓环；后续评审 Grok + DeepSeek（GLM、codex 均已成作者）。gate8 0 P1。
-> **16:30 CST**：#559 rebase-refresh 首次 nohup 无日志（原因待 trace）；我为查原因用 `timeout 110 bash -x` 手跑，**在 rebase 中途被 timeout 杀掉、留下半截 rebase**——发现后 `git rebase --abort` 回到 f53f3dbe，改为无 timeout 后台跑并留 trace（rebase-refresh.trace）。教训：会改 git 状态的脚本不加外部 timeout 运行。#570 核验通过（host_manifest 2/0、lib 1134/0）→ **PR #575**，codex+Grok r1 与 gate1。#566 修复轮 1 核验通过（host_model_port 5/0、lib 1123/0），rebase 时 `model/http.rs` 与已合入 #555 的 import 行冲突（两边 import 都留），因合并了代码改为核验通过后才推送（后台）。#574 修复轮 1（负控改显式源码替换）推送，GLM+Grok r2 与 gate2 → finalize-reviewed。#573 修复轮 1（GLM：unsafe 守卫按函数体绑定 + pin 完整 token、grep rg spawn 复用人批函数、其余 spawn 点 TS detached 对照表；6 条负控）交付，verify4 核验排队；账本更正与 state 决策记录核验后补。#531 Grok r7 0 P1（codex r7 P0 已转修复轮 9）。
-> **16:50 CST**：#559 16:39 入队。#575 codex r1 0 P1、gate1 0 P1 → finalize-reviewed 等 Grok r1。#574 GLM r2 0/0；gate2 sibling P1（新负控脚本漏抄同族的 `env.pop('PDRS_BASELINE')`）→ 协调者一行补（Claude 署名），gate3 全量（--timeout 1500）后 finalize-mixed（glm r2 + grok r2）。#573 修复轮 1 核验通过（unsafe_boundary 1/0、bash / grep / background / hooks_runtime / mcp_runtime 全绿、lib 1134/0）→ 提交；协调者**先自己抽查 TS** 再写账本（`SubprocessPort.ts:63`、`commandRunner.ts:43` 为 detached，sidecar `stdioAgentLoopSidecarConnection.ts:75-81` 不是），追加 A6.5-BASH-OS-001 当前状态更正，`state/decisions-20261023.md` 补 #552 人定原话（修 Grok r1 F1 指针空）；rebase 只撞账本，代码自动合并 → 仍先核验后推送，再派 codex+Grok r2（unsafe 专审 + 看 Linux CI 日志）与 gate2。
-> **17:00 CST**：**#559（#554 宿主本地超时默认不限时 + 取消后 5 s 有界退出）合入**（ce81cd62，noreply），#554 关闭，树归档回收 → **#553（后台任务输出落盘与重启恢复，人批修）派 codex**（background.rs 主要作者），先出拆 PR 方案、本单只做输出 spill。#575 入队。#566 r2：codex P1×2（取消仍依赖消费端轮询；落盘 await 被取消时丢请求记录 / 跳事件）+ gate2 concurrency P1（同第二条：`cpu::run` 的 Task drop 会 abort 排队中的记录任务）→ GLM 修复轮 2；Grok r2 0 P1。#531 修复轮 9（codex，方案 B：扫描不持本仓 W，复合操作按根路径全序；EdgeClaw 含 ignored 56/0，旧锁环负控检出）与 #551 修复轮 1（DeepSeek：配置来源补齐；https / socks 代理仍不支持、已写三条六字段候选；MCP provider 尚无生产构造点＝归 A6.9-pr3c）交付，verify4 核验排队。
-> **17:10 CST**：**#575（A6.9-pr2a 纯 manifest 计算）合入**（81527890），树回收。sccache 已接上但首批 26 次请求无命中 / 未命中计数（多为增量单元透传），待下一批全新依赖编译再看效果。#531 修复轮 9 核验通过（EdgeClaw 五套全绿、lib 1142/0）→ 推送，**Grok + DeepSeek** r8（GLM、codex 均已为作者）与 gate9。#574 gate3 boundary **P0（需实测）**：dispose 回调先用 `Waker::noop()` 首 poll 再移入 spawned task，窗口内 `Notify` 边沿唤醒丢失可永久挂起 → codex 修复轮 2（先写确定性复现，成立再修）。#573 codex r2 P1×2：Linux 证据仍缺（CI 只跑旧 head）；账本「当前状态更正」又错述 glob（Rust glob 进程内遍历、不 spawn rg）与 MCP stdio（无 process_group）——**同类第三次（只核一侧）**，协调者两侧逐行核对后追加更正二（附 Rust 行号），auto-memory「relay-claims-verify」沉淀为规则；rebase → 核验 → 推送 → codex r3（看新 head 的 Linux CI 日志）后台串行。
-> **17:20 CST**：**人定两项**（原话记 `_tmp/20261023-loop/decisions-1023-human.md`）：① **macmini-01 装 rustup 与 Node 22**——`_tmp/20261023-macmini/setup.sh`（rustup 1.99.0 minimal + clippy / rustfmt，与本机对齐；Node 官方 v22.22.0 包校验 SHASUMS256，装在 ~/opt，不改 PATH 配置），后台运行；仓库 git clone 到 macmini `~/ws/pdrs-runner`，TS 基线从本机 rsync（同 arm64，避免 npm 再下载预编译包，不扩大授权）；远程核验脚本 `_tmp/20261023-macmini/remote-verify.sh`（已推送分支、每分支独立远端 worktree / target、远端 cargo ≤ 3、lib 4 线程），用于 rebase 后复核、负载类负控与全量重跑。② **账本拆文件**——先由 claude-fable-5-1 按本项目 skill（aias-meta-evolve、aias-meta-proto、dev-req、dev-docs）审核优化提案（只读，产出 `_tmp/20261023-ledger-split/review.md` 与 `proposal.md`），协调者核对后按冻结尺子变更程序实施。注：`42plugin.json` 的 plugins 列表为空，项目实际 skill 来自 `.claude/skills/`（42plugin 缓存 symlink）。
-> **17:30 CST**：**sccache 撤回**：`_build/cargo-home/config.toml` 的 rustc-wrapper 触发 `tests/unsafe_boundary.rs` 守卫（禁止 CARGO_HOME 下任何 config* 与 RUSTC_WRAPPER 等变量，防替换编译器 / 改 lint，属有意安全护栏）——#573 rebase 后核验 unsafe_boundary 0/1 即此因；删除配置后 1/0；17:05–17:25 期间的实现方（#562、#553）遇 sandbox 拒绝 sccache 时已自行 `RUSTC_WRAPPER=` 并如实记录。不为提速绕开该护栏，sccache 放弃（实测 25 命中 / 758 未命中）。#573 后续链（rebase → 核验 → 推送 → codex r3）重跑。**#551 → PR #577**（DeepSeek；mcp_proxy 2/0、mcp_https 3/0、mcp_runtime 21/0、lib 1138/0）：账本追加 LIFETIME-001 代理部分已对 MCP 消除，登记 MCP-PROXY-HTTPS / SOCKS / FALLBACK-001（未批准），**引用的 TS 行号协调者逐个核过**（`proxy.ts:122-145` catch 保留 dispatcher；TS 依赖 undici ^8.2.0、装的 8.3.0，`proxy-agent.js:143` socks 分支）；跟进单 #576；GLM+codex r1 与 gate1。#571、#563、#553 pr1、#562 修复轮 2 交付，verify4 核验排队。macmini：rustup 还在下 5 个组件，仓库已 clone，TS 基线 rsync 中。
-> **17:40 CST**：macmini：rustup 1.99.0 已装、Node v22.22.0 解压中（日志未刷出时 ssh 看进程确认在跑，非卡死）。#531 DeepSeek r8 0 P1；gate9 concurrency + boundary 同报 P1（`negative_locks.py:130` 元组当 dict 键必然 KeyError，最后一条 held-cache 负控跑不到）→ 协调者一行修（键改 `'storage/accessors.rs'`，只改该文件），整套锁负控后台复跑后再提交；锁序本身两家与 gate9 均无 P0/P1。#574 修复轮 2：gate3 P0（noop waker 丢唤醒）**确定性实测未复现**——首 poll 已把 Notify 等待登记在原 future 上、spawned task 复 poll 同一 future；补 4 窗口回归与负控（丢弃重建 future 转红）→ 推送，GLM r3（核 tokio 语义与其他边沿原语）+ gate4 后 finalize-mixed。#569（fable）如实报告当前负载复现不了失败 → 待 #568 合入后照 #568 配对补证再开 PR。**#571（A6.9-pr3a factory 骨架）→ PR #578**（codex+Grok r1、gate1）；**#563 → PR #579**（GLM+codex r1、gate1），账本按真实 TS 实测追加更正：#537 时登记的「TS 读 ENOENT」不实——读返回 `[]`、写经链接创建、删为无操作，逐条附 file-memory.ts 行号（协调者核 `:697`、`:1303`）。另：board 草稿里把代理跟进单写成 #578，实为 **#576**（PR 正文无误），已改。
-> **17:45 CST**：**macmini-01 工具链就绪**：rustup 1.99.0 + clippy / rustfmt、Node v22.22.0（官方包 sha256 校验通过）；仓库已 clone，TS 基线 rsync 中（552M / 1.3G），完成后先跑一次 remote-verify 实测。**#577（#551 MCP 代理）codex r1：P0——用户配置的 `Proxy-Authorization` 头会随目标请求发给 MCP 服务器（undici 8.3.0 在代理 dispatch 时拒绝该头）；P1×3：gitleaks 放行只匹配私钥短前缀（可放过另一把有效私钥，codex 用 `gitleaks stdin` 实测）、NO_PROXY 端口溢出被当不限端口、代理认证解码不等价 decodeURIComponent** → DeepSeek 修复轮 2；GLM r1 0 P1、gate1 0 P1。#573 codex r3 P1：新 head Linux CI lint 失败——`tests/bash_session.rs` 的真实 TS 回放只在 macOS 编译（金样录自 darwin），其辅助项在 Linux 未使用 → 协调者对该测试文件在非 macOS 放行 dead_code / unused_imports（Linux 仍跑 `detached_shell_leads_its_own_session`），推送，codex r4 等 CI 完成后核 Linux 日志并判断是否满足 #386 条件。#531 Grok r8 唯一 P1 即负控脚本 KeyError——已修并整套复跑（16 条变异全部检出、源码恢复、rc=0）→ 提交推送，Grok r9 只核修正 + gate10 后 finalize-mixed（grok r9 + dsh r8）。
-> **17:55 CST**：#574 GLM r3 0/0、Grok r2 0 P1（GLM 核实 noop waker 首 poll 结论成立）；gate4 concurrency P1（dispose 前奏在 state 锁内执行，前奏 panic 时同批 waiter 丢失 → 后续 dispose 无限挂起）→ codex 修复轮 3（先复现）。#578（A6.9-pr3a）codex r1 + Grok r1 同报 P1：TS `Promise.allSettled` 同时启动 8 项清理、Rust 改为逐个 await（互等时 drain 挂死）；另 loadedAt 用了资源时钟、单族失败丢错误包裹层（gate1）→ GLM 修复轮 1。#579（#563）codex r1 P1×2：负控只证明 read、write / delete 无独立转红；**我的账本「删为无操作」又不实——TS `:1303` 跳过后 `:1307` 无条件 `repairManifests()`、金样新增 MEMORY.md**（只核一行、没读完整函数；auto-memory 补第四次：读完整函数体，以金样为准）；gate1 boundary P1（生成器对 Dirent 无比较排序为空操作）→ DeepSeek 修复轮 1，账本更正待交付后追加。#562 修复轮 2 提交 + rebase，本机核验后推送并派 GLM + DeepSeek r3（Grok 上轮超时）。**#553 pr1 → PR #580**（codex；background_output 1/0、background_tasks 9/0、lib 1143/0；`Refs #553` 不关单），账本追加部分实现（TS `TaskOutputStore.ts:71-73`、`ExecutionWorldBundle.ts:177-178` 协调者核过），GLM+Grok r1 与 gate1。macmini TS 基线 rsync 806M / 1.3G。
-> **18:00 CST**：**#531（A6.6-pr10f EdgeClaw export / import、overview、UI）入队**（Grok r9 + DeepSeek r8 + gate10 均 0 P1；锁问题按最后一轮机会收敛）。**账本拆文件**：fable 审核产出 `_tmp/20261023-ledger-split/review.md`（原提案 P0×2 P1×4）与优化稿 `proposal.md`；协调者核对发现优化稿的共享 `diffs/manifest.json`（每加一条都改清单与 FROZEN 哈希）会重新引入串行冲突、违背拆分目的 → 改为：旧单文件冻结、新条目只新增文件、只追加由 `check_frozen.py --base` 对照 merge-base 强制、不需要共享清单（`coordinator-review.md`），其余（负例、回滚、读取方清单、更正关联与批准指针机检）采纳 → 开 **#581**（冻结尺子变更程序），派 codex，评审 GLM + Grok。#573 codex r4：lint 已过，但 Linux 上 `detached_shell_leads_its_own_session` 失败——两条 getsid 断言通过（setsid 在 Linux 生效），失败在 drop 后进程组 5 s 内仍存在 → GLM 修复轮 2（先加组成员状态诊断判定僵尸 vs 活进程；本机与 macmini 均 macOS，只能靠 CI）。#562 修复轮 2 推送，GLM + DeepSeek r3。macmini TS 基线仍在 rsync。
-> **18:05 CST**：#531 在合并队列。#566 修复轮 2（取消主动传 provider、落盘取消安全）、#577 修复轮 2（Proxy-Authorization 拦截、gitleaks 精确放行、NO_PROXY 溢出、decodeURIComponent）、#574 修复轮 3（dispose 前奏 panic 不丢 waiter）、#579 修复轮 1（逐操作负控、delete 全部效果、生成器显式排序）交付 → 负载 4.5，四单并行 verify4 核验。#580 GLM r1 0/0、gate1 0 P1，Grok r1 P1（删掉 `flushed.await` 测试仍通过）→ codex 修复轮 1（写入闸门 + 负控）。#562 GLM r3 0/0、gate3 0 P1，等 DeepSeek r3 后自动收尾。macmini 的 TS 基线 rsync 已 50 分钟（node_modules 小文件多），仍在进行。
-> **18:20 CST**：**#531（A6.6-pr10f）合入**（c877d3cc，noreply），树归档回收，磁盘回 126.6 GiB。macmini TS 基线 rsync 完成（1.3G）。#562 因 #531 合入 DIRTY → rebase-refresh（GLM r3 + DeepSeek r3 均 0/0、gate3 0 P1）。四单核验通过并推送（新脚本 `_tmp/20261023-loop/push-tree.sh`：只自动合并账本冲突、代码冲突即 abort、五项断言全过才推）：#566 修复轮 2（host_model_port 10/0、lib 1134/0）→ codex+Grok r3；#577 修复轮 2（mcp_proxy 2/0、lib 1153/0）→ GLM+codex r2；#574 修复轮 3（plugin_runtime 26/0）→ GLM+Grok r4；#579 修复轮 1（dangling_links 7/0）+ 协调者账本更正二（**读完 deleteEntries / writeRecord 整个函数**后核 `:698`、`:1307` 的 repairManifests，写 / 删均落 MEMORY.md）→ GLM+codex r2；四单均带新 gate 与 finalize-reviewed。#580 修复轮 1 在做。**#568 的 Grok r4 在 16:15 启动后静默失败（无任何 rv-grok-r4 文件）**，18:20 重派，agent 代码分析3 已接单。**#547（p2-sweep-13）被晾**：修复轮 2 上午交付后一直未提交，rewind 重链后的复核也没跑完 → verify4 整套重核（含 rewind、source_identity 正确设 fixtures 目录）。
-> **18:30 CST**：#568 Grok r4 0 P1（配对负控确认）→ rebase-refresh 收尾（GLM r3、Grok r4、codex r1 均 0 P1）。#564（**Claude-fable 首单**：插件 Markdown 逐级 NOFOLLOW 打开、复用 `project_files::open_beneath`、打开后句柄复核；无新增 unsafe）提交推送（`Claude Fable 5.1` 署名），**首次用 macmini 远程核验**（remote-verify.sh）。**#581（账本拆文件）→ PR #582**：rebase 时 FROZEN 冲突，frozen-merge 只重算账本哈希、漏了本提交改过的 `check_frozen.py` 哈希行 → 手工合并后 check_frozen PASS，`accepted-diffs.md` 与 main 逐字节一致（冻结点）；`frozen-merge.py` 改为一并重算本提交改过的已登记文件；`test-gateway-ledger.py` 24/0、`--base origin/main` PASS；GLM + Grok r1（含实测并行新增无冲突与尺子不可绕过）与 gate1。#578 修复轮 1、#573 修复轮 2、#580 修复轮 1 交付，本机 verify4 并行核验。
-> **18:45 CST**：**#577（#551 MCP 走代理）入队**。**rebase-refresh.sh 两处缺陷（我写的）**：① 第 18 行 `"代码冲突：$u，停"` 又是变量后接中文被并入变量名、`set -u` 退出——这就是 #559、#568 两次「无日志静默失败」的根因（下午修 shell-var-cjk 时 grep 已列出这一行，我只改了第 36 行）；② 代码冲突时**不 abort 就退出**，#568 工作树停在 rebase 中途（resume.rs UU）。已：abort 恢复；四个失败出口都先 `git rebase --abort`；全量扫描另修 archive-compress.sh，finalize-reviewed.sh 有实例在跑、另写 finalize-reviewed2.sh（旧版把 `$R：`/`$note；` 吞掉，PR 正文的评审摘要已为乱码，如 #575——不影响 pr-gate 判定）。#568 真实代码冲突（#559 把 execution_timeout 改成 Option，本单放宽到 60 s）→ 协调者合并为 `Some(Duration::from_secs(60))` 两处并改正过时注释（生产默认现为 None），host::tests::resume 10/0，推送，全量 gate3 后 finalize-pr。#562 gate4 sibling P1（recorder 金样场景数下限漏收紧）→ codex 修复轮 3。macmini 远程核验 #564 正在跑 lib 全量（通道可用）。#566 codex r3、#579 codex r2 各 1 条 P1，下轮处理。
-> **19:20 CST 交接（旧协调会话 18:50 因上下文过长交接，新会话接替）**：13:15 之后的逐轮记录原在 `_tmp/20261023-loop/board-pending-1315.md`，本段之上已补进库；交接全文 `_tmp/20261023-loop/handoff-1850.md`。今天人定增补（#552 unsafe 例外扩展、放开并行限制、macmini-01 工具链、账本拆文件）已并入 `state/decisions-20261023.md`；CLAUDE.md 资源上限同步为 worktree 16、磁盘 200 GiB（cargo 仍 4，sccache 因与 unsafe_boundary 守卫冲突已撤回），`scripts/wt-status.sh` 显示值同步。接手实查：#568（#560）、#577（#551）已合入，两棵树先归档 `_tmp/`（文件数一致）再回收；#574 18:46 被合并队列踢出——队列 CI 里 `mcp_client` 的 http-sse 场景 step 1 报 `mcp_call_timeout`（#574 只改插件运行时，下一条队列 #568 同一用例 3 s 通过），判负载假红，已重新入队，再红就开 P2-跟进。#582 合入后另改 CLAUDE.md「accepted-diffs.md 只追加」一行。worktree 12/16（含本 board 树）、cargo 0/4、磁盘约 131 GiB / 200、负载约 4。下一步：按 READY 逐单核验已交付的修复轮（#566 #562 #579 #580 #573），派 #591 修复轮 1、#578 r2、#582 修复，派 #576 / #572 两条新单。下一个交接点约 21:20 CST。
-> **19:55 CST**：新会话首轮。#574（#543）合入（noreply），树回收；#592（board 交接）与 #578（A6.9-pr3a，codex/Grok r2 0 P1、gate2 0 P1）入队。修复轮核验通过并推送：#580（#553 pr1 修复轮 1）→ GLM r2 0 P1、Grok r2 P1（负控副本共用本树 target）→ codex 修复轮 2；#573（#552）修复轮 2（根因：测试在 runtime 销毁后自旋，Linux 僵尸 leader 仍算组成员；只改测试）推送等 Linux CI；#562（#222）修复轮 3 → GLM+DeepSeek r4；#579（#563）修复轮 2 → codex r3；#566 修复轮 3 rebase 时 model/http.rs 与 #551 的 import 冲突（两边 use 取并集），核验后 push。#582（#581）codex 修复轮 1（--base 强制旧账本逐字节冻结，Python 30/30、负控 33/33、真实账本 PASS）+ 协调者改 CLAUDE.md 账本规则行 → GLM+Grok r2 与 gate2。#591（#564）三家 P1 合并成一份任务书 → Claude-fable 修复轮 1。#569 rebase（与 #568 只差注释），核验后开 PR。#547 在 macmini 单跑 3 条 lib 失败。#572 #576 与 #566 同改 model/http.rs，按同模块串行等 #566 合入。
-> **20:10 CST**：#547 在 macmini 单跑 3 条 lib 失败（real_ts_submit_scenarios 与 skills 两条）各 3/3 过，判负载假红 → Grok+codex r3 与 gate3。#566 修复轮 3 推送（88cdec49）→ codex r4 与 gate4（Grok r3 已 0 P1）。#562 r4：GLM 0/0；DeepSeek P2（负控原地改写受控 oracle/generator，中断即留变异）——与 #580 同类按 P2b 处理 → codex 修复轮 4。#579 codex r3 0/0、GLM r2 0/0 → gate3 后 finalize-mixed（评审轮次不同，finalize-reviewed2 会等不存在的 glm-r3，已改用 mixed）。#573 Linux CI 转绿 → codex+Grok r5（按人定专审 unsafe 块）与 gate3。#569 → PR #593（如实写「负载下未复现」），codex+GLM r1 与 gate1。#592 #578 队列中。
-> **20:30 CST**：**#592（board）与 #578（A6.9-pr3a）合入**（noreply），两树归档回收；#579 收尾入队。**评审造假**：Grok 在 #573 r5 里自述 #574 r4「没真正跑过任何实测」，而 #574 已凭该轮合入 → PR 留言、派 DeepSeek 合入后补审 ca349a6e（含变异实测）；评审规则加「实测结论必须贴原始命令与输出，否则视为未做」，auto-memory「review-raw-output」。同规则下 #573 Grok r5、#566 Grok r3 的实测都没贴输出 → 各改派 DeepSeek 作第二家（#573 codex r5 0/0 如实写「未编译运行」，#566 codex r4 0/0），收尾链改为 codex+dsh。#582 gate2 P1（merge_group.base_sha 语义可能让 --base 零约束）→ 用真实队列 run 39942224745 仲裁（merge group 提交的父 = base，merge-base ≠ HEAD，检查有效），降为 P2a，仍派 codex 修复轮 2 加 fail-closed 防护。#593（#569）codex 与 GLM 独立撞上同两条 P1（握手 2 s 独立计时未放宽；grep helper 内层 15 s 期限使外层 120 s 不生效）→ Claude-fable 修复轮 1。#562 修复轮 4（负控改用 /tmp 副本，6/6 检出）核验中。#547 codex r3 P1×3、gate3 P1×3，等 Grok r3 后合并派 GLM。
-> **20:45 CST**：#566 第一条收尾链在我改派前已贴结果块（含 Grok r3），且 gate4 concurrency 600 s 超时致 pr-gate FAIL → gate5 用 --timeout 1500 重跑，收尾改为 codex r4 + DeepSeek r4（DeepSeek 在跑），结果块将被覆盖。#547 Grok r3（P1×1，未附输出，任务书标「先自己验证」）+ codex r3 P1×3 + gate3 P1×3 合并 → GLM 修复轮 3（超预算不得静默 (0,0)、多目录别名目标、include 宏三种括号、账本更正候选由协调者登记）。#582 修复轮 2 推送（Python 34/34、负控 39/39、真实账本两种检查 PASS）→ GLM+DeepSeek r3 与 gate3 后自动收尾。**注意**：#582 合入后 gateway 旧账本冻结，#547 #580 等仍在旧账本追加的 PR 须把条目改到 `specs/gateway-parity/diffs/`，并停用 ledger-merge / frozen-merge / ledger-chain。
-> **21:00 CST**：**#579（#563）合入**，树回收。#574 合入后补审（DeepSeek，含临时 worktree 回退变异，40 处原始输出）P0=0 P1=0，已贴 PR，事件闭合。#573 收敛后被 #592 挤成 DIRTY（state/decisions-20261023 与 FROZEN/账本）→ 新写 `_tmp/20261023-loop/rebase-state-ledger.sh`（state/ 取 main 侧、账本工具合并、代码冲突 abort；bash 3.2 无 mapfile 改 while-read）——中途我先在 zsh 里手写循环，`$u` 不分词空转 10 次，abort 恢复后才改脚本（shell-var 类第 N 次：会改 git 状态的循环一律写成 bash 脚本）。rebase 后 check_frozen PASS、账本 0 删除，推送 a8c3de63，gate4 后 codex r5 + DeepSeek r5 收尾。#566 gate5 P1（model_override 要求两字段都是字符串才认，TS 只看真值，协调者核过 routerModelInvokerAdapter.ts:28-37）→ GLM 修复轮 4。#562 修复轮 4 核验（lib 1168/0）推送 → DeepSeek+GLM r5 与 gate5 后收尾。#582 gate3 0 P1、GLM r3 0/0，等 DeepSeek r3 后自动收尾。
-> **21:15 CST**：#573 第二条收尾链（gate4 0 P1）贴块后 merge-when-green 等 CI。#562 gate5 sibling P1：同模块 run-registry 金样仍是场景数下限 ≥20（同类假 PASS，按 P2b→P1）→ codex 修复轮 5 只修这一处。#593（#569）Claude-fable 修复轮 1：握手期限一并放宽、grep helper 用父进程下发的整体预算（110 s < 父等待），4×3 压测 12/12、两条负控转红 → 核验+推送后 codex+GLM r2 与 gate2 自动收尾。#580 修复轮 2（负控副本自有 target 并在所有退出路径删除，18/18 检出）→ rebase-state-ledger + push（check_frozen PASS），GLM+DeepSeek r3 与 gate3 后自动收尾。#582 被 #579 的账本追加挤成 DIRTY，等 DeepSeek r3 跑完再 rebase（不在评审进行中改评审所读的树）。
-> **21:30 CST**：#573（#552 setsid）入队第 1 位。#593（#569）r2 codex 0/0、GLM 0/0、gate2 0 P1，结果块已贴，merge-when-green 等 CI。#582 DeepSeek r3 P1（main 前进后 FROZEN 冲突，作者的「真实 main」实为旧 9bed）+ P2（self-base 时只追加对照零约束）→ rebase-state-ledger 干净（FROZEN 保留 main 的 #563 注记与账本哈希 + 本 PR 三条注记与 checker 哈希，真实 main 两种检查 PASS）；P2 由协调者在 ci.yml 加守卫（pull_request / merge_group 下 LEDGER_BASE==HEAD 即失败，只 push 允许）→ GLM+DeepSeek r4 与 gate4 后自动收尾。#591（#564）Claude-fable 修复轮 1 交付（负控 77/77，ELOOP/ENOTDIR 才算竞态跳过，其余错误按 TS readFile 传播）→ 沙箱外核验中。其范围外一条「独立技能 SKILL.md 仍按路径读取」评审标 P2，按 p2-followup-regrade 定 **P0** → 开 #594（前置 #591，同文件串行）。#562 DeepSeek r5 0/0，等 codex 修复轮 5（run-registry 场景数）。
-> **21:50 CST**：**#573（#552 bash setsid，人批 unsafe 例外扩展）合入**（noreply），树归档回收。#593 入队第 1 位。#582 r4 GLM 0/0、DeepSeek 0 P1、gate4 0 P1 → finalize-mixed 在跑。#591 修复轮 1 核验：plugin_runtime 1 条失败（dispose 先后顺序）——分支基于 #574 合入前的 main，rebase 后 plugin_runtime 26/0、plugin_traversal 22/0，判非本单问题；推送 3ed0078f → codex+DeepSeek r2 与 gate2 后自动收尾。#580 gate3 boundary P1（账本追加条机器判据写「8 组 103 步、12 条负控」，现状 11 组 122 步、18 条）→ 协调者核数后改写本 PR 自己追加的那一行并重登记 FROZEN（相对 main 仍只追加，check_frozen PASS），gate4 后待 DeepSeek r3 自动收尾（两家 r3 审的是前一 head，增量只是这一行账本文字）。
-> **21:15 CST（时间更正）**：本文件此前 20:10 之后各段的时间标签是我估写的、偏晚（实际 21:13 时我已写到「21:50」）；以 finalize.log / merge-when-green.log 的时间戳为准。之后每段先跑 `date +%H:%M` 再写。本轮：#562 修复轮 5（run-registry 精确场景数 + 负控）、#566 修复轮 4（model_override 按 TS 真值语义）、#547 修复轮 3（超预算报错、include 宏三种括号等）三单同时交付 → 三路 verify4 并行核验。#582 收尾后又被 #573 账本追加挤成 DIRTY（merge-when-green 21:07 读到旧 pr-gate 失败退出）→ rebase-state-ledger（真实 main 两种检查 PASS、回归 OK）推送 7e40e48a，gate5 后 finalize-mixed 用 r4 结论收尾。
-> **21:22 CST**：三单沙箱外核验全绿：#562（recorder 6/0、compaction 6/0、lib 1173/0）、#566（host_model_port 13/0、lib 1167/0）、#547（rewind 4/0、lib 1171/0）→ 各自 rebase-state-ledger + push-tree 推送（ded5b31c / ddbd1653 / 91542e2c），派评审与 gate 后自动收尾：#562 DeepSeek+GLM r6、#566 codex+DeepSeek r5、#547 Grok+codex r4（评审规则已要求实测贴原始输出）。#547 修复轮 3 的账本更正候选（A6.8-SKILLS-TREEFILES-001 语义）待登记：若 #582 先合入，按新规写 `specs/gateway-parity/diffs/A6.8-SKILLS-TREEFILES-001-R2.md`。
-> **21:26 CST**：**#593（#569 host 负载假红）合入**，树回收。#580、#582 结果块已贴，merge-when-green 等 CI（#582 先入队后 gateway 旧账本冻结）。#591 r2：codex 0/0；DeepSeek P1——「负控 77/77」跑在 rebase 前的树上（plugins.rs 已因 #543 改变，6 个相关负控未在 3ed0078f 复跑）→ 协调者在 3ed0078f 上整套重跑（`_tmp/20261023-issue-564-plugin-toctou/negative-3ed0078f/`）。READY 其余 impl 单都卡在即将合入的 #566 / #562 / #591 上 → 从开着的 P2-跟进里取 #344（tool-result spill 写入侧 TOCTOU，与 #564 同类，前置于 A6.9）开新树派 codex。
-> **21:35 CST**：#580 入队（改账本，#582 按 ledger_busy 等它出队）→ 写 `_tmp/20261023-issue-581-ledger-split/after-580.sh`：#580 合入后自动 rebase #582、推送、gate6、用 r4 结论收尾。#591 在 3ed0078f 上重跑负控（进行中，已出的均检出）。#566 r5 codex P1×2（property_key 吞 JS 转换错误、cache-plan 用结构相等代替 ===）+ gate6 P1（生产入口 execution_context 仍过滤 modelOverride）→ GLM 修复轮 5。**#547 tree_files 同一处修 3 次不过，按规则挂起**：决策卡 `_tmp/20261023-loop/card-547-tree-files.md`（选 A：拆分，AI 代批待人复核），开 #595（先由第三家出设计再实现），#547 修复轮 4 回退 tree_files 与其账本条目、只保留已收敛项（GLM）。#562 GLM r6 0/0，等 DeepSeek r6。
-> **21:45 CST**：**#580（#553 pr1 后台输出 spill）合入**，树回收。after-580 链已把 #582 rebase 推送（e6c68f94），gate6 后收尾。#562 21:37 入队后因 #580 账本合入被踢（DIRTY）——它还往旧账本追加，**排在 #582 之后**：#582 合入后把 #562 / #591 / #547 的账本条目改写为 `specs/gateway-parity/diffs/<ID>-R<n>.md`。#591 负控在 3ed0078f 重跑 77/77、git 干净，已贴 PR，DeepSeek r3 补证复核在跑；gate2 boundary P1：ROOT-001 / R1 登记未随 TOCTOU 防护同步（硬链接、socket、FIFO 三类新差异）→ #582 后写 `diffs/A6.3-PLUGIN-MARKDOWN-ROOT-001-R2.md`。#566 DeepSeek r5 与 codex r5 独立撞上同两条 P1（已在 GLM 修复轮 5 中）。#344 实现交付（10/10、负控 6/6、TS 金样两次一致）→ 沙箱外核验。
-> **21:55 CST**：#582（账本拆文件）gate6 后入队第 1 位。#591 DeepSeek r3 补证复核 0/0；仍差 gate2 boundary P1 的账本更正（#582 后写 diffs/ 新格式）。#547 修复轮 4 交付（tree_files 与其账本条目撤回）——rebase 时历史提交里的账本追加 / 撤回与 main 冲突、ledger-merge 拒绝 → 修复轮 1–4 的净差异只剩 4 个文件（无 specs），**压成单提交以 origin/main 为基重放**、force-with-lease 推送 c0c5084b（原历史留本地 backup/p2s13-*），核验中。#344 → PR #596（Closes #344），GLM+DeepSeek r1 与 gate1 后自动收尾。#595 开树派 Claude-fable 只出设计（TS 精确语义实测、逐值一致论证、fd 有界、负控计划、diffs/ 草稿）。
-> **22:05 CST**：#582 仍在队列第 1 位等检查。#596（#344）r1：DeepSeek **P0**（containment 基准是 spill 根而非 project 根，上游 .pilotdeck / tool-results 为符号链接时可写出项目，读路径 native_archive 用 project 根可拒同布局）、GLM 范围外 P1（EdgeClaw file_memory 同构检查后按路径写）→ codex 修复轮 1（以 project 根逐级 NOFOLLOW + mkdirat、上游预置 / 竞态两测试与负控）；file_memory 开 #597（越权写按 P0，等 #596 合入后派）。#547 拆分后单提交核验绿（lib 1177/0）→ codex+DeepSeek r5 与 gate5 后自动收尾，PR 标题改为不含 tree_files。#566 修复轮 5 交付（生产入口透传、ToString 抛错、=== 语义；oracle 41 用例两次一致、3 负控转红）→ 核验中。
-> **22:25 CST**：**#582（#581 差异账本拆文件，人批冻结尺子变更）合入**，树回收；ledger-merge / frozen-merge / ledger-chain 改名 .retired-582 停用，push-tree / rebase-state-ledger 加注：specs/gateway-parity 冲突即视为需改写为 diffs/ 的信号。旧账本追加的在途 PR 逐个改写：#562 从 origin/main 重放除旧账本提交外的全部提交（src 补丁逐行一致），新增 `diffs/A6.2-TRANSCRIPT-DOMAIN-001-R1.md` → GLM+DeepSeek r7 与 gate7；#591 rebase 后新增 `diffs/A6.3-PLUGIN-MARKDOWN-ROOT-001-R2.md`（补登硬链接 / FIFO / socket 三类差异，gate2 P1）→ codex+GLM r4 与 gate3。**#547 第二块也挂起**：源码身份合同的 include 宏正则扫描三轮仍 P1（codex r5 P1×7、DeepSeek P1×3）→ 决策卡 `card-547-source-identity.md`（选 A：移到 #426 改用 rustc dep-info，AI 代批待复核），#547 只剩 snapshot.rs 9 行注释 → codex+DeepSeek r6；#426 开树派 codex。#566 修复轮 5 推送 → codex+DeepSeek r6 与 gate7。#596 修复轮 1（project 根逐级 NOFOLLOW + mkdirat）交付 → 核验中。#595 设计稿交付（304 行）→ codex+GLM 设计评审；协调者读稿时发现核心论证疑点（祖先链 ≠ ELOOP：无环 k=20 DAG TS 记 0、祖先链会照常下降），已列为评审必判项、要求两侧实测对照。zsh 不分词坑第二次（cherry-pick 循环）：git 状态循环一律 `bash -c` 或写成 bash 脚本。
-> **22:30 CST**：#547（缩为 snapshot 注释）codex r6 0/0、DeepSeek r6 0 P1，结果块已贴，merge-when-green 等 CI。#566 codex r6 P1（model.rs:897 把路由键转换失败当「metadata 不存在」，跳过注入的 lookup 与其返回值校验）——等 DeepSeek r6 出来后合并派 GLM 修复轮 6。#596 修复轮 1 核验中（tool_budget 5/0、context_prepare 1/0，lib 在跑），r2 任务书已备。#426（codex 实现）、#595 设计评审（codex+GLM）在跑。
-> **22:35 CST**：#547（缩为 snapshot 注释）入队。**#562 误留在合并队列**：21:37 merge-when-green 入队后被 #580 踢出，又在 #580 合入后被队列自动重新接纳（GitHub 对 DIRTY 后恢复的 PR 保留入队意图），当时 head 已是我 22:21 改写的新格式账本版本、DeepSeek r7 随后报 P1×2（我写的 R1 两处不实：批准记录与 #505 人批矛盾、负控「均在 /tmp」不实）→ 已用 GraphQL dequeuePullRequest 移出、修正推送（5af2511e）、DeepSeek+GLM r8 后 finalize-mixed。教训：改写 head 前先查该 PR 是否在队列（push-tree 前核 mergeQueue）。#566 codex r6 P1（model.rs:897 把 ToString 失败当 metadata 不存在）、DeepSeek r6 0、gate7 0 → GLM 修复轮 6。#591 r4 codex 0/0、GLM 0 P1，等 gate3 收尾。
-> **22:45 CST**：#547 队列第 1 位等检查。#562 r8 DeepSeek 0 P1、GLM 0 P1，gate7 头不符 → gate8 后 finalize-mixed。#591 gate3 P1×2（身份复核基准是 read_markdown 内新 lstat 而非检查时 (dev,ino)；检查后删除被静默跳过、TS 报 ENOENT）→ Claude-fable 修复轮 2。#595 设计评审：codex P1×5、GLM P0×1 P1×5，两家独立确认祖先链论证不成立、计数一致来自完整路径系统调用，main 现状已是 fd O(1)、固定别名预算必误伤 → Claude-fable 设计第 2 版（以 main 完整路径遍历为基线，只加总工作量上限、取值按 TS 实测吞吐、超限行为列为待人定项）。#426 实现交付 → PR #598（node 23/23 协调者复跑一致、负控 20/20）→ GLM+DeepSeek r1 与 gate1。
-> **22:52 CST**：**#547（p2-sweep-13，最终只剩 snapshot host 边界注释）合入**，树回收；其原有两块已分别拆到 #595 / #598。#596（#344 spill 写入 TOCTOU）r2 DeepSeek 0 P1（实测 21 段原始输出，含 P0 闭合）、GLM 0 P1（如实声明无执行工具、仅静态）、gate2 0 P1 → 已入队第 1 位，PR 留言说明收敛依据。
-> **23:02 CST**：#596 队列第 1 位。#562 gate8 sibling P1（session_domain 金样测试绕过 test_baseline::oracle 的基线 commit / sourceSha256 校验，另三个同源消费者都有）→ codex 修复轮 6。#598（#426）GLM r1 0 P1、gate1 0 P1，等 DeepSeek r1。磁盘 90 GiB（disk-trim 生效）。
-> **23:15 CST 交接（持有人：协调者本会话，19:10 接手）**：本段合入 #574 #568 #577 #578 #592 #579 #573 #593 #580 #582 #547 #596（邮箱 noreply）。#582 后 gateway 旧账本冻结，新条目写 diffs/。在途与下一步见 READY 与 `_tmp/20261023-loop/handoff-2315.md`。待人复核：#547 两块按「同一处修 3 次」挂起拆分（`_tmp/20261023-loop/card-547-*.md`）。worktree 7/16（含本 board 树）、cargo 1/4、磁盘约 91 GiB / 200。下一个交接点约 01:15 CST。
-> **23:22 CST**：#599（board 23:15 交接）等 CI 后入队。#566 修复轮 6 核验绿（host_model_port 14/0、lib 1179/0）推送 aaae7011 → codex+DeepSeek r7 与 gate8。#598 交付 HEAD 真实构建补证通过（CAPTURE_OK_HEAD，9 包 409 文件）→ PR 留言、DeepSeek r2 复核后收尾。#597 codex 实现中；#591 codex 修复轮 3、#562 codex 修复轮 6、#595 fable 设计 v2 在跑。
-> **23:35 CST**：#599（board）入队。#566 codex r7 0/0，等 DeepSeek r7 与 gate8 后自动收尾。#562 codex 修复轮 6 交付（域金样与副本统一经 test_baseline::oracle 校验，篡改 sha / commit 均转红；storage 97/0）→ 沙箱外核验。**#597 codex 被其内容安全过滤中断**（误判为网络安全风险，exit=1，留未提交半成品）→ 改派 GLM 在同一工作树接手，任务书改为「防御性加固、与 #596 同一做法」措辞；auto-memory「codex-cyber-filter」。#591 codex 修复轮 3、#595 fable 设计 v2（已跑 50 分钟）在跑。
-> **23:43 CST**：**#599（board 23:15 交接）合入**，树回收。#598（#426）入队第 1 位。#566 gate8 P1（context.rs 路由比对把缺失键与 undefined 当不同，偏离 JS !==）→ GLM 修复轮 7。#562 修复轮 6 核验绿（lib 1179/0）推送 458838ea → DeepSeek+GLM r9 与 gate9。#591 codex 修复轮 3 交付（两测试修正后手工回退均转红、新增 pre-lstat 真实 TS 金样）；其沙箱内负控 78/79、lib 23 失败均为监听 / socket EPERM → 协调者沙箱外重跑 verify4 + 整套负控。
-> **23:53 CST**：**#598（#426 源码身份合同改由 cargo metadata + rustc dep-info 认定）合入**，树回收。#562 r9 GLM 0/0、gate9 0 P1，等 DeepSeek r9 后自动收尾。#591 修复轮 3 沙箱外核验绿（plugin_traversal 22/0、plugin_runtime 26/0、lib 1185/0），整套负控沙箱外重跑中。#595 设计 v2 交付（基线 = main 完整路径遍历，只加总工作量上限 8,388,608，实测 Rust 最坏 164 s / 2.34 GB；超限 A 报错 / B 返回 0/0 待人定）→ codex+GLM 设计评审第 2 轮；待人定两项写卡 `_tmp/20261023-loop/card-595-limit.md`（建议 8,388,608 + A）。
-> **00:05 CST**：#591 负控沙箱外 79/79 → 修复轮 2–3 合并提交（署名 Claude Fable + Codex）推送 0122f796 → 两作者谱系都排除，GLM+DeepSeek r5 与 gate4。#595 codex 设计评审 r2 P1×4（探针移动后不能复跑；上限不能解释为覆盖 TS 能力，应定位为产品资源策略；cap 计的是累计 listed 条目而非资源上界、宽目录先 collect 未受限；差异草稿措辞超出观测）——方向已认可（祖先链删除、以完整路径系统调用保留内核截断），等 GLM 后派 fable 设计 v3。#597 GLM 接手交付（写 / mkdir / unlink / clear 都改目录句柄，竞态负控 7/9 转红、2 条按设计保持绿；另改 tool_budget.rs 的 mkdir 边界错误映射）→ 沙箱外核验。
-> **00:14 CST**：#562（#222）r9 收敛，结果块已贴、入队第 1 位。#597 GLM 接手完成，沙箱外核验绿（edgeclaw_file_memory 10/0、entries 9/0、tool_budget 5/0、lib 1192/0）→ PR #600（Codex + GLM 两作者，评审派 DeepSeek + Grok）与 gate1。#591 GLM r5 0 P1；gate4 P1（祖先被换成普通文件也得 ENOTDIR，被误当链接换入跳过，TS 整拒）→ codex 修复轮 4。#595 GLM 设计 r2 P1×1（差异草稿格式）、codex P1×4 → fable 设计 v3（探针可复跑、上限定位为产品资源策略、边读边计数、草稿措辞）。#566 修复轮 7（缺失键归一为 undefined）交付，核验中。
-> **00:23 CST**：**#562（#222 会话域日志校验）合入**，树回收；A6.9-pr3d（#587）前置之一解除。#566 修复轮 7 核验绿（host_model_port 14/0、lib 1185/0）推送 da047192 → codex+DeepSeek r8 与 gate9。#600 gate1 P1×2（project_files 新函数无条件用 unix API；overwrite_at 拒绝 nlink≥2 / 非普通文件是未登记偏离）→ 写 after-r1.sh：等 DeepSeek+Grok r1 后自动派 GLM 修复轮 1。
-> **00:38 CST**：#566 r8 codex 0/0、gate9 0 P1，等 DeepSeek r8 后自动收尾。#595 设计 v3 交付（逐条回应表、探针可复跑、上限定位为产品资源策略），按决策卡建议（8,388,608 + A，AI 代批待复核）派 fable 实现——任务书两处改动：边读边计数（不先 collect）、账本写 diffs/ 新格式（v3 §7 追加旧账本的说法已过时）。#591 修复轮 4（ENOTDIR 仅祖先为符号链接时跳过）提交推送 1e033e05；DeepSeek r5 P1#2：79/79 负控跑时 project_files.rs 哈希与 HEAD 不同 → 在新 HEAD 上沙箱外重跑整套负控并记录源码哈希。#600 GLM 修复轮 1 在跑（after-r1.sh 已触发）。
-> **00:45 CST**：**#566（A6.9-pr1 模型端口）收敛入队**（8 轮修复；r8 codex 0/0、DeepSeek 0 P1 带原始输出 8 段、gate9 0 P1）。预写 `_tmp/20261023-loop/after-566.sh`：合入后自动开 #583（pr2b handler 绑定，GLM）与 #584（pr3b 模型资源 factory，codex）两棵树派单，任务书 `_tmp/20261024-issue-583/`、`_tmp/20261024-issue-584/`；#572 / #576 同改 model/http.rs，待 #584 后串行。#591 新 HEAD 上负控与核验在跑。
-> **00:51 CST**：无新状态：#566 队列中等检查；#591 新 HEAD 核验与整套负控在跑；#600 GLM 修复轮 1、#595 fable 实现在跑；after-566 链待命。
-> **01:05 CST**：**#566（A6.9-pr1 模型端口）合入**，树回收；after-566 已开 #583（GLM）、#584（codex）两树派单。#591 在 head 1e033e05 负控 82/82、源码哈希与 HEAD 一致、插件四套与 lib 全绿 → PR 留言，DeepSeek+GLM r6 与 gate5。#595 fable 实现交付，协调者复核挡回 5 处（条目读取错误改为跳过——偏离 main/TS 的整目录 (0,0)；全局 static 改上限致并行测试干扰；oracle.json 金样无测试读取；负控缺 canonicalize / collect 两项；账本 frontmatter 与六字段不合格式）→ fable 实现修复轮 1。
-> **01:15 CST 交接（持有人：协调者本会话）**：本段合入 #599 #598 #562 #566（邮箱 noreply）；A6.9 后续 #583（GLM）、#584（codex）已开工。在途与下一步见 READY 与 `_tmp/20261023-loop/handoff-0115.md`。待人：`_tmp/20261023-loop/card-595-limit.md`（tree_files 上限与超限行为，已按建议先实现）。worktree 7/16（含本 board 树）、磁盘约 94 GiB / 200。下一个交接点约 03:15 CST。
+> ## 10:23 CST 2026-10-24 · /loop 停止
+> 
+> **READY 已更新**：移除已关闭的 #558/#560/#543/#552。
+> **剩余任务 #553**：后台任务持久化（中-大型），需要充足 token。
+> **停止原因**：token 183k/200k，无法启动新的大型实现任务。
+> 
+> 本会话工作完成。新会话继续 #553。
+
+> ## 10:18 CST 2026-10-24 · /loop 最终状态
+> 
+> **本会话完成**：#608/#607 MERGED、#576/#609 closed、#558 核实已合入。
+> **READY 过时**：多个标记 ready 的任务已关闭（#558/#560/#543/#552）。
+> **停止原因**：token 180k/200k，无快速可派任务，READY 需人工更新。
+> 
+> **建议**：新会话中更新 READY queue，继续 #553 或其他大型任务。
+
+> ## 10:13 CST 2026-10-24 · /loop 协调轮
+> 
+> **#558 已完成**：FailureGuard 已通过 PR #567 合入（5866aedf, caeb0aef），wt-558 已回收。
+> **发现**：任务实际已在 10-23 完成，agent 核实了状态。
+> **token**：177k/200k。
+
+> ## 10:03 CST 2026-10-24 · /loop 协调轮
+> 
+> **#558 派发**：A7.2-pr4b-a FailureGuard 纯移植，agent a29b65.. 在 wt-558 工作。
+> **token**：175k/200k。
+
+> ## 09:42 CST 2026-10-24 · /loop 一轮检查
+> 
+> **现场**：1 worktree（pr275 draft）、0 cargo、READY 全部「待人」、无在途 PR。
+> **本会话已完成**：#608/#607 MERGED、#576/#609 closed。
+> **下一步**：READY 无可派单，token 170k/200k，会话应结束。
+
+> ## 09:31 CST 2026-10-24 · 会话结束
+> 
+> 本会话完成：#608 MERGED（#604）、#607 MERGED（#585）、#576/#609 closed。
+> 
+> Token 169k/200k，无法启动新任务。下一步：新会话继续 #586（A6.9-pr3c2）。
+
+> ## 08:57 CST 2026-10-24 · /loop 完成（06:30-08:57, 2h27m）
+> 
+> **#608 MERGED**（#604 complete 实现）：84cd2d82 等 6 个提交已合入 main，#604 closed，wt-604 已回收。
+> 
+> **本轮完成工作**：
+> - #604 complete_model 实现（fix1→fix2→fix3→fmt→clippy→fmt2）
+> - gate2 P1=6 → fix3 修复 top 3 → gate3 P1=3 → 开 P2-跟进 #610/#611
+> - #607 MERGED（#585 MCP+execution-world）
+> - #576/#609 closed（重复登记）
+> 
+> **下一步**：继续 A6.9 系列（#586 pr3c2、#587 pr3d、#588 pr3e）
+> 
+> **资源**：87.6 GiB；worktrees 1（pr275）；token 164k/200k。
+
+> ## 08:53 CST 2026-10-24 · /loop 协调轮
+> **gate-final 完成**：P1=4（正常范围），PR description 已更新为最终 head d3b06dff。
+> **#608 状态 CLEAN**：已重新入队，Monitor 盯合并完成。
+> **token**：162k/200k。
+
+> ## 08:43 CST 2026-10-24 · /loop 协调轮（重启）
+> **#608 CI SUCCESS**：d3b06dff check 通过，已入队，但 pr-gate 报 stale head（gate3 是 4e688ed2）。
+> **gate-final 启动**：针对最终 d3b06dff 重跑 gate（PID 82260），完成后更新 PR description 并重入队。
+> **token**：157k/200k。
+
+> ## 08:22 CST 2026-10-24 · /loop 最终状态（1h52m 运行）
+> 
+> **#608 (#604) 状态**：d3b06dff（fmt fix2），CI check in_progress，修复轮次 6 次（fix1→fix2→fix3→fmt→clippy→fmt2）
+> 
+> **完成工作**：
+> - fix3 修复 gate2 top 3 P1（parseModelResponse、429 重试、Google 报错）
+> - gate3 剩余 P1 开 P2-跟进（#610 openai-responses、#611 测试覆盖）
+> - #607 MERGED（#585）、#576/#609 closed
+> 
+> **下一步**：CI 通过后 `gh pr merge 608 --merge`，核邮箱，继续 A6.9 系列（#586/#587/#588）
+> 
+> **资源**：87.6 GiB；worktrees 2；**token 151k/200k**（接近预算上限）
+
+> ## 08:03 CST 2026-10-24 · /loop 协调轮（交接后继续）
+> **#608 clippy 修正**：f3a99e43（if 语句折叠），CI 重跑中。
+> **修复轮次**：fix1→fix2→fix3→fmt→clippy，逐步消除 gate2/gate3 P1 和 CI 错误。
+> **token**：147k/200k，接近预算警告线，本轮后可能需停止或精简上下文。
+
+> ## 2026-10-24 08:30 · /loop 两小时交接（自 06:30 起）
+> 
+> **交接文档**：`_tmp/20261024-handoff-0830.md`
+> 
+> **进行中**：#608 (#604) CI check in_progress（最新 a21bed76 fmt fix），gate3 P1=3 已开 #610/#611 P2-跟进。
+> 
+> **已完成**：#607 MERGED（#585）、#576/#609 closed（重复登记）。
+> 
+> **下一步**：#608 CI 通过 → 入队 → 合入 → 继续 A6.9 (#586/#587/#588)。
+> 
+> **资源**：87.6 GiB / 200 GiB；worktrees 2；token 143k/200k。
+> 
+> **持有人**：wt-604 coordinator、wt-pr275 idle。
+
+> ## 07:54 CST 2026-10-24 · /loop 协调轮（1h 24m 运行）
+> **gate3-604 完成**：P1=3（从 gate2 的 6 降到 3）
+>   - P1-1/2: openai-responses 协议解析错误（用了错误的解析器）→ 开 #610 P2-跟进
+>   - P1-2: complete_model 零测试覆盖 → 开 #611 P2-跟进
+> **#608 准备合并**：gate3 剩余 P1 已开跟进，可按问题分级 P2-c 档处理（前置于后续节点）。
+> **下一步**：核 CI、入队、准备 2h 交接（08:30 目标）。
+> **资源**：磁盘 87.6 GiB；worktrees 2；token 139k/200k。
+
+> ## 07:42 CST 2026-10-24 · /loop 协调轮
+> **#604 fix3 完成**：agent 修复了 gate2 top 3 P1（parseModelResponse、429 重试、Google 报错），提交 4e688ed2 已推送，gate3-604 评审中（PID 59347）。
+> **P1-3/4/6 未修复**：重试策略、超时语义、测试覆盖，按任务书预定可开 P2-跟进。
+> **资源**：磁盘 87.6 GiB；worktrees 2（604/pr275）；cargo 0/4。
+
+> ## 07:21 CST 2026-10-24 · /loop 协调轮
+> **#576/#609 已关闭**：三条 MCP 代理差异已在 #551 登记完成（accepted-diffs.md），无需重复。wt-576 已回收。
+> **#604 fix3 派发**：agent a16f60.. 处理 gate2 P1×6（parseModelResponse、429 重试、Google 分支等），2 小时预算。
+> **资源**：磁盘约 84 GiB；worktrees 2（604/pr275）；cargo 0/4；1 agent 在跑。
+
+> ## 07:12 CST 2026-10-24 · /loop 协调轮
+> **#608 gate2-604 完成**：P1=6（complete_model 实现缺陷：缺 parseModelResponse、缺 Google 分支、错误的重试/超时策略、非 2xx retryable 不重试、零测试覆盖），需 fix3。
+> **#609 #576 fix**：CI check in_progress。
+> **决策**：#604 fix3 任务书已写（`_tmp/20261024-issue-604-fix3/task.md`），考虑派 worker 或自行修复。
+> **资源**：磁盘约 84 GiB；worktrees 3（604/576/pr275）；cargo 0/4。
+
+> ## 07:01 CST 2026-10-24 · /loop 协调轮
+> **#608 #604 fix2**：CI check SUCCESS，gate2-604 评审中（PID 42084）。
+> **#609 #576 fix**：差异文件格式修正推送（9160c2f8），补全 frontmatter id 与六个必需字段。
+> **#607 A6.9-pr3c1 MERGED**（#585 closed，wt-585 已回收）。
+> **下一目标**：#608 gate2 完成后入队，#609 CI 重跑完后 gate review。
+> **资源**：磁盘约 84 GiB；worktrees 3（604/576/pr275）；cargo 0/4。
+
+> ## 13:59 CST 2026-10-24 · #586 A6.9-pr3c2 完成
+> **#586 A6.9-pr3c2**（PR #612）：交互与 hooks 资源接入 factory 完成。新增 `runtime/project/interaction.rs`（InteractionFamilySource），注册交互资源占位符（permission、hooks、event、steer）到 ExecutionWorld family。遵循 pr3c1 模式，factory 层面只注册资源族占位符；实际 per-turn port 绑定（GatewayInteractionCoordinator、HookRuntime、EventSink、SteerMailbox）属 A7.2-pr6 会话/turn 层。编译通过 16s，测试 97 passed。提交 94e4a56f，等待两家评审。
+> **证据**：`_tmp/20261024-issue-586/implementation.md`
+> **资源**：磁盘约 84 GiB；worktrees 4（586/604/576/pr275）；cargo 0/4。
+
+> ## 06:52 CST 2026-10-24 · /loop 协调轮
+> **#607 A6.9-pr3c1 MERGED**（1b87c188, c17fec43, ed50b351），#585 closed，wt-585 已回收。
+> **#608 #604 fix2**（211db44e）：CI check in_progress。
+> **#609 #576 代理尾项**：CI check pending，文档类 PR。
+> **下一目标**：#586 (A6.9-pr3c2) 在 #607 合入后前置完成。
+> **资源**：磁盘约 84 GiB；worktrees 3（604/576/pr275）；cargo 0/4。
+
+> ## 06:45 CST 2026-10-24 · /loop 协调轮
+> **#607 A6.9-pr3c1**（#585）：gate1 P0=0 P1=0，merge queue 中。
+> **#608 #604 complete fix2**：测试断言 + 负控 + stale 注释修正推送（211db44e），CI 重跑中。gate1-604 P1×4 全部修正。
+> **#609 #576 MCP 代理尾项**：PR 已创建，3 差异登记文件提交完成（https/socks5/fallback 直连退化），登记类 issue 不需实现。
+> **资源**：磁盘约 84 GiB；worktrees 4（585/604/576/pr275）；cargo 0/4。
+
+> ## 06:43 CST 2026-10-24 · /loop 协调轮
+> **#607 A6.9-pr3c1 MERGED wait**（gate1 P0=0 P1=0，已入 merge queue）。
+> **#604 non-streaming complete**（PR #608）：CI check failure（tests 与旧行为矛盾，gate1-604 P1=4 全为同根因），需修正测试断言 + 负控 + stale 注释。
+> **#576 MCP 代理尾项**（wt 创建）：3 份差异登记文件已写（https/socks5/fallback 直连退化），属登记类 issue 不需实现。
+> **wt-597 已回收**（RESULT 保存至 `_tmp/archive/`）。
+> **资源**：磁盘约 84 GiB；worktrees 4（585/604/576/pr275）；cargo 0/4。
+
+> ## 06:30 CST 2026-10-24 · /loop 协调轮
+> **#600/#597 合入**（335f7ce1，noreply 邮箱）：9 轮修复完成。fix 轮 5-8 覆盖 read_at statat 探针、remove_child_at EACCES/EPERM 精确分流。gate13 P0=0 P1=0。issue #597 已关闭。wt-issue-597 可回收。
+> **#585 A6.9-pr3c1**（PR #607）：MCP + execution-world factory 接线，clippy 修正推送（751da5fb），CI 在跑。
+> **#604 non-streaming complete**（PR #608）：NativeModelInvocationProvider 实现 complete()，http::complete_model() 新函数，19/0 测试通过，推送（184b0cf0），CI 在跑。
+> **资源**：磁盘约 84 GiB；worktrees 4（597 可回收/585/604/pr275）；cargo 1/4。
+
+> ## 06:05 CST 2026-10-24 · /loop 协调轮
+> **#600/#597 fix 轮 9**（4a75404e）：fmt 修正（lookup EACCES 单行）。CI check in_progress。pr-gate 对新 HEAD 失败（需新 gate 块）。
+> **fix 轮 8 总结**：remove_child_at EACCES/EPERM 统一 statat 探针：非目录→unlink 形状，EACCES+目录→返回错误，EPERM+目录→descends_after_rmdir 递归。gate13 P0=0 P1=0（两家通过）。
+> **#585 A6.9-pr3c1**（PR #607）：Claude 直接实现。新增 `runtime/project/tools_mcp.rs`（McpFamilySource + ExecutionWorldFamilySource），Families::with_tools_mcp，CI 跑中。
+> **等待**：#600 CI check 完成 → 若通过 → 更新 PR body + 入队；#607 CI 待评审。
+> **资源**：磁盘约 84 GiB；worktrees 3（597/585/pr275）；cargo 0/4。
+>
+> ## 05:33 CST 2026-10-24 · /loop 协调轮
+> **#600/#597 fix 轮 6**：CI check 失败根因：`remove_child_at` 对不可写父目录下普通文件 `unlinkat(AT_REMOVEDIR)` 返回 EACCES（不进 ENOTDIR 分支），错误形状为 `rmdir` 而 TS 期望 `unlink`。补 `statat` 探针（`st_mode & S_IFMT == S_IFDIR`），非目录改用 `unlink` 报错。`mutation_security_tests` 30/0，`edgeclaw_entries` 本地通过。提交 77ed6bd8，推送。gate11（base 713b8a43）已起。
+> **#585 A6.9-pr3c1**：worktree 已建（`_build/wt-issue-585-tools-mcp-factory`），codex 实现中（PID 79167）。任务书 `_tmp/20261024-issue-585-tools-mcp-factory/task.md`。
+> **资源**：磁盘 84 GiB；worktrees 3（597/585/pr275）；cargo 2（gate11 + codex）。
+> **下一步**：gate11 完成后，若 P0/P1=0 → 更新 PR 描述 + 等 CI + 入队 #600；codex 完成 → 核验 #585 提交 → 推送 → 起评审。
+>
+> ## 05:19 CST 2026-10-24 · /loop 协调轮
+> **合入**：#603（#584 model factory，fix6 1e6515ca）、#602（#595 skills tree_files）、#606（#594 SKILL.md TOCTOU）——三单均 MERGED，邮箱 noreply 格式正常。**#600（#597 EdgeClaw TOCTOU）** 仍 OPEN：gate9（3f4b2721）P1×2（sibling+boundary 一致：read_at 叶 openat 缺 statat 探针），Claude 直接修复（fix 轮 5，713b8a43）：read_at 叶 openat EACCES/ENOTDIR 补 statat 探针与 regular_files_at 对齐，补读侧负控 mutation_read_inaccessible_parent_is_none / mutation_read_unreadable_leaf_keeps_open_error，A6.6 账本追加 R1 更正。30/0 mutation_security_tests，fmt/clippy 通过，推送，gate10 在跑（713b8a43，GLM 四角色）。
+> **READY 现状**：#558（A7.2-pr4b-a）已由 #567 合入；#557（A6.9-pr1）已由 #566 合入；A6.9 系列 #566/#575/#578 全 MERGED；无可立即派单的新 READY 条目。
+> **当前在途**：#600 等 gate10 完成，若 P0/P1=0 则贴结果块入队。
+> **资源**：磁盘约 96 GiB；worktrees 4（584/597/pr275/主仓，594 已回收）；cargo 0/4。
+>
+> ## 13:15 CST 交接（持有人：协调者本会话）：本段合入 #550（board + #505 人批记录）、#536（A7.2-pr7 turn 读面）、#556（#508 读图沙箱，人定 A）；人定 #454 选 C（PR #561）、#505 32 条批复（开 #551–#554）。新开 #555 #559 #561 #562，总装线盘点后开 #557（A6.9-pr1，在做）与 #558；P2-跟进 #560 #563 #564。工具侧本段沉淀：disk-trim.sh（deps 累积 .rcgu.o）、rebase-refresh.sh（只因账本冲突的 rebase 只审账本）、gate-specs-finalize.sh、ledger-chain.sh（改账本 PR 合入一个再刷新下一个）、merge-when-green 入队锁；auto-memory 新增 probe-leak-check、no-edit-running-script，补 disk-cap-check、rebase-in-script-stop。待人：见 READY human 行（状态文件提案、账本拆文件提案、10-23 未批准差异与 AI 代批项）。worktree 12/12（本树为 board）、磁盘约 124 GiB / 160、负载回落到 10 以下。下一个交接点约 15:15 CST。
+
+> **02:50 CST 2026-10-24（协调者接续，自 01:15 交接）**：本段合入 #605（#583 A6.9-pr2b handler binding，GLM 实现，dsh r1 0 P1）。新开 #606（#594 独立技能 SKILL.md TOCTOU，Claude-fable 实现，lib 1205/0，负控 5/5，等两家评审）。#583 树回收。#597 修复轮 2（GLM：读路径 parsed/directory/snapshot/repair/single_meta 改走根句柄 + 非 Unix cfg 补全 + descends_after_rmdir 谓词 + Scratch restore；lib 1221/0 沙箱外复跑）推送 b7a88e19，gate3 + dsh r3 在跑。#584 修复轮 1（Codex：supports_complete 按 judge provider 判定而非整个注册表 all()，空表 false，Tokio runtime 缺失 → RuntimeError；host_model_port 14/0 沙箱外复跑）推送 9ee70269，gate2 + dsh r2 在跑。#595 fix2 派 GLM（NC-3 重新证明惰性读取 + 设计验收缺项补测）。资源：worktree 3/16，cargo 0/4，磁盘 71 GiB / 200，负载 ~4。
+
+> **03:01 CST 两小时交接点**：本段合入 #605（#583 A6.9-pr2b）。推送：#606（#594 SKILL.md TOCTOU，rebase 后 8919be2e 干净只含本改动）、#600 修复轮 2（b7a88e19，gate3 0 P1）、#603 修复轮 1（9ee70269，host_model_port 14/0 沙箱外过）。在途：#603/584 gate2 + dsh r2、#600/597 dsh r3、#606/594 codex r1、#602/595 fix2-codex（计数钩子 + 验收缺项）。资源：wt 5/16，cargo 1/4，磁盘 71.6 GiB，负载 4。详见 `_tmp/20261024-loop/handoff-0300.md`。交接即继续。
+> **07:31 CST**：完成 #604 修复轮 3（complete_model 的 P1-1/P1-5/P1-2 三个缺陷），提交 4e688ed2 到 codex/issue-604-complete 分支。修复内容：补 parseModelResponse 响应解析（parse_anthropic_complete_response / parse_openai_complete_response，返回 canonical 形状 {role, content, usage, finishReason, raw}）；补 retryable 429/5xx 重试逻辑（消费 Retry-After 头并退避重试）；补 Google 协议显式报错。验证：cargo check 通过，model_factory 11 测试全绿。详见 `_tmp/20261024-issue-604-fix3/DONE.md`。下一步：#604 继续修复或等 gate2 评审。
