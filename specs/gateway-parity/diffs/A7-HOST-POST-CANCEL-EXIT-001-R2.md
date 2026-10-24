@@ -21,7 +21,7 @@ cc7c4e6（`resources/PilotDeck`，与 `/Users/da/ws/PilotDeck-Rust` 同文件逐
 
 ## 机器判据
 
-`src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs` 的 `slow_consumer_does_not_spend_the_cancel_exit_grace`：消费 turn_started、model_event 后 abort，睡 6 s，再要求依次拿到 input_accepted、turn_completed/success、None，且 `disposed == 1`。负控：还原 `execution.rs` 的取件顺序，该用例两次都红（`terminal without proper lifecycle … state: Started`）；恢复后 `cancel` 过滤集 44/44 连续三次绿。R1 的 `src/pilotdeck-gateway/src/host/tests/cancel_exit.rs` 全套（静默 peer、重连交错、终态应用 / drain）不变且通过。复算：`cargo test -p pilotdeck-gateway --lib -- --test-threads=4`。
+`src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs` 的 `slow_consumer_does_not_spend_the_cancel_exit_grace`：消费 turn_started、model_event 后 abort，睡 6 s，再要求依次拿到 input_accepted、turn_completed/success、None，且 `disposed == 1`。负控：还原 `execution.rs` 的取件顺序，该用例两次都红（`terminal without proper lifecycle … state: Started`）；恢复后 `cancel` 过滤集 44/44 连续三次绿。同批另有 `slow_consumer_still_receives_a_ready_error_terminal`（慢消费方之后 turn_failed 与 error 终态仍交付，失败配对）、`slow_consumer_with_a_blocked_callback_still_exits_bounded`（回调真正阻塞时仍在 `POST_CANCEL_EXIT_TIMEOUT / 2` 内报错退出，`disposed == 1`），以及 host 层 `cancel_exit.rs` 的 `completed_application_is_collected_before_the_deadline_exit`（暂停时钟；负控为把 `biased` 下 deadline 与 join_next 对调，该用例转红，原件 `_tmp/20261025-issue-589-p1/r3b/03-host-collect-red-swapped.log`）。R1 的 `src/pilotdeck-gateway/src/host/tests/cancel_exit.rs` 全套（静默 peer、重连交错、终态应用 / drain）不变且通过。复算：`cargo test -p pilotdeck-gateway --lib -- --test-threads=4`。
 
 ## 批准记录
 
