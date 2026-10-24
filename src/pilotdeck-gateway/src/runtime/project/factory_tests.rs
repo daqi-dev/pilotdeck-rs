@@ -805,6 +805,94 @@ async fn interaction_preserves_custom_execution_world_source() {
     bounded(group.dispose()).await.unwrap();
 }
 
+/// Negative control: a wrapped execution-world source that fails in the stage
+/// phase must abort the whole wrapper. The inner error is forwarded unchanged
+/// (no extra cause, no replacement message) and the interaction marker is not
+/// published: staging a capability the execution world did not produce must
+/// fail closed. The inner source's rollback owner, registered before its stage
+/// threw, still exists and is disposed by the group.
+#[tokio::test]
+async fn interaction_staging_failure_propagates_without_marker() {
+    let probe = Arc::new(Probe::default());
+    *probe.fail.lock().unwrap() = Some((Family::ExecutionWorld, Phase::Stage));
+    let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
+        probe: Arc::clone(&probe),
+        family: Family::ExecutionWorld,
+        extra: no_extra,
+        registers_owner: true,
+        stages: true,
+        publishes: &[Resource::ExecutionWorld],
+    });
+    let families = Families {
+        execution_world: custom,
+        ..Families::unwired()
+    }
+    .with_interaction();
+
+    let group = interaction_test_group();
+    let context = group.context();
+    let error = families
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .expect_err("a failing execution-world stage must abort interaction staging");
+
+    assert_eq!(
+        error,
+        RuntimeError::new("stage failed:executionWorld:1"),
+        "the wrapper must forward the inner stage error unchanged"
+    );
+    assert!(
+        context.resource(Resource::Interaction).is_none(),
+        "a failed stage must not publish the interaction marker"
+    );
+    assert!(context.resource(Resource::ExecutionWorld).is_none());
+    // The inner source registered its dispose owner before its stage threw; the
+    // wrapper must neither replace that owner nor leak it past disposal.
+    assert_eq!(handle_id(context.owner(Family::ExecutionWorld)), "1");
+    bounded(group.dispose()).await.unwrap();
+    assert_eq!(
+        probe.events(),
+        [
+            "construct:executionWorld:1",
+            "stage:executionWorld:1",
+            "dispose:executionWorld:1"
+        ]
+    );
+    assert!(context.resource(Resource::Interaction).is_none());
+}
+
+/// Negative control: `with_interaction` over `Families::unwired` must still
+/// report the execution-world family as explicitly unsupported, not stage
+/// silently, and must not publish the marker or fabricate an owner.
+#[tokio::test]
+async fn unwired_interaction_still_reports_execution_world_unsupported() {
+    let families = Families::unwired().with_interaction();
+    assert!(
+        families.execution_world.layers_interaction(),
+        "with_interaction must keep the wrapper over the unsupported source"
+    );
+    assert_eq!(families.execution_world.family(), Family::ExecutionWorld);
+
+    let group = interaction_test_group();
+    let context = group.context();
+    let error = families
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .expect_err("unwired execution world must not stage through the wrapper");
+
+    assert_eq!(
+        error,
+        RuntimeError::new(
+            "Project runtime resource family executionWorld is not available in the native runtime yet (A6.9-pr3c)."
+        )
+    );
+    assert!(context.owner(Family::ExecutionWorld).is_none());
+    assert!(context.resource(Resource::ExecutionWorld).is_none());
+    assert!(context.resource(Resource::Interaction).is_none());
+    bounded(group.dispose()).await.unwrap();
+    assert!(context.resource(Resource::Interaction).is_none());
+}
+
 /// The eight parallel-group disposals start together (`Promise.allSettled`,
 /// ProjectRuntimeResourcesBundle.ts:416-425): a disposal that waits for a
 /// sibling's cleanup signal is unblocked by that sibling's start. A
