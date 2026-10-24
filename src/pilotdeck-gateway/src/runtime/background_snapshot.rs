@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use tokio::task::spawn_blocking;
+use tokio::{sync::oneshot, task::spawn_blocking};
 
 const SNAPSHOT_VERSION: u32 = 1;
 
@@ -76,6 +76,8 @@ pub struct JsonFileBackgroundTaskSnapshotStore {
     file_path: PathBuf,
     entries: Arc<Mutex<Vec<PersistedBackgroundTask>>>,
     write_tail: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    #[cfg(test)]
+    writes_started: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl JsonFileBackgroundTaskSnapshotStore {
@@ -85,10 +87,15 @@ impl JsonFileBackgroundTaskSnapshotStore {
             file_path,
             entries: Arc::new(Mutex::new(entries)),
             write_tail: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            writes_started: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
     async fn write_current(&self) -> io::Result<()> {
+        #[cfg(test)]
+        self.writes_started
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let file_path = self.file_path.clone();
         let entries = self.entries.lock().unwrap().clone();
 
@@ -130,6 +137,9 @@ impl BackgroundTaskSnapshotStore for JsonFileBackgroundTaskSnapshotStore {
         &self,
         snapshot: PersistedBackgroundTask,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + '_>> {
+        // Accept the update and register its task atomically, before returning
+        // a cancellable waiter. Every filesystem write belongs to this chain.
+        let mut tail = self.write_tail.lock().unwrap();
         // Update in-memory map
         {
             let mut entries = self.entries.lock().unwrap();
@@ -143,43 +153,36 @@ impl BackgroundTaskSnapshotStore for JsonFileBackgroundTaskSnapshotStore {
             }
         }
 
-        // Serialize writes by taking previous task before spawning
-        let prev_task = self.write_tail.lock().unwrap().take();
+        let prev_task = tail.take();
         let store = self.clone();
-        let write_tail = Arc::clone(&self.write_tail);
+        let (done, completion) = oneshot::channel();
 
-        Box::pin(async move {
-            // Wait for previous write to complete
+        *tail = Some(tokio::spawn(async move {
             if let Some(prev) = prev_task {
                 let _ = prev.await;
             }
+            let _ = done.send(store.write_current().await);
+        }));
 
-            // Spawn and store the current write task (ignore errors in background)
-            let write_task = tokio::spawn({
-                let store = store.clone();
-                async move {
-                    let _ = store.write_current().await;
-                }
-            });
-
-            // Store the new task handle
-            *write_tail.lock().unwrap() = Some(write_task);
-
-            // Execute the write directly and return its result
-            store.write_current().await
-        })
+        Box::pin(async move { completion.await.map_err(io::Error::other)? })
     }
 
     fn flush(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + '_>> {
-        let tail = self.write_tail.lock().unwrap().take();
-        Box::pin(async move {
-            if let Some(task) = tail {
-                let _ = task.await;
-            }
-            Ok(())
-        })
+        // Keep the barrier in the chain so concurrent writes and flushes
+        // cannot bypass earlier writes, even if this waiter is dropped.
+        let mut tail = self.write_tail.lock().unwrap();
+        let prev_task = tail.take();
+        let (done, completion) = oneshot::channel();
+        *tail = Some(tokio::spawn(async move {
+            let result = match prev_task {
+                Some(task) => task.await.map_err(io::Error::other),
+                None => Ok(()),
+            };
+            let _ = done.send(result);
+        }));
+        Box::pin(async move { completion.await.map_err(io::Error::other)? })
     }
 }
 
@@ -696,4 +699,85 @@ fn parse_iso_to_epoch_ms(iso: &str) -> Option<f64> {
 
 fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{sync::atomic::Ordering, time::Duration};
+
+    fn snapshot(task_id: &str) -> PersistedBackgroundTask {
+        let mut entry = deserialize_snapshot_file(
+            r#"{"version":1,"tasks":[{"task":{
+                "taskId":"task","type":"local_bash","kind":"bash",
+                "status":"pending","startedAt":"2026-10-24T00:00:00.000Z",
+                "outputBytes":0
+            },"output":{"totalBytes":0,"persisted":false}}]}"#,
+        )
+        .unwrap()
+        .tasks
+        .remove(0);
+        entry.task.task_id = task_id.to_owned();
+        entry
+    }
+
+    #[tokio::test]
+    async fn writes_and_flushes_keep_the_chain_when_waiters_are_dropped() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let scratch = crate::test_scratch::Scratch::new("617-snapshot-chain");
+            let path = scratch.path().join("snapshot.json");
+            let store = JsonFileBackgroundTaskSnapshotStore::new(path.clone()).unwrap();
+            let (release, released) = oneshot::channel();
+            *store.write_tail.lock().unwrap() = Some(tokio::spawn(async move {
+                let _ = released.await;
+            }));
+
+            // Neither accepting a write nor a flush depends on polling its
+            // returned future. Cancelling either waiter must keep the chain.
+            drop(store.write(snapshot("first")));
+            drop(store.flush());
+            let second = store.write(snapshot("second"));
+            let mut flushed = store.flush();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), &mut flushed)
+                    .await
+                    .is_err(),
+                "flush bypassed the gated predecessor"
+            );
+            assert_eq!(store.writes_started.load(Ordering::SeqCst), 0);
+            assert!(!path.exists());
+
+            release.send(()).unwrap();
+            second.await.unwrap();
+            flushed.await.unwrap();
+            assert_eq!(store.writes_started.load(Ordering::SeqCst), 2);
+            let loaded = JsonFileBackgroundTaskSnapshotStore::new(path).unwrap();
+            let ids: Vec<_> = loaded.load().into_iter().map(|e| e.task.task_id).collect();
+            assert_eq!(ids, ["first", "second"]);
+        })
+        .await
+        .expect("bounded snapshot chain probe");
+    }
+
+    #[tokio::test]
+    async fn write_reports_io_failure_and_the_next_write_can_recover() {
+        let scratch = crate::test_scratch::Scratch::new("617-snapshot-write-error");
+        let parent = scratch.path().join("store");
+        let path = parent.join("snapshot.json");
+        let store = JsonFileBackgroundTaskSnapshotStore::new(path.clone()).unwrap();
+        fs::write(&parent, b"not a directory").unwrap();
+
+        assert!(store.write(snapshot("task")).await.is_err());
+        store.flush().await.unwrap();
+        assert_eq!(store.writes_started.load(Ordering::SeqCst), 1);
+
+        fs::remove_file(parent).unwrap();
+        let mut completed = snapshot("task");
+        completed.task.status = "completed".to_owned();
+        store.write(completed).await.unwrap();
+        store.flush().await.unwrap();
+        assert_eq!(store.writes_started.load(Ordering::SeqCst), 2);
+        let loaded = JsonFileBackgroundTaskSnapshotStore::new(path).unwrap();
+        assert_eq!(loaded.load()[0].task.status, "completed");
+    }
 }
