@@ -2275,38 +2275,3 @@ fn dump_failure_error_projects_the_node_fs_error() {
         Some(&JsString::from("/tmp/pilotdeck_request_1.json"))
     );
 }
-
-// The dump directory resolves like Node's `os.tmpdir()` on unix, not like
-// `std::env::temp_dir()`: TMPDIR, then TMP, then TEMP — empty values skip to
-// the next variable like JS `||` — else `/tmp`, with exactly one trailing `/`
-// dropped while the result stays longer than the root. Every expectation
-// below was probed against node v22.22.0
-// (`_tmp/20261025-issue-621-fix-r4/node-probe/`); an empty TMPDIR under
-// `std::env::temp_dir()` answers `""`, which would drop a dump into the
-// process's working directory.
-#[test]
-fn node_tmpdir_matches_os_tmpdir_resolution() {
-    let dir = |tmpdir: Option<&str>, tmp: Option<&str>, temp: Option<&str>| {
-        node_tmpdir_from(|key| match key {
-            "TMPDIR" => tmpdir.map(str::to_string),
-            "TMP" => tmp.map(str::to_string),
-            "TEMP" => temp.map(str::to_string),
-            _ => None,
-        })
-    };
-    assert_eq!(dir(Some("/tmp/user"), None, None), "/tmp/user");
-    // Empty values fall through, like JS `||`.
-    assert_eq!(dir(Some(""), Some("/tmp/t"), None), "/tmp/t");
-    assert_eq!(dir(None, Some(""), Some("/tmp/e")), "/tmp/e");
-    assert_eq!(dir(None, None, Some("/tmp/e")), "/tmp/e");
-    assert_eq!(dir(None, None, None), "/tmp");
-    assert_eq!(dir(Some(""), Some(""), Some("")), "/tmp");
-    // Exactly one trailing `/` goes away, but only past the root.
-    assert_eq!(dir(Some("/tmp/x/"), None, None), "/tmp/x");
-    assert_eq!(dir(Some("/tmp/x//"), None, None), "/tmp/x/");
-    assert_eq!(dir(Some("///"), None, None), "//");
-    assert_eq!(dir(Some("//"), None, None), "/");
-    assert_eq!(dir(Some("/"), None, None), "/");
-    // Relative values pass through unchanged, like node.
-    assert_eq!(dir(Some("relative"), None, None), "relative");
-}

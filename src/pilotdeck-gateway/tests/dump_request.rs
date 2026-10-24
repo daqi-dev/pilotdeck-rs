@@ -437,6 +437,13 @@ fn dump_request_write_over_file_size_limit_surfaces_efbig() {
         Some(0),
         "google/xfsz write-fail (a SIGXFSZ death reports 153 or no code):\n{stdout}\n{stderr}"
     );
+    // A signal death alone cannot tell "handler registered" from "the
+    // registration failed and degraded": only the degradation note can, so
+    // its absence is what pins the registration actually happened here.
+    assert!(
+        !stderr.contains("SIGXFSZ handler not registered"),
+        "google/xfsz: SIGXFSZ registration must not have degraded:\n{stderr}"
+    );
     assert!(
         !stdout.contains("SENT_BODY="),
         "google/xfsz: the SDK send must not run after a failed dump: {stdout}"
