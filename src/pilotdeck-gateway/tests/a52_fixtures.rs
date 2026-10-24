@@ -416,7 +416,14 @@ async fn native_observers_reject_frame_event_sequence_and_result_corruption() {
                 disk["records"][0]["result"] = json!({"type":"error","code":"stale"})
             }
             ObserverRule::RegistryState => disk["records"][0]["state"] = json!("accepted"),
-            ObserverRule::RegistryRaw => disk["records"][0]["runId"] = json!("tampered"),
+            ObserverRule::RegistryRaw => {
+                // Tamper the record identity so the raw find fails with this label.
+                // The two alignment asserts below are structural: both sides read
+                // the same bytes, so no disk mutation can make them diverge
+                // independently — they guard against an API that masks stored
+                // content, which is not reachable via single-file mutation.
+                disk["records"][0]["runId"] = json!("tampered");
+            }
         }
         fs::write(&path, serde_json::to_vec(&disk).unwrap()).unwrap();
         let rejected =
