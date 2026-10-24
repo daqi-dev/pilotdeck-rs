@@ -35,12 +35,19 @@ PDRS_BASELINE=/absolute/path/to/pinned/PilotDeck \
 
 成功路径固定业务事件 `turn_started → input_accepted → turn_completed`。
 实时业务帧、WS final 复本、registry seq/revision/result 以及 raw snapshot
-分别检查。原生 observer 另有 8 个指定规则负控：丢实时业务帧、破坏 WS seq、
+分别检查。原生 observer 有 12 个指定规则负控：丢实时业务帧、破坏 WS seq、
 丢 final 复本、漏 registry event、破坏 registry seq/lastSeq/revision、覆盖 result；
+另有 [#625](https://github.com/daqi-dev/pilotdeck-rs/issues/625) 补齐的
+finishReason、实时事件 runId、registry state 和磁盘记录 runId 四项破坏。
 必须命中对应规则，普通异常不算检出。标签与变异共用 `ObserverRule` 枚举，
-新增带标签断言时须同步补变异及 `ALL` 列表。其余字段及 raw snapshot 的负控
-和 TS 规则映射由 [#625](https://github.com/daqi-dev/pilotdeck-rs/issues/625)
-跟进，前置于 A5.4；当前这些字段仍由正向断言检查。
+新增带标签断言时须同步补变异及 `ALL` 列表。raw 身份检查先于 API 查询，
+完整 record（含 result）及 events 再与独立读盘结果对齐。
+
+TS 映射以 `scripts/a5-19/preregistration-b.mjs` 为准：WireSequence / FinalReplica
+覆盖当前请求的 FRAME_SEQ，RunId 覆盖 SESSION_ISOLATION 的实时事件归属，
+RegistryRaw 覆盖当前查询 run 的 REGISTRY_RAW 完整 record/events 对齐。
+其余标签是原生成功轮次的不变量；这些局部断言不代表通过完整 TS 生产矩阵，
+不替代 journal、故障次序或跨会话验收。#625 是 A5.4 的一项前置，不单独证明该阶段完成。
 双连接竞争与 stale close 前均断言 abort 为零，避免错误的提前 abort 掩盖交错。
 每个 gate 的进入通知先于释放；15 秒仅是失败看门狗。
 冷启轮询只等子进程退出，20 秒到期 kill/wait 后失败，不用于挑选通过的交错。
