@@ -6,9 +6,12 @@ use tokio::net::TcpListener;
 #[tokio::main]
 async fn main() -> Result<(), ProxyError> {
     // Node's process-wide SIGXFSZ ignore (a write past RLIMIT_FSIZE reports
-    // EFBIG instead of killing the process); install the same disposition
-    // at startup so every fs write in this process matches Node (#621).
-    pilotdeck_child_signals::ignore_sigxfsz()?;
+    // EFBIG instead of killing the process); register the same disposition
+    // at startup through tokio's safe signal API so every fs write in this
+    // process matches Node (#621). The registration is held for the
+    // process lifetime (a static OnceLock in the library).
+    #[cfg(unix)]
+    pilotdeck_gateway::ensure_sigxfsz_ignored();
     let listen: SocketAddr = std::env::var("PILOTDECK_PROXY_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:28789".into())
         .parse()?;

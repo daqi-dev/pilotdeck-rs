@@ -1613,15 +1613,16 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), Dum
 
     // Node ignores SIGXFSZ process-wide, so a dump write past RLIMIT_FSIZE
     // surfaces as EFBIG from `write` instead of killing the process; Rust
-    // std ignores only SIGPIPE (probe: without the ignore the writing
+    // std ignores only SIGPIPE (probe: without a handler the writing
     // process dies with exit 153 before io::Error reaches user code). This
-    // runtime has no process entry of its own, so the first dump installs
-    // the same ignore for its host process; the gateway binary installs it
-    // at startup too (`main.rs`). A failed install leaves the previous
-    // disposition — no worse than without this guard — and says so.
-    if let Err(error) = pilotdeck_child_signals::ignore_sigxfsz() {
-        eprintln!("[model-debug] could not ignore SIGXFSZ: {error}");
-    }
+    // runtime has no process entry of its own, so the first dump registers
+    // a tokio SIGXFSZ handler for its host process — the safe signal API,
+    // no unsafe, once per process (OnceLock) — and the gateway binary
+    // registers it at startup too (`main.rs`). Outside a tokio runtime the
+    // registration degrades to a stderr note and the default disposition,
+    // no worse than without this guard.
+    #[cfg(unix)]
+    crate::ensure_sigxfsz_ignored();
 
     // Format as pretty-printed JSON (TS uses `JSON.stringify(body, null, 2)`).
     let json = match crate::js_value::json_stringify(final_body) {

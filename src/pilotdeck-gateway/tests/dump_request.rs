@@ -399,10 +399,11 @@ fn dump_request_write_failure_semantics() {
 /// kill the child: Node ignores SIGXFSZ process-wide, so its `writeFileSync`
 /// observes `EFBIG` (`errno -27`, syscall `write`, no path) and the attempt
 /// yields one non-retryable error event. Rust std ignores only SIGPIPE, so
-/// without the matching ignore the child dies with SIGXFSZ (exit 153) before
-/// any io::Error exists (probe: `_tmp/20261025-issue-621-takeover/xfsz-probe/`,
+/// without a handler the child dies with SIGXFSZ (exit 153) before any
+/// io::Error exists (probe: `_tmp/20261025-issue-621-takeover/xfsz-probe/`,
 /// rustc 1.99.0 vs node v22.22.0, `ulimit -f 1`, 4 KiB write); the dump path
-/// installs the ignore before writing, which is what this case pins.
+/// registers a tokio SIGXFSZ handler before writing, which is what this case
+/// pins.
 #[test]
 fn dump_request_write_over_file_size_limit_surfaces_efbig() {
     let marker = format!(
