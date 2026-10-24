@@ -2213,6 +2213,29 @@ fn dump_failure_maps_errnos_through_the_libuv_table() {
     assert_eq!(write.message(), "EFBIG: file too large, write");
 }
 
+// The SIGXFSZ registration must degrade, never panic, when there is no
+// tokio runtime: the dump path is plain library code, and a library caller
+// on a non-async thread keeps the default disposition (writes past
+// RLIMIT_FSIZE then kill the process like plain Rust) instead of taking the
+// whole process down at registration. The registration attempt itself is
+// exercised (not the process-wide OnceLock, which other tests may already
+// have initialized from inside their runtimes), on a fresh thread with no
+// runtime context; tokio's `signal()` alone would panic there
+// (`scheduler::Handle::current()`), hence the runtime probe in
+// `register_sigxfsz`.
+#[cfg(unix)]
+#[test]
+fn sigxfsz_registration_degrades_without_a_runtime() {
+    let attempt = std::thread::spawn(crate::register_sigxfsz)
+        .join()
+        .expect("registration attempt must not panic without a runtime");
+    assert!(
+        attempt.is_err(),
+        "no-runtime registration must degrade, got: {:?}",
+        attempt.map(|_| ())
+    );
+}
+
 // The canonical Google error event for a failed dump write: `raw` is the fs
 // Error's own enumerable fields (`normalize_model_error` keeps the `raw` it is
 // handed), `code` falls through the classifiers to the fs `code`, and

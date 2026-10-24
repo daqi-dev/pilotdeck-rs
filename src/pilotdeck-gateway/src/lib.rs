@@ -70,3 +70,50 @@ pub fn session_chat_dir(
     }
     .chat_dir(project)
 }
+
+/// Register this process's SIGXFSZ handler, aligning it with Node (#621).
+/// Node's platform init ignores SIGXFSZ process-wide, so a write past
+/// RLIMIT_FSIZE surfaces as an `EFBIG` error from the syscall; Rust std
+/// ignores only SIGPIPE, so the same write instead kills the process
+/// (coordinator probe, node v22.22.0 vs rustc 1.99.0 + tokio 1.48.0,
+/// `ulimit -f 1` writing 4 KiB: unregistered the writing process dies with
+/// exit 153; registered through tokio's safe signal API it observes
+/// os error 27 and continues — evidence
+/// `_tmp/20261025-issue-621-takeover/xfsz-tokio-probe/`). The gateway
+/// binary calls this at startup, and the debug request dump registers
+/// before its write (`runtime/model/http.rs`), so every host process of the
+/// model runtime is covered — that runtime has no process entry of its own.
+/// Exactly once per process (`OnceLock`); the returned `Signal` must stay
+/// held so the disposition stays installed, so it lives in the lock.
+/// Registration must run inside a tokio runtime with the signal driver
+/// enabled; without a runtime it degrades to a stderr note and the default
+/// disposition — no worse than without this guard, and never a panic.
+#[cfg(unix)]
+pub fn ensure_sigxfsz_ignored() {
+    static SIGNAL: std::sync::OnceLock<Option<tokio::signal::unix::Signal>> =
+        std::sync::OnceLock::new();
+    SIGNAL.get_or_init(|| match register_sigxfsz() {
+        Ok(signal) => Some(signal),
+        // A failed attempt is recorded as `None`, so the registration
+        // and this note both happen exactly once per process.
+        Err(reason) => {
+            eprintln!(
+                "[model-debug] SIGXFSZ handler not registered ({reason}); \
+                 writes past RLIMIT_FSIZE will terminate the process"
+            );
+            None
+        }
+    });
+}
+
+/// The registration attempt itself: safe tokio signal API, no unsafe. The
+/// runtime check first keeps the library callable from plain (non-async)
+/// threads, where tokio's `signal()` would panic instead of answering.
+#[cfg(unix)]
+fn register_sigxfsz() -> Result<tokio::signal::unix::Signal, String> {
+    if tokio::runtime::Handle::try_current().is_err() {
+        return Err("no tokio runtime on this thread".into());
+    }
+    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::from_raw(libc::SIGXFSZ))
+        .map_err(|error| format!("tokio signal registration failed: {error}"))
+}
