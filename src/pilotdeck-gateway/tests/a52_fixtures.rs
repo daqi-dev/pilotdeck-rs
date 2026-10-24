@@ -417,11 +417,9 @@ async fn native_observers_reject_frame_event_sequence_and_result_corruption() {
             }
             ObserverRule::RegistryState => disk["records"][0]["state"] = json!("accepted"),
             ObserverRule::RegistryRaw => {
-                // Tamper the record identity so the raw find fails with this label.
-                // The two alignment asserts below are structural: both sides read
-                // the same bytes, so no disk mutation can make them diverge
-                // independently — they guard against an API that masks stored
-                // content, which is not reachable via single-file mutation.
+                // This mutation covers the raw record's identity check.
+                // Full record/events alignment is checked on the positive path;
+                // this matrix does not inject separate observer-level divergence.
                 disk["records"][0]["runId"] = json!("tampered");
             }
         }
