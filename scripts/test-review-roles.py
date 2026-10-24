@@ -44,7 +44,7 @@ with open(conf["log"], "a") as f:
                         "key_is": next((n for n, v in conf["keys"].items() if v == os.environ.get("ANTHROPIC_API_KEY")),
                                        "other" if os.environ.get("ANTHROPIC_API_KEY") else "unset"), "cfg": cfg,
                         "cfg_empty": bool(cfg) and os.path.isdir(cfg) and not os.listdir(cfg)}) + "\n")
-init_model = "claude-sonnet-5-5" if mode == "wrong_init" else model
+init_model = "wrong-model-x" if mode == "wrong_init" else model
 print(json.dumps({"type": "system", "subtype": "init", "tools": tools, "model": init_model}), flush=True)
 trace = conf.get("trace")
 if trace:
@@ -58,10 +58,10 @@ if hang_first and not os.path.exists(hang_first):
 if mode == "hang":
     time.sleep(30)
 if mode != "no_assistant":
-    resp = "claude-sonnet-5-5" if mode == "wrong_resp" else {"glm-5.3-mb": "GLM-5.3"}.get(model, model)  # 真网关回显展示名
+    resp = "wrong-model-x" if mode == "wrong_resp" else {"glm-5.3-mb": "GLM-5.3"}.get(model, model)  # 真网关回显展示名
     print(json.dumps({"type": "assistant", "message": {"model": resp, "content": []}}), flush=True)
 final = "只有半截" if mode == "noverdict" else conf["final"]
-usage = {("claude-sonnet-5-5" if mode == "wrong_usage" else model): {}}
+usage = {("wrong-model-x" if mode == "wrong_usage" else model): {}}
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": final, "total_cost_usd": 0,
                   "modelUsage": usage}))
 if trace:
@@ -161,10 +161,14 @@ def _run(gate, rrr, out_base: Path) -> int:
         if rc != 0 or "runner=anthropic model=claude-sonnet-5-5" not in s or gate_errs(s):
             fails.append(f"anthropic-ok：应全 PASS 且过闸（rc={rc}）")
 
-        for name, mode, want in [("extra-tool", "extra_tool", "TOOLS_VIOLATION"), ("wrong-init", "wrong_init", "ERROR"),
-                                 ("wrong-resp", "wrong_resp", "ERROR"), ("wrong-usage", "wrong_usage", "ERROR"),
-                                 ("no-assistant", "no_assistant", "ERROR"), ("noverdict", "noverdict", "PARTIAL")]:
-            rc, s = run(name, mode)
+        # 两通道回显行为已分叉（GLM 回显展示名、Claude 原样回显），模型守卫负控两通道各跑一遍
+        for name, mode, want, runner in [("extra-tool", "extra_tool", "TOOLS_VIOLATION", "zai"), ("wrong-init", "wrong_init", "ERROR", "zai"),
+                                         ("wrong-resp", "wrong_resp", "ERROR", "zai"), ("wrong-usage", "wrong_usage", "ERROR", "zai"),
+                                         ("wrong-init-anth", "wrong_init", "ERROR", "anthropic"),
+                                         ("wrong-resp-anth", "wrong_resp", "ERROR", "anthropic"),
+                                         ("wrong-usage-anth", "wrong_usage", "ERROR", "anthropic"),
+                                         ("no-assistant", "no_assistant", "ERROR", "zai"), ("noverdict", "noverdict", "PARTIAL", "zai")]:
+            rc, s = run(name, mode, runner=runner)
             if rc == 0 or want not in s or not gate_errs(s):
                 fails.append(f"{name}：应判 {want} 且闸门拒收（rc={rc}）")
         rc, s = run("timeout", "hang", timeout=2)
