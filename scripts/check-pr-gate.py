@@ -131,7 +131,7 @@ def strip_code(body: str) -> str:
     lines, fence, comment = [], None, False
     for line in body.splitlines():
         if comment:  # 跨行 HTML 注释（CommonMark type-2 HTML 块）里出现的 ``` 不是围栏
-            lines.append(line)
+            # 注释内部行不计入 prose：Closes/Refs 等关键词在注释里不算 issue 关联
             comment = "-->" not in line
             continue
         m = FENCE.match(line)
