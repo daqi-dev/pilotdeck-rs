@@ -315,6 +315,11 @@ impl LiveTurnStream {
 /// dropped by the host's bounded cancel exit) are still observed. `finish()`
 /// validates the terminal against that received lifecycle, never against the
 /// delivered prefix.
+///
+/// `validate_event` forwards to `inner.validate_event` after its own lifecycle
+/// check: an inner handler that rejects a payload keeps exactly its rejection
+/// semantics when wrapped (the wrapper never silently skips it), and either
+/// rejection fails the receive path before application and ACK.
 struct StreamHandler {
     inner: Arc<dyn HostHandler>,
     events: mpsc::Sender<JsValue>,
@@ -327,9 +332,14 @@ impl HostHandler for StreamHandler {
     }
 
     fn validate_event(&self, payload: &JsValue) -> Result<(), HostError> {
+        // Own lifecycle check first: an invalid event is cut off before the
+        // inner contract sees it, exactly like it is cut off before
+        // application. Then forward the inner handler's validation so wrapping
+        // it never drops a rejection a directly-embedded handler enforces.
         self.integrity
             .observe_event(payload)
-            .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))
+            .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
+        self.inner.validate_event(payload)
     }
 
     fn event(&self, event: JsValue) -> HostFuture<()> {
@@ -379,7 +389,9 @@ enum IntegrityState {
     Started,
     /// input_accepted observed after turn_started.
     InputAccepted,
-    /// turn_failed observed; only the terminal may still follow.
+    /// turn_failed observed; it may legally repeat (TurnRunner's catch
+    /// re-emits it after a finalization failure) and intermediate events may
+    /// still arrive before the terminal.
     Failed,
     /// The authoritative terminal has been projected from ExecuteResult.
     Completed,

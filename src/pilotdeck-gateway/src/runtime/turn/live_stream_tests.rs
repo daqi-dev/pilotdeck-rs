@@ -18,6 +18,10 @@ struct Handler {
     /// Leaves the input_accepted callback pending forever, so a received final
     /// stays unapplied and only the host's bounded cancel exit can surface it.
     block_input_accepted: bool,
+    /// Rejects input_accepted in validate_event: a legal lifecycle payload an
+    /// inner handler refuses, to prove the StreamHandler wrapper forwards the
+    /// inner contract's rejection instead of silently skipping it.
+    reject_input_accepted: bool,
 }
 
 impl HostHandler for Handler {
@@ -42,6 +46,16 @@ impl HostHandler for Handler {
                 Ok(())
             }
         })
+    }
+
+    fn validate_event(&self, payload: &JsValue) -> Result<(), HostError> {
+        if self.reject_input_accepted && payload.get("type") == Some(&"input_accepted".into()) {
+            return Err(HostError::new(
+                HostErrorKind::Protocol,
+                "inner rejected input_accepted",
+            ));
+        }
+        Ok(())
     }
 
     fn dispose(&self) -> HostFuture<()> {
@@ -550,6 +564,58 @@ async fn host_max_turns_terminal_completes_without_turn_failed() {
 }
 
 #[tokio::test]
+async fn inner_validation_rejection_fails_the_stream_before_application() {
+    // The wrapper must keep the inner handler's validate_event semantics: an
+    // inner handler that rejects a legal lifecycle payload (a module-side
+    // contract the same handler would enforce when given to HostClient
+    // directly) must also reject it through the LiveSession path — the event
+    // is not applied, not published, and the turn fails closed with the
+    // inner error.
+    let handler = Arc::new(Handler {
+        reject_input_accepted: true,
+        ..Handler::default()
+    });
+    let session = session("live-normal", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    // turn_started's application may still be in flight when the rejection
+    // fails the execution, so only the legal prefix may precede the error.
+    let mut error = None;
+    for _ in 0..2 {
+        match next(turn.as_mut()).await {
+            Ok(Some(event)) => assert_eq!(
+                event.get("type"),
+                Some(&"turn_started".into()),
+                "only the legal prefix may be published"
+            ),
+            Ok(None) => panic!("the stream settled without the inner rejection error"),
+            Err(rejection) => {
+                error = Some(rejection);
+                break;
+            }
+        }
+    }
+    let error = error.expect("the inner rejection must fail the stream");
+    assert!(
+        error.message.contains("inner rejected input_accepted"),
+        "{error:?}"
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    // input_accepted was never applied to the module-side handler...
+    {
+        let applied = handler.events.lock().unwrap();
+        assert!(
+            !applied.iter().any(|event| {
+                event.get("payload").and_then(|payload| payload.get("type"))
+                    == Some(&"input_accepted".into())
+            }),
+            "the inner-rejected event must not be applied"
+        );
+    }
+    // ...and the failed-closed turn still disposed its host exactly once.
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn cancel_exit_returns_the_host_validated_final_when_lifecycle_events_were_stopped() {
     // The pending input_accepted callback keeps the received success final
     // unapplied; after cancellation the host's bounded cancel exit
@@ -845,6 +911,51 @@ async fn incomplete_compaction_final_yields_original_messages_then_none() {
     // The incomplete compaction final is aborted before the handler sees it.
     assert_eq!(handler.events.lock().unwrap().len(), 3);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancel_with_a_full_aborted_result_projects_the_peer_terminal_once() {
+    // The other side of the compaction case: TS AgentLoop.ts:594-611 returns a
+    // complete result.type="aborted" module final after cancel, which the host
+    // surfaces as ExecuteResult::Terminal — the authoritative-terminal
+    // branch, not the ExecuteResult::Aborted synthesis. The session must
+    // project the peer's own result and messages exactly once, then close and
+    // release the host.
+    let handler = Arc::new(Handler::default());
+    let (session, children) =
+        session_tracking_children("live-cancel-full-aborted", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    for event_type in ["turn_started", "input_accepted", "model_event"] {
+        let event = next(turn.as_mut()).await.unwrap().unwrap();
+        assert_eq!(event.get("type"), Some(&event_type.into()), "{event_type}");
+    }
+    session.abort(&"user-stop".into()).unwrap();
+    let completed = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+    assert_eq!(completed.get("sessionId"), Some(&"session".into()));
+    assert_eq!(completed.get("turnId"), Some(&"turn".into()));
+    let result = completed.get("result").unwrap();
+    // The peer's own result, not the session-synthesized aborted result:
+    // a real turns count and distinct timestamps (aborted_result uses
+    // turns 0 and startedAt == completedAt).
+    assert_eq!(result.get("type"), Some(&"aborted".into()));
+    assert_eq!(result.get("stopReason"), Some(&"aborted_streaming".into()));
+    assert_eq!(result.get("turns"), Some(&JsValue::Number(1.0)));
+    assert_ne!(result.get("startedAt"), result.get("completedAt"));
+    assert_eq!(
+        completed.get("messages"),
+        input().get("messages"),
+        "the aborted terminal still retains the turn messages"
+    );
+    // The authoritative terminal is projected exactly once, then closed.
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    // turn_started, input_accepted, model_event and the applied final.
+    assert_eq!(handler.events.lock().unwrap().len(), 4);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    // The sidecar process itself was released, not just the stream.
+    let child = *children.lock().unwrap().first().unwrap();
+    assert_reaped(child).await;
 }
 
 #[tokio::test]
