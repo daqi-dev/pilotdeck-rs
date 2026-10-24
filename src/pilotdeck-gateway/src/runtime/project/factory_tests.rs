@@ -1907,3 +1907,836 @@ async fn interaction_registry_rolls_back_failed_post_interaction_family() {
     assert_eq!(count_events(&events, "dispose:executionWorld:18"), 1);
     assert_eq!(count_events(&events, "dispose:memoryBundle:36"), 1);
 }
+
+mod context_storage_tests {
+    use super::*;
+    use crate::host::modules::context::{ContextInput, ContextRuntime};
+    use crate::runtime::project::context_storage::{
+        ContextStorageFamilySource, ContextStorageResources, SessionContextStorage,
+    };
+
+    fn snapshot() -> Value {
+        json!({"config": {
+            "agent": {"model": {"provider": "custom", "model": "wide"}},
+            "model": {"providers": {
+                "other": {"models": {"wide": {"capabilities": {"maxContextTokens": 8192}}}},
+                "custom": {"models": {
+                    "small": {"capabilities": {"maxContextTokens": 4096}},
+                    "wide": {"capabilities": {"maxContextTokens": 128000}}
+                }}
+            }}
+        }})
+    }
+
+    fn stage(root: &Path, snapshot: Value) -> ProjectResources {
+        let group = ProjectResources::new(
+            root.to_path_buf(),
+            root.join("home"),
+            None,
+            crate::config::Env::new(),
+            Arc::new(|| UNIX_EPOCH),
+            Arc::new(pilotdeck_protocol::parse_json(&snapshot.to_string()).unwrap()),
+            RuntimeProfile::resolve(&JsValue::Undefined, &RuntimeProfileOverrides::default()),
+        );
+        ContextStorageFamilySource
+            .stage(&group.context(), &mut group.sink())
+            .unwrap();
+        assert!(group.context().owner(Family::ContextStorage).is_none());
+        group
+    }
+
+    fn input(value: Value) -> ContextInput {
+        ContextInput {
+            fields: pilotdeck_protocol::parse_json(&value.to_string())
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone(),
+            abort_signal: None,
+            budget_evaluator: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn context_storage_uses_selected_catalog_cap_and_nullish_override() {
+        let scratch = Scratch::new();
+        for (override_value, expected) in [
+            (None, 128000.0),
+            (Some(Value::Null), 128000.0),
+            (Some(json!(64000)), 64000.0),
+            (Some(json!(0)), 0.0),
+        ] {
+            let mut config = snapshot();
+            if let Some(value) = override_value {
+                config["config"]["agent"]["maxContextTokens"] = value;
+            }
+            let group = stage(&scratch.0, config);
+            let resource = group
+                .context()
+                .resource(Resource::InstructionStorage)
+                .unwrap();
+            let storage = resource
+                .as_any()
+                .downcast_ref::<ContextStorageResources>()
+                .unwrap();
+            let session = storage.create_session(scratch.0.join("spill")).unwrap();
+            let result = session
+                .context_runtime
+                .try_auto_compact(input(json!({})))
+                .await
+                .unwrap();
+            assert_eq!(
+                result
+                    .get("snapshot")
+                    .unwrap()
+                    .get("maxContextTokens")
+                    .unwrap()
+                    .as_number(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn context_storage_missing_model_or_cap_does_not_invent_a_limit() {
+        let scratch = Scratch::new();
+        for missing in ["provider", "model", "cap"] {
+            let mut config = snapshot();
+            match missing {
+                "provider" => {
+                    config["config"]["agent"]["model"]["provider"] = json!("absent");
+                    config["config"]["agent"]["maxContextTokens"] = json!(64000);
+                }
+                "model" => {
+                    config["config"]["agent"]["model"]["model"] = json!("absent");
+                    config["config"]["agent"]["maxContextTokens"] = json!(64000);
+                }
+                _ => {
+                    config["config"]["model"]["providers"]["custom"]["models"]["wide"]["capabilities"] =
+                        json!({})
+                }
+            }
+            let group = stage(&scratch.0, config);
+            let resource = group
+                .context()
+                .resource(Resource::InstructionStorage)
+                .unwrap();
+            let storage = resource
+                .as_any()
+                .downcast_ref::<ContextStorageResources>()
+                .unwrap();
+            assert!(
+                storage.create_session(scratch.0.join("spill")).is_err(),
+                "{missing}"
+            );
+        }
+    }
+
+    async fn spill(session: &SessionContextStorage, text: &str) -> JsValue {
+        let result = session
+            .context_runtime
+            .apply_tool_results(input(json!({
+                "turnId": "same-turn",
+                "messages": [],
+                "toolResultMessage": {"role": "user", "content": [{
+                    "type": "tool_result", "toolCallId": "same-call",
+                    "content": [{"type": "text", "text": text}]
+                }]}
+            })))
+            .await
+            .unwrap();
+        assert_eq!(result.get("diagnostics"), Some(&JsValue::Array(vec![])));
+        let JsValue::Array(messages) = result.get("appendedMessages").unwrap() else {
+            panic!("messages")
+        };
+        let JsValue::Array(content) = messages[0].get("content").unwrap() else {
+            panic!("content")
+        };
+        assert_eq!(
+            content[0].get("type"),
+            Some(&"tool_result_reference".into())
+        );
+        content[0].clone()
+    }
+
+    fn text_field(value: &JsValue, field: &str) -> String {
+        value
+            .get(field)
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn context_storage_sessions_isolate_reused_ids_and_spill_files() {
+        let scratch = Scratch::new();
+        let group = stage(&scratch.0, snapshot());
+        let resource = group
+            .context()
+            .resource(Resource::InstructionStorage)
+            .unwrap();
+        let spill_resource = group.context().resource(Resource::ToolResultSpill).unwrap();
+        assert!(Arc::ptr_eq(&resource, &spill_resource));
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let dir = scratch.0.join(".pilotdeck/tool-results");
+        let first = storage.create_session(dir.join("session-a")).unwrap();
+        let second = storage.create_session(dir.join("session-b")).unwrap();
+        assert!(!Arc::ptr_eq(
+            &first.tool_result_budget,
+            &second.tool_result_budget
+        ));
+        let first_text = "a".repeat(200_001);
+        let second_text = "b".repeat(200_001);
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let launch = |session: SessionContextStorage, text: String| {
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                let reference = spill(&session, &text).await;
+                (session, reference)
+            })
+        };
+        let (first, second) = tokio::join!(
+            launch(first, first_text.clone()),
+            launch(second, second_text.clone())
+        );
+        let (first, first_ref) = first.unwrap();
+        let (_, second_ref) = second.unwrap();
+        for (reference, session_id, expected) in [
+            (&first_ref, "session-a", &first_text),
+            (&second_ref, "session-b", &second_text),
+        ] {
+            let path = PathBuf::from(text_field(reference, "path"));
+            assert_eq!(path.parent(), Some(dir.join(session_id).as_path()));
+            assert_eq!(std::fs::read_to_string(path).unwrap(), *expected);
+            let alias = text_field(reference, "readFilePath");
+            assert!(alias.starts_with(".pilotdeck/tool-results/refs/result-"));
+            assert_eq!(
+                std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
+                *expected
+            );
+        }
+        assert_ne!(first_ref.get("path"), second_ref.get("path"));
+        assert_ne!(
+            first_ref.get("readFilePath"),
+            second_ref.get("readFilePath")
+        );
+        // Reuse within the same context keeps the original cached replacement.
+        assert_eq!(spill(&first, "small later result").await, first_ref);
+    }
+
+    #[test]
+    fn context_storage_scoped_contexts_accept_same_execution_spill_root() {
+        let scratch = Scratch::new();
+        let group = stage(&scratch.0, snapshot());
+        let resource = group.context().resource(Resource::ToolResultSpill).unwrap();
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let custom_root = scratch.0.join("execution-spill");
+        let first = storage.create_session(&custom_root).unwrap();
+        let second = storage.create_session(&custom_root).unwrap();
+        assert!(!Arc::ptr_eq(
+            &first.tool_result_budget,
+            &second.tool_result_budget
+        ));
+        assert_eq!(
+            first.tool_result_budget.tool_results_dir(),
+            second.tool_result_budget.tool_results_dir()
+        );
+        assert!(
+            !custom_root.exists(),
+            "composition must not perform spill I/O"
+        );
+    }
+}
+
+mod memory_bundle_tests {
+    use super::*;
+    use crate::host::Cancellation;
+    use crate::runtime::context::memory::{
+        MemoryFuture, MemoryResolver, MemoryRetrieveInput, MemoryRetrieveResult,
+    };
+    use crate::runtime::memory::{
+        MemoryBundleError, MemoryConfig, MemoryDisposeFn, MemoryMaintenanceService,
+        MemoryManagementService, MemoryProviderError, MemoryProviderFactoryFn,
+        NativeMemoryProviderOptions, NativeMemoryService, NativeProjectMemoryProvider,
+        NativeProviderFactoryFn, ProjectMemoryBundleOptions, ProjectMemoryProvider,
+    };
+    use crate::runtime::project::RuntimeResources;
+    use crate::runtime::project::memory_bundle::{
+        MemoryBundleFamilySource, MemoryBundleResource, MemoryMaintenanceResource,
+        MemoryManagementResource, MemoryResolverResource,
+    };
+    use pilotdeck_protocol::JsString;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+    const MEMORY_YAML: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\nmemory:\n  enabled: true\n  provider: edgeclaw\n";
+
+    fn memory_snapshot() -> Value {
+        json!({"config": {
+            "agent": {"model": {"id": "test/mock", "provider": "test", "model": "mock"}},
+            "memory": {"enabled": true, "provider": "edgeclaw", "rootDir": "/normalized/root"}
+        }})
+    }
+
+    fn memory_group(root: &Path, snapshot: Value) -> ProjectResources {
+        ProjectResources::new(
+            root.to_path_buf(),
+            root.join("home"),
+            None,
+            crate::config::Env::new(),
+            Arc::new(|| UNIX_EPOCH),
+            Arc::new(pilotdeck_protocol::parse_json(&snapshot.to_string()).unwrap()),
+            RuntimeProfile::resolve(&JsValue::Undefined, &RuntimeProfileOverrides::default()),
+        )
+    }
+
+    fn stage_memory(source: &MemoryBundleFamilySource, group: &ProjectResources) -> RuntimeResult {
+        source.stage(&group.context(), &mut group.sink())
+    }
+
+    /// One provider implementing all three published surfaces; the counters
+    /// prove the real handles reach their configured implementations.
+    #[derive(Default)]
+    struct FakeMemory {
+        retrieve_calls: AtomicUsize,
+        maintenance_calls: AtomicUsize,
+        list_calls: AtomicUsize,
+        clear_calls: AtomicUsize,
+        clear_session_calls: AtomicUsize,
+        dispose_calls: AtomicUsize,
+        close_calls: AtomicUsize,
+        retrieve_input: Mutex<Option<(String, String, String)>>,
+    }
+
+    impl MemoryResolver for FakeMemory {
+        fn retrieve(&self, input: MemoryRetrieveInput) -> MemoryFuture {
+            self.retrieve_calls.fetch_add(1, Ordering::SeqCst);
+            *self.retrieve_input.lock().unwrap() = Some((
+                input.query.clone(),
+                input.session_id.clone(),
+                input.project_root.clone(),
+            ));
+            Box::pin(async move {
+                Ok(MemoryRetrieveResult {
+                    system_context: Some("remembered context".into()),
+                    diagnostics: Vec::new(),
+                })
+            })
+        }
+    }
+
+    impl MemoryMaintenanceService for FakeMemory {
+        fn run_due_scheduled_maintenance(&self, _reason: &str) -> MemoryFuture<'_, ()> {
+            self.maintenance_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    impl MemoryManagementService for FakeMemory {
+        fn list(&self, _limit: usize) -> Result<Vec<JsValue>, MemoryProviderError> {
+            self.list_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![JsValue::from("remembered")])
+        }
+        fn clear(&self, _scope: &str) -> Result<(), MemoryProviderError> {
+            self.clear_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn clear_session(&self, _session_key: &JsString) -> Result<(), MemoryProviderError> {
+            self.clear_session_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    impl NativeMemoryService for FakeMemory {
+        fn run_due_scheduled_maintenance(&self, _reason: &str) -> MemoryFuture<'_, ()> {
+            self.maintenance_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+        fn list(&self, _limit: usize) -> Result<Vec<JsValue>, MemoryProviderError> {
+            self.list_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![JsValue::from("remembered")])
+        }
+        fn clear(&self, _scope: &str) -> Result<(), MemoryProviderError> {
+            self.clear_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn clear_session(&self, _session_key: &JsString) -> Result<(), MemoryProviderError> {
+            self.clear_session_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn close(&self) {
+            self.close_calls.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn disposer(provider: &Arc<FakeMemory>) -> MemoryDisposeFn {
+        let provider = Arc::clone(provider);
+        Arc::new(move || {
+            let provider = Arc::clone(&provider);
+            Box::pin(async move {
+                provider.dispose_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+        })
+    }
+
+    fn injected_provider(provider: &Arc<FakeMemory>) -> ProjectMemoryProvider {
+        let memory: Arc<dyn MemoryResolver> = provider.clone();
+        let maintenance: Arc<dyn MemoryMaintenanceService> = provider.clone();
+        let management: Arc<dyn MemoryManagementService> = provider.clone();
+        ProjectMemoryProvider {
+            memory,
+            maintenance: Some(maintenance),
+            management: Some(management),
+            dispose: Some(disposer(provider)),
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_factory_injects_provider_and_publishes_three_handles() {
+        let scratch = Scratch::new();
+        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
+        let provider = Arc::new(FakeMemory::default());
+        let captured: Arc<Mutex<Option<ProjectMemoryBundleOptions>>> = Arc::new(Mutex::new(None));
+        let captured_in_factory = Arc::clone(&captured);
+        let provider_in_factory = Arc::clone(&provider);
+        let factory: MemoryProviderFactoryFn = Arc::new(move |options| {
+            *captured_in_factory.lock().unwrap() = Some(options);
+            Ok(Some(injected_provider(&provider_in_factory)))
+        });
+        let source = MemoryBundleFamilySource::default().with_provider_factory(factory);
+
+        stage_memory(&source, &group).expect("an injected provider must stage");
+
+        let options = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the provider factory must receive the bundle options");
+        assert_eq!(options.project_root, scratch.0.join("project"));
+        assert_eq!(
+            options.config,
+            Some(MemoryConfig {
+                enabled: true,
+                provider: "edgeclaw".into(),
+            }),
+            "the normalized memory config must reach the provider factory"
+        );
+        assert_eq!(options.agent_model.as_deref(), Some("test/mock"));
+        assert!(options.provider_factory.is_some());
+        assert!(options.create_provider.is_none());
+
+        let context = group.context();
+        assert!(
+            context
+                .owner(Family::MemoryBundle)
+                .expect("the bundle owner is registered before staging")
+                .as_any()
+                .is::<MemoryBundleResource>(),
+            "the owner must be the ProjectMemoryBundle wrapper"
+        );
+        let memory = context.resource(Resource::Memory).unwrap();
+        let service = context.resource(Resource::MemoryService).unwrap();
+        let management = context.resource(Resource::MemoryManagement).unwrap();
+        let memory = memory
+            .as_any()
+            .downcast_ref::<MemoryResolverResource>()
+            .unwrap();
+        let service = service
+            .as_any()
+            .downcast_ref::<MemoryMaintenanceResource>()
+            .unwrap();
+        let management = management
+            .as_any()
+            .downcast_ref::<MemoryManagementResource>()
+            .unwrap();
+        let expected_memory: Arc<dyn MemoryResolver> = provider.clone();
+        let expected_maintenance: Arc<dyn MemoryMaintenanceService> = provider.clone();
+        let expected_management: Arc<dyn MemoryManagementService> = provider.clone();
+        assert!(Arc::ptr_eq(memory.resolver(), &expected_memory));
+        assert!(Arc::ptr_eq(service.maintenance(), &expected_maintenance));
+        assert!(Arc::ptr_eq(management.management(), &expected_management));
+
+        let retrieved = memory
+            .resolver()
+            .retrieve(MemoryRetrieveInput {
+                query: "where".into(),
+                session_id: "session-1".into(),
+                project_root: scratch.0.join("project").to_string_lossy().into_owned(),
+                recent_messages: Vec::new(),
+                signal: Cancellation::default(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            retrieved.system_context.as_deref(),
+            Some("remembered context")
+        );
+        service
+            .maintenance()
+            .run_due_scheduled_maintenance("manual")
+            .await
+            .unwrap();
+        assert_eq!(management.management().list(10).unwrap().len(), 1);
+        management.management().clear("current_project").unwrap();
+        management
+            .management()
+            .clear_session(&JsString::from("session-1"))
+            .unwrap();
+        assert_eq!(provider.retrieve_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.maintenance_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.list_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.clear_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.clear_session_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            provider.retrieve_input.lock().unwrap().as_ref(),
+            Some(&(
+                "where".into(),
+                "session-1".into(),
+                scratch.0.join("project").to_string_lossy().into_owned()
+            ))
+        );
+
+        bounded(group.dispose()).await.unwrap();
+        bounded(group.dispose()).await.unwrap();
+        assert_eq!(
+            provider.dispose_calls.load(Ordering::SeqCst),
+            1,
+            "the provider disposer must run exactly once across repeated disposal"
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_factory_without_provider_publishes_no_resources() {
+        let scratch = Scratch::new();
+        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
+        let factory: MemoryProviderFactoryFn = Arc::new(|_| Ok(None));
+        let source = MemoryBundleFamilySource::default().with_provider_factory(factory);
+        stage_memory(&source, &group).expect("an absent provider is a valid stage");
+        let context = group.context();
+        assert!(context.owner(Family::MemoryBundle).is_some());
+        assert!(context.resource(Resource::Memory).is_none());
+        assert!(context.resource(Resource::MemoryService).is_none());
+        assert!(context.resource(Resource::MemoryManagement).is_none());
+        bounded(group.dispose()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_factory_error_keeps_message_and_registered_owner() {
+        let scratch = Scratch::new();
+        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
+        let factory: MemoryProviderFactoryFn = Arc::new(|_| {
+            Err(MemoryBundleError::Factory(MemoryProviderError {
+                name: "Boom".into(),
+                code: Some("E_BOOM".into()),
+                message: JsString::from("provider exploded"),
+                requires_host: false,
+            }))
+        });
+        let source = MemoryBundleFamilySource::default().with_provider_factory(factory);
+
+        let error = stage_memory(&source, &group).expect_err("a throwing factory must fail");
+        assert_eq!(
+            error.message, "provider exploded",
+            "the RuntimeError keeps the original message without a staging prefix"
+        );
+        let context = group.context();
+        assert!(
+            context.owner(Family::MemoryBundle).is_some(),
+            "the dispose owner is registered before stage can throw"
+        );
+        assert!(context.resource(Resource::Memory).is_none());
+        assert!(context.resource(Resource::MemoryService).is_none());
+        assert!(context.resource(Resource::MemoryManagement).is_none());
+        bounded(group.dispose()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_provider_factory_precedes_legacy_create_provider() {
+        let scratch = Scratch::new();
+        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
+        let provider = Arc::new(FakeMemory::default());
+        let legacy_calls = Arc::new(AtomicUsize::new(0));
+        let provider_in_factory = Arc::clone(&provider);
+        let factory: MemoryProviderFactoryFn =
+            Arc::new(move |_| Ok(Some(injected_provider(&provider_in_factory))));
+        let legacy_calls_in_factory = Arc::clone(&legacy_calls);
+        let legacy: NativeProviderFactoryFn = Arc::new(move |_: &NativeMemoryProviderOptions| {
+            legacy_calls_in_factory.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        });
+        let source = MemoryBundleFamilySource::default()
+            .with_provider_factory(factory)
+            .with_create_provider(legacy);
+
+        stage_memory(&source, &group).expect("the provider factory must win");
+        assert_eq!(
+            legacy_calls.load(Ordering::SeqCst),
+            0,
+            "createProvider must not be consulted when providerFactory is present"
+        );
+        assert!(group.context().resource(Resource::Memory).is_some());
+        bounded(group.dispose()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_legacy_create_provider_stages_when_provider_factory_is_absent() {
+        let scratch = Scratch::new();
+        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
+        let provider = Arc::new(FakeMemory::default());
+        let captured: Arc<Mutex<Option<NativeMemoryProviderOptions>>> = Arc::new(Mutex::new(None));
+        let captured_in_factory = Arc::clone(&captured);
+        let provider_in_factory = Arc::clone(&provider);
+        let legacy: NativeProviderFactoryFn = Arc::new(move |input| {
+            *captured_in_factory.lock().unwrap() = Some(input.clone());
+            let memory: Arc<dyn MemoryResolver> = provider_in_factory.clone();
+            let service: Arc<dyn NativeMemoryService> = provider_in_factory.clone();
+            Ok(Some(NativeProjectMemoryProvider {
+                provider: memory,
+                service,
+            }))
+        });
+        let source = MemoryBundleFamilySource::default().with_create_provider(legacy);
+
+        stage_memory(&source, &group).expect("the legacy injection point must stage");
+        let input = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("createProvider receives the stripped native options");
+        assert_eq!(input.project_root, scratch.0.join("project"));
+        assert_eq!(
+            input.config,
+            Some(MemoryConfig {
+                enabled: true,
+                provider: "edgeclaw".into(),
+            })
+        );
+        assert_eq!(input.agent_model.as_deref(), Some("test/mock"));
+
+        let management = group
+            .context()
+            .resource(Resource::MemoryManagement)
+            .unwrap();
+        let management = management
+            .as_any()
+            .downcast_ref::<MemoryManagementResource>()
+            .unwrap();
+        management.management().clear("current_project").unwrap();
+        assert_eq!(provider.clear_calls.load(Ordering::SeqCst), 1);
+
+        bounded(group.dispose()).await.unwrap();
+        bounded(group.dispose()).await.unwrap();
+        assert_eq!(
+            provider.close_calls.load(Ordering::SeqCst),
+            1,
+            "the native service close runs exactly once through the provider disposer"
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_native_default_fails_explicitly_and_does_not_publish() {
+        let scratch = Scratch::new();
+        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
+        let error = stage_memory(&MemoryBundleFamilySource::default(), &group)
+            .expect_err("the unported native provider must fail explicitly");
+        assert_eq!(
+            error.message,
+            "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported."
+        );
+        let context = group.context();
+        assert!(context.owner(Family::MemoryBundle).is_some());
+        assert!(context.resource(Resource::Memory).is_none());
+        assert!(context.resource(Resource::MemoryService).is_none());
+        assert!(context.resource(Resource::MemoryManagement).is_none());
+        bounded(group.dispose()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_native_default_with_disabled_config_stages_no_provider() {
+        let scratch = Scratch::new();
+        let mut snapshot = memory_snapshot();
+        snapshot["config"]["memory"]["enabled"] = json!(false);
+        let group = memory_group(&scratch.0.join("project"), snapshot);
+        stage_memory(&MemoryBundleFamilySource::default(), &group)
+            .expect("a disabled config stages no provider, as in the baseline");
+        let context = group.context();
+        assert!(context.owner(Family::MemoryBundle).is_some());
+        assert!(context.resource(Resource::Memory).is_none());
+        assert!(context.resource(Resource::MemoryService).is_none());
+        assert!(context.resource(Resource::MemoryManagement).is_none());
+        bounded(group.dispose()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn with_context_memory_wires_context_and_keeps_native_memory_default() {
+        let scratch = Scratch::new();
+        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
+        let families = Families::unwired().with_context_memory();
+
+        families
+            .context_storage
+            .stage(&group.context(), &mut group.sink())
+            .expect("the builder must wire the native context storage source");
+        assert!(
+            group
+                .context()
+                .resource(Resource::InstructionStorage)
+                .is_some()
+        );
+        assert!(
+            group
+                .context()
+                .resource(Resource::ToolResultSpill)
+                .is_some()
+        );
+
+        let error = families
+            .memory
+            .stage(&group.context(), &mut group.sink())
+            .expect_err("the builder keeps the unported native memory default");
+        assert_eq!(
+            error.message,
+            "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported."
+        );
+        assert!(group.context().resource(Resource::Memory).is_none());
+        bounded(group.dispose()).await.unwrap();
+    }
+
+    struct SilentFamily(Family);
+    impl ResourceFamilySource for SilentFamily {
+        fn family(&self) -> Family {
+            self.0
+        }
+        fn stage(&self, _: &StageContext, _: &mut StageSink<'_>) -> RuntimeResult {
+            Ok(())
+        }
+    }
+
+    fn silent(family: Family) -> Arc<dyn ResourceFamilySource> {
+        Arc::new(SilentFamily(family))
+    }
+
+    fn memory_registry(
+        scratch: &Scratch,
+        source: MemoryBundleFamilySource,
+        fail: Arc<AtomicBool>,
+        factory_calls: Arc<AtomicUsize>,
+        provider: Arc<FakeMemory>,
+    ) -> ProjectRuntimeRegistry {
+        std::fs::create_dir_all(scratch.0.join("project/.pilotdeck")).unwrap();
+        std::fs::write(
+            scratch.0.join("project/.pilotdeck/pilotdeck.yaml"),
+            MEMORY_YAML,
+        )
+        .unwrap();
+        std::fs::create_dir_all(scratch.0.join("config-home")).unwrap();
+        std::fs::write(scratch.0.join("config-home/pilotdeck.yaml"), MEMORY_YAML).unwrap();
+        let mut env = Env::new();
+        env.insert(
+            "PILOT_HOME".into(),
+            scratch.0.join("config-home").to_string_lossy().into_owned(),
+        );
+        let factory: MemoryProviderFactoryFn = Arc::new(move |_| {
+            factory_calls.fetch_add(1, Ordering::SeqCst);
+            if fail.load(Ordering::SeqCst) {
+                Err(MemoryBundleError::Factory(MemoryProviderError::new(
+                    "memory factory exploded",
+                )))
+            } else {
+                Ok(Some(injected_provider(&provider)))
+            }
+        });
+        let families = Families {
+            model_runtime: silent(Family::ModelRuntime),
+            plugins: silent(Family::PluginRuntime),
+            router_custom_routers: Some(silent(Family::RouterCustomRouters)),
+            router_runtime: silent(Family::RouterRuntime),
+            lsp: Some(silent(Family::LspService)),
+            execution_world: silent(Family::ExecutionWorld),
+            session_title: Some(silent(Family::SessionTitleProvider)),
+            mcp: silent(Family::McpProvider),
+            ..Families::unwired()
+        }
+        .with_context_memory()
+        .with_memory(source.with_provider_factory(factory));
+        let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+            pilot_home: scratch.0.join("pilot-home"),
+            cwd: scratch.0.to_path_buf(),
+            env,
+            homedir: Some(scratch.0.join("pilot-home")),
+            builtin_skills_root: None,
+            now: Arc::new(|| SystemTime::UNIX_EPOCH),
+            config_version: None,
+            runtime_profile_overrides: RuntimeProfileOverrides::default(),
+            families,
+        });
+        ProjectRuntimeRegistry::new(scratch.0.join("project"), Arc::new(factory))
+    }
+
+    #[tokio::test]
+    async fn memory_registry_stages_injected_provider_and_does_not_publish_failures() {
+        let scratch = Scratch::new();
+        let provider = Arc::new(FakeMemory::default());
+        let fail = Arc::new(AtomicBool::new(true));
+        let factory_calls = Arc::new(AtomicUsize::new(0));
+        let registry = memory_registry(
+            &scratch,
+            MemoryBundleFamilySource::default(),
+            Arc::clone(&fail),
+            Arc::clone(&factory_calls),
+            Arc::clone(&provider),
+        );
+        let root = scratch.0.join("project");
+
+        let error = match registry.resolve(Some(&root)) {
+            Err(error) => error,
+            Ok(_) => panic!("a failing memory factory must fail the generation"),
+        };
+        assert_eq!(error.message, "memory factory exploded");
+        let error = match registry.resolve(Some(&root)) {
+            Err(error) => error,
+            Ok(_) => panic!("a failed generation is never published or cached"),
+        };
+        assert_eq!(error.message, "memory factory exploded");
+        assert_eq!(
+            factory_calls.load(Ordering::SeqCst),
+            2,
+            "the second resolve must stage a fresh generation"
+        );
+
+        fail.store(false, Ordering::SeqCst);
+        let runtime = registry
+            .resolve(Some(&root))
+            .expect("a later complete generation must publish");
+        let lease = runtime
+            .acquire()
+            .expect("the published generation is active");
+        let context = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .expect("Factory resources should be published")
+            .context();
+        assert!(context.resource(Resource::Memory).is_some());
+        assert!(context.resource(Resource::MemoryService).is_some());
+        assert!(context.resource(Resource::MemoryManagement).is_some());
+        assert_eq!(factory_calls.load(Ordering::SeqCst), 3);
+        drop(lease);
+        bounded(registry.dispose()).await.unwrap();
+        bounded(registry.dispose()).await.unwrap();
+        assert_eq!(
+            provider.dispose_calls.load(Ordering::SeqCst),
+            1,
+            "registry disposal must clean the provider exactly once"
+        );
+    }
+}
