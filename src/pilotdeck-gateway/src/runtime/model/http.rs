@@ -238,7 +238,10 @@ impl HyperModelTransport {
     }
     /// Trust exactly `roots` (tests use a throwaway CA).
     pub fn with_roots(roots: rustls::RootCertStore) -> Self {
-        Self::from_config(rooted_client_config(roots), ProxyConfig::from_settings(None))
+        Self::from_config(
+            rooted_client_config(roots),
+            ProxyConfig::from_settings(None),
+        )
     }
     fn builder() -> rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier> {
         rustls::ClientConfig::builder_with_provider(Arc::new(
@@ -249,7 +252,8 @@ impl HyperModelTransport {
     }
     fn from_config(config: rustls::ClientConfig, proxy: Option<ProxyConfig>) -> Self {
         Self {
-            client: Client::builder(TokioExecutor::new()).build(proxy_https_connector(config, proxy)),
+            client: Client::builder(TokioExecutor::new())
+                .build(proxy_https_connector(config, proxy)),
         }
     }
 }
