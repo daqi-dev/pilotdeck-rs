@@ -4505,6 +4505,386 @@
      "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
     }
    ]
+  },
+  {
+   "name": "anthropic-200-empty-endpoint-fallback",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "text": "plan",
+      "signature": "sig=="
+     },
+     {
+      "type": "text",
+      "text": "hello"
+     },
+     {
+      "type": "tool_call",
+      "id": "toolu_1",
+      "name": "lookup",
+      "input": {
+       "q": "x"
+      },
+      "raw": {
+       "type": "tool_use",
+       "id": "toolu_1",
+       "name": "lookup",
+       "input": {
+        "q": "x"
+       }
+      }
+     }
+    ],
+    "usage": {
+     "inputTokens": 11,
+     "outputTokens": 7,
+     "cacheReadTokens": 3,
+     "cacheWriteTokens": 2,
+     "totalTokens": 23
+    },
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "msg_1",
+     "type": "message",
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "plan",
+       "signature": "sig=="
+      },
+      {
+       "type": "text",
+       "text": "hello"
+      },
+      {
+       "type": "tool_use",
+       "id": "toolu_1",
+       "name": "lookup",
+       "input": {
+        "q": "x"
+       }
+      }
+     ],
+     "stop_reason": "tool_use",
+     "usage": {
+      "input_tokens": 11,
+      "output_tokens": 7,
+      "cache_read_input_tokens": 3,
+      "cache_creation_input_tokens": 2
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig==\"},{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}],\"stop_reason\":\"tool_use\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7,\"cache_read_input_tokens\":3,\"cache_creation_input_tokens\":2}}"
+   },
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}"
+    },
+    {
+     "body": "{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig==\"},{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}],\"stop_reason\":\"tool_use\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7,\"cache_read_input_tokens\":3,\"cache_creation_input_tokens\":2}}"
+    }
+   ],
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "anthropic-200-all-wrong-endpoint-fallback",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": {
+     "last": true
+    }
+   },
+   "reply": {
+    "status": 200,
+    "body": "{\"last\":true}"
+   },
+   "replies": [
+    {
+     "status": 200,
+     "body": "{\"wrong\":1}"
+    },
+    {
+     "status": 200,
+     "body": "{\"last\":true}"
+    }
+   ],
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-200-empty-endpoint-fallback",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "Hi"
+     },
+     {
+      "type": "thinking",
+      "text": "why\nbecause"
+     },
+     {
+      "type": "tool_call",
+      "id": "call_a",
+      "name": "lookup",
+      "input": {
+       "q": "x"
+      },
+      "raw": {
+       "type": "function_call",
+       "call_id": "call_a",
+       "id": "fc_1",
+       "name": "lookup",
+       "arguments": "{\"q\":\"x\"}"
+      }
+     },
+     {
+      "type": "tool_call",
+      "id": "fc_2",
+      "name": "lookup2",
+      "input": {
+       "q": "y"
+      },
+      "raw": {
+       "type": "function_call",
+       "id": "fc_2",
+       "name": "lookup2",
+       "arguments": "{q: 'y',}"
+      }
+     }
+    ],
+    "usage": {
+     "inputTokens": 26,
+     "outputTokens": 10,
+     "cacheReadTokens": 4,
+     "totalTokens": 40
+    },
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "resp-1",
+     "output_text": "Hi",
+     "output": [
+      {
+       "type": "message",
+       "content": [
+        {
+         "type": "text",
+         "text": "Hi"
+        }
+       ]
+      },
+      {
+       "type": "reasoning",
+       "summary": [
+        {
+         "type": "summary_text",
+         "text": "why"
+        },
+        {
+         "type": "summary_text",
+         "output_text": "because"
+        },
+        {
+         "type": "summary_text",
+         "text": ""
+        }
+       ]
+      },
+      {
+       "type": "function_call",
+       "call_id": "call_a",
+       "id": "fc_1",
+       "name": "lookup",
+       "arguments": "{\"q\":\"x\"}"
+      },
+      {
+       "type": "function_call",
+       "id": "fc_2",
+       "name": "lookup2",
+       "arguments": "{q: 'y',}"
+      }
+     ],
+     "status": "completed",
+     "usage": {
+      "input_tokens": 30,
+      "output_tokens": 10,
+      "total_tokens": 40,
+      "input_tokens_details": {
+       "cached_tokens": 4
+      }
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-1\",\"output_text\":\"Hi\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"Hi\"}]},{\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"why\"},{\"type\":\"summary_text\",\"output_text\":\"because\"},{\"type\":\"summary_text\",\"text\":\"\"}]},{\"type\":\"function_call\",\"call_id\":\"call_a\",\"id\":\"fc_1\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"},{\"type\":\"function_call\",\"id\":\"fc_2\",\"name\":\"lookup2\",\"arguments\":\"{q: 'y',}\"}],\"status\":\"completed\",\"usage\":{\"input_tokens\":30,\"output_tokens\":10,\"total_tokens\":40,\"input_tokens_details\":{\"cached_tokens\":4}}}"
+   },
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}"
+    },
+    {
+     "body": "{\"id\":\"resp-1\",\"output_text\":\"Hi\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"Hi\"}]},{\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"why\"},{\"type\":\"summary_text\",\"output_text\":\"because\"},{\"type\":\"summary_text\",\"text\":\"\"}]},{\"type\":\"function_call\",\"call_id\":\"call_a\",\"id\":\"fc_1\",\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"},{\"type\":\"function_call\",\"id\":\"fc_2\",\"name\":\"lookup2\",\"arguments\":\"{q: 'y',}\"}],\"status\":\"completed\",\"usage\":{\"input_tokens\":30,\"output_tokens\":10,\"total_tokens\":40,\"input_tokens_details\":{\"cached_tokens\":4}}}"
+    }
+   ],
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
   }
  ]
 }

@@ -205,7 +205,54 @@ CONTROLS = [
         """            let id = id_state.choose(non_empty_string(field(record, "id")).cloned(), generated);""",
         TEST,
     ),
+    (
+        # Bypass only the Anthropic shape predicate at the http.rs call site.
+        # The first 200 `{}` is then accepted and the pinned fallback case
+        # (2 requests, second-endpoint canonical) fails on request count.
+        "anthropic-shape-check-bypassed",
+        """                    let accepted = parsed.as_ref().is_some_and(|value| {
+                        providers::expected_complete_response_shape(
+                            field(provider, "protocol"),
+                            value,
+                        )
+                    });""",
+        """                    let accepted = parsed.as_ref().is_some_and(|value| {
+                        is(field(provider, "protocol"), "anthropic")
+                            || providers::expected_complete_response_shape(
+                                field(provider, "protocol"),
+                                value,
+                            )
+                    });""",
+        TEST,
+    ),
+    (
+        # Same call-site bypass for Responses: the first 200 `{}` must not be
+        # accepted, so the target case's request count/canonical still hold.
+        "responses-shape-check-bypassed",
+        """                    let accepted = parsed.as_ref().is_some_and(|value| {
+                        providers::expected_complete_response_shape(
+                            field(provider, "protocol"),
+                            value,
+                        )
+                    });""",
+        """                    let accepted = parsed.as_ref().is_some_and(|value| {
+                        is(field(provider, "protocol"), "openai-responses")
+                            || providers::expected_complete_response_shape(
+                                field(provider, "protocol"),
+                                value,
+                            )
+                    });""",
+        TEST,
+    ),
 ]
+
+# These controls must fail on the newly pinned target case itself, not on some
+# unrelated assertion or a compile error. The case name is part of the panic
+# message (`<case>: request count` / `<case>: canonical response`).
+TARGET_CASE = {
+    "anthropic-shape-check-bypassed": "anthropic-200-empty-endpoint-fallback:",
+    "responses-shape-check-bypassed": "responses-200-empty-endpoint-fallback:",
+}
 
 _active: dict | None = None
 _active_proc: subprocess.Popen | None = None
@@ -796,7 +843,12 @@ def main(argv: list[str] | None = None) -> int:
         try:
             code, output = run_test(test_name)
             caught = "test result: FAILED" in output and code != 0
+            target = TARGET_CASE.get(name)
+            if caught and target is not None:
+                caught = target in output
             print(f"{name}: {'caught' if caught else 'NOT CAUGHT'} (exit {code})")
+            if target is not None:
+                print(f"  target case in output: {target in output}")
             if not caught:
                 tail = "\n".join(output.splitlines()[-25:])
                 print(tail)
