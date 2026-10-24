@@ -1559,6 +1559,34 @@ async fn provider_exchange(
     }
 }
 
+/// Node's `os.tmpdir()` on unix (`node:lib/os.js`): the first nonempty value
+/// of TMPDIR, then TMP, then TEMP (empty strings are skipped, like JS `||`),
+/// else `/tmp`, with exactly one trailing `/` dropped when the result is
+/// longer than the root. Probed against node v22.22.0 —
+/// `_tmp/20261025-issue-621-fix-r4/node-probe/`: an empty TMPDIR falls
+/// through to TMP/TEMP, and `//` collapses to `/` while `///` only to `//`.
+/// `std::env::temp_dir()` reads TMPDIR alone and answers `""` when it is set
+/// but empty, which would drop a dump (the whole conversation) into the
+/// process's working directory, so the dump path resolves the directory the
+/// way its TS counterpart does.
+fn node_tmpdir() -> std::path::PathBuf {
+    std::path::PathBuf::from(node_tmpdir_from(|key| std::env::var(key).ok()))
+}
+
+/// The lookup-shaped half of [`node_tmpdir`], so the resolution table is
+/// testable without touching process environment (set_var is unsafe since
+/// edition 2024).
+fn node_tmpdir_from(lookup: impl Fn(&str) -> Option<String>) -> String {
+    let mut path = ["TMPDIR", "TMP", "TEMP"]
+        .into_iter()
+        .find_map(|key| lookup(key).filter(|value| !value.is_empty()))
+        .unwrap_or_else(|| "/tmp".to_string());
+    if path.len() > 1 && path.ends_with('/') {
+        path.pop();
+    }
+    path
+}
+
 /// Debug helper that writes the request body to a JSON file under the OS
 /// temp directory when `PILOTDECK_DUMP_REQUEST=1`. Matches TS
 /// `streamModel.ts:196-203,395-401` in trigger (streaming attempts only),
@@ -1583,6 +1611,18 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), Dum
         .and_then(|s| s.to_utf8().ok())
         .unwrap_or_else(|| "unknown".to_string());
 
+    // Node ignores SIGXFSZ process-wide, so a dump write past RLIMIT_FSIZE
+    // surfaces as EFBIG from `write` instead of killing the process; Rust
+    // std ignores only SIGPIPE (probe: without the ignore the writing
+    // process dies with exit 153 before io::Error reaches user code). This
+    // runtime has no process entry of its own, so the first dump installs
+    // the same ignore for its host process; the gateway binary installs it
+    // at startup too (`main.rs`). A failed install leaves the previous
+    // disposition — no worse than without this guard — and says so.
+    if let Err(error) = pilotdeck_child_signals::ignore_sigxfsz() {
+        eprintln!("[model-debug] could not ignore SIGXFSZ: {error}");
+    }
+
     // Format as pretty-printed JSON (TS uses `JSON.stringify(body, null, 2)`).
     let json = match crate::js_value::json_stringify(final_body) {
         Ok(Some(compact)) => {
@@ -1596,7 +1636,7 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), Dum
     };
 
     let path = write_dump_exclusively(
-        &std::env::temp_dir(),
+        &node_tmpdir(),
         &json,
         &mut || {
             next_dump_name(

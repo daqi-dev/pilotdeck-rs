@@ -3,9 +3,44 @@
 //! fork-to-exec window, for every spawn whose TS counterpart is detached (the
 //! bash runner, background tasks, the ripgrep engine spawn and command hooks;
 //! A6.5-BASH-OS-001 setsid half).
+//! The #621 fix-r4 addition: this process's own SIGXFSZ disposition, matching
+//! Node's process-wide ignore (see [`ignore_sigxfsz`]).
 #![cfg(unix)]
 
 use std::{io, os::unix::process::CommandExt, process::Command};
+
+/// Install `SIG_IGN` for SIGXFSZ in this process, aligning it with Node.
+/// Node's platform init ignores SIGXFSZ, so a write past RLIMIT_FSIZE
+/// surfaces as an `EFBIG` error from the syscall; Rust std ignores only
+/// SIGPIPE, so the same write instead kills the process (probe on node
+/// v22.22.0 vs rustc 1.99.0, `ulimit -f 1` writing 4 KiB: Node gets
+/// `{"errno":-27,"code":"EFBIG","syscall":"write"}` and continues, the Rust
+/// process dies with exit 153 before user code sees any io::Error; evidence
+/// `_tmp/20261025-issue-621-takeover/xfsz-probe/`). The gateway binary calls
+/// this at startup, and the debug request dump installs it before its write
+/// (`runtime/model/http.rs`), so every host process of the model runtime is
+/// covered — that runtime has no process entry of its own. Idempotent and
+/// thread-safe (concurrent identical installs are benign); an error means
+/// the disposition was left unchanged, never made worse.
+#[allow(unsafe_code)]
+pub fn ignore_sigxfsz() -> io::Result<()> {
+    // SAFETY: sigaction(2) only changes this process's disposition for
+    // SIGXFSZ. All pointers refer to live stack storage; the null old-action
+    // pointer requests no output. The zeroed struct is valid on macOS/Linux
+    // (integer fields and a nullable sa_restorer); its mask is initialized
+    // before use and its handler is SIG_IGN, which the kernel never invokes.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = libc::SIG_IGN;
+        if libc::sigemptyset(&mut action.sa_mask) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::sigaction(libc::SIGXFSZ, &action, std::ptr::null_mut()) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
 
 // libuv's Unix child-init range is 1..32, excluding unchangeable signals.
 // This is 29 signals on macOS and Linux; Linux 32/33 (glibc's internal

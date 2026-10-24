@@ -285,17 +285,53 @@ fn rust_tokens(source: &str) -> Vec<String> {
 // other change — imports, type aliases shadowing `libc`, helper items, a
 // moved or copied unsafe block — changes the token sequence). ANY change to
 // that file must update this copy in the same commit and re-extends the
-// #386/#552 human-approved unsafe exception; do not edit either side alone.
-// Source order: the #386 signal reset, then the #552 setsid.
+// #386/#552/#621 human-approved unsafe exception; do not edit either side alone.
+// Source order: the #621 SIGXFSZ ignore, then the #386 signal reset, then the
+// #552 setsid.
 const CHILD_SOURCE: &str = r#"
 //! The #386 human-approved exception: reset inherited child signals before exec.
 //! The #552 human-approved addition: libuv's `detached` `setsid()` in the same
 //! fork-to-exec window, for every spawn whose TS counterpart is detached (the
 //! bash runner, background tasks, the ripgrep engine spawn and command hooks;
 //! A6.5-BASH-OS-001 setsid half).
+//! The #621 fix-r4 addition: this process's own SIGXFSZ disposition, matching
+//! Node's process-wide ignore (see [`ignore_sigxfsz`]).
 #![cfg(unix)]
 
 use std::{io, os::unix::process::CommandExt, process::Command};
+
+/// Install `SIG_IGN` for SIGXFSZ in this process, aligning it with Node.
+/// Node's platform init ignores SIGXFSZ, so a write past RLIMIT_FSIZE
+/// surfaces as an `EFBIG` error from the syscall; Rust std ignores only
+/// SIGPIPE, so the same write instead kills the process (probe on node
+/// v22.22.0 vs rustc 1.99.0, `ulimit -f 1` writing 4 KiB: Node gets
+/// `{"errno":-27,"code":"EFBIG","syscall":"write"}` and continues, the Rust
+/// process dies with exit 153 before user code sees any io::Error; evidence
+/// `_tmp/20261025-issue-621-takeover/xfsz-probe/`). The gateway binary calls
+/// this at startup, and the debug request dump installs it before its write
+/// (`runtime/model/http.rs`), so every host process of the model runtime is
+/// covered — that runtime has no process entry of its own. Idempotent and
+/// thread-safe (concurrent identical installs are benign); an error means
+/// the disposition was left unchanged, never made worse.
+#[allow(unsafe_code)]
+pub fn ignore_sigxfsz() -> io::Result<()> {
+    // SAFETY: sigaction(2) only changes this process's disposition for
+    // SIGXFSZ. All pointers refer to live stack storage; the null old-action
+    // pointer requests no output. The zeroed struct is valid on macOS/Linux
+    // (integer fields and a nullable sa_restorer); its mask is initialized
+    // before use and its handler is SIG_IGN, which the kernel never invokes.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = libc::SIG_IGN;
+        if libc::sigemptyset(&mut action.sa_mask) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if libc::sigaction(libc::SIGXFSZ, &action, std::ptr::null_mut()) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
 
 // libuv's Unix child-init range is 1..32, excluding unchangeable signals.
 // This is 29 signals on macOS and Linux; Linux 32/33 (glibc's internal
@@ -418,17 +454,18 @@ fn child_source_boundary(source: &str) {
     }
     assert_eq!(
         lint_attributes.len(),
-        2,
+        3,
         "exactly one unsafe_code lint attribute per approved function"
     );
     // The approved functions' full extents: the lint attribute through the
     // closing brace of the body. `bodies` holds `(body_open, body_close)`
     // half-open token ranges for the unsafe-block binding below.
     let mut functions = Vec::new();
-    for ((start, end), name) in lint_attributes
-        .iter()
-        .zip(["install_child_signal_reset", "install_child_detach_session"])
-    {
+    for ((start, end), name) in lint_attributes.iter().zip([
+        "ignore_sigxfsz",
+        "install_child_signal_reset",
+        "install_child_detach_session",
+    ]) {
         assert_eq!(
             &tokens[*start..*end],
             ["#", "[", "allow", "(", "unsafe_code", ")", "]"]
@@ -454,7 +491,15 @@ fn child_source_boundary(source: &str) {
             }
             index += 1;
         }
-        let body_open = index + 1;
+        // An optional return type (`-> io::Result<()>`) sits between the
+        // parameter list and the body's opening brace; skip it.
+        let mut body_open = index + 1;
+        if tokens.get(body_open).map(String::as_str) == Some("-") {
+            assert_eq!(tokens[body_open + 1], ">");
+            while tokens[body_open].as_str() != "{" {
+                body_open += 1;
+            }
+        }
         assert_eq!(tokens[body_open], "{", "approved function body");
         let mut depth = 1;
         let mut body_close = body_open + 1;
@@ -497,7 +542,7 @@ fn child_source_boundary(source: &str) {
         .collect();
     assert_eq!(
         unsafe_blocks.len(),
-        2,
+        3,
         "exactly one unsafe keyword per approved function"
     );
     // Bind every unsafe block to an approved function body: each block must
@@ -531,7 +576,7 @@ fn child_source_boundary(source: &str) {
     assert_eq!(
         tokens,
         rust_tokens(CHILD_SOURCE),
-        "pilotdeck-child-signals/src/lib.rs changed; updating CHILD_SOURCE requires extending the #386/#552 human-approved unsafe exception"
+        "pilotdeck-child-signals/src/lib.rs changed; updating CHILD_SOURCE requires extending the #386/#552/#621 human-approved unsafe exception"
     );
     assert!(source.contains("#![cfg(unix)]"));
     for forbidden in ["macro_rules", "macro", "include", "mod"] {
