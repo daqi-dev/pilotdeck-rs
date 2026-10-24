@@ -5,8 +5,9 @@
 //! recordAcceptedInput, the loop.run() generator yields AgentEvents until
 //! turn_completed.
 //!
-//! Stream integrity verification detects dropped frames, duplicates, and
-//! premature finals — all must fail the turn.
+//! StreamIntegrity currently checks only the terminal completion sequence.
+//! Event observation is not wired here yet, so this adapter does not claim
+//! dropped-frame or duplicate-frame detection; unobserved terminals fail closed.
 
 use crate::{
     host::{
@@ -23,47 +24,73 @@ use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionC
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-/// Production LiveSession implementation backed by a HostClient (sidecar process).
-/// The adapter coordinates turn execution with the host and enforces stream integrity.
+type TurnHost = (HostClient, Arc<dyn HostHandler>);
+type TurnHostFactory = dyn Fn() -> HostFuture<TurnHost> + Send + Sync;
+
+/// Production LiveSession backed by a fresh HostClient and handler for each turn.
+/// HostClient closes its process and disposes its handler after each execution.
 pub struct LiveSessionAdapter {
-    client: Mutex<Option<HostClient>>,
-    cancellation: Cancellation,
-    handler: Arc<dyn HostHandler>,
+    host_factory: Arc<TurnHostFactory>,
+    state: Arc<Mutex<SessionState>>,
+}
+
+#[derive(Default)]
+struct SessionState {
+    disposed: bool,
+    active: Option<Cancellation>,
+}
+
+struct ActiveTurn(Arc<Mutex<SessionState>>);
+
+impl Drop for ActiveTurn {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().active = None;
+    }
 }
 
 impl LiveSessionAdapter {
-    pub fn new(client: HostClient, handler: Arc<dyn HostHandler>) -> Self {
+    /// The factory must create turn-owned resources, including a fresh handler
+    /// when its dispose implementation releases module resources.
+    pub fn new(host_factory: impl Fn() -> HostFuture<TurnHost> + Send + Sync + 'static) -> Self {
         Self {
-            client: Mutex::new(Some(client)),
-            cancellation: Cancellation::default(),
-            handler,
+            host_factory: Arc::new(host_factory),
+            state: Arc::default(),
         }
     }
 }
 
 impl LiveSession for LiveSessionAdapter {
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
-        // Extract the client from the mutex; submit consumes it for execute().
-        let client = self
-            .client
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| RuntimeError::new("Agent session already submitted or disposed."))?;
-
-        // Parse execution options from the input
+        // Invalid requests must not occupy the session's active turn slot.
         let request = parse_execute_request(&input, &options)?;
+        let cancellation = Cancellation::default();
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.disposed {
+                return Err(RuntimeError::new("Agent session disposed."));
+            }
+            if state.active.is_some() {
+                return Err(RuntimeError::new(
+                    "Agent session already has an active turn.",
+                ));
+            }
+            state.active = Some(cancellation.clone());
+        }
+        let active = ActiveTurn(self.state.clone());
+        let host_factory = self.host_factory.clone();
         let identity = request.identity.clone();
         // Keep at most one delivered event ahead of the submit consumer.
         let (events, receiver) = mpsc::channel(1);
-        let handler = Arc::new(StreamHandler {
-            inner: self.handler.clone(),
-            events,
-        });
-        let cancellation = self.cancellation.clone();
-
         Ok(Box::new(LiveTurnStream {
             execution: Some(Box::pin(async move {
+                let (client, inner) = tokio::select! {
+                    biased;
+                    host = host_factory() => host?,
+                    _ = cancellation.cancelled() => {
+                        return Ok(ExecuteResult::Aborted { terminal: None });
+                    }
+                };
+                let handler = Arc::new(StreamHandler { inner, events });
                 client
                     .execute_cancellable(request, handler, cancellation)
                     .await
@@ -73,6 +100,7 @@ impl LiveSession for LiveSessionAdapter {
             identity,
             input,
             integrity: StreamIntegrity::new(),
+            active: Some(active),
         }))
     }
 
@@ -82,19 +110,19 @@ impl LiveSession for LiveSessionAdapter {
     }
 
     fn abort(&self, reason: &JsString) -> RuntimeResult {
-        self.cancellation.cancel(Some(reason.clone()));
+        if let Some(cancellation) = &self.state.lock().unwrap().active {
+            cancellation.cancel(Some(reason.clone()));
+        }
         Ok(())
     }
 
     fn dispose(&self) -> DisposeFuture<'_> {
-        let client = self.client.lock().unwrap().take();
-        Box::pin(async move {
-            // Take the client if it hasn't been submitted yet
-            if let Some(client) = client {
-                let _ = client.close().await;
-            }
-            Ok(())
-        })
+        let mut state = self.state.lock().unwrap();
+        state.disposed = true;
+        if let Some(cancellation) = &state.active {
+            cancellation.cancel(None);
+        }
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -108,6 +136,8 @@ struct LiveTurnStream {
     identity: ExecutionIdentity,
     input: JsValue,
     integrity: StreamIntegrity,
+    // Release the active slot after the final/error is delivered, or on drop.
+    active: Option<ActiveTurn>,
 }
 
 impl LiveTurn for LiveTurnStream {
@@ -130,7 +160,11 @@ impl LiveTurn for LiveTurnStream {
                 return Ok(Some(event));
             }
             match self.result.take() {
-                Some(result) => self.finish(result),
+                Some(result) => {
+                    let result = self.finish(result);
+                    self.active.take();
+                    result
+                }
                 None => Ok(None),
             }
         })
@@ -144,7 +178,7 @@ impl LiveTurnStream {
     ) -> Result<Option<JsValue>, RuntimeError> {
         match result {
             Ok(ExecuteResult::Terminal(terminal)) => {
-                // P1-1: observe_event wiring remains part of A7.2-pr6b.
+                // Event observation remains deferred to A7.2-pr6b.
                 self.integrity.observe_terminal()?;
                 Ok(Some(self.completed_event(
                     terminal.get("payload").unwrap_or(&JsValue::Undefined),
@@ -265,8 +299,8 @@ impl HostHandler for StreamHandler {
     }
 }
 
-/// Stream integrity verification: detects dropped frames, duplicates, and
-/// premature finals. Matches TurnRunner.ts baseline expectations.
+/// Terminal sequence validation only. Event observation is not yet wired into
+/// production, so an unobserved non-aborted terminal is rejected fail-closed.
 struct StreamIntegrity {
     state: Mutex<IntegrityState>,
 }
@@ -338,7 +372,7 @@ impl StreamIntegrity {
 }
 
 fn parse_execute_request(
-    _input: &JsValue,
+    input: &JsValue,
     options: &JsValue,
 ) -> Result<ExecuteRequest, RuntimeError> {
     // Extract required fields from input/options
@@ -348,9 +382,12 @@ fn parse_execute_request(
     let operation_id = extract_string(options, "operationId").unwrap_or_else(|_| "default".into());
     let request_id = extract_string(options, "requestId").unwrap_or_else(|_| "default".into());
 
-    // Build the execute request payload
-    let payload = JsObject::new();
-    // TODO: populate payload with actual execution parameters
+    // The sidecar reads messages and execution parameters directly from payload.
+    // Preserve all fields and JS values, including lone UTF-16 surrogates.
+    let payload = input
+        .as_object()
+        .ok_or_else(|| RuntimeError::new("Expected execution input object"))?
+        .clone();
 
     Ok(ExecuteRequest {
         identity: ExecutionIdentity {
