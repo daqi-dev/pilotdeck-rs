@@ -19,11 +19,17 @@ use std::{
     sync::{Arc, atomic::Ordering},
 };
 
-// Keep each tagged assertion paired with a mutation in the observer control
-// test below. Adding a rule also requires exhaustive label and mutation arms.
+// Keep each rule label paired with at least one mutation below. Assertions may
+// share a label: controls verify the rule, not every assertion site separately.
+// Adding a rule also requires exhaustive label and mutation arms.
 // Mapping to scripts/a5-19/preregistration-b.mjs: WireSequence/FinalReplica
 // cover FRAME_SEQ for this request; RunId covers its SESSION_ISOLATION slice;
-// RegistryRaw covers REGISTRY_RAW for the queried run's full record/events.
+// RegistryRaw's positive checks follow REGISTRY_RAW for this run's full
+// record/events; its negative control damages only the raw record identity.
+// These are scoped correspondences: final payload equality, mandatory runId
+// and an existing completed record are native successful-turn requirements;
+// TS FRAME_SEQ does not check payload equality, and TS permits absent runIds
+// or missing records in its general isolation/raw observations.
 // LiveSequence, FinishReason and Registry{Events,Sequence,LastSeq,Revision,
 // Result,State} are native successful-turn invariants, not claims of the full
 // TS production matrix (journals, fault schedules and other sessions included).
@@ -89,6 +95,9 @@ fn events(path: &std::path::Path, session: &str, id: &str) -> Vec<Value> {
         .collect()
 }
 fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[Value]) {
+    // Call after this run's completion has been delivered: publication persists
+    // before delivery, and terminal runs stay stable across these separate reads.
+    // open() can fence orphan runs; these fixtures' records have a live owner.
     // Check raw identity/state before API reloads: a changed runId would make
     // events/get miss the record and mask the intended raw-snapshot rejection.
     let disk: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
@@ -416,12 +425,7 @@ async fn native_observers_reject_frame_event_sequence_and_result_corruption() {
                 disk["records"][0]["result"] = json!({"type":"error","code":"stale"})
             }
             ObserverRule::RegistryState => disk["records"][0]["state"] = json!("accepted"),
-            ObserverRule::RegistryRaw => {
-                // This mutation covers the raw record's identity check.
-                // Full record/events alignment is checked on the positive path;
-                // this matrix does not inject separate observer-level divergence.
-                disk["records"][0]["runId"] = json!("tampered");
-            }
+            ObserverRule::RegistryRaw => disk["records"][0]["runId"] = json!("tampered"),
         }
         fs::write(&path, serde_json::to_vec(&disk).unwrap()).unwrap();
         let rejected =
