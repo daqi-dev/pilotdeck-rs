@@ -2557,6 +2557,58 @@ mod context_storage_tests {
     }
 
     #[tokio::test]
+    async fn context_storage_same_budget_sanitize_equal_ids_return_cached_record() {
+        let scratch = Scratch::new();
+        let group = stage(&scratch.0, snapshot());
+        let resource = group.context().resource(Resource::ToolResultSpill).unwrap();
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let dir = scratch.0.join(".pilotdeck/tool-results");
+        let session = storage.create_session(&dir).unwrap();
+        let first_text = "a".repeat(200_001);
+        let second_text = "b".repeat(200_001);
+        let refs_entries = || {
+            let mut names = std::fs::read_dir(dir.join("refs"))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+
+        // `c/1` and `c-1` sanitize to the same scoped key `t1-c-1` within one
+        // budget, so the second commit must return the first cached record.
+        let first_ref = spill_with(&session, &first_text, "t1", "c/1").await;
+        let aliases_after_first = refs_entries();
+        let second_ref = spill_with(&session, &second_text, "t1", "c-1").await;
+
+        assert_eq!(second_ref, first_ref);
+        assert_eq!(text_field(&second_ref, "toolCallId"), "c/1");
+        assert_eq!(
+            text_field(&second_ref, "preview"),
+            text_field(&first_ref, "preview")
+        );
+        assert!(text_field(&second_ref, "preview").starts_with('a'));
+
+        let path = PathBuf::from(text_field(&first_ref, "path"));
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("t1-c-1.txt")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), first_text);
+        let alias = text_field(&first_ref, "readFilePath");
+        assert_eq!(
+            std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
+            first_text
+        );
+        // A cache miss would persist `b` and add a second alias; a hit writes nothing.
+        assert_eq!(refs_entries(), aliases_after_first);
+        assert_eq!(aliases_after_first.len(), 1);
+    }
+
+    #[tokio::test]
     async fn context_storage_shared_directory_distinguishes_unique_scoped_keys() {
         let scratch = Scratch::new();
         let group = stage(&scratch.0, snapshot());
