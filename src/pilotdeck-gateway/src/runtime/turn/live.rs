@@ -939,9 +939,11 @@ mod tests {
 
     #[test]
     fn a_final_missing_lifecycle_is_rejected_from_every_state() {
-        // No cancellation flag can rescue these: the receive-path hook observed
-        // what the sidecar actually sent, so a missing input_accepted or
-        // turn_failed is a sidecar violation regardless of host cleanup.
+        // No cancellation flag can rescue these, on either instance: a missing
+        // input_accepted or turn_failed is a sidecar violation regardless of
+        // host cleanup. On the receive-path instance a matching delivery has no
+        // bearing; on the delivered instance, events dropped by the host's
+        // cancel exit are exactly what cannot serve as evidence.
         for observations in [Vec::<&str>::new(), vec!["turn_started"]] {
             for kind in ["success", "max_turns"] {
                 let integrity = StreamIntegrity::new();

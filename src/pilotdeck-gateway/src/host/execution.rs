@@ -180,10 +180,28 @@ pub(super) async fn run(
     let mut drain_deadline = None;
     let callbacks = &mut scope.callbacks;
     let mut interruption = None;
+    // True once the cancel deadline is seen already elapsed at a loop top,
+    // i.e. this future resumed after being unpolled (a slow consumer). One
+    // scheduling turn is then granted so an application spawned on this poll
+    // can reach the session before the exit drops it.
+    let mut cancel_catch_up = false;
     loop {
         // The deadline survives acceptance, best-effort cancel, reconnect and
         // terminal application. Repeated observations never move it forward.
         cancel.observe(&cancellation);
+        // This future is only polled from the session's next(), so a slow
+        // consumer can resume the loop with the deadline already elapsed while
+        // lifecycle work is still queued. Grant the applications waiting on
+        // this poll one scheduling turn before the deadline is reconsidered;
+        // a genuinely blocked callback makes no progress and the next expiry
+        // still exits.
+        if cancel
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+            && (!events.is_empty() || !callbacks.is_empty())
+        {
+            cancel_catch_up = true;
+        }
         #[cfg(test)]
         signals.cancel_deadline.send_replace(cancel.deadline);
         if let Some(error) = interruption.take() {
@@ -286,21 +304,21 @@ pub(super) async fn run(
             });
             event_running = true;
         }
+        if cancel_catch_up {
+            // Let a task spawned by the block above (or a completed callback)
+            // run before the expired deadline is polled again.
+            tokio::task::yield_now().await;
+        }
+        // Prefer work that is already available over the cancel deadline: this
+        // future is only polled from the session's next(), so a slow consumer
+        // can leave an application finished but not yet collected, and its
+        // bounded channel send may be waiting for the consumer. Collect and
+        // deliver those before the exit drops the queue. The deadline stays
+        // ahead of `receive` so a still-streaming peer cannot starve it.
         tokio::select! {
+            biased;
             _ = wait_for_deadline(execution_deadline), if terminal_applied.is_none() => {
                 return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out."));
-            }
-            // Receiving final does not mean its event callback has completed.
-            // At the same absolute bound, stop cooperative application and keep
-            // the validated terminal authoritative without claiming it applied.
-            _ = wait_for_deadline(cancel.deadline) => {
-                callbacks.shutdown().await;
-                events.clear();
-                if let Some(terminal) = terminal_applied.take() { return Ok(terminal); }
-                if let Some((event, aborted)) = known_terminal.take() {
-                    return Ok(terminal_result(event, aborted, progress));
-                }
-                return Err(post_cancel_timeout());
             }
             _ = wait_for_deadline(drain_deadline), if terminal_applied.is_some() => {
                 // TS processes callbacks serially (570-579); this host runs them
@@ -352,6 +370,18 @@ pub(super) async fn run(
                         }
                     }
                 }
+            }
+            // Receiving final does not mean its event callback has completed.
+            // At the same absolute bound, stop cooperative application and keep
+            // the validated terminal authoritative without claiming it applied.
+            _ = wait_for_deadline(cancel.deadline) => {
+                callbacks.shutdown().await;
+                events.clear();
+                if let Some(terminal) = terminal_applied.take() { return Ok(terminal); }
+                if let Some((event, aborted)) = known_terminal.take() {
+                    return Ok(terminal_result(event, aborted, progress));
+                }
+                return Err(post_cancel_timeout());
             }
             input = client.connection.receive(), if !terminal_received => {
                 let raw = match input {
