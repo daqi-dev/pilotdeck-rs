@@ -1559,34 +1559,6 @@ async fn provider_exchange(
     }
 }
 
-/// Node's `os.tmpdir()` on unix (`node:lib/os.js`): the first nonempty value
-/// of TMPDIR, then TMP, then TEMP (empty strings are skipped, like JS `||`),
-/// else `/tmp`, with exactly one trailing `/` dropped when the result is
-/// longer than the root. Probed against node v22.22.0 —
-/// `_tmp/20261025-issue-621-fix-r4/node-probe/`: an empty TMPDIR falls
-/// through to TMP/TEMP, and `//` collapses to `/` while `///` only to `//`.
-/// `std::env::temp_dir()` reads TMPDIR alone and answers `""` when it is set
-/// but empty, which would drop a dump (the whole conversation) into the
-/// process's working directory, so the dump path resolves the directory the
-/// way its TS counterpart does.
-fn node_tmpdir() -> std::path::PathBuf {
-    std::path::PathBuf::from(node_tmpdir_from(|key| std::env::var(key).ok()))
-}
-
-/// The lookup-shaped half of [`node_tmpdir`], so the resolution table is
-/// testable without touching process environment (set_var is unsafe since
-/// edition 2024).
-fn node_tmpdir_from(lookup: impl Fn(&str) -> Option<String>) -> String {
-    let mut path = ["TMPDIR", "TMP", "TEMP"]
-        .into_iter()
-        .find_map(|key| lookup(key).filter(|value| !value.is_empty()))
-        .unwrap_or_else(|| "/tmp".to_string());
-    if path.len() > 1 && path.ends_with('/') {
-        path.pop();
-    }
-    path
-}
-
 /// Debug helper that writes the request body to a JSON file under the OS
 /// temp directory when `PILOTDECK_DUMP_REQUEST=1`. Matches TS
 /// `streamModel.ts:196-203,395-401` in trigger (streaming attempts only),
@@ -1636,8 +1608,12 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), Dum
         _ => return Ok(()), // Failed to serialize; skip the dump.
     };
 
+    // `std::env::temp_dir()` reads TMPDIR alone and answers `""` when it is
+    // set but empty, which would drop a dump (the whole conversation) into
+    // the process's working directory, so the directory resolves the way its
+    // TS counterpart does: `crate::node_io::node_tmpdir`.
     let path = write_dump_exclusively(
-        &node_tmpdir(),
+        &std::path::PathBuf::from(crate::node_io::node_tmpdir(|key| std::env::var_os(key))),
         &json,
         &mut || {
             next_dump_name(
