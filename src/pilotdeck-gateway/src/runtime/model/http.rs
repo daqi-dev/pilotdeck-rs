@@ -2941,7 +2941,10 @@ pub async fn complete_model(
 
     let (max_retries, _) = retry_decide_request(&provider, 0.0, 0.0);
     let mut attempt = 0.0;
-    loop {
+    // `streamModel.ts:92`: `for (attempt = 0; attempt <= maxRetries; attempt++)`.
+    // A fractional limit such as 1.5 therefore runs attempts 0 and 1 only and
+    // falls out of the loop into the exhausted error below.
+    while attempt <= max_retries {
         throw_if_aborted(options)?;
         let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
         let body = providers::build_model_request(&current, &provider_now, &model_now)?;
@@ -2960,6 +2963,8 @@ pub async fn complete_model(
         };
         let status = response.status().as_u16();
         let (mut body_stream, before_abort) = response.into_body();
+        // TS `response.text()` is outside the send try/catch: a mid-body
+        // failure is not a retryable send error and must not re-enter the loop.
         let text = response_text(&mut body_stream, options, before_abort).await?;
         // `parseRawJson`: invalid/empty success bodies stay as the raw text.
         let raw = parse_json(&text).unwrap_or_else(|_| JsValue::String(text.as_str().into()));
@@ -2978,6 +2983,13 @@ pub async fn complete_model(
         let provider_id_value = field(&provider, "id").clone();
         return parse_complete_response(&protocol_value, &raw, &provider_id_value);
     }
+
+    // `streamModel.ts:154`: only a fractional/invalid limit that lets attempts
+    // run without the final failure being rethrown reaches this branch.
+    Err(ModelStreamError::thrown(
+        "Error",
+        "complete() exhausted all retry attempts without a result.",
+    ))
 }
 
 /// `streamModel(request, config, options)` for the HTTP protocols.
