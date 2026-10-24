@@ -923,3 +923,252 @@ async fn unwired_families_report_each_family() {
         bounded(registry.dispose()).await.unwrap();
     }
 }
+
+mod context_storage_tests {
+    use super::*;
+    use crate::host::modules::context::{ContextInput, ContextRuntime};
+    use crate::runtime::project::context_storage::{
+        ContextStorageFamilySource, ContextStorageResources, SessionContextStorage,
+    };
+
+    fn snapshot() -> Value {
+        json!({"config": {
+            "agent": {"model": {"provider": "custom", "model": "wide"}},
+            "model": {"providers": {
+                "other": {"models": {"wide": {"capabilities": {"maxContextTokens": 8192}}}},
+                "custom": {"models": {
+                    "small": {"capabilities": {"maxContextTokens": 4096}},
+                    "wide": {"capabilities": {"maxContextTokens": 128000}}
+                }}
+            }}
+        }})
+    }
+
+    fn stage(root: &Path, snapshot: Value) -> ProjectResources {
+        let group = ProjectResources::new(
+            root.to_path_buf(),
+            root.join("home"),
+            None,
+            crate::config::Env::new(),
+            Arc::new(|| UNIX_EPOCH),
+            Arc::new(pilotdeck_protocol::parse_json(&snapshot.to_string()).unwrap()),
+            RuntimeProfile::resolve(&JsValue::Undefined, &RuntimeProfileOverrides::default()),
+        );
+        ContextStorageFamilySource
+            .stage(&group.context(), &mut group.sink())
+            .unwrap();
+        assert!(group.context().owner(Family::ContextStorage).is_none());
+        group
+    }
+
+    fn input(value: Value) -> ContextInput {
+        ContextInput {
+            fields: pilotdeck_protocol::parse_json(&value.to_string())
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone(),
+            abort_signal: None,
+            budget_evaluator: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn context_storage_uses_selected_catalog_cap_and_nullish_override() {
+        let scratch = Scratch::new();
+        for (override_value, expected) in [
+            (None, 128000.0),
+            (Some(Value::Null), 128000.0),
+            (Some(json!(64000)), 64000.0),
+            (Some(json!(0)), 0.0),
+        ] {
+            let mut config = snapshot();
+            if let Some(value) = override_value {
+                config["config"]["agent"]["maxContextTokens"] = value;
+            }
+            let group = stage(&scratch.0, config);
+            let resource = group
+                .context()
+                .resource(Resource::InstructionStorage)
+                .unwrap();
+            let storage = resource
+                .as_any()
+                .downcast_ref::<ContextStorageResources>()
+                .unwrap();
+            let session = storage.create_session(scratch.0.join("spill")).unwrap();
+            let result = session
+                .context_runtime
+                .try_auto_compact(input(json!({})))
+                .await
+                .unwrap();
+            assert_eq!(
+                result
+                    .get("snapshot")
+                    .unwrap()
+                    .get("maxContextTokens")
+                    .unwrap()
+                    .as_number(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn context_storage_missing_model_or_cap_does_not_invent_a_limit() {
+        let scratch = Scratch::new();
+        for missing in ["provider", "model", "cap"] {
+            let mut config = snapshot();
+            match missing {
+                "provider" => {
+                    config["config"]["agent"]["model"]["provider"] = json!("absent");
+                    config["config"]["agent"]["maxContextTokens"] = json!(64000);
+                }
+                "model" => {
+                    config["config"]["agent"]["model"]["model"] = json!("absent");
+                    config["config"]["agent"]["maxContextTokens"] = json!(64000);
+                }
+                _ => {
+                    config["config"]["model"]["providers"]["custom"]["models"]["wide"]["capabilities"] =
+                        json!({})
+                }
+            }
+            let group = stage(&scratch.0, config);
+            let resource = group
+                .context()
+                .resource(Resource::InstructionStorage)
+                .unwrap();
+            let storage = resource
+                .as_any()
+                .downcast_ref::<ContextStorageResources>()
+                .unwrap();
+            assert!(
+                storage.create_session(scratch.0.join("spill")).is_err(),
+                "{missing}"
+            );
+        }
+    }
+
+    async fn spill(session: &SessionContextStorage, text: &str) -> JsValue {
+        let result = session
+            .context_runtime
+            .apply_tool_results(input(json!({
+                "turnId": "same-turn",
+                "messages": [],
+                "toolResultMessage": {"role": "user", "content": [{
+                    "type": "tool_result", "toolCallId": "same-call",
+                    "content": [{"type": "text", "text": text}]
+                }]}
+            })))
+            .await
+            .unwrap();
+        assert_eq!(result.get("diagnostics"), Some(&JsValue::Array(vec![])));
+        let JsValue::Array(messages) = result.get("appendedMessages").unwrap() else {
+            panic!("messages")
+        };
+        let JsValue::Array(content) = messages[0].get("content").unwrap() else {
+            panic!("content")
+        };
+        assert_eq!(
+            content[0].get("type"),
+            Some(&"tool_result_reference".into())
+        );
+        content[0].clone()
+    }
+
+    fn text_field(value: &JsValue, field: &str) -> String {
+        value
+            .get(field)
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn context_storage_sessions_isolate_reused_ids_and_spill_files() {
+        let scratch = Scratch::new();
+        let group = stage(&scratch.0, snapshot());
+        let resource = group
+            .context()
+            .resource(Resource::InstructionStorage)
+            .unwrap();
+        let spill_resource = group.context().resource(Resource::ToolResultSpill).unwrap();
+        assert!(Arc::ptr_eq(&resource, &spill_resource));
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let dir = scratch.0.join(".pilotdeck/tool-results");
+        let first = storage.create_session(dir.join("session-a")).unwrap();
+        let second = storage.create_session(dir.join("session-b")).unwrap();
+        assert!(!Arc::ptr_eq(
+            &first.tool_result_budget,
+            &second.tool_result_budget
+        ));
+        let first_text = "a".repeat(200_001);
+        let second_text = "b".repeat(200_001);
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let launch = |session: SessionContextStorage, text: String| {
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                let reference = spill(&session, &text).await;
+                (session, reference)
+            })
+        };
+        let (first, second) = tokio::join!(
+            launch(first, first_text.clone()),
+            launch(second, second_text.clone())
+        );
+        let (first, first_ref) = first.unwrap();
+        let (_, second_ref) = second.unwrap();
+        for (reference, session_id, expected) in [
+            (&first_ref, "session-a", &first_text),
+            (&second_ref, "session-b", &second_text),
+        ] {
+            let path = PathBuf::from(text_field(reference, "path"));
+            assert_eq!(path.parent(), Some(dir.join(session_id).as_path()));
+            assert_eq!(std::fs::read_to_string(path).unwrap(), *expected);
+            let alias = text_field(reference, "readFilePath");
+            assert!(alias.starts_with(".pilotdeck/tool-results/refs/result-"));
+            assert_eq!(
+                std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
+                *expected
+            );
+        }
+        assert_ne!(first_ref.get("path"), second_ref.get("path"));
+        assert_ne!(
+            first_ref.get("readFilePath"),
+            second_ref.get("readFilePath")
+        );
+        // Reuse within the same context keeps the original cached replacement.
+        assert_eq!(spill(&first, "small later result").await, first_ref);
+    }
+
+    #[test]
+    fn context_storage_scoped_contexts_accept_same_execution_spill_root() {
+        let scratch = Scratch::new();
+        let group = stage(&scratch.0, snapshot());
+        let resource = group.context().resource(Resource::ToolResultSpill).unwrap();
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let custom_root = scratch.0.join("execution-spill");
+        let first = storage.create_session(&custom_root).unwrap();
+        let second = storage.create_session(&custom_root).unwrap();
+        assert!(!Arc::ptr_eq(
+            &first.tool_result_budget,
+            &second.tool_result_budget
+        ));
+        assert_eq!(
+            first.tool_result_budget.tool_results_dir(),
+            second.tool_result_budget.tool_results_dir()
+        );
+        assert!(
+            !custom_root.exists(),
+            "composition must not perform spill I/O"
+        );
+    }
+}

@@ -104,7 +104,7 @@ pub trait ProjectRuntimeFactory: Send + Sync {
     fn stage(&self, project_root: &Path, resources: &mut ResourceBundle) -> RuntimeResult;
 }
 
-mod context_storage;
+pub mod context_storage;
 /// The production factory (`buildRuntime`): config read and resource-family
 /// staging with the baseline's rollback order.
 mod factory;
