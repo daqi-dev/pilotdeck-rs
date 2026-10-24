@@ -1888,8 +1888,81 @@ async fn shape_probe_counts_eof_replacement_against_string_limit() {
     }
 }
 
-/// Production builds must use V8's limit, not a test/configurable threshold.
+/// The in-loop cap boundary is exact across frames: 16 UTF-16 units (the
+/// limit) are accepted, while 17 units reject the candidate and fall back to
+/// the next endpoint. The same probe must discard an over-limit frame
+/// immediately, so a later body read error carries no retained prefix.
+#[tokio::test]
+async fn complete_shape_probe_cap_boundary_is_exact_across_frames() {
+    let _limit = LimitGuard::set(16);
+
+    let (request, config) = complete_config();
+    let at_limit = sequence(vec![vec![
+        TestFrame::Data(b"{\"choices\":["),
+        TestFrame::Data(b"  ]}"),
+    ]]);
+    let accepted = complete_model(&at_limit, &request, &config, &StreamOptions::default())
+        .await
+        .expect("exactly the limit is still valid");
+    assert!(matches!(accepted, JsValue::Object(_)));
+    assert!(
+        at_limit.0.lock().unwrap().is_empty(),
+        "an exactly-at-limit first candidate must not fall back"
+    );
+
+    let (request, config) = complete_config();
+    let over_limit = sequence(vec![
+        vec![
+            TestFrame::Data(b"{\"choices\":["),
+            TestFrame::Data(b"   ]}"),
+        ],
+        vec![TestFrame::Data(TEST_TINY_CHOICES)],
+    ]);
+    let accepted = complete_model(&over_limit, &request, &config, &StreamOptions::default())
+        .await
+        .expect("limit + 1 must fall back to the next endpoint");
+    assert!(matches!(accepted, JsValue::Object(_)));
+    assert!(
+        over_limit.0.lock().unwrap().is_empty(),
+        "limit + 1 must reject the first candidate and request the next endpoint"
+    );
+
+    let mut body = replay_body(
+        Bytes::from_static(br#"{"choices":["x"]}"#),
+        Some(BodyFailure::Terminated),
+    );
+    match read_shape_probe(&mut body, &StreamOptions::default()).await {
+        ShapeProbe::ReadError { bytes } => assert!(
+            bytes.is_empty(),
+            "limit + 1 in the main loop must discard the prefix, kept {} bytes",
+            bytes.len()
+        ),
+        _ => panic!("a body read error must win over the drained cap"),
+    }
+}
+
+/// With no `LimitGuard` override the test executes the same default tail
+/// expression the production build compiles. Pin V8's real contract literal
+/// (Node 22.22 `buffer.constants.MAX_STRING_LENGTH`), not the constant against
+/// itself: a mutation of the shared default to `usize::MAX` must fail here.
 #[test]
 fn shape_string_limit_defaults_to_v8_max() {
-    assert_eq!(string_limit(), super::super::count_http::MAX_STRING_LENGTH);
+    assert_eq!(string_limit(), 0x1fffffe8);
+}
+
+/// Nested guards restore the previous override, and the outermost drop returns
+/// to the shared production default rather than leaving an override behind.
+#[test]
+fn limit_guard_nests_and_drop_restores_the_shared_default() {
+    assert_eq!(string_limit(), 0x1fffffe8);
+    {
+        let _outer = LimitGuard::set(4);
+        assert_eq!(string_limit(), 4);
+        {
+            let _inner = LimitGuard::set(8);
+            assert_eq!(string_limit(), 8);
+        }
+        assert_eq!(string_limit(), 4);
+    }
+    assert_eq!(string_limit(), 0x1fffffe8);
 }
