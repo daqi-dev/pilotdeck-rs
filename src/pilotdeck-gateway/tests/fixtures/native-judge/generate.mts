@@ -121,6 +121,7 @@ router:
       for (const provider of Object.values(savedSnapshot.config.model.providers) as any[]) provider.url = '<loopback>/v1';
       assert.ok([...completeHttp, ...judgeHttp].every(r => r.body.stream === false));
       if (['auth', 'bad-request'].includes(item.id)) assert.equal(judgeHttp.length, 1);
+      if (item.id === 'retryable') assert.equal(judgeHttp.length, 3);
       results.push({ ...item, response, snapshot: savedSnapshot, directRequest, input, completion,
         completeHttp, decision, events, judgeHttp });
     } finally {

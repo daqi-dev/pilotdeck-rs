@@ -271,6 +271,9 @@ async fn run(case: &JsValue) {
     if ["auth", "bad-request"].contains(&id.as_str()) {
         assert_eq!(http.len(), 1, "non-retryable provider must not retry");
     }
+    if id == "retryable" {
+        assert_eq!(http.len(), 3, "retryable judge must exhaust three attempts");
+    }
     if id.starts_with("missing-") {
         assert!(
             http.is_empty(),
