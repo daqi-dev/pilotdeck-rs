@@ -114,7 +114,7 @@ fn ts_six_cells_concurrency_restart_and_sidecar() {
             let children = launch["ownedChildren"].as_array().unwrap();
             assert_eq!(children.len(), 20);
             assert!(children.iter().all(|v| v["reaped"] == true));
-            for pair in children.chunks_exact(2) {
+            for pair in children.as_chunks::<2>().0 {
                 assert_ne!(pair[0]["pid"], pair[1]["pid"]);
                 assert_eq!(pair[0]["pilotHome"], pair[1]["pilotHome"]);
             }
