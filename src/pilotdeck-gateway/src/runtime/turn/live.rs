@@ -10,14 +10,25 @@
 //! appears at most once, turn_failed may repeat (TurnRunner's catch re-emits it
 //! after a finalization failure) and the module final is the only authoritative
 //! terminal (the host already suppresses a sidecar's non-final turn_completed,
-//! agentLoopSidecarClient.ts:680-684). The lifecycle is observed by a
-//! synchronous `HostHandler::validate_event` hook on the host's receive path:
-//! every event that passed wire validation has been observed by the time the
-//! host returns a final, even when its application callback never completed —
-//! the host's bounded cancel exit (POST_CANCEL_EXIT_TIMEOUT) may drop queued
-//! applications while keeping the already-received final authoritative. The
-//! terminal is therefore validated strictly against the received lifecycle; a
-//! cancellation request alone never rescues a missing or contradictory one.
+//! agentLoopSidecarClient.ts:680-684). Two observations of the same sequence
+//! back two different guarantees:
+//!
+//! - a synchronous `HostHandler::validate_event` hook sees every event that
+//!   passed wire validation on the host's receive path, even when its
+//!   application callback never completed, so a misbehaving sidecar is cut off
+//!   at its first violating event;
+//! - the session separately records the events it actually delivers to its
+//!   consumer, and `finish()` projects the authoritative terminal only when
+//!   that delivered prefix justifies it. TS is a pull-based generator: the
+//!   final is read only after every earlier event was yielded to the consumer
+//!   (agentLoopSidecarClient.ts:552-683), so a terminal can never publish
+//!   before its `input_accepted` / `turn_failed`. The host's bounded cancel
+//!   exit (POST_CANCEL_EXIT_TIMEOUT) may drop queued applications and return an
+//!   already-received final; the consumer really never saw that dropped
+//!   lifecycle, so the terminal fails closed instead of reporting a success
+//!   whose `commit_accepted_input` never ran. A cancellation request alone
+//!   never rescues a terminal.
+//!
 //! It does not claim dropped-frame or duplicate-frame detection.
 
 use crate::{
@@ -91,7 +102,7 @@ impl LiveSession for LiveSessionAdapter {
         let host_factory = self.host_factory.clone();
         let identity = request.identity.clone();
         // Shared between the host-side validation hook (every received event)
-        // and finish()'s strict terminal check; see StreamHandler.
+        // and finish()'s second, contradiction-only check; see StreamHandler.
         let integrity = Arc::new(StreamIntegrity::new());
         let hook_integrity = integrity.clone();
         // Keep at most one delivered event ahead of the submit consumer.
@@ -119,6 +130,7 @@ impl LiveSession for LiveSessionAdapter {
             identity,
             input,
             integrity,
+            delivered: StreamIntegrity::new(),
             active: Some(active),
         }))
     }
@@ -154,9 +166,13 @@ struct LiveTurnStream {
     events: mpsc::Receiver<JsValue>,
     identity: ExecutionIdentity,
     input: JsValue,
-    // The same instance the host-side hook observes into, so finish() checks
-    // the terminal against everything the sidecar actually sent.
+    // The instance the host-side receive hook observes into. finish() also
+    // consults it so a contradiction received but dropped before delivery (for
+    // example turn_failed followed by success) still fails the terminal.
     integrity: Arc<StreamIntegrity>,
+    // Lifecycle actually delivered to the consumer. finish() requires this
+    // prefix to justify the terminal, like TS's pull-based final ordering.
+    delivered: StreamIntegrity,
     // Release the active slot after the final/error is delivered, or on drop.
     active: Option<ActiveTurn>,
 }
@@ -183,12 +199,12 @@ impl LiveTurn for LiveTurnStream {
                 }
             }
             if let Some(event) = delivered {
-                return Ok(Some(event));
+                return self.publish(event);
             }
             // execute may have queued an event in the very poll that completed
             // it, after select already polled recv. Keep its result for next().
             if let Ok(event) = self.events.try_recv() {
-                return Ok(Some(event));
+                return self.publish(event);
             }
             match self.result.take() {
                 Some(result) => {
@@ -203,6 +219,15 @@ impl LiveTurn for LiveTurnStream {
 }
 
 impl LiveTurnStream {
+    /// Record an applied event as delivered and hand it to the consumer.
+    /// Delivered order is a prefix of the receive order the hook already
+    /// validated, so this cannot fail on the production path; propagating the
+    /// error keeps a broken prefix from ever being projected as a terminal.
+    fn publish(&self, event: JsValue) -> Result<Option<JsValue>, RuntimeError> {
+        self.delivered.observe_event(&event)?;
+        Ok(Some(event))
+    }
+
     fn finish(
         &self,
         result: Result<ExecuteResult, HostError>,
@@ -214,14 +239,19 @@ impl LiveTurnStream {
                     .and_then(|payload| payload.get("result"))
                     .and_then(|result| result.get("type"))
                     .and_then(JsValue::as_string);
-                // Strict check against everything the host received. The
-                // host's bounded cancel exit (POST_CANCEL_EXIT_TIMEOUT,
-                // host/execution.rs) may stop applying events and return an
-                // already-validated final while queued applications are lost —
-                // but their lifecycle was still observed by the receive-path
-                // hook, so a missing input_accepted or turn_failed here is a
-                // sidecar violation, not a host cleanup fact, and cancellation
-                // changes nothing.
+                // TS reads the final only after every earlier event was
+                // yielded (agentLoopSidecarClient.ts:552-683), so the consumer
+                // here must have received a lifecycle that justifies the
+                // terminal. The host's bounded cancel exit may return a
+                // received-but-unapplied final after dropping queued
+                // applications; the consumer never saw those events, so the
+                // success/error terminal must fail closed (submit.rs commits
+                // accepted input only on a delivered input_accepted).
+                self.delivered.observe_terminal(outcome)?;
+                // The received stream can still expose a contradiction the
+                // consumer never got (for example a queued turn_failed before
+                // a success final); keep this second, fail-closed gate so the
+                // cancellation exit cannot hide it.
                 self.integrity.observe_terminal(outcome)?;
                 Ok(Some(self.completed_event(
                     terminal.get("payload").unwrap_or(&JsValue::Undefined),
@@ -229,6 +259,7 @@ impl LiveTurnStream {
             }
             Ok(ExecuteResult::Aborted { terminal }) => {
                 self.integrity.observe_aborted()?;
+                self.delivered.observe_aborted()?;
                 let terminal = terminal.unwrap_or_else(|| self.aborted_result());
                 Ok(Some(self.completed_event(&terminal)))
             }
@@ -309,12 +340,12 @@ impl LiveTurnStream {
 /// before the host ACKs it. A violating event therefore never reaches the
 /// inner handler, and a misbehaving sidecar is cut off at its first violating
 /// event. `event` awaits `applied` and only then forwards the payload, so the
-/// consumer only ever publishes events that were applied successfully — but
-/// the integrity state may be ahead of what the consumer has pulled: events
-/// whose application callback never completed (including the whole queue
-/// dropped by the host's bounded cancel exit) are still observed. `finish()`
-/// validates the terminal against that received lifecycle, never against the
-/// delivered prefix.
+/// consumer only ever publishes events that were applied successfully; the
+/// session records that delivered prefix separately and `finish()` requires it
+/// to justify the terminal. The receive-path state may be ahead of delivery:
+/// events whose application callback never completed (including the whole
+/// queue dropped by the host's bounded cancel exit) are still observed there,
+/// but they never become terminal evidence — only a contradiction gate.
 ///
 /// `validate_event` forwards to `inner.validate_event` after its own lifecycle
 /// check: an inner handler that rejects a payload keeps exactly its rejection
@@ -375,8 +406,11 @@ impl HostHandler for StreamHandler {
 /// owns wire sequence/identity; this machine only tracks lifecycle order:
 /// turn_started opens the turn, input_accepted and turn_failed appear at most
 /// once each in that order, and the authoritative terminal is projected exactly
-/// once by the session from ExecuteResult. It does not detect unknown dropped
-/// frames; the host's strict sequence check (client:879-893) owns that.
+/// once by the session from ExecuteResult. One instance observes the receive
+/// path (cut-off and contradiction gate); another observes only what the
+/// consumer was actually delivered (the terminal justification). It does not
+/// detect unknown dropped frames; the host's strict sequence check
+/// (client:879-893) owns that.
 struct StreamIntegrity {
     state: Mutex<IntegrityState>,
 }
@@ -485,12 +519,14 @@ impl StreamIntegrity {
 
     /// Observe the authoritative terminal projected from ExecuteResult.
     /// `outcome` is the terminal result's type (success/error/max_turns/aborted).
-    /// The check is strict against the lifecycle received on the wire (the
-    /// receive-path hook observed every event the host accepted, applied or
-    /// not): a cancellation request alone never rescues a missing or
-    /// contradictory lifecycle, because the host's cancel exit only drops
-    /// unapplied applications, never received events. The final itself was
-    /// already validated by the host layer.
+    /// The check is strict against the lifecycle this instance observed: on the
+    /// delivered prefix a success/error/max_turns terminal must be justified by
+    /// events the consumer actually received (TS reads the final only after
+    /// yielding every earlier event, agentLoopSidecarClient.ts:552-683), while
+    /// on the receive-path instance the same predicate additionally rejects a
+    /// terminal contradicting an event that was received but dropped before
+    /// delivery. A cancellation request alone never rescues either. The final
+    /// itself was already validated by the host layer.
     fn observe_terminal(&self, outcome: Option<&JsString>) -> Result<(), RuntimeError> {
         let outcome = outcome.map(|outcome| String::from_utf16_lossy(outcome.units()));
         let mut state = self.state.lock().unwrap();
