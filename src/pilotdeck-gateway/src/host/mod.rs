@@ -92,7 +92,7 @@ const DEFAULT_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 /// rather than the shorter `close_timeout`: a shorter bound silently discards
 /// late-but-valid terminals that TS would accept, and dropping a legitimate
 /// result is not more safe. A terminal that arrives inside this bound wins.
-pub(super) const POST_CANCEL_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const POST_CANCEL_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {

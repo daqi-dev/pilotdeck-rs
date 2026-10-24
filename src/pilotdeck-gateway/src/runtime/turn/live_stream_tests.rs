@@ -1,5 +1,5 @@
 use super::*;
-use crate::host::Limits;
+use crate::host::{Limits, POST_CANCEL_EXIT_TIMEOUT};
 use crate::runtime::turn::projector::{
     GatewayAgentEventProjectionInput, GatewayAgentEventProjector,
 };
@@ -815,7 +815,8 @@ async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"model_event".into())
     );
-    tokio::time::sleep(Duration::from_secs(6)).await;
+    // Do not hard-code the grace: one second past the host's own constant.
+    tokio::time::sleep(POST_CANCEL_EXIT_TIMEOUT + Duration::from_secs(1)).await;
     // The queued input_accepted and success final must still be delivered.
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
@@ -828,6 +829,94 @@ async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
             .get("result")
             .and_then(|result| result.get("type")),
         Some(&"success".into())
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn slow_consumer_still_receives_a_ready_error_terminal() {
+    // Pair for slow_consumer_does_not_spend_the_cancel_exit_grace: the same
+    // stalled consumer, but the final is an error. turn_failed and the error
+    // final are already queued when the grace expires; both must be delivered
+    // in order, so the terminal is justified by a delivered turn_failed instead
+    // of being rejected as "terminal without proper lifecycle". No handler
+    // callback is blocked; the stall is purely the consumer's.
+    let handler = Arc::new(Handler::default());
+    let session = session("live-cancel-slow-consumer-failure", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    session.abort(&"user-stop".into()).unwrap();
+    // As in the success pairing, this next() arms the cancel deadline and
+    // delivers model_event before the consumer stalls.
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"model_event".into())
+    );
+    tokio::time::sleep(POST_CANCEL_EXIT_TIMEOUT + Duration::from_secs(1)).await;
+    // The queued turn_failed and error final must still be delivered.
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"turn_failed".into())
+    );
+    let completed = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+    assert_eq!(
+        completed
+            .get("result")
+            .and_then(|result| result.get("type")),
+        Some(&"error".into())
+    );
+    assert_eq!(
+        completed
+            .get("result")
+            .and_then(|result| result.get("stopReason")),
+        Some(&"model_error".into())
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
+    // The slow consumer lets the post-cancel deadline expire while the pending
+    // input_accepted application is genuinely blocked (Handler::block_*): no
+    // catch-up scheduling turn can finish it. The bounded exit must surface the
+    // received final, fail the lifecycle check, and dispose exactly once
+    // without waiting for the callback.
+    let handler = Arc::new(Handler {
+        block_input_accepted: true,
+        ..Handler::default()
+    });
+    let session = session("live-cancel-slow-consumer", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    session.abort(&"user-stop".into()).unwrap();
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"model_event".into())
+    );
+    tokio::time::sleep(POST_CANCEL_EXIT_TIMEOUT + Duration::from_secs(1)).await;
+    // The deadline is already past; a blocked callback must not extend it.
+    let started = std::time::Instant::now();
+    let error = timeout(Duration::from_secs(3), turn.next())
+        .await
+        .expect("the cancel exit must stay bounded with a blocked callback")
+        .unwrap_err();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "cancel exit took {:?} with a blocked callback",
+        started.elapsed()
+    );
+    assert!(
+        error.message.contains("terminal without proper lifecycle"),
+        "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);

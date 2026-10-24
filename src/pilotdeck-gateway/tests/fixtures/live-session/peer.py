@@ -185,6 +185,24 @@ elif mode == "live-cancel-slow-consumer":
                       event=dict(type="text_delta", text="queued")))
     send_event(2, dict(type="input_accepted", sessionId=session, turnId=turn))
     send(success_final(3))
+elif mode == "live-cancel-slow-consumer-failure":
+    # Pair for live-cancel-slow-consumer with an error terminal: a complete
+    # legal failure whose frames all arrive before the abort. The test consumes
+    # turn_started and model_event, aborts, then stalls past the post-cancel
+    # grace before pulling again. The queued turn_failed and error final must
+    # still be delivered in order, so the delivered prefix justifies the error
+    # terminal (TurnRunner.ts:209,256,282,437).
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="model_event", sessionId=session, turnId=turn,
+                      event=dict(type="text_delta", text="queued")))
+    send_event(2, dict(type="turn_failed", sessionId=session, turnId=turn,
+                      error=dict(code="agent_model_error",
+                                 message="Model request failed.")))
+    send(agent_event(3, dict(result=dict(
+        type="error", sessionId=session, turnId=turn, stopReason="model_error",
+        turns=1, errors=[dict(code="agent_model_error",
+                              message="Model request failed.")]),
+        messages=messages), final=True, outcome="failed"))
 elif mode == "live-missing-accepted":
     # Negative control (a)/(c): a success final without input_accepted. No
     # amount of cancellation makes this a legal terminal; only an
