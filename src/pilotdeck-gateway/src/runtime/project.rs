@@ -108,6 +108,7 @@ pub mod custom_routers;
 /// The production factory (`buildRuntime`): config read and resource-family
 /// staging with the baseline's rollback order.
 mod factory;
+pub mod interaction;
 pub mod model;
 pub mod plugins;
 pub mod tools_mcp;

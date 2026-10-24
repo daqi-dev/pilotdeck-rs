@@ -286,6 +286,10 @@ pub enum Resource {
     RouterCustomRouters,
     Tools,
     ExecutionWorld,
+    /// Factory capability marker for interaction. The per-turn permission,
+    /// hooks, event and steer ports are bound by A7.2-pr6 (#589); this marker
+    /// alone must not be read as those ports being ready.
+    Interaction,
     InstructionStorage,
     ToolResultSpill,
     PromptCacheCoordinator,
@@ -304,6 +308,7 @@ impl Resource {
             Self::RouterCustomRouters => "routerSessionCustomRouters",
             Self::Tools => "tools",
             Self::ExecutionWorld => "executionWorld",
+            Self::Interaction => "interaction",
             Self::InstructionStorage => "instructionStorage",
             Self::ToolResultSpill => "toolResultSpill",
             Self::PromptCacheCoordinator => "promptCacheCoordinator",
@@ -326,6 +331,14 @@ pub trait ResourceFamilySource: Send + Sync {
     /// and reading earlier families through `context`. Errors abort the whole
     /// generation; already staged families are rolled back.
     fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult;
+    /// Whether this source layers the interaction capability marker over
+    /// another execution-world source. [`Families::with_tools_mcp`] consults
+    /// it so replacing the execution world does not silently drop the marker
+    /// when the builders are chained in either order. Ordinary family sources
+    /// answer `false`.
+    fn layers_interaction(&self) -> bool {
+        false
+    }
 }
 
 /// `loadPilotConfig` as the bundle calls it: `({ projectRoot, env })`
@@ -440,10 +453,22 @@ impl Families {
         self
     }
 
-    /// Wire the MCP and execution-world families (A6.9-pr3c1).
+    /// Wire the MCP and execution-world families (A6.9-pr3c1). If the
+    /// interaction marker is already layered over the execution world, keep
+    /// it: replacing the native source is the point of this builder, dropping
+    /// the marker is not. That makes `with_interaction` and `with_tools_mcp`
+    /// independent of call order.
     pub fn with_tools_mcp(mut self) -> Self {
         self.mcp = Arc::new(super::tools_mcp::McpFamilySource);
-        self.execution_world = Arc::new(super::tools_mcp::ExecutionWorldFamilySource);
+        let execution_world: Arc<dyn ResourceFamilySource> =
+            Arc::new(super::tools_mcp::ExecutionWorldFamilySource);
+        self.execution_world = if self.execution_world.layers_interaction() {
+            Arc::new(super::interaction::InteractionFamilySource::new(
+                execution_world,
+            ))
+        } else {
+            execution_world
+        };
         self
     }
 
@@ -454,6 +479,22 @@ impl Families {
         self.plugins = Arc::new(super::plugins::PluginFamilySource { options });
         self.router_custom_routers =
             Some(Arc::new(super::custom_routers::CustomRouterFamilySource));
+        self
+    }
+
+    /// Publish the interaction capability marker (permission, hooks, event,
+    /// steer) for A6.9-pr3c2. This is a factory-level marker on the
+    /// execution-world family, not the per-turn ports: their binding stays
+    /// with A7.2-pr6 (#589). The wrapper preserves whatever execution-world
+    /// source is already configured, so a later `with_tools_mcp` can rebuild
+    /// the native source without dropping the marker.
+    pub fn with_interaction(mut self) -> Self {
+        if !self.execution_world.layers_interaction() {
+            let execution_world = Arc::clone(&self.execution_world);
+            self.execution_world = Arc::new(super::interaction::InteractionFamilySource::new(
+                execution_world,
+            ));
+        }
         self
     }
 
@@ -535,6 +576,7 @@ struct Slots {
     router_custom_routers_resource: Option<Arc<dyn FamilyResource>>,
     tools: Option<Arc<dyn FamilyResource>>,
     execution_world: Option<Arc<dyn FamilyResource>>,
+    interaction: Option<Arc<dyn FamilyResource>>,
     instruction_storage: Option<Arc<dyn FamilyResource>>,
     tool_result_spill: Option<Arc<dyn FamilyResource>>,
     prompt_cache_coordinator: Option<Arc<dyn FamilyResource>>,
@@ -608,6 +650,7 @@ impl StageContext {
             Resource::RouterCustomRouters => slots.router_custom_routers_resource.clone(),
             Resource::Tools => slots.tools.clone(),
             Resource::ExecutionWorld => slots.execution_world.clone(),
+            Resource::Interaction => slots.interaction.clone(),
             Resource::InstructionStorage => slots.instruction_storage.clone(),
             Resource::ToolResultSpill => slots.tool_result_spill.clone(),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator.clone(),
@@ -657,6 +700,7 @@ impl StageSink<'_> {
             Resource::RouterCustomRouters => slots.router_custom_routers_resource = Some(handle),
             Resource::Tools => slots.tools = Some(handle),
             Resource::ExecutionWorld => slots.execution_world = Some(handle),
+            Resource::Interaction => slots.interaction = Some(handle),
             Resource::InstructionStorage => slots.instruction_storage = Some(handle),
             Resource::ToolResultSpill => slots.tool_result_spill = Some(handle),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator = Some(handle),
@@ -712,6 +756,7 @@ impl ProjectResources {
                 router_custom_routers_resource: None,
                 tools: None,
                 execution_world: None,
+                interaction: None,
                 instruction_storage: None,
                 tool_result_spill: None,
                 prompt_cache_coordinator: None,

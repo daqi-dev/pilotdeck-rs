@@ -672,6 +672,139 @@ async fn unwired_families_report_explicit_errors() {
     bounded(registry.dispose()).await.unwrap();
 }
 
+/// A staging group with no family handles, for direct family-source tests.
+fn interaction_test_group() -> ProjectResources {
+    ProjectResources::new(
+        PathBuf::from("/project"),
+        PathBuf::from("/home"),
+        None,
+        crate::config::Env::new(),
+        Arc::new(|| SystemTime::UNIX_EPOCH),
+        Arc::new(JsValue::Undefined),
+        RuntimeProfile::resolve(&JsValue::Undefined, &RuntimeProfileOverrides::default()),
+    )
+}
+
+/// Stage the MCP and execution-world builders in the factory's order.
+fn stage_tools_and_execution_world(
+    families: &Families,
+    context: &StageContext,
+    sink: &mut StageSink<'_>,
+) {
+    families.execution_world.stage(context, sink).unwrap();
+    families.mcp.stage(context, sink).unwrap();
+}
+
+/// Forward order: interaction layered after the tools family keeps the
+/// execution-world resource/owner and the MCP family.
+#[tokio::test]
+async fn interaction_staging_publishes_resources() {
+    let group = interaction_test_group();
+    let context = group.context();
+    assert!(context.resource(Resource::Interaction).is_none());
+    assert!(context.resource(Resource::ExecutionWorld).is_none());
+
+    let families = Families::unwired().with_tools_mcp().with_interaction();
+    stage_tools_and_execution_world(&families, &context, &mut group.sink());
+
+    let interaction = context
+        .resource(Resource::Interaction)
+        .expect("successful interaction staging must publish its resource");
+    let execution_world = context
+        .resource(Resource::ExecutionWorld)
+        .expect("interaction wiring must preserve the execution-world resource");
+    let owner = context.owner(Family::ExecutionWorld).unwrap();
+    assert!(Arc::ptr_eq(&owner, &execution_world));
+    assert!(!Arc::ptr_eq(&interaction, &execution_world));
+    assert!(
+        context.owner(Family::McpProvider).is_some(),
+        "with_tools_mcp must still wire the MCP family"
+    );
+    bounded(group.dispose()).await.unwrap();
+}
+
+/// Reverse order (P2a regression): `with_interaction` before `with_tools_mcp`
+/// must keep MCP, the execution world and the interaction marker. Both
+/// builders used to overwrite `execution_world`, silently dropping Interaction.
+#[tokio::test]
+async fn interaction_before_tools_keeps_all_capabilities() {
+    let group = interaction_test_group();
+    let context = group.context();
+
+    let families = Families::unwired().with_interaction().with_tools_mcp();
+    stage_tools_and_execution_world(&families, &context, &mut group.sink());
+
+    let interaction = context
+        .resource(Resource::Interaction)
+        .expect("interaction must survive a later with_tools_mcp");
+    let execution_world = context
+        .resource(Resource::ExecutionWorld)
+        .expect("with_tools_mcp must still publish the execution world");
+    let owner = context.owner(Family::ExecutionWorld).unwrap();
+    assert!(Arc::ptr_eq(&owner, &execution_world));
+    assert!(!Arc::ptr_eq(&interaction, &execution_world));
+    assert!(
+        context.owner(Family::McpProvider).is_some(),
+        "with_tools_mcp must still wire the MCP family"
+    );
+    bounded(group.dispose()).await.unwrap();
+}
+
+/// Negative control: MCP + execution world alone must not publish the
+/// interaction marker, so an accidental always-on marker cannot pass.
+#[tokio::test]
+async fn tools_without_interaction_has_no_interaction_marker() {
+    let group = interaction_test_group();
+    let context = group.context();
+
+    let families = Families::unwired().with_tools_mcp();
+    stage_tools_and_execution_world(&families, &context, &mut group.sink());
+
+    assert!(context.resource(Resource::Interaction).is_none());
+    assert!(context.resource(Resource::ExecutionWorld).is_some());
+    assert!(context.owner(Family::McpProvider).is_some());
+    bounded(group.dispose()).await.unwrap();
+}
+
+/// A custom execution-world source is wrapped, not replaced, by
+/// `with_interaction`: its owner/resource identity survives.
+#[tokio::test]
+async fn interaction_preserves_custom_execution_world_source() {
+    let probe = Arc::new(Probe::default());
+    let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
+        probe: Arc::clone(&probe),
+        family: Family::ExecutionWorld,
+        extra: no_extra,
+        registers_owner: true,
+        stages: true,
+        publishes: &[Resource::ExecutionWorld],
+    });
+    let families = Families {
+        execution_world: custom,
+        ..Families::unwired()
+    }
+    .with_interaction();
+
+    let group = interaction_test_group();
+    let context = group.context();
+    families
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .unwrap();
+
+    let owner = context.owner(Family::ExecutionWorld).unwrap();
+    let execution_world = context.resource(Resource::ExecutionWorld).unwrap();
+    assert!(owner.as_any().is::<FakeHandle>());
+    assert!(execution_world.as_any().is::<FakeHandle>());
+    assert_eq!(
+        handle_id(Some(owner)),
+        handle_id(Some(execution_world)),
+        "the custom source's owner and resource must stay the same stage"
+    );
+    assert!(context.resource(Resource::Interaction).is_some());
+    bounded(group.dispose()).await.unwrap();
+}
+
 /// The eight parallel-group disposals start together (`Promise.allSettled`,
 /// ProjectRuntimeResourcesBundle.ts:416-425): a disposal that waits for a
 /// sibling's cleanup signal is unblocked by that sibling's start. A
