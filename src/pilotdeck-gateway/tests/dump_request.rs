@@ -18,7 +18,11 @@ fn dump_request_creates_file() {
     let dir = fs::read_dir("/tmp").expect("cannot read /tmp");
     let before: Vec<_> = dir
         .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().starts_with("pilotdeck_request_"))
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("pilotdeck_request_")
+        })
         .map(|e| e.path())
         .collect();
 

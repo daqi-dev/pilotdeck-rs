@@ -1116,11 +1116,7 @@ pub struct HttpHookOptions {
 
 pub struct HttpHookExecutor {
     client: hyper_util::client::legacy::Client<
-        ConnectDeadline<
-            hyper_rustls::HttpsConnector<
-                crate::runtime::model::http::ProxyConnect,
-            >,
-        >,
+        ConnectDeadline<hyper_rustls::HttpsConnector<crate::runtime::model::http::ProxyConnect>>,
         http_body_util::Full<bytes::Bytes>,
     >,
     /// undici `headersTimeout` (per dispatch, so per redirect hop) and
