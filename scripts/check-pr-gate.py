@@ -262,7 +262,9 @@ def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | No
             print(f"check-pr-gate: 豁免——{reason}")
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
-    if not ISSUE_LINK.search(prose) and not NO_ISSUE.search(marks):
+    # 单行 HTML 注释（<!-- ... -->）里的 Closes/Refs 不触发 issue 关联：把注释正文挖空再查
+    prose_for_link = re.sub(r"<!--.*?-->", "<!-- -->", prose, flags=re.S)
+    if not ISSUE_LINK.search(prose_for_link) and not NO_ISSUE.search(marks):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
     errs.extend(check_reviewers(body, head_ref, trailers))
     return errs

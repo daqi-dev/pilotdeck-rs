@@ -293,7 +293,19 @@ def main() -> int:
     has_issue_err = any("缺 issue 关联" in e for e in errs_real)
     print(f"{'PASS' if not has_issue_err else 'FAIL'} prose 里真实 Closes 算 issue 关联（应不报 issue 错）")
     fails += has_issue_err
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 47} 例）")
+    # 单行注释 <!-- Closes #999 --> 不算 issue 关联（P0 修复）
+    body_single_comment = (GATE_BASE + "<!-- reviewers: glm,codex -->\n<!-- Closes #999 -->\n")
+    errs_single = gate.check(body_single_comment, "", "deepseek/x")
+    good = any("缺 issue 关联" in e for e in errs_single)
+    print(f"{'PASS' if good else 'FAIL'} 单行注释 Closes 不算 issue 关联（应 FAIL 无关联）")
+    fails += not good
+    # 行内注释 说明 <!-- Refs #1 --> 完 不算 issue 关联
+    body_inline_comment = (GATE_BASE + "<!-- reviewers: glm,codex -->\n说明 <!-- Refs #1 --> 完\n")
+    errs_inline = gate.check(body_inline_comment, "", "deepseek/x")
+    good = any("缺 issue 关联" in e for e in errs_inline)
+    print(f"{'PASS' if good else 'FAIL'} 行内注释 Refs 不算 issue 关联（应 FAIL 无关联）")
+    fails += not good
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 49} 例）")
     return 1 if fails else 0
 
 
