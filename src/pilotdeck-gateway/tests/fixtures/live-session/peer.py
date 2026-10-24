@@ -160,6 +160,31 @@ elif mode == "live-cancel-blocked-model-event":
     send_event(1, dict(type="model_event", sessionId=session, turnId=turn,
                       event=dict(type="text_delta", text="blocked")))
     send(success_final(2))
+elif mode == "live-cancel-queued-turn-failed":
+    # Isolated negative control for the receive-path contradiction gate: the
+    # consumer is delivered turn_started and input_accepted, while the
+    # received turn_failed never completes its application (the test handler
+    # parks it) and is dropped by the bounded cancel exit together with the
+    # queued success final. The delivered prefix alone would justify success;
+    # only the receive-path turn_failed can reject it.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+    send_event(2, dict(type="turn_failed", sessionId=session, turnId=turn,
+                      error=dict(code="agent_model_error",
+                                 message="Model request failed.")))
+    send(success_final(3))
+elif mode == "live-cancel-slow-consumer":
+    # A complete legal turn whose frames all arrive before the abort. The test
+    # consumes turn_started and model_event, aborts, then stalls past the
+    # post-cancel grace before pulling again (a slow host consumer, no blocking
+    # handler). The queued input_accepted and success final must still be
+    # delivered: TS has no post-cancel timer and only yields the final after
+    # every earlier event (agentLoopSidecarClient.ts:543-556, :931-958).
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="model_event", sessionId=session, turnId=turn,
+                      event=dict(type="text_delta", text="queued")))
+    send_event(2, dict(type="input_accepted", sessionId=session, turnId=turn))
+    send(success_final(3))
 elif mode == "live-missing-accepted":
     # Negative control (a)/(c): a success final without input_accepted. No
     # amount of cancellation makes this a legal terminal; only an
