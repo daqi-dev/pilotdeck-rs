@@ -150,6 +150,57 @@ const specs: Spec[] = [
   },
   { name: 'openai-normal', protocol: 'openai', reply: json(openaiBody) },
   {
+    // The second tool call has no id, so it generates the same id the first
+    // call already claimed; the shared `nextUniqueToolCallId` must use `_2`.
+    name: 'openai-tool-id-suffix-collision',
+    protocol: 'openai',
+    reply: json({
+      id: 'chatcmpl-suffix',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          tool_calls: [
+            { id: 'call_chatcmpl-suffix_0_1', type: 'function', function: { name: 'first', arguments: '{}' } },
+            { type: 'function', function: { name: 'second', arguments: '{}' } },
+          ],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }),
+  },
+  {
+    // `safeToolCallIdPart`: trims, collapses a run of illegal characters into
+    // one `_`, and strips leading/trailing underscores.
+    name: 'openai-tool-id-sanitize-run',
+    protocol: 'openai',
+    reply: json({
+      id: 'chat cmpl..1_',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          tool_calls: [{ type: 'function', function: { name: 'lookup', arguments: '{}' } }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }),
+  },
+  {
+    // Same `_2` suffix rule on the Responses id state (generated from the
+    // output index), not just the chat-completions state.
+    name: 'responses-tool-id-suffix-collision',
+    protocol: 'openai-responses',
+    reply: json({
+      id: 'resp-suffix',
+      output: [
+        { type: 'function_call', call_id: 'call_resp-suffix_1', name: 'first', arguments: '{}' },
+        { type: 'function_call', name: 'second', arguments: '{}' },
+      ],
+      status: 'completed',
+    }),
+  },
+  {
     name: 'openai-string-content',
     protocol: 'openai',
     reply: json({

@@ -456,6 +456,310 @@
    ]
   },
   {
+   "name": "openai-tool-id-suffix-collision",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_call",
+      "id": "call_chatcmpl-suffix_0_1",
+      "name": "first",
+      "input": {},
+      "raw": {
+       "id": "call_chatcmpl-suffix_0_1",
+       "type": "function",
+       "function": {
+        "name": "first",
+        "arguments": "{}"
+       }
+      }
+     },
+     {
+      "type": "tool_call",
+      "id": "call_chatcmpl-suffix_0_1_2",
+      "name": "second",
+      "input": {},
+      "raw": {
+       "type": "function",
+       "function": {
+        "name": "second",
+        "arguments": "{}"
+       }
+      }
+     }
+    ],
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "chatcmpl-suffix",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "tool_calls": [
+         {
+          "id": "call_chatcmpl-suffix_0_1",
+          "type": "function",
+          "function": {
+           "name": "first",
+           "arguments": "{}"
+          }
+         },
+         {
+          "type": "function",
+          "function": {
+           "name": "second",
+           "arguments": "{}"
+          }
+         }
+        ]
+       },
+       "finish_reason": "tool_calls"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-suffix\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_chatcmpl-suffix_0_1\",\"type\":\"function\",\"function\":{\"name\":\"first\",\"arguments\":\"{}\"}},{\"type\":\"function\",\"function\":{\"name\":\"second\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-tool-id-sanitize-run",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_call",
+      "id": "call_chat_cmpl_1_0_0",
+      "name": "lookup",
+      "input": {},
+      "raw": {
+       "type": "function",
+       "function": {
+        "name": "lookup",
+        "arguments": "{}"
+       }
+      }
+     }
+    ],
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "chat cmpl..1_",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "tool_calls": [
+         {
+          "type": "function",
+          "function": {
+           "name": "lookup",
+           "arguments": "{}"
+          }
+         }
+        ]
+       },
+       "finish_reason": "tool_calls"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chat cmpl..1_\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-tool-id-suffix-collision",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_call",
+      "id": "call_resp-suffix_1",
+      "name": "first",
+      "input": {},
+      "raw": {
+       "type": "function_call",
+       "call_id": "call_resp-suffix_1",
+       "name": "first",
+       "arguments": "{}"
+      }
+     },
+     {
+      "type": "tool_call",
+      "id": "call_resp-suffix_1_2",
+      "name": "second",
+      "input": {},
+      "raw": {
+       "type": "function_call",
+       "name": "second",
+       "arguments": "{}"
+      }
+     }
+    ],
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "resp-suffix",
+     "output": [
+      {
+       "type": "function_call",
+       "call_id": "call_resp-suffix_1",
+       "name": "first",
+       "arguments": "{}"
+      },
+      {
+       "type": "function_call",
+       "name": "second",
+       "arguments": "{}"
+      }
+     ],
+     "status": "completed"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-suffix\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_resp-suffix_1\",\"name\":\"first\",\"arguments\":\"{}\"},{\"type\":\"function_call\",\"name\":\"second\",\"arguments\":\"{}\"}],\"status\":\"completed\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
    "name": "openai-string-content",
    "protocol": "openai",
    "request": {

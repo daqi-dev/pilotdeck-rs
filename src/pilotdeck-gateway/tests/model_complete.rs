@@ -17,8 +17,12 @@ use hyper::{
     header::{HeaderName, HeaderValue},
 };
 use pilotdeck_gateway::runtime::{
-    model::http::{
-        BodyFailure, ModelHttpTransport, StreamOptions, TransportFuture, complete_model,
+    model::{
+        http::{
+            BodyFailure, ModelHttpTransport, StreamOptions, TransportFailure, TransportFuture,
+            complete_model,
+        },
+        router::AbortFlag,
     },
     network::ExchangeFuture,
 };
@@ -34,6 +38,7 @@ use std::{
 };
 
 const ORACLE: &str = include_str!("fixtures/model-complete/oracle.json");
+const TRANSPORT_ORACLE: &str = include_str!("fixtures/model-complete-transport/oracle.json");
 
 struct FrameBody(VecDeque<Bytes>);
 
@@ -156,7 +161,7 @@ fn case<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
 async fn native_complete_model_matches_real_ts_complete() {
     let oracle = baseline::oracle(ORACLE);
     let cases = array(model_mock::get(&oracle, "cases"));
-    assert_eq!(cases.len(), 25, "unexpected model-complete oracle size");
+    assert_eq!(cases.len(), 28, "unexpected model-complete oracle size");
     for case in cases {
         let name = text(model_mock::get(case, "name"));
         let outcome = run(case).await;
@@ -164,6 +169,148 @@ async fn native_complete_model_matches_real_ts_complete() {
             outcome.requests,
             model_mock::get(case, "requestCount").as_number().unwrap() as usize,
             "{name}: request count"
+        );
+        if let Some(expected) = case.get("response") {
+            let actual = outcome
+                .result
+                .unwrap_or_else(|error| panic!("{name}: unexpected error {error:?}"));
+            assert_eq!(
+                model_mock::json(&actual),
+                model_mock::json(expected),
+                "{name}: canonical response"
+            );
+        } else {
+            let expected = model_mock::get(case, "thrown");
+            let error = match outcome.result {
+                Ok(value) => panic!(
+                    "{name}: expected an error, got {}",
+                    model_mock::json(&value)
+                ),
+                Err(error) => error,
+            };
+            assert_eq!(
+                model_mock::json(&model_mock::thrown(&error)),
+                model_mock::json(expected),
+                "{name}: thrown error"
+            );
+        }
+    }
+}
+
+/// Transport that fails before headers for the first `fail_times` sends, then
+/// serves one framed reply. The real `complete_model` retry loop drives it.
+type ScriptedReply = (u16, Vec<(String, String)>, Vec<Bytes>);
+
+struct Scripted {
+    fail_times: usize,
+    message: String,
+    reply: Option<ScriptedReply>,
+    sent: Arc<AtomicUsize>,
+}
+
+impl ModelHttpTransport for Scripted {
+    fn send(&self, _request: Request<Full<Bytes>>) -> TransportFuture {
+        let call = self.sent.fetch_add(1, Ordering::SeqCst);
+        if call < self.fail_times {
+            let failure = if self.message == "fetch failed" {
+                TransportFailure::fetch_failed(None)
+            } else {
+                TransportFailure {
+                    cause_code: None,
+                    message: self.message.clone(),
+                }
+            };
+            return TransportFuture::ready(Err(failure));
+        }
+        let Some((status, headers, frames)) = &self.reply else {
+            return TransportFuture::ready(Err(TransportFailure::fetch_failed(None)));
+        };
+        let mut response = Response::builder().status(*status);
+        for (name, value) in headers {
+            response = response.header(
+                HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                HeaderValue::from_str(value).unwrap(),
+            );
+        }
+        let body = FrameBody(frames.iter().cloned().collect()).boxed();
+        ExchangeFuture::ready(Ok(response.body(body).unwrap()))
+    }
+}
+
+async fn run_transport(case: &JsValue) -> Outcome {
+    let reply = model_mock::get(case, "reply");
+    let reply = if matches!(reply, JsValue::Object(_)) {
+        let status = model_mock::get(reply, "status")
+            .as_number()
+            .map_or(200, |status| status as u16);
+        let headers = match model_mock::get(reply, "headers") {
+            JsValue::Object(headers) => headers
+                .entries()
+                .iter()
+                .map(|(name, value)| (String::from_utf16_lossy(name.units()), text(value)))
+                .collect(),
+            _ => Vec::new(),
+        };
+        Some((
+            status,
+            headers,
+            frames(&text(model_mock::get(reply, "body"))),
+        ))
+    } else {
+        None
+    };
+    let behavior = model_mock::get(case, "fetch");
+    let fail_times = model_mock::get(behavior, "failTimes")
+        .as_number()
+        .unwrap_or(0.0) as usize;
+    let message = model_mock::get(behavior, "message")
+        .as_string()
+        .map(|value| value.to_utf8().unwrap())
+        .unwrap_or_default();
+    let abort_before_send = model_mock::get(behavior, "abortBeforeSend")
+        .as_bool()
+        .unwrap_or(false);
+
+    let sent = Arc::new(AtomicUsize::new(0));
+    let transport = Scripted {
+        fail_times,
+        message,
+        reply,
+        sent: sent.clone(),
+    };
+    let mut options = StreamOptions::default();
+    if abort_before_send {
+        let abort = AbortFlag::new();
+        abort.abort();
+        options.abort = Some(abort);
+    }
+    let request = model_mock::get(case, "request");
+    let provider = model_mock::get(case, "provider");
+    let config = config(provider);
+    let result = complete_model(&transport, request, &config, &options).await;
+    Outcome {
+        result,
+        requests: sent.load(Ordering::SeqCst),
+    }
+}
+
+/// Real TS `complete()` against a controlled failing `fetch`: the retry bound
+/// is `attempt <= maxRetries` (fractional 1.5 runs attempts 0 and 1 only and
+/// exits with the exhausted error), abort is not retried, a non-retryable
+/// transport error is sent once, and one failure followed by a success returns
+/// the canonical response. Request counts and the final thrown shape are pinned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_complete_transport_retry_matches_real_ts() {
+    let oracle = baseline::oracle(TRANSPORT_ORACLE);
+    let cases = array(model_mock::get(&oracle, "cases"));
+    assert_eq!(cases.len(), 7, "unexpected transport oracle size");
+    for case in cases {
+        let name = text(model_mock::get(case, "name"));
+        let outcome = run_transport(case).await;
+        assert_eq!(
+            outcome.requests,
+            model_mock::get(case, "fetchCalls").as_number().unwrap() as usize,
+            "{name}: fetch calls"
         );
         if let Some(expected) = case.get("response") {
             let actual = outcome
@@ -294,4 +441,12 @@ async fn complete_empty_and_non_json_bodies_stay_raw_text() {
 #[ignore]
 fn regenerates_model_complete_oracle_identically() {
     baseline::regenerates_identically("model-complete");
+}
+
+/// Rebuild the controlled-`fetch` transport oracle from the fixed baseline and
+/// require byte-identical output.
+#[test]
+#[ignore]
+fn regenerates_model_complete_transport_oracle_identically() {
+    baseline::regenerates_identically("model-complete-transport");
 }
