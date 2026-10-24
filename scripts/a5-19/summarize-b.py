@@ -40,10 +40,10 @@ def report(main_dir, side_dir, old_dir):
                          'storage': [reference(Path(d['path'])) for d in observation['durable'] if Path(d['path']).exists()],
                          'registry': reference(Path(observation['registry']['path'])) if observation['registry']['applicable'] else observation['registry']['reason']})
     side_evidence = []
-    for path in sorted((side_dir / 'raw').glob('*/observation.json')):
+    for path in sorted((side_dir / 'raw').rglob('observation.json')):
         observation = json.loads(path.read_text())
         terminal = observation['sidecarProof']['unknownEntries'][0]
-        side_evidence.append({'repetition': observation['repetition'], 'observation': reference(path),
+        side_evidence.append({'caseId': observation['caseId'], 'repetition': observation['repetition'], 'observation': reference(path),
                               'journal': reference(path.with_name('timeline.ndjson')),
                               'childLoadedFiles': len(observation['childLoaded']), 'unknownOutcome': terminal['outcome'],
                               'unknownCode': terminal['code'], 'lastAppliedSequence': terminal['lastAppliedSequence'],
@@ -66,7 +66,7 @@ def report(main_dir, side_dir, old_dir):
                      'summary': [{k: v for k, v in row.items() if k != 'alternatives' or not row['stable']} for row in main['summaries']],
                      'controls': main['controls'], 'evidence': evidence},
             'controlEvidence': [reference(p) for p in sorted((main_dir / 'raw/controls').rglob('*')) if p.is_file()],
-            'sidecar': {'manifest': reference(side_path), 'caseId': side['caseId'], 'measurements': side['measurements'],
+            'sidecar': {'manifest': reference(side_path), 'expectedCases': side['expectedCases'], 'measurements': side['measurements'],
                         'stable': side['stable'], 'distinct': side['distinct'], 'evidence': side_evidence},
             'a52aRegression': {'manifest': reference(old_path), 'measurements': old['totalMeasurements'], 'repeats': old['repeats'],
                               'unstableGroups': old['unstableGroups'], 'controls': old['checks']['observerControls']},
