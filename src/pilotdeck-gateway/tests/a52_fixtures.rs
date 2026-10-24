@@ -21,27 +21,41 @@ use std::{
 
 // Keep each tagged assertion paired with a mutation in the observer control
 // test below. Adding a rule also requires exhaustive label and mutation arms.
+// Mapping to scripts/a5-19/preregistration-b.mjs: WireSequence/FinalReplica
+// cover FRAME_SEQ for this request; RunId covers its SESSION_ISOLATION slice;
+// RegistryRaw covers REGISTRY_RAW for the queried run's full record/events.
+// LiveSequence, FinishReason and Registry{Events,Sequence,LastSeq,Revision,
+// Result,State} are native successful-turn invariants, not claims of the full
+// TS production matrix (journals, fault schedules and other sessions included).
 #[derive(Clone, Copy, Debug)]
 enum ObserverRule {
     LiveSequence,
     WireSequence,
     FinalReplica,
+    FinishReason,
+    RunId,
     RegistryEvents,
     RegistrySequence,
     RegistryLastSeq,
     RegistryRevision,
     RegistryResult,
+    RegistryState,
+    RegistryRaw,
 }
 impl ObserverRule {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 12] = [
         Self::LiveSequence,
         Self::WireSequence,
         Self::FinalReplica,
+        Self::FinishReason,
+        Self::RunId,
         Self::RegistryEvents,
         Self::RegistrySequence,
         Self::RegistryLastSeq,
         Self::RegistryRevision,
         Self::RegistryResult,
+        Self::RegistryState,
+        Self::RegistryRaw,
     ];
 
     fn label(self) -> &'static str {
@@ -49,11 +63,15 @@ impl ObserverRule {
             Self::LiveSequence => "A52_LIVE_SEQUENCE",
             Self::WireSequence => "A52_WIRE_SEQUENCE",
             Self::FinalReplica => "A52_FINAL_REPLICA",
+            Self::FinishReason => "A52_FINISH_REASON",
+            Self::RunId => "A52_RUN_ID",
             Self::RegistryEvents => "A52_REGISTRY_EVENTS",
             Self::RegistrySequence => "A52_REGISTRY_SEQUENCE",
             Self::RegistryLastSeq => "A52_REGISTRY_LAST_SEQ",
             Self::RegistryRevision => "A52_REGISTRY_REVISION",
             Self::RegistryResult => "A52_REGISTRY_RESULT",
+            Self::RegistryState => "A52_REGISTRY_STATE",
+            Self::RegistryRaw => "A52_REGISTRY_RAW",
         }
     }
 }
@@ -71,6 +89,21 @@ fn events(path: &std::path::Path, session: &str, id: &str) -> Vec<Value> {
         .collect()
 }
 fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[Value]) {
+    // Check raw identity/state before API reloads: a changed runId would make
+    // events/get miss the record and mask the intended raw-snapshot rejection.
+    let disk: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let raw_record = disk["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["sessionKey"] == session && r["runId"] == id)
+        .expect(ObserverRule::RegistryRaw.label());
+    assert_eq!(
+        raw_record["state"],
+        "completed",
+        "{}",
+        ObserverRule::RegistryState.label()
+    );
     let live: Vec<_> = frames
         .iter()
         .filter(|v| v["type"] == "event" && v["final"] == false && v["event"].is_object())
@@ -84,6 +117,18 @@ fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[V
         ["turn_started", "input_accepted", "turn_completed"],
         "{}",
         ObserverRule::LiveSequence.label()
+    );
+    // Validate live fields before comparing them with final/durable replicas.
+    assert_eq!(
+        live.last().unwrap()["finishReason"],
+        "completed",
+        "{}",
+        ObserverRule::FinishReason.label()
+    );
+    assert!(
+        live.iter().all(|v| v["runId"] == id),
+        "{}",
+        ObserverRule::RunId.label()
     );
     let wire: Vec<_> = frames.iter().filter(|v| v["type"] == "event").collect();
     for (seq, frame) in wire.iter().enumerate() {
@@ -125,11 +170,14 @@ fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[V
         );
     }
     assert_eq!(live.last().unwrap()["type"], "turn_completed");
-    assert_eq!(live.last().unwrap()["finishReason"], "completed");
-    assert!(live.iter().all(|v| v["runId"] == id));
     let fresh = FileRunRegistry::open(path).unwrap();
     let record = fresh.get(&run(session, id)).unwrap().unwrap();
-    assert_eq!(record.state(), Some(RunState::Completed));
+    assert_eq!(
+        record.state(),
+        Some(RunState::Completed),
+        "{}",
+        ObserverRule::RegistryState.label()
+    );
     assert_eq!(
         record.last_seq(),
         Some(durable.len() as f64),
@@ -148,14 +196,19 @@ fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[V
         "{}",
         ObserverRule::RegistryResult.label()
     );
-    // Read raw bytes as a separate observer, rather than trusting get/events alone.
-    let disk: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    assert!(
-        disk["records"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["sessionKey"] == session && r["runId"] == id && r["state"] == "completed")
+    // TS REGISTRY_RAW alignment for this native run: compare the entire stored
+    // record (including result) and event list with the independent byte read.
+    assert_eq!(
+        value(record.as_json()),
+        *raw_record,
+        "{}",
+        ObserverRule::RegistryRaw.label()
+    );
+    assert_eq!(
+        json!(durable),
+        disk["events"][format!("\0{session}\0{id}")],
+        "{}",
+        ObserverRule::RegistryRaw.label()
     );
 }
 
@@ -341,6 +394,18 @@ async fn native_observers_reject_frame_event_sequence_and_result_corruption() {
             ObserverRule::FinalReplica => {
                 damaged_frames.retain(|frame| frame["type"] != "event" || frame["final"] != true);
             }
+            ObserverRule::FinishReason => {
+                damaged_frames
+                    .iter_mut()
+                    .find(|frame| frame["event"]["type"] == "turn_completed")
+                    .unwrap()["event"]["finishReason"] = json!("error");
+            }
+            ObserverRule::RunId => {
+                damaged_frames
+                    .iter_mut()
+                    .find(|frame| frame["event"]["type"] == "turn_started")
+                    .unwrap()["event"]["runId"] = json!("wrong");
+            }
             ObserverRule::RegistryEvents => {
                 disk["events"]["\0s\0r"].as_array_mut().unwrap().remove(1);
             }
@@ -350,6 +415,8 @@ async fn native_observers_reject_frame_event_sequence_and_result_corruption() {
             ObserverRule::RegistryResult => {
                 disk["records"][0]["result"] = json!({"type":"error","code":"stale"})
             }
+            ObserverRule::RegistryState => disk["records"][0]["state"] = json!("accepted"),
+            ObserverRule::RegistryRaw => disk["records"][0]["runId"] = json!("tampered"),
         }
         fs::write(&path, serde_json::to_vec(&disk).unwrap()).unwrap();
         let rejected =

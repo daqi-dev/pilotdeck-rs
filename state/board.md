@@ -22,6 +22,9 @@ updated: 2026-10-24 13:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #590 | impl | blocked | A7.2-pr6b sidecar格+四格矩阵；前置#589
 <!-- READY:END -->
 
+> ## 2026-10-24 · #625 A5.2 原生观察面负控（Codex，wt-625-negctl）
+> 补齐 finishReason/runId/state/raw snapshot 四项指定标签负控，原生矩阵由 8 项增至 12 项；raw 先校验目标记录身份，再对齐完整 record/events，说明与 TS 预注册规则的映射及适用边界，不改冻结文件。下一步完成真实成功场景与全部反例复算、双非作者评审并合入；最终测试与收尾证据贴 #625 关联 PR。本轮不改变 A5.4 整体完成状态。
+
 > ## 2026-10-24 11:55 → 13:44 · /loop 协调轮（脱困后恢复）
 > **11:59**：#553（后台任务输出落盘与重启恢复）ready，派 agent abf8eedfc10b2be27（DeepSeek via dsh headless），任务书 `_tmp/20261024-issue-553/task.md`。
 > **12:19**：同步 board：#549 #544 已合入（兄弟会话处理），从 READY 移除；main 最新 84cd2d82。
