@@ -286,9 +286,12 @@ pub enum Resource {
     RouterCustomRouters,
     Tools,
     ExecutionWorld,
-    /// Factory capability marker for interaction. The per-turn permission,
-    /// hooks, event and steer ports are bound by A7.2-pr6 (#589); this marker
-    /// alone must not be read as those ports being ready.
+    /// Factory capability marker for interaction: this generation's builders
+    /// selected interaction, independent of the runtime profile. The profile
+    /// stays authoritative — a Disabled or Headless profile is not changed by
+    /// the marker's presence. The per-turn permission, hooks, event and steer
+    /// ports are bound by A7.2-pr6 (#589); this marker alone must not be read
+    /// as those ports being ready and must not enable them.
     Interaction,
     InstructionStorage,
     ToolResultSpill,
@@ -336,6 +339,18 @@ pub trait ResourceFamilySource: Send + Sync {
     /// it so replacing the execution world does not silently drop the marker
     /// when the builders are chained in either order. Ordinary family sources
     /// answer `false`.
+    ///
+    /// Contract: the answer must accurately describe whether *this* source
+    /// (including any wrapper it delegates to) publishes
+    /// [`Resource::Interaction`] when staged. A transparent decorator that
+    /// wraps an interaction-layered source must forward the answer rather
+    /// than fall back to the default. [`Families::with_tools_mcp`] always
+    /// replaces the execution-world kernel with the native source (including
+    /// a custom kernel) and preserves only the marker layering, so it can
+    /// rebuild a supported transparent wrapper but not arbitrary decorators.
+    /// Sources that answer `true` without publishing the marker, or `false`
+    /// while publishing it, are outside this contract: the builders neither
+    /// detect nor repair such a false declaration.
     fn layers_interaction(&self) -> bool {
         false
     }
@@ -453,10 +468,13 @@ impl Families {
         self
     }
 
-    /// Wire the MCP and execution-world families (A6.9-pr3c1). If the
-    /// interaction marker is already layered over the execution world, keep
-    /// it: replacing the native source is the point of this builder, dropping
-    /// the marker is not. That makes `with_interaction` and `with_tools_mcp`
+    /// Wire the MCP and execution-world families (A6.9-pr3c1). Replacing the
+    /// execution-world source is the point of this builder: a previously
+    /// configured custom source is discarded in favour of the native one and
+    /// is never staged. If the interaction marker is already layered over the
+    /// execution world, keep the marker layering by wrapping the new native
+    /// source: only the marker selection is preserved, not the discarded
+    /// custom kernel. That makes `with_interaction` and `with_tools_mcp`
     /// independent of call order.
     pub fn with_tools_mcp(mut self) -> Self {
         self.mcp = Arc::new(super::tools_mcp::McpFamilySource);
@@ -485,9 +503,16 @@ impl Families {
     /// Publish the interaction capability marker (permission, hooks, event,
     /// steer) for A6.9-pr3c2. This is a factory-level marker on the
     /// execution-world family, not the per-turn ports: their binding stays
-    /// with A7.2-pr6 (#589). The wrapper preserves whatever execution-world
-    /// source is already configured, so a later `with_tools_mcp` can rebuild
-    /// the native source without dropping the marker.
+    /// with A7.2-pr6 (#589). It records only the builder selection and is
+    /// published regardless of `context.profile()`: consumers keep obeying
+    /// the frozen runtime profile (Interactive/Headless/Disabled) and must
+    /// not enable interaction paths from this marker alone.
+    ///
+    /// Idempotent: calling this on an already-layered source keeps the same
+    /// wrapper instead of wrapping it again. The wrapper preserves whatever
+    /// execution-world source is currently configured; a later
+    /// `with_tools_mcp` replaces that inner source with the native one (see
+    /// [`Self::with_tools_mcp`]) and keeps the marker.
     pub fn with_interaction(mut self) -> Self {
         if !self.execution_world.layers_interaction() {
             let execution_world = Arc::clone(&self.execution_world);

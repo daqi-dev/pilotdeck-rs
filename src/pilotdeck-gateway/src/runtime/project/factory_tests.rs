@@ -199,6 +199,19 @@ fn handle_id(handle: Option<Arc<dyn FamilyResource>>) -> String {
         .to_string()
 }
 
+/// How many recorded events start with `prefix` (e.g. one family's construct,
+/// stage or dispose entries).
+fn count_events(events: &[String], prefix: &str) -> usize {
+    events
+        .iter()
+        .filter(|event| event.starts_with(prefix))
+        .count()
+}
+
+fn has_event(events: &[String], event: &str) -> bool {
+    events.iter().any(|recorded| recorded == event)
+}
+
 // The construct-time details the generator's per-family fakes record, all
 // read through the production StageContext exactly as the real families
 // would read the bundle's stage inputs.
@@ -803,6 +816,295 @@ async fn interaction_preserves_custom_execution_world_source() {
     );
     assert!(context.resource(Resource::Interaction).is_some());
     bounded(group.dispose()).await.unwrap();
+    // The wrapper must stage the custom source exactly once and forward its
+    // disposal exactly once: a double wrap would construct/stage it twice, and
+    // a replaced or lost owner would never be disposed.
+    assert_eq!(
+        probe.events(),
+        [
+            "construct:executionWorld:1",
+            "stage:executionWorld:1",
+            "dispose:executionWorld:1",
+        ]
+    );
+}
+
+/// Stage one interaction-wrapped execution world plus the MCP family and
+/// assert the full capability set, then dispose the group.
+async fn assert_staged_interaction(families: &Families) {
+    assert!(families.execution_world.layers_interaction());
+    let group = interaction_test_group();
+    let context = group.context();
+    stage_tools_and_execution_world(families, &context, &mut group.sink());
+    let interaction = context
+        .resource(Resource::Interaction)
+        .expect("the chain must publish the interaction marker");
+    let execution_world = context
+        .resource(Resource::ExecutionWorld)
+        .expect("the chain must publish the execution world");
+    let owner = context
+        .owner(Family::ExecutionWorld)
+        .expect("the chain must register the execution-world owner");
+    assert!(Arc::ptr_eq(&owner, &execution_world));
+    assert!(!Arc::ptr_eq(&interaction, &execution_world));
+    assert!(context.owner(Family::McpProvider).is_some());
+    bounded(group.dispose()).await.unwrap();
+}
+
+/// `with_interaction` is idempotent: a second call must keep the same wrapper
+/// Arc instead of wrapping again. A double wrapper would stage the custom
+/// source twice, so the exact event sequence is the second guard.
+#[tokio::test]
+async fn repeated_interaction_builder_does_not_double_wrap() {
+    let probe = Arc::new(Probe::default());
+    let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
+        probe: Arc::clone(&probe),
+        family: Family::ExecutionWorld,
+        extra: no_extra,
+        registers_owner: true,
+        stages: true,
+        publishes: &[Resource::ExecutionWorld],
+    });
+    let once = Families {
+        execution_world: custom,
+        ..Families::unwired()
+    }
+    .with_interaction();
+    let wrapper = Arc::clone(&once.execution_world);
+    let twice = once.with_interaction();
+
+    assert!(
+        Arc::ptr_eq(&wrapper, &twice.execution_world),
+        "a repeated with_interaction must reuse the existing wrapper"
+    );
+    let group = interaction_test_group();
+    let context = group.context();
+    twice
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .unwrap();
+    assert!(context.resource(Resource::Interaction).is_some());
+    bounded(group.dispose()).await.unwrap();
+    assert_eq!(
+        probe.events(),
+        [
+            "construct:executionWorld:1",
+            "stage:executionWorld:1",
+            "dispose:executionWorld:1",
+        ],
+        "a double wrapper would stage and dispose the inner source twice"
+    );
+}
+
+/// A supported transparent decorator forwards `layers_interaction` from the
+/// source it delegates to, so the builders recognize the existing layering and
+/// do not wrap it again. A decorator that falls back to the default `false`
+/// is outside the contract and is treated as an ordinary source.
+#[tokio::test]
+async fn forwarding_decorator_keeps_interaction_layering() {
+    struct ForwardingDecorator(Arc<dyn ResourceFamilySource>);
+    impl ResourceFamilySource for ForwardingDecorator {
+        fn family(&self) -> Family {
+            self.0.family()
+        }
+        fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+            self.0.stage(context, sink)
+        }
+        fn layers_interaction(&self) -> bool {
+            self.0.layers_interaction()
+        }
+    }
+
+    let probe = Arc::new(Probe::default());
+    let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
+        probe: Arc::clone(&probe),
+        family: Family::ExecutionWorld,
+        extra: no_extra,
+        registers_owner: true,
+        stages: true,
+        publishes: &[Resource::ExecutionWorld],
+    });
+    let wrapped: Arc<dyn ResourceFamilySource> =
+        Arc::new(crate::runtime::project::interaction::InteractionFamilySource::new(custom));
+    let decorated: Arc<dyn ResourceFamilySource> = Arc::new(ForwardingDecorator(wrapped));
+    let families = Families {
+        execution_world: decorated,
+        ..Families::unwired()
+    };
+    let decorator = Arc::clone(&families.execution_world);
+    let families = families.with_interaction();
+
+    assert!(
+        Arc::ptr_eq(&decorator, &families.execution_world),
+        "a forwarding decorator must be recognized as already interaction-layered"
+    );
+    let group = interaction_test_group();
+    let context = group.context();
+    families
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .unwrap();
+    assert!(context.resource(Resource::Interaction).is_some());
+    assert!(context.resource(Resource::ExecutionWorld).is_some());
+    bounded(group.dispose()).await.unwrap();
+    assert_eq!(
+        probe.events(),
+        [
+            "construct:executionWorld:1",
+            "stage:executionWorld:1",
+            "dispose:executionWorld:1",
+        ]
+    );
+}
+
+/// Builder chains around the interaction selection stay correct: I→T→I,
+/// T→I→T and a repeated T must keep a single marker layering over the native
+/// source. The captured wrapper Arcs pin that `with_interaction` never
+/// double-wraps and that `with_tools_mcp` rebuilds the layer around the native
+/// kernel rather than wrapping the previous wrapper.
+#[tokio::test]
+async fn repeated_builder_chains_keep_interaction_capability() {
+    // I -> T -> I.
+    let chained = Families::unwired().with_interaction().with_tools_mcp();
+    let wrapper = Arc::clone(&chained.execution_world);
+    let chained = chained.with_interaction();
+    assert!(
+        Arc::ptr_eq(&wrapper, &chained.execution_world),
+        "with_interaction after with_tools_mcp must not double-wrap"
+    );
+    assert_staged_interaction(&chained).await;
+
+    // T -> I -> T.
+    let chained = Families::unwired().with_tools_mcp().with_interaction();
+    let first_wrapper = Arc::clone(&chained.execution_world);
+    let chained = chained.with_tools_mcp();
+    assert!(
+        !Arc::ptr_eq(&first_wrapper, &chained.execution_world),
+        "with_tools_mcp must rebuild the layer around the native source"
+    );
+    assert_staged_interaction(&chained).await;
+
+    // I -> T -> T: a repeated with_tools_mcp rebuilds, never stacks wrappers.
+    let chained = Families::unwired().with_interaction().with_tools_mcp();
+    let first_wrapper = Arc::clone(&chained.execution_world);
+    let chained = chained.with_tools_mcp();
+    assert!(
+        !Arc::ptr_eq(&first_wrapper, &chained.execution_world),
+        "a repeated with_tools_mcp must target the native kernel, not the wrapper"
+    );
+    assert_staged_interaction(&chained).await;
+}
+
+/// `with_tools_mcp` replaces a custom execution-world source by design, even
+/// when `with_interaction` was layered first: only the marker selection
+/// survives, the discarded custom kernel never stages.
+#[tokio::test]
+async fn tools_mcp_replaces_custom_execution_world_after_interaction() {
+    let probe = Arc::new(Probe::default());
+    let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
+        probe: Arc::clone(&probe),
+        family: Family::ExecutionWorld,
+        extra: no_extra,
+        registers_owner: true,
+        stages: true,
+        publishes: &[Resource::ExecutionWorld],
+    });
+    let families = Families {
+        execution_world: custom,
+        ..Families::unwired()
+    }
+    .with_interaction()
+    .with_tools_mcp();
+
+    assert!(families.execution_world.layers_interaction());
+    assert_eq!(families.execution_world.family(), Family::ExecutionWorld);
+    let group = interaction_test_group();
+    let context = group.context();
+    families
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .unwrap();
+
+    assert!(context.resource(Resource::Interaction).is_some());
+    let execution_world = context
+        .resource(Resource::ExecutionWorld)
+        .expect("with_tools_mcp must publish the native execution world");
+    assert!(
+        !execution_world.as_any().is::<FakeHandle>(),
+        "the custom execution-world source must be replaced by the native one"
+    );
+    let owner = context.owner(Family::ExecutionWorld).unwrap();
+    assert!(Arc::ptr_eq(&owner, &execution_world));
+    assert!(
+        probe.events().is_empty(),
+        "a replaced custom source must not be constructed or staged"
+    );
+    bounded(group.dispose()).await.unwrap();
+    assert!(
+        probe.events().is_empty(),
+        "a replaced custom source must not be disposed"
+    );
+}
+
+/// The marker records only the builder selection: publishing it must leave the
+/// frozen runtime profile and its permission policy untouched for every
+/// profile, including Disabled and Headless.
+#[tokio::test]
+async fn interaction_marker_does_not_change_runtime_profile() {
+    for name in [
+        InteractionProfileName::Interactive,
+        InteractionProfileName::Headless,
+        InteractionProfileName::Disabled,
+    ] {
+        let profile = InteractionProfile::resolve(name);
+        let group = ProjectResources::new(
+            PathBuf::from("/project"),
+            PathBuf::from("/home"),
+            None,
+            crate::config::Env::new(),
+            Arc::new(|| SystemTime::UNIX_EPOCH),
+            Arc::new(JsValue::Undefined),
+            profile,
+        );
+        let context = group.context();
+        assert_eq!(context.profile(), profile);
+
+        let probe = Arc::new(Probe::default());
+        let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
+            probe,
+            family: Family::ExecutionWorld,
+            extra: no_extra,
+            registers_owner: true,
+            stages: true,
+            publishes: &[Resource::ExecutionWorld],
+        });
+        let families = Families {
+            execution_world: custom,
+            ..Families::unwired()
+        }
+        .with_interaction();
+        families
+            .execution_world
+            .stage(&context, &mut group.sink())
+            .unwrap();
+
+        assert!(
+            context.resource(Resource::Interaction).is_some(),
+            "the marker is a builder selection independent of the profile"
+        );
+        let observed = context.profile();
+        assert_eq!(observed, profile, "the marker must not change the profile");
+        assert_eq!(observed.interaction.name, name);
+        assert_eq!(
+            observed.interaction.can_prompt,
+            profile.interaction.can_prompt
+        );
+        assert_eq!(
+            observed.interaction.permission_provider,
+            profile.interaction.permission_provider
+        );
+        bounded(group.dispose()).await.unwrap();
+    }
 }
 
 /// Negative control: a wrapped execution-world source that fails in the stage
@@ -857,6 +1159,52 @@ async fn interaction_staging_failure_propagates_without_marker() {
             "stage:executionWorld:1",
             "dispose:executionWorld:1"
         ]
+    );
+    assert!(context.resource(Resource::Interaction).is_none());
+}
+
+/// Negative control paired with the stage-phase failure above: an inner
+/// execution-world source that fails in the construct phase (before it can
+/// register a rollback owner) must forward the original error, publish neither
+/// the marker nor an execution-world resource, and leave nothing for disposal.
+#[tokio::test]
+async fn interaction_construct_failure_has_no_owner_or_marker() {
+    let probe = Arc::new(Probe::default());
+    *probe.fail.lock().unwrap() = Some((Family::ExecutionWorld, Phase::Construct));
+    let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
+        probe: Arc::clone(&probe),
+        family: Family::ExecutionWorld,
+        extra: no_extra,
+        registers_owner: true,
+        stages: true,
+        publishes: &[Resource::ExecutionWorld],
+    });
+    let families = Families {
+        execution_world: custom,
+        ..Families::unwired()
+    }
+    .with_interaction();
+
+    let group = interaction_test_group();
+    let context = group.context();
+    let error = families
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .expect_err("a failing execution-world construct must abort interaction staging");
+
+    assert_eq!(
+        error,
+        RuntimeError::new("construct failed:executionWorld:1"),
+        "the wrapper must forward the inner construct error unchanged"
+    );
+    assert!(context.owner(Family::ExecutionWorld).is_none());
+    assert!(context.resource(Resource::ExecutionWorld).is_none());
+    assert!(context.resource(Resource::Interaction).is_none());
+    bounded(group.dispose()).await.unwrap();
+    assert_eq!(
+        probe.events(),
+        ["construct:executionWorld:1"],
+        "a construct-phase failure registers no owner, so disposal emits nothing"
     );
     assert!(context.resource(Resource::Interaction).is_none());
 }
@@ -1272,4 +1620,242 @@ async fn custom_router_registry_stages_after_plugins() {
 
     drop(lease);
     bounded(registry.dispose()).await.unwrap();
+}
+
+/// Registry over the production factory with native model/tools/plugins and
+/// the production interaction wrapper; only families whose native wiring has
+/// not landed are recording fakes. The chain is the sibling of the plugin
+/// coverage above: it exercises resolve -> publication -> lease -> dispose with
+/// the marker present.
+fn interaction_native_registry(
+    scratch: &Scratch,
+    probe: &Arc<Probe>,
+) -> (ProjectRuntimeRegistry, PathBuf) {
+    use crate::runtime::plugins::PluginRuntimeOptions;
+    const CONFIG_YAML: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
+
+    let project_root = scratch.0.join("interaction-project");
+    let pilot_home = scratch.0.join("interaction-pilot-home");
+    std::fs::create_dir_all(project_root.join(".pilotdeck")).unwrap();
+    std::fs::create_dir(&pilot_home).unwrap();
+    std::fs::write(pilot_home.join("pilotdeck.yaml"), CONFIG_YAML).unwrap();
+    std::fs::write(project_root.join(".pilotdeck/pilotdeck.yaml"), CONFIG_YAML).unwrap();
+    let mut env = Env::new();
+    env.insert("PILOT_HOME".into(), pilot_home.to_str().unwrap().into());
+
+    let plugin_options = PluginRuntimeOptions {
+        project_root: project_root.clone(),
+        pilot_home: pilot_home.clone(),
+        builtin_skills_root: None,
+        builtin_plugins: Vec::new(),
+        builtin_plugins_enabled: std::collections::HashMap::new(),
+    };
+    let other_family = |family| -> Arc<dyn ResourceFamilySource> {
+        Arc::new(FakeSource {
+            probe: Arc::clone(probe),
+            family,
+            extra: no_extra,
+            registers_owner: family != Family::ContextStorage,
+            stages: true,
+            publishes: &[],
+        })
+    };
+    let families = Families {
+        lsp: Some(other_family(Family::LspService)),
+        context_storage: other_family(Family::ContextStorage),
+        session_title: Some(other_family(Family::SessionTitleProvider)),
+        memory: other_family(Family::MemoryBundle),
+        ..Families::unwired()
+    }
+    .with_native_models()
+    .with_tools_mcp()
+    .with_plugins(plugin_options)
+    .with_interaction();
+
+    let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+        pilot_home: pilot_home.clone(),
+        cwd: scratch.0.to_path_buf(),
+        env,
+        homedir: Some(pilot_home),
+        builtin_skills_root: None,
+        now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        config_version: None,
+        runtime_profile_overrides: RuntimeProfileOverrides::default(),
+        families,
+    });
+    let registry = ProjectRuntimeRegistry::new(&project_root, Arc::new(factory));
+    (registry, project_root)
+}
+
+/// Positive registry control: the production factory stages the interaction
+/// wrapper through the real registry, publishes one usable generation, and
+/// disposes every fake owner exactly once.
+#[tokio::test]
+async fn interaction_registry_resolve_stages_and_disposes() {
+    let scratch = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let (registry, project_root) = interaction_native_registry(&scratch, &probe);
+
+    let runtime = registry
+        .resolve(Some(&project_root))
+        .expect("interaction-wrapped staging must publish a generation");
+    let lease = runtime
+        .acquire()
+        .expect("the published generation is active");
+    let context = lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .expect("Factory resources should be published")
+        .context();
+    let interaction = context
+        .resource(Resource::Interaction)
+        .expect("the published generation must carry the interaction marker");
+    let execution_world = context
+        .resource(Resource::ExecutionWorld)
+        .expect("the published generation must carry the execution world");
+    assert!(
+        !execution_world.as_any().is::<FakeHandle>(),
+        "the native execution-world source must be staged under the wrapper"
+    );
+    assert!(Arc::ptr_eq(
+        &context.owner(Family::ExecutionWorld).unwrap(),
+        &execution_world
+    ));
+    assert!(!Arc::ptr_eq(&interaction, &execution_world));
+    assert!(context.owner(Family::McpProvider).is_some());
+    assert_eq!(
+        context.profile().interaction.name,
+        InteractionProfileName::Interactive,
+        "the marker must not switch the config's default profile"
+    );
+
+    drop(lease);
+    bounded(registry.dispose()).await.unwrap();
+    assert_eq!(runtime.state().as_str(), "disposed");
+    bounded(runtime.wait_disposed()).await.unwrap();
+    let events = probe.events();
+    for family in ["lspService", "sessionTitleProvider", "memoryBundle"] {
+        assert_eq!(
+            count_events(&events, &format!("dispose:{family}:")),
+            1,
+            "{family} must be disposed exactly once"
+        );
+    }
+}
+
+/// Registry over the production factory whose family constructors are the
+/// recording fakes, with the production interaction wrapper layered over the
+/// fake execution-world source. Only the wrapper is production here; the
+/// fixture observes rollback of the wrapped owner and of later families.
+fn interaction_fake_registry(scratch: &Scratch, probe: &Arc<Probe>) -> ProjectRuntimeRegistry {
+    std::fs::create_dir_all(scratch.0.join("a/.pilotdeck")).unwrap();
+    std::fs::write(
+        scratch.0.join("a/.pilotdeck/pilotdeck.yaml"),
+        PROJECT_CONFIGS[0].1,
+    )
+    .unwrap();
+    std::fs::create_dir_all(scratch.0.join("config-home")).unwrap();
+    std::fs::write(scratch.0.join("config-home/pilotdeck.yaml"), GLOBAL_YAML).unwrap();
+    let mut env = crate::config::Env::new();
+    env.insert(
+        "PILOT_HOME".to_owned(),
+        scratch.0.join("config-home").to_string_lossy().into_owned(),
+    );
+    let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+        pilot_home: scratch.0.join("home"),
+        cwd: scratch.0.to_path_buf(),
+        env,
+        homedir: Some(scratch.0.join("home")),
+        builtin_skills_root: None,
+        now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        config_version: None,
+        runtime_profile_overrides: RuntimeProfileOverrides::default(),
+        families: families(probe).with_interaction(),
+    });
+    ProjectRuntimeRegistry::new(scratch.0.join("fallback"), Arc::new(factory))
+}
+
+/// Negative registry control: a family failing after the interaction wrapper
+/// was staged must not publish the generation. Already registered owners roll
+/// back exactly once, and a retry stages a fresh generation rather than
+/// consuming the failed one's capabilities. The marker itself is stateless and
+/// has no dispose entry; only the wrapped execution-world owner is observed.
+#[tokio::test]
+async fn interaction_registry_rolls_back_failed_post_interaction_family() {
+    let scratch = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    *probe.fail.lock().unwrap() = Some((Family::MemoryBundle, Phase::Stage));
+    let registry = interaction_fake_registry(&scratch, &probe);
+    let root = scratch.0.join("a");
+
+    let error = registry
+        .resolve(Some(&root))
+        .expect_err("a post-interaction family failure must fail the generation");
+    assert_eq!(error, RuntimeError::new("stage failed:memoryBundle:12"));
+    until(|| has_event(&probe.events(), "dispose:memoryBundle:12")).await;
+    settle().await;
+    let events = probe.events();
+    assert_eq!(count_events(&events, "construct:executionWorld:"), 1);
+    assert_eq!(count_events(&events, "stage:executionWorld:"), 1);
+    assert_eq!(
+        count_events(&events, "dispose:executionWorld:"),
+        1,
+        "the wrapped execution-world owner must roll back exactly once"
+    );
+    assert_eq!(count_events(&events, "dispose:mcpProvider:"), 1);
+    assert_eq!(
+        count_events(&events, "dispose:memoryBundle:"),
+        1,
+        "the failing family's registered owner must roll back exactly once"
+    );
+
+    // The failed generation was never published into the registry: a second
+    // resolve stages every family again with fresh handles.
+    let error = registry
+        .resolve(Some(&root))
+        .expect_err("the retry must fail until the injected failure is cleared");
+    assert_eq!(error, RuntimeError::new("stage failed:memoryBundle:24"));
+    until(|| has_event(&probe.events(), "dispose:memoryBundle:24")).await;
+    settle().await;
+    let events = probe.events();
+    assert_eq!(count_events(&events, "construct:executionWorld:"), 2);
+    assert_eq!(count_events(&events, "stage:executionWorld:"), 2);
+    assert_eq!(count_events(&events, "dispose:executionWorld:"), 2);
+    assert_eq!(
+        count_events(&events, "dispose:executionWorld:6"),
+        1,
+        "the first failed generation's owner must not be disposed twice"
+    );
+    assert_eq!(count_events(&events, "dispose:executionWorld:18"), 1);
+
+    // A subsequent complete generation is fresh: it owns new handles and is
+    // the only one carrying the published marker.
+    *probe.fail.lock().unwrap() = None;
+    let runtime = registry
+        .resolve(Some(&root))
+        .expect("a complete generation must publish");
+    let lease = runtime
+        .acquire()
+        .expect("the published generation is active");
+    let context = lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .expect("Factory resources should be published")
+        .context();
+    assert!(context.resource(Resource::Interaction).is_some());
+    assert_eq!(
+        handle_id(context.resource(Resource::ExecutionWorld)),
+        "30",
+        "the published generation must not reuse a failed generation's handles"
+    );
+    drop(lease);
+    bounded(registry.dispose()).await.unwrap();
+    assert_eq!(runtime.state().as_str(), "disposed");
+    let events = probe.events();
+    assert_eq!(count_events(&events, "dispose:executionWorld:30"), 1);
+    assert_eq!(count_events(&events, "dispose:executionWorld:6"), 1);
+    assert_eq!(count_events(&events, "dispose:executionWorld:18"), 1);
+    assert_eq!(count_events(&events, "dispose:memoryBundle:36"), 1);
 }
