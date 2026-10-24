@@ -817,8 +817,9 @@ async fn interaction_preserves_custom_execution_world_source() {
     assert!(context.resource(Resource::Interaction).is_some());
     bounded(group.dispose()).await.unwrap();
     // The wrapper must stage the custom source exactly once and forward its
-    // disposal exactly once: a double wrap would construct/stage it twice, and
-    // a replaced or lost owner would never be disposed.
+    // disposal exactly once. These counts pin only a direct duplicate
+    // stage/dispose (or a lost owner, which would leave no dispose event);
+    // repeated wrapping itself is caught by Arc::ptr_eq, not by them.
     assert_eq!(
         probe.events(),
         [
@@ -830,7 +831,9 @@ async fn interaction_preserves_custom_execution_world_source() {
 }
 
 /// Stage one interaction-wrapped execution world plus the MCP family and
-/// assert the full capability set, then dispose the group.
+/// assert the full capability set, then dispose the group. Every caller has
+/// just run `with_tools_mcp`, so the staged execution world must be the native
+/// source rather than a fixture kernel.
 async fn assert_staged_interaction(families: &Families) {
     assert!(families.execution_world.layers_interaction());
     let group = interaction_test_group();
@@ -842,6 +845,10 @@ async fn assert_staged_interaction(families: &Families) {
     let execution_world = context
         .resource(Resource::ExecutionWorld)
         .expect("the chain must publish the execution world");
+    assert!(
+        !execution_world.as_any().is::<FakeHandle>(),
+        "with_tools_mcp must stage the native execution world, not a custom kernel"
+    );
     let owner = context
         .owner(Family::ExecutionWorld)
         .expect("the chain must register the execution-world owner");
@@ -852,8 +859,9 @@ async fn assert_staged_interaction(families: &Families) {
 }
 
 /// `with_interaction` is idempotent: a second call must keep the same wrapper
-/// Arc instead of wrapping again. A double wrapper would stage the custom
-/// source twice, so the exact event sequence is the second guard.
+/// Arc instead of wrapping again. Arc::ptr_eq is the direct guard; the exact
+/// event sequence only pins that this wrapper stages and disposes the inner
+/// source once, i.e. it has no direct duplicate stage/dispose.
 #[tokio::test]
 async fn repeated_interaction_builder_does_not_double_wrap() {
     let probe = Arc::new(Probe::default());
@@ -892,14 +900,16 @@ async fn repeated_interaction_builder_does_not_double_wrap() {
             "stage:executionWorld:1",
             "dispose:executionWorld:1",
         ],
-        "a double wrapper would stage and dispose the inner source twice"
+        "the inner source must be staged and disposed exactly once"
     );
 }
 
 /// A supported transparent decorator forwards `layers_interaction` from the
 /// source it delegates to, so the builders recognize the existing layering and
 /// do not wrap it again. A decorator that falls back to the default `false`
-/// is outside the contract and is treated as an ordinary source.
+/// is outside the contract and is treated as an ordinary source. A later
+/// `with_tools_mcp` still keeps the marker but rebuilds it around the native
+/// source, replacing the decorator and its custom kernel.
 #[tokio::test]
 async fn forwarding_decorator_keeps_interaction_layering() {
     struct ForwardingDecorator(Arc<dyn ResourceFamilySource>);
@@ -954,6 +964,24 @@ async fn forwarding_decorator_keeps_interaction_layering() {
             "stage:executionWorld:1",
             "dispose:executionWorld:1",
         ]
+    );
+
+    // Second segment: even after a forwarding decorator, `with_tools_mcp`
+    // keeps the marker but rebuilds the layering as a fresh
+    // InteractionFamilySource around the native source. The decorator and the
+    // custom kernel it wrapped are both replaced, so the discarded custom
+    // source must never be constructed, staged or disposed.
+    let events_before = probe.events();
+    let families = families.with_tools_mcp();
+    assert!(
+        !Arc::ptr_eq(&decorator, &families.execution_world),
+        "with_tools_mcp must replace the decorated custom chain"
+    );
+    assert_staged_interaction(&families).await;
+    assert_eq!(
+        probe.events(),
+        events_before,
+        "the discarded decorator and custom kernel must not be staged or disposed"
     );
 }
 
@@ -1056,7 +1084,13 @@ async fn interaction_marker_does_not_change_runtime_profile() {
         InteractionProfileName::Headless,
         InteractionProfileName::Disabled,
     ] {
-        let profile = InteractionProfile::resolve(name);
+        let profile = RuntimeProfile::resolve(
+            &JsValue::Undefined,
+            &RuntimeProfileOverrides {
+                interaction_profile_override: Some(name),
+                ..RuntimeProfileOverrides::default()
+            },
+        );
         let group = ProjectResources::new(
             PathBuf::from("/project"),
             PathBuf::from("/home"),
@@ -1789,9 +1823,10 @@ async fn interaction_registry_rolls_back_failed_post_interaction_family() {
     let registry = interaction_fake_registry(&scratch, &probe);
     let root = scratch.0.join("a");
 
-    let error = registry
-        .resolve(Some(&root))
-        .expect_err("a post-interaction family failure must fail the generation");
+    let error = match registry.resolve(Some(&root)) {
+        Err(error) => error,
+        Ok(_) => panic!("a post-interaction family failure must fail the generation"),
+    };
     assert_eq!(error, RuntimeError::new("stage failed:memoryBundle:12"));
     until(|| has_event(&probe.events(), "dispose:memoryBundle:12")).await;
     settle().await;
@@ -1812,9 +1847,10 @@ async fn interaction_registry_rolls_back_failed_post_interaction_family() {
 
     // The failed generation was never published into the registry: a second
     // resolve stages every family again with fresh handles.
-    let error = registry
-        .resolve(Some(&root))
-        .expect_err("the retry must fail until the injected failure is cleared");
+    let error = match registry.resolve(Some(&root)) {
+        Err(error) => error,
+        Ok(_) => panic!("the retry must fail until the injected failure is cleared"),
+    };
     assert_eq!(error, RuntimeError::new("stage failed:memoryBundle:24"));
     until(|| has_event(&probe.events(), "dispose:memoryBundle:24")).await;
     settle().await;

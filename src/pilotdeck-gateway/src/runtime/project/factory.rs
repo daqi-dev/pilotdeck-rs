@@ -346,8 +346,10 @@ pub trait ResourceFamilySource: Send + Sync {
     /// wraps an interaction-layered source must forward the answer rather
     /// than fall back to the default. [`Families::with_tools_mcp`] always
     /// replaces the execution-world kernel with the native source (including
-    /// a custom kernel) and preserves only the marker layering, so it can
-    /// rebuild a supported transparent wrapper but not arbitrary decorators.
+    /// a custom kernel) and rebuilds the marker layering as a fresh
+    /// `InteractionFamilySource` around that native source; any decorator
+    /// outside it, transparent or not, is replaced too. Only the marker
+    /// selection survives.
     /// Sources that answer `true` without publishing the marker, or `false`
     /// while publishing it, are outside this contract: the builders neither
     /// detect nor repair such a false declaration.
@@ -474,8 +476,10 @@ impl Families {
     /// is never staged. If the interaction marker is already layered over the
     /// execution world, keep the marker layering by wrapping the new native
     /// source: only the marker selection is preserved, not the discarded
-    /// custom kernel. That makes `with_interaction` and `with_tools_mcp`
-    /// independent of call order.
+    /// custom kernel. The rebuilt layering is a fresh
+    /// `InteractionFamilySource` around the native source, so a decorator that
+    /// wrapped the custom kernel is replaced as well. That makes
+    /// `with_interaction` and `with_tools_mcp` independent of call order.
     pub fn with_tools_mcp(mut self) -> Self {
         self.mcp = Arc::new(super::tools_mcp::McpFamilySource);
         let execution_world: Arc<dyn ResourceFamilySource> =
