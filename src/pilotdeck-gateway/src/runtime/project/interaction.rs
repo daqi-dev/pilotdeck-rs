@@ -53,13 +53,16 @@ impl FamilyResource for InteractionResource {
 /// resource intact, so `with_interaction` composes with `with_tools_mcp` in
 /// either order and preserves a custom execution-world source until a builder
 /// replaces that kernel. `with_tools_mcp` always swaps in the native source and
-/// keeps only this marker layering.
+/// rebuilds this wrapper around it; any decorator outside the wrapper is
+/// replaced as well, so only the marker selection survives.
 ///
-/// This is a transparent wrapper and therefore forwards
-/// `layers_interaction() == true`. Any decorator placed between this wrapper
-/// and the execution world must likewise forward the answer of the source it
-/// delegates to; otherwise the builders treat it as an ordinary source and may
-/// replace or re-wrap it (see `ResourceFamilySource::layers_interaction`).
+/// This wrapper publishes the marker itself, so it answers
+/// `layers_interaction() == true` regardless of the wrapped source's answer;
+/// it does not forward that answer from the kernel. A transparent decorator
+/// placed outside this wrapper must forward this wrapper's answer so the
+/// builders recognize the existing layering; otherwise they treat it as an
+/// ordinary source and may replace it (see
+/// `ResourceFamilySource::layers_interaction`).
 pub struct InteractionFamilySource {
     execution_world: Arc<dyn ResourceFamilySource>,
 }
