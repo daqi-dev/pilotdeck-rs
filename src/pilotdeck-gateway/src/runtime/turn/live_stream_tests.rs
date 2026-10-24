@@ -66,6 +66,7 @@ fn stream(execution: HostFuture<ExecuteResult>, events: mpsc::Receiver<JsValue>)
             .identity,
         input: input(),
         integrity: StreamIntegrity::new(),
+        active: None,
     }
 }
 
@@ -139,7 +140,7 @@ async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
         Ok(ExecuteResult::Terminal(final_frame))
     });
     let mut turn = stream(execution, rx);
-    // Isolate P1-2's terminal mapping from P1-1's explicitly deferred wiring.
+    // Isolate terminal mapping from the explicitly deferred event observation.
     // The real HostClient test below keeps the production integrity state.
     for event in ["turn_started", "input_accepted", "turn_completed"] {
         turn.integrity.observe_event(event).unwrap();
@@ -247,15 +248,22 @@ async fn aborted_result_already_supplied_by_host_is_projected_once() {
     assert_eq!(next(&mut turn).await.unwrap(), None);
 }
 
-async fn session(mode: &str, handler: Arc<Handler>) -> LiveSessionAdapter {
+async fn spawn_client(mode: &str) -> Result<HostClient, HostError> {
     let mut command = Command::new("python3");
-    command
-        .arg(concat!(
+    if mode == "live-payload" {
+        command.arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../scripts/a6-host/fixture.py"
-        ))
-        .arg(mode);
-    let client = HostClient::spawn(
+            "/tests/fixtures/live-session/peer.py"
+        ));
+    } else {
+        command
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../scripts/a6-host/fixture.py"
+            ))
+            .arg(mode);
+    }
+    HostClient::spawn(
         &mut command,
         Some(&"fixture".into()),
         Limits {
@@ -265,8 +273,26 @@ async fn session(mode: &str, handler: Arc<Handler>) -> LiveSessionAdapter {
         },
     )
     .await
-    .unwrap();
-    LiveSessionAdapter::new(client, handler)
+}
+
+async fn session(mode: &str, handler: Arc<Handler>) -> LiveSessionAdapter {
+    // Pre-connect the first test client so abort-before-execute still exercises
+    // HostClient's cleanup. Later turns must create their own connection.
+    let initial = Mutex::new(Some(spawn_client(mode).await.unwrap()));
+    let mode = mode.to_owned();
+    LiveSessionAdapter::new(move || {
+        let initial = initial.lock().unwrap().take();
+        let mode = mode.clone();
+        // This test double only records lifecycle calls; it owns no modules.
+        let handler = handler.clone();
+        Box::pin(async move {
+            let client = match initial {
+                Some(client) => client,
+                None => spawn_client(&mode).await?,
+            };
+            Ok((client, handler as Arc<dyn HostHandler>))
+        })
+    })
 }
 
 #[tokio::test]
@@ -280,7 +306,7 @@ async fn host_stream_forwards_multiple_events_before_deferred_integrity_error() 
         assert_eq!(event.get("text"), Some(&"hello".into()));
         assert!(event.get("payload").is_none());
     }
-    // P1-1 is outside this patch: retain the existing fail-closed terminal gate.
+    // Event observation remains deferred; keep the fail-closed terminal gate.
     assert!(
         next(turn.as_mut())
             .await
@@ -337,4 +363,189 @@ async fn dropping_an_active_stream_disposes_its_host_handler() {
     .await
     .expect("dropping execute must dispose its handler");
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    let mut second = session.submit(input(), options()).unwrap();
+    assert!(next(second.as_mut()).await.unwrap().is_some());
+}
+
+#[test]
+fn execute_request_preserves_input_fields_and_option_identity() {
+    let mut payload = input().as_object().unwrap().clone();
+    payload.insert("provider".into(), "custom-provider".into());
+    payload.insert("model".into(), "custom-model".into());
+    payload.insert("turnId".into(), "payload-turn".into());
+    payload.insert(
+        "contextOverride".into(),
+        parse_json(r#"{"messages":[],"custom":{"enabled":true}}"#).unwrap(),
+    );
+    let request = parse_execute_request(&JsValue::Object(payload.clone()), &options()).unwrap();
+    assert_eq!(request.payload, payload);
+    assert_eq!(request.identity.session_id, JsString::from("session"));
+    assert_eq!(request.identity.turn_id, JsString::from("turn"));
+    assert_eq!(request.identity.run_id, JsString::from("run"));
+    assert_eq!(request.identity.operation_id, JsString::from("operation"));
+    assert_eq!(request.identity.request_id, JsString::from("request"));
+}
+
+#[test]
+fn execute_request_rejects_non_object_input() {
+    for invalid in [
+        JsValue::Undefined,
+        JsValue::Null,
+        JsValue::Bool(true),
+        JsValue::Number(1.0),
+        "message".into(),
+        JsValue::Array(vec![]),
+    ] {
+        assert!(
+            parse_execute_request(&invalid, &options())
+                .unwrap_err()
+                .message
+                .contains("Expected execution input object")
+        );
+    }
+}
+
+#[tokio::test]
+async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
+    let handlers = Arc::new(Mutex::new(Vec::new()));
+    let created = handlers.clone();
+    let session = LiveSessionAdapter::new(move || {
+        let created = created.clone();
+        Box::pin(async move {
+            let client = spawn_client("live-payload").await?;
+            let handler = Arc::new(Handler::default());
+            created.lock().unwrap().push(handler.clone());
+            Ok((client, handler as Arc<dyn HostHandler>))
+        })
+    });
+    for number in 1_u32..=2 {
+        let turn_id = JsValue::String(format!("turn-{number}").into());
+        let mut payload = input().as_object().unwrap().clone();
+        payload.insert("custom".into(), JsValue::Number(f64::from(number)));
+        payload.insert(
+            "model".into(),
+            JsValue::String(format!("model-{number}").into()),
+        );
+        let JsValue::Array(messages) = payload.get("messages").unwrap() else {
+            panic!("test input must contain messages");
+        };
+        let mut messages = messages.clone();
+        messages
+            .push(parse_json(&format!(r#"{{"role":"user","content":"turn-{number}"}}"#)).unwrap());
+        payload.insert("messages".into(), JsValue::Array(messages));
+        let payload = JsValue::Object(payload);
+        let mut turn_options = options().as_object().unwrap().clone();
+        turn_options.insert("turnId".into(), turn_id.clone());
+        let mut turn = session
+            .submit(payload.clone(), JsValue::Object(turn_options))
+            .unwrap();
+        assert!(session.submit(input(), options()).is_err());
+        let received = next(turn.as_mut()).await.unwrap().unwrap();
+        assert_eq!(received.get("receivedPayload"), Some(&payload));
+        assert_eq!(received.get("turnId"), Some(&turn_id));
+        // Keep the existing terminal gate: event observation is still deferred.
+        assert!(
+            next(turn.as_mut())
+                .await
+                .unwrap_err()
+                .message
+                .contains("without proper completion")
+        );
+        assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+        let handlers = handlers.lock().unwrap();
+        assert_eq!(handlers.len(), number as usize);
+        assert_eq!(handlers.last().unwrap().disposed.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn invalid_submit_does_not_consume_the_session() {
+    let session = session("turn-completed", Arc::new(Handler::default())).await;
+    assert!(session.submit(JsValue::Null, options()).is_err());
+    assert!(session.submit(input(), JsValue::Null).is_err());
+    let mut turn = session.submit(input(), options()).unwrap();
+    assert!(next(turn.as_mut()).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn unpolled_drop_and_factory_failure_release_the_active_turn() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let created = calls.clone();
+    let session = LiveSessionAdapter::new(move || {
+        created.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Err(HostError::new(HostErrorKind::Io, "spawn failed")) })
+    });
+    let turn = session.submit(input(), options()).unwrap();
+    assert!(session.submit(input(), options()).is_err());
+    drop(turn);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    for expected_calls in 1..=2 {
+        let mut turn = session.submit(input(), options()).unwrap();
+        assert!(
+            next(turn.as_mut())
+                .await
+                .unwrap_err()
+                .message
+                .contains("spawn failed")
+        );
+        assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+        assert_eq!(calls.load(Ordering::SeqCst), expected_calls);
+    }
+}
+
+#[tokio::test]
+async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
+    let handler = Arc::new(Handler::default());
+    let session = session("cancel-compaction", handler.clone()).await;
+    let mut first = session.submit(input(), options()).unwrap();
+    assert!(next(first.as_mut()).await.unwrap().is_some());
+    session
+        .abort(&"compaction_persistence_failed".into())
+        .unwrap();
+    assert_aborted(&next(first.as_mut()).await.unwrap().unwrap());
+    assert_eq!(next(first.as_mut()).await.unwrap(), None);
+    let mut second = session.submit(input(), options()).unwrap();
+    // A new turn must reach the sidecar instead of inheriting the old abort.
+    assert_eq!(
+        next(second.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"text_delta".into())
+    );
+    session
+        .abort(&"compaction_persistence_failed".into())
+        .unwrap();
+    session.dispose().await.unwrap();
+    assert!(session.submit(input(), options()).is_err());
+    assert_aborted(&next(second.as_mut()).await.unwrap().unwrap());
+    assert_eq!(next(second.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn dispose_cancels_pending_host_creation_and_rejects_future_submits() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let entered = started.clone();
+    let session = LiveSessionAdapter::new(move || {
+        entered.notify_one();
+        Box::pin(std::future::pending())
+    });
+    let mut turn = session.submit(input(), options()).unwrap();
+    let mut pending = turn.next();
+    timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            result = &mut pending => panic!("host creation must still be pending: {result:?}"),
+            _ = started.notified() => {}
+        }
+    })
+    .await
+    .expect("host factory must start");
+    session.dispose().await.unwrap();
+    assert_aborted(
+        &timeout(Duration::from_secs(5), pending)
+            .await
+            .expect("dispose must interrupt host creation")
+            .unwrap()
+            .unwrap(),
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert!(session.submit(input(), options()).is_err());
 }
