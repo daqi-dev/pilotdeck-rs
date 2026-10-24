@@ -274,9 +274,8 @@ impl GatewayRequests for Requests {
                 return self
                     .0
                     .reconnect(owner, Some(next.clone()), Some(&previous))
-                    .map(|result| {
+                    .inspect(|_| {
                         assert_eq!(self.0.get_binding(owner), Some(next));
-                        result
                     })
                     .map_err(|e| RequestError::new(format!("{e:?}")));
             }
