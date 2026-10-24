@@ -1491,3 +1491,93 @@ fn turn_scope_drop_after_runtime_shutdown_does_not_panic() {
     assert!(dropped.is_ok(), "TurnScope::drop panicked after shutdown");
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 0);
 }
+
+/// A handler that records what the `validate_event` hook observed and can be
+/// told to fail on one payload type, for testing the hook's own contract.
+struct RecordingHook {
+    seen: std::sync::Mutex<Vec<String>>,
+    applied: AtomicUsize,
+    fail_on: Option<&'static str>,
+}
+impl Default for RecordingHook {
+    fn default() -> Self {
+        Self {
+            seen: std::sync::Mutex::new(Vec::new()),
+            applied: AtomicUsize::new(0),
+            fail_on: None,
+        }
+    }
+}
+impl HostHandler for RecordingHook {
+    fn module_call(&self, _call: JsValue) -> HostFuture<JsObject> {
+        Box::pin(async { Ok(JsObject::new()) })
+    }
+    fn event(&self, _event: JsValue) -> HostFuture<()> {
+        self.applied.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(()) })
+    }
+    fn validate_event(&self, payload: &JsValue) -> Result<(), HostError> {
+        let name = String::from_utf16_lossy(
+            payload
+                .get("type")
+                .and_then(JsValue::as_string)
+                .expect("validated event payload type")
+                .units(),
+        );
+        self.seen.lock().unwrap().push(name.clone());
+        if self.fail_on == Some(name.as_str()) {
+            return Err(HostError::protocol(format!("test hook rejected {name}")));
+        }
+        Ok(())
+    }
+}
+async fn run_with(mode: &str, handler: Arc<dyn HostHandler>) -> Result<ExecuteResult, HostError> {
+    let (mut command, receipt) = peer(mode);
+    let client = HostClient::spawn(&mut command, Some(&"fixture".into()), limits()).await?;
+    let result = client.execute(request(), handler).await;
+    if result.is_ok() {
+        receipt.assert_pass(mode);
+    }
+    result
+}
+#[tokio::test]
+async fn validate_event_hook_runs_after_suppression_and_skips_finals() {
+    // Mode "turn-completed" streams text_delta(0), the sidecar's own
+    // turn_completed(1) which the host suppresses as non-authoritative, then
+    // text_delta(2) and the final(3). The hook must see exactly the two
+    // text_delta payloads: the suppressed event never reaches it and the
+    // authoritative final is projected by the caller instead. The peer's ack
+    // assertion (lastAppliedSequence 2) proves ACK still follows application.
+    let handler = Arc::new(RecordingHook::default());
+    let result = run_with("turn-completed", handler.clone()).await.unwrap();
+    assert!(matches!(result, ExecuteResult::Terminal(_)));
+    assert_eq!(
+        *handler.seen.lock().unwrap(),
+        ["text_delta", "text_delta"],
+        "hook must observe wire-received non-final events after suppression"
+    );
+    // text_delta(0), text_delta(2), and the final(3) are all applied — the
+    // final carries the result and messages. Only the suppressed
+    // turn_completed(1) never reaches the handler.
+    assert_eq!(handler.applied.load(Ordering::SeqCst), 3);
+    println!("HOST_PASS validate_event ordering: suppressed and final events skipped");
+}
+#[tokio::test]
+async fn validate_event_failure_fails_execution_before_application() {
+    // A hook rejection fails the execution closed: the violating event is
+    // never applied and never ACKed. The peer stays stuck waiting for the
+    // ack of sequence 0, so no receipt is written on the error path.
+    let handler = Arc::new(RecordingHook {
+        fail_on: Some("text_delta"),
+        ..RecordingHook::default()
+    });
+    let result = run_with("positive", handler.clone()).await;
+    let error = result.expect_err("hook rejection must fail the execution");
+    assert_eq!(error.kind, HostErrorKind::Protocol);
+    assert!(error.message.contains("test hook rejected text_delta"));
+    assert_eq!(
+        handler.applied.load(Ordering::SeqCst),
+        0,
+        "a violating event must not be applied to the handler"
+    );
+}

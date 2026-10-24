@@ -65,7 +65,14 @@ fn wire(payload: &JsValue, final_event: bool) -> JsValue {
     JsValue::Object(event)
 }
 
-fn stream(execution: HostFuture<ExecuteResult>, events: mpsc::Receiver<JsValue>) -> LiveTurnStream {
+fn stream(
+    execution: HostFuture<ExecuteResult>,
+    events: mpsc::Receiver<JsValue>,
+    integrity: Arc<StreamIntegrity>,
+) -> LiveTurnStream {
+    // Directly-built streams bypass the host receive path, so nothing has
+    // been observed by the hook; finish() then rejects any Terminal unless
+    // the test also drives the StreamHandler's validate_event in host order.
     LiveTurnStream {
         execution: Some(execution),
         result: None,
@@ -74,12 +81,23 @@ fn stream(execution: HostFuture<ExecuteResult>, events: mpsc::Receiver<JsValue>)
             .unwrap()
             .identity,
         input: input(),
-        integrity: StreamIntegrity::new(),
-        violated: false,
+        integrity,
         active: None,
-        // A stream built directly is never cancelled: strict terminal checks.
-        cancellation: Cancellation::default(),
     }
+}
+
+/// Simulate the host's receive order for one event: wire validation, the
+/// synchronous lifecycle hook, then application (which publishes the payload
+/// to the session consumer). Finals skip the hook, like the host does.
+async fn deliver(
+    handler: &StreamHandler,
+    payload: &JsValue,
+    final_event: bool,
+) -> Result<(), HostError> {
+    if !final_event {
+        handler.validate_event(payload)?;
+    }
+    handler.event(wire(payload, final_event)).await
 }
 
 async fn next(turn: &mut dyn LiveTurn) -> Result<Option<JsValue>, RuntimeError> {
@@ -136,22 +154,27 @@ async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
     let terminal = parse_json(r#"{"result":{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1},"messages":[]}"#).unwrap();
     let (tx, rx) = mpsc::channel(1);
     let inner = Arc::new(Handler::default());
-    let handler = StreamHandler {
+    let handler = Arc::new(StreamHandler {
         inner: inner.clone(),
         events: tx,
-    };
-    let sent = expected.clone();
-    let final_frame = wire(&terminal, true);
-    let execution = Box::pin(async move {
-        handler.module_call(JsValue::Null).await?;
-        for event in sent {
-            handler.event(wire(&event, false)).await?;
-        }
-        handler.event(final_frame.clone()).await?;
-        handler.dispose().await?;
-        Ok(ExecuteResult::Terminal(final_frame))
+        integrity: Arc::new(StreamIntegrity::new()),
     });
-    let mut turn = stream(execution, rx);
+    let integrity = handler.integrity.clone();
+    let sent = expected.clone();
+    let final_terminal = terminal.clone();
+    let mut turn = stream(
+        Box::pin(async move {
+            handler.module_call(JsValue::Null).await?;
+            for event in &sent {
+                deliver(&handler, event, false).await?;
+            }
+            deliver(&handler, &final_terminal, true).await?;
+            handler.dispose().await?;
+            Ok(ExecuteResult::Terminal(wire(&final_terminal, true)))
+        }),
+        rx,
+        integrity,
+    );
     for event in expected {
         assert_eq!(next(&mut turn).await.unwrap(), Some(event));
     }
@@ -178,6 +201,7 @@ async fn event_queued_in_the_completing_poll_precedes_execution_error() {
             Err(HostError::new(HostErrorKind::Disconnected, "lost peer"))
         }),
         rx,
+        Arc::new(StreamIntegrity::new()),
     );
     assert_eq!(next(&mut turn).await.unwrap(), Some(event));
     assert!(
@@ -193,24 +217,27 @@ async fn event_queued_in_the_completing_poll_precedes_execution_error() {
 #[tokio::test]
 async fn failed_handler_event_is_not_published() {
     let (tx, rx) = mpsc::channel(1);
-    let handler = StreamHandler {
+    let handler = Arc::new(StreamHandler {
         inner: Arc::new(Handler {
             fail_event: true,
             ..Handler::default()
         }),
         events: tx,
-    };
+        integrity: Arc::new(StreamIntegrity::new()),
+    });
+    let integrity = handler.integrity.clone();
     let mut turn = stream(
         Box::pin(async move {
-            handler
-                .event(wire(
-                    &parse_json(r#"{"type":"turn_started"}"#).unwrap(),
-                    false,
-                ))
-                .await?;
+            deliver(
+                &handler,
+                &parse_json(r#"{"type":"turn_started"}"#).unwrap(),
+                false,
+            )
+            .await?;
             Ok(ExecuteResult::Aborted { terminal: None })
         }),
         rx,
+        integrity,
     );
     assert!(
         next(&mut turn)
@@ -232,6 +259,7 @@ async fn closed_event_channel_waits_for_execution_cleanup_and_aborted_result() {
             Ok(ExecuteResult::Aborted { terminal: None })
         }),
         rx,
+        Arc::new(StreamIntegrity::new()),
     );
     assert_aborted(&next(&mut turn).await.unwrap().unwrap());
     assert_eq!(next(&mut turn).await.unwrap(), None);
@@ -249,6 +277,7 @@ async fn aborted_result_already_supplied_by_host_is_projected_once() {
             })
         }),
         rx,
+        Arc::new(StreamIntegrity::new()),
     );
     let event = next(&mut turn).await.unwrap().unwrap();
     assert_eq!(event.get("result"), expected.get("result"));
@@ -258,24 +287,40 @@ async fn aborted_result_already_supplied_by_host_is_projected_once() {
 
 #[tokio::test]
 async fn event_after_the_authoritative_terminal_fails_closed() {
+    // After the module final the host stops receiving (execution.rs guards
+    // `receive()` with `!terminal_received`) and the channel is quiescent
+    // once execute settles, so a frame published after the final cannot reach
+    // the session through the production path. What must still hold is that
+    // the receive hook rejects any such event as a premature final once the
+    // session projected the terminal, failing the execution closed instead of
+    // extending the turn.
     let (tx, rx) = mpsc::channel(1);
     let terminal = parse_json(
         r#"{"result":{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1},"messages":[]}"#,
     )
     .unwrap();
-    let final_frame = wire(&terminal, true);
     let started =
         parse_json(r#"{"type":"turn_started","sessionId":"session","turnId":"turn"}"#).unwrap();
     let accepted =
         parse_json(r#"{"type":"input_accepted","sessionId":"session","turnId":"turn"}"#).unwrap();
-    let sender = tx.clone();
+    let handler = Arc::new(StreamHandler {
+        inner: Arc::new(Handler::default()),
+        events: tx,
+        integrity: Arc::new(StreamIntegrity::new()),
+    });
+    let integrity = handler.integrity.clone();
     let mut turn = stream(
-        Box::pin(async move {
-            sender.send(started).await.unwrap();
-            sender.send(accepted).await.unwrap();
-            Ok(ExecuteResult::Terminal(final_frame))
+        Box::pin({
+            let handler = handler.clone();
+            async move {
+                deliver(&handler, &started, false).await?;
+                deliver(&handler, &accepted, false).await?;
+                deliver(&handler, &terminal, true).await?;
+                Ok(ExecuteResult::Terminal(wire(&terminal, true)))
+            }
         }),
         rx,
+        integrity,
     );
     assert_eq!(
         next(&mut turn).await.unwrap().unwrap().get("type"),
@@ -287,11 +332,11 @@ async fn event_after_the_authoritative_terminal_fails_closed() {
     );
     let completed = next(&mut turn).await.unwrap().unwrap();
     assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
-    // A frame published after the module final must not extend the closed turn.
-    tx.send(parse_json(r#"{"type":"model_event"}"#).unwrap())
-        .await
-        .unwrap();
-    let error = next(&mut turn).await.unwrap_err();
+    // The terminal has now been projected; the hook must fail a later frame
+    // instead of extending the closed turn.
+    let error = handler
+        .validate_event(&parse_json(r#"{"type":"model_event"}"#).unwrap())
+        .expect_err("a post-terminal event must fail the hook");
     assert!(error.message.contains("premature final"), "{error:?}");
     assert_eq!(next(&mut turn).await.unwrap(), None);
 }
@@ -509,8 +554,9 @@ async fn cancel_exit_returns_the_host_validated_final_when_lifecycle_events_were
     // The pending input_accepted callback keeps the received success final
     // unapplied; after cancellation the host's bounded cancel exit
     // (POST_CANCEL_EXIT_TIMEOUT, host/execution.rs) stops applying events and
-    // returns that already-validated final anyway. The session must project
-    // it instead of rejecting the missing observed lifecycle.
+    // returns that already-validated final anyway. The session projects it
+    // strictly: the receive-path hook observed input_accepted when it arrived,
+    // so no cancellation-based relaxation is involved.
     let handler = Arc::new(Handler {
         block_input_accepted: true,
         ..Handler::default()
@@ -536,24 +582,163 @@ async fn cancel_exit_returns_the_host_validated_final_when_lifecycle_events_were
 }
 
 #[tokio::test]
-async fn events_after_a_violation_settle_to_none_even_when_buffered() {
-    // A legal event already buffered behind the violating one must never be
-    // delivered after the stream has failed closed; next() settles to None.
-    let (tx, rx) = mpsc::channel(1);
-    let sender = tokio::spawn(async move {
-        tx.send(parse_json(r#"{"type":"turn_started"}"#).unwrap())
-            .await
-            .unwrap();
-        tx.send(parse_json(r#"{"type":"turn_started"}"#).unwrap())
-            .await
-            .unwrap();
-        tx.send(parse_json(r#"{"type":"model_event"}"#).unwrap())
-            .await
-            .unwrap();
+async fn queued_turn_failed_behind_a_pending_callback_satisfies_the_error_terminal() {
+    // The pending input_accepted callback also holds back turn_failed and the
+    // error final, which stay in the host's application queue. The hook
+    // observed them at receive time, so the cancel-exit final validates
+    // strictly: the error terminal requires turn_failed, and it was received
+    // even though the consumer never saw it. Observing only the pending
+    // event could not prove this.
+    let handler = Arc::new(Handler {
+        block_input_accepted: true,
+        ..Handler::default()
     });
+    let session = session("live-cancel-pending-failure", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    session.abort(&"user-stop".into()).unwrap();
+    let completed = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+    let result = completed.get("result").unwrap();
+    assert_eq!(result.get("type"), Some(&"error".into()));
+    assert_eq!(
+        completed.get("messages"),
+        input().get("messages"),
+        "the cancel-exit final still retains the turn messages"
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancel_request_with_truly_missing_input_accepted_is_still_rejected() {
+    // Negative control (a): the peer never sends input_accepted, so the
+    // success final is missing a required lifecycle event no matter that a
+    // cancellation request was made. A cancellation flag must not rescue it.
+    // The round-1 implementation accepted this final (fake pass); the strict
+    // receive-fact check rejects it.
+    let handler = Arc::new(Handler::default());
+    let session = session("live-missing-accepted", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    session.abort(&"user-stop".into()).unwrap();
+    let error = next(turn.as_mut()).await.unwrap_err();
+    assert!(
+        error.message.contains("terminal without proper lifecycle"),
+        "{error:?}"
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn missing_lifecycle_is_rejected_without_cancellation() {
+    // Negative control (c) through the production path: the same peer without
+    // any cancellation request.
+    let handler = Arc::new(Handler::default());
+    let session = session("live-missing-accepted", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    let error = next(turn.as_mut()).await.unwrap_err();
+    assert!(
+        error.message.contains("terminal without proper lifecycle"),
+        "{error:?}"
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn success_after_observed_turn_failed_is_rejected_even_with_cancel() {
+    // Negative control (b): after turn_failed was received, only the same
+    // error terminal may follow (TurnRunner.ts:437-439); a success final is a
+    // contradiction. The round-1 implementation accepted it under a
+    // cancellation flag (fake pass); the strict check rejects it.
+    let handler = Arc::new(Handler::default());
+    let session = session("live-failed-then-success", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    for event_type in ["turn_started", "input_accepted", "turn_failed"] {
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+            Some(&event_type.into()),
+            "{event_type}"
+        );
+    }
+    session.abort(&"user-stop".into()).unwrap();
+    let error = next(turn.as_mut()).await.unwrap_err();
+    assert!(
+        error.message.contains("terminal without proper lifecycle"),
+        "{error:?}"
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn max_turns_after_observed_turn_failed_is_rejected_even_with_cancel() {
+    // Negative control (b), max_turns variant: the loop's max-turns path never
+    // emits turn_failed (AgentLoop.ts:2218-2233), so a max_turns final after a
+    // received turn_failed contradicts it, cancellation or not.
+    let handler = Arc::new(Handler::default());
+    let session = session("live-failed-then-max-turns", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    for event_type in ["turn_started", "input_accepted", "turn_failed"] {
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+            Some(&event_type.into()),
+            "{event_type}"
+        );
+    }
+    session.abort(&"user-stop".into()).unwrap();
+    let error = next(turn.as_mut()).await.unwrap_err();
+    assert!(
+        error.message.contains("terminal without proper lifecycle"),
+        "{error:?}"
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn events_after_a_violation_settle_to_none_even_when_buffered() {
+    // A legal event already buffered when the violation fails the execution
+    // must be delivered before the violation error, never after it: the
+    // biased recv arm and the try_recv drain both run before result.take(),
+    // and the channel is quiescent once execute settles. next() then settles
+    // to None.
+    let (tx, rx) = mpsc::channel(1);
+    let handler = Arc::new(StreamHandler {
+        inner: Arc::new(Handler::default()),
+        events: tx,
+        integrity: Arc::new(StreamIntegrity::new()),
+    });
+    let integrity = handler.integrity.clone();
     let mut turn = stream(
-        Box::pin(std::future::pending()),
+        Box::pin(async move {
+            deliver(
+                &handler,
+                &parse_json(r#"{"type":"turn_started"}"#).unwrap(),
+                false,
+            )
+            .await?;
+            // The legal turn_started was applied and published; only then
+            // does the violating second one fail the hook, exactly like
+            // the host receive path. Events after it are never received.
+            Err(handler
+                .validate_event(&parse_json(r#"{"type":"turn_started"}"#).unwrap())
+                .expect_err("second turn_started must violate"))
+        }),
         rx,
+        integrity,
     );
     assert_eq!(
         next(&mut turn).await.unwrap().unwrap().get("type"),
@@ -566,51 +751,16 @@ async fn events_after_a_violation_settle_to_none_even_when_buffered() {
             .contains("turn_started after the turn already opened"),
         "{error:?}"
     );
-    // The legal model_event is now buffered behind the violation; it must
-    // not surface through either delivery path.
-    sender.await.unwrap();
     assert_eq!(next(&mut turn).await.unwrap(), None);
     assert_eq!(next(&mut turn).await.unwrap(), None);
 }
 
 #[tokio::test]
-async fn cancelled_stream_keeps_a_validated_final_with_partial_lifecycle() {
-    // The same session-level rule without the host's 5 s cancel-exit wait:
-    // after cancellation, a Terminal with an unobserved lifecycle projects
-    // instead of failing the turn, and the stream still closes afterwards.
-    let (tx, rx) = mpsc::channel(1);
-    let terminal = parse_json(
-        r#"{"result":{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1},"messages":[]}"#,
-    )
-    .unwrap();
-    let started =
-        parse_json(r#"{"type":"turn_started","sessionId":"session","turnId":"turn"}"#).unwrap();
-    let sender = tx.clone();
-    let mut turn = stream(
-        Box::pin(async move {
-            sender.send(started).await.unwrap();
-            drop(tx);
-            Ok(ExecuteResult::Terminal(terminal))
-        }),
-        rx,
-    );
-    let cancellation = Cancellation::default();
-    cancellation.cancel(Some("user-stop".into()));
-    turn.cancellation = cancellation;
-    assert_eq!(
-        next(&mut turn).await.unwrap().unwrap().get("type"),
-        Some(&"turn_started".into())
-    );
-    let completed = next(&mut turn).await.unwrap().unwrap();
-    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
-    assert_eq!(completed.get("result").unwrap().get("type"), Some(&"success".into()));
-    assert_eq!(next(&mut turn).await.unwrap(), None);
-}
-
-#[tokio::test]
-async fn uncancelled_stream_still_rejects_a_final_with_partial_lifecycle() {
-    // The cancel-exit relaxation must not weaken the strict rule: without
-    // cancellation, a success terminal without input_accepted still fails.
+async fn a_final_with_unobserved_lifecycle_is_rejected() {
+    // Unit-level stream check: a hand-constructed Terminal bypasses the host
+    // receive path, so nothing was observed and the strict terminal check
+    // fails. The real-host negative controls below prove the same boundary
+    // through the production path.
     let (_tx, rx) = mpsc::channel(1);
     let terminal = parse_json(
         r#"{"result":{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1},"messages":[]}"#,
@@ -619,6 +769,7 @@ async fn uncancelled_stream_still_rejects_a_final_with_partial_lifecycle() {
     let mut turn = stream(
         Box::pin(async move { Ok(ExecuteResult::Terminal(terminal)) }),
         rx,
+        Arc::new(StreamIntegrity::new()),
     );
     let error = next(&mut turn).await.unwrap_err();
     assert!(
@@ -639,9 +790,10 @@ async fn host_stream_rejects_events_before_turn_started_and_releases_the_host() 
     assert!(error.message.contains("before turn_started"), "{error:?}");
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    // The misbehaving stream's execute future was dropped: the handler is
-    // disposed on the detached cleanup path, and at least the first event
-    // was applied before the violation.
+    // The violation is caught by the receive-path hook before application, so
+    // the inner handler never applied (and the host never ACKed) the illegal
+    // event, and the dropped execution's detached cleanup still disposed the
+    // handler exactly once.
     timeout(Duration::from_secs(5), async {
         while handler.disposed.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
@@ -651,8 +803,12 @@ async fn host_stream_rejects_events_before_turn_started_and_releases_the_host() 
     .expect("dropping execute must dispose its handler");
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
     // The misbehaving sidecar process itself was closed, not just the stream.
-    assert_reaped(*children.lock().unwrap().first().unwrap()).await;
-    assert!(!handler.events.lock().unwrap().is_empty());
+    let child = *children.lock().unwrap().first().unwrap();
+    assert_reaped(child).await;
+    assert!(
+        handler.events.lock().unwrap().is_empty(),
+        "a violating event must not be applied to the module-side handler"
+    );
     // The active turn slot was released with the violation.
     let replacement = session.submit(input(), options());
     assert!(replacement.is_ok());
@@ -697,9 +853,25 @@ async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
     let (session, children) =
         session_tracking_children("live-duplicate-start", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    let first = next(turn.as_mut()).await.unwrap().unwrap();
-    assert_eq!(first.get("type"), Some(&"turn_started".into()));
-    let error = next(turn.as_mut()).await.unwrap_err();
+    // The second turn_started fails the receive hook, and the host cancels the
+    // first event's in-flight application, so its publication races the
+    // violation: only the violation error is guaranteed.
+    let mut error = None;
+    for _ in 0..2 {
+        match next(turn.as_mut()).await {
+            Ok(Some(event)) => assert_eq!(
+                event.get("type"),
+                Some(&"turn_started".into()),
+                "only the legal prefix may be published"
+            ),
+            Ok(None) => panic!("the stream settled without the violation error"),
+            Err(violation) => {
+                error = Some(violation);
+                break;
+            }
+        }
+    }
+    let error = error.expect("the violation must fail the stream");
     assert!(
         error
             .message
@@ -707,7 +879,8 @@ async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
         "{error:?}"
     );
     // The peer also streams a legal model_event after the violating one; it
-    // must never be delivered after the stream has failed closed.
+    // is never even received once the hook failed, and nothing may surface
+    // after the stream has failed closed.
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     timeout(Duration::from_secs(5), async {
@@ -720,7 +893,8 @@ async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
     // Dropping execute closes the peer's whole process group: the peer, which
     // would otherwise block on stdin, actually exits.
-    assert_reaped(*children.lock().unwrap().first().unwrap()).await;
+    let child = *children.lock().unwrap().first().unwrap();
+    assert_reaped(child).await;
     // The slot is free again after the violation.
     assert!(session.submit(input(), options()).is_ok());
 }

@@ -136,6 +136,48 @@ elif mode == "live-cancel-pending":
     send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
     send(success_final(2))
+elif mode == "live-cancel-pending-failure":
+    # The same pending callback, but with turn_failed and an error final
+    # queued behind it: the error terminal requires turn_failed, which the
+    # consumer never sees because its application never completes.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+    send_event(2, dict(type="turn_failed", sessionId=session, turnId=turn,
+                      error=dict(code="agent_model_error",
+                                 message="Model request failed.")))
+    send(agent_event(3, dict(result=dict(
+        type="error", sessionId=session, turnId=turn, stopReason="model_error",
+        turns=1, errors=[dict(code="agent_model_error",
+                              message="Model request failed.")]),
+        messages=messages), final=True, outcome="failed"))
+elif mode == "live-missing-accepted":
+    # Negative control (a)/(c): a success final without input_accepted. No
+    # amount of cancellation makes this a legal terminal; only an
+    # input_accepted the sidecar actually sent would.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send(success_final(1))
+elif mode == "live-failed-then-success":
+    # Negative control (b): after turn_failed only the same error terminal
+    # may follow (TurnRunner.ts:437-439); a success final contradicts it.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+    send_event(2, dict(type="turn_failed", sessionId=session, turnId=turn,
+                      error=dict(code="agent_model_error",
+                                 message="Model request failed.")))
+    send(success_final(3))
+elif mode == "live-failed-then-max-turns":
+    # Negative control (b), max_turns variant: the max-turns path never emits
+    # turn_failed (AgentLoop.ts:2218-2233), so this ordering is contradictory.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+    send_event(2, dict(type="turn_failed", sessionId=session, turnId=turn,
+                      error=dict(code="agent_model_error",
+                                 message="Model request failed.")))
+    send(agent_event(3, dict(result=dict(
+        type="max_turns", sessionId=session, turnId=turn, stopReason="max_turns",
+        turns=3, errors=[dict(code="agent_max_turns",
+                              message="Reached maximum number of turns (3).")]),
+        messages=messages), final=True, outcome="failed"))
 elif mode == "live-cancel-compaction":
     send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
