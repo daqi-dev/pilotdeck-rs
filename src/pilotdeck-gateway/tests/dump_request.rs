@@ -199,29 +199,63 @@ fn dump_request_disabled_by_default() {
     }
 }
 
+/// EACCES fixture: a directory this run created and then closed for writing.
+/// Kept as a guard so the case cannot end — not even on an assertion-panic
+/// unwind — with the directory still at 0o000: drop restores 0o700 first and
+/// only then removes it, so nothing leaks under the case root.
+struct NoAccessDir(std::path::PathBuf);
+
+impl NoAccessDir {
+    /// `None` when this run is privileged (euid 0): DAC does not apply, so
+    /// the child's open would succeed and EACCES cannot be provoked. Probed
+    /// by reading the freshly closed directory itself — only a privileged
+    /// process can list a 0o000 directory — which needs no extra dependency.
+    fn create(root: &std::path::Path) -> Option<Self> {
+        let dir = root.join("noaccess-tmpdir");
+        std::fs::create_dir(&dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+            if std::fs::read_dir(&dir).is_ok() {
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                return None;
+            }
+        }
+        Some(Self(dir))
+    }
+}
+
+impl Drop for NoAccessDir {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+        }
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// How the child's temp directory is broken, and what the exclusive create
 /// reports for it. These are the three write-failure shapes TS was probed
 /// with (`_tmp/20261025-issue-621-fix-r2/ts-probe/`); the errno numbers are
-/// the same on darwin and linux.
-fn broken_tmpdir(root: &std::path::Path, kind: &str) -> std::path::PathBuf {
+/// the same on darwin and linux. The EACCES shape yields `None` under euid 0
+/// (DAC does not apply there), so the caller can skip just that shape; the
+/// returned guard, when `Some`, must outlive the child run it breaks.
+fn broken_tmpdir(
+    root: &std::path::Path,
+    kind: &str,
+) -> Option<(std::path::PathBuf, Option<NoAccessDir>)> {
     match kind {
         // ENOENT: the directory does not exist.
-        "enoent" => root.join("nonexistent-tmpdir"),
-        // EACCES: a directory this run created and then closed for writing.
-        "eacces" => {
-            let dir = root.join("noaccess-tmpdir");
-            std::fs::create_dir(&dir).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
-            }
-            dir
-        }
+        "enoent" => Some((root.join("nonexistent-tmpdir"), None)),
+        // EACCES: the closed-for-writing directory guarded above.
+        "eacces" => NoAccessDir::create(root).map(|guard| (guard.0.clone(), Some(guard))),
         // ENOTDIR: a path component is a regular file.
         _ => {
             std::fs::write(root.join("blocker-file"), "not a directory").unwrap();
-            root.join("blocker-file").join("sub")
+            Some((root.join("blocker-file").join("sub"), None))
         }
     }
 }
@@ -254,7 +288,13 @@ fn dump_request_write_failure_semantics() {
                     .as_nanos()
             );
             let root = CaseRoot::acquire("write-fail");
-            let broken = broken_tmpdir(&root, kind);
+            // `_noaccess` keeps the EACCES fixture closed for the whole child
+            // run and reopens it on drop; declared after `root` so it also
+            // drops first.
+            let Some((broken, _noaccess)) = broken_tmpdir(&root, kind) else {
+                eprintln!("{protocol}/{kind} write-fail: skipped, euid is 0 (DAC does not apply)");
+                continue;
+            };
             let output = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "dump_child", "--ignored", "--nocapture"])
                 .env("PDRS_DUMP_PROTOCOL", protocol)
