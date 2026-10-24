@@ -438,6 +438,15 @@ impl Families {
         self
     }
 
+    /// Wire the interaction families (permission, hooks, event, steer) for
+    /// A6.9-pr3c2. Registers interaction resource capability at factory level;
+    /// per-turn handler binding happens in session/turn layer (A7.2-pr6).
+    pub fn with_interaction(mut self) -> Self {
+        // InteractionFamilySource registers to ExecutionWorld family
+        self.execution_world = Arc::new(super::interaction::InteractionFamilySource);
+        self
+    }
+
     /// Every family not yet wired into the native runtime (A6.9-pr3b..3e).
     /// Staging reports each one explicitly instead of succeeding silently.
     pub fn unwired() -> Self {

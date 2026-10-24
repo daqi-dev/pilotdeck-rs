@@ -109,6 +109,7 @@ pub trait ProjectRuntimeFactory: Send + Sync {
 mod factory;
 pub mod model;
 pub mod tools_mcp;
+pub mod interaction;
 pub use factory::{
     ConfigSource, Families, Family, FamilyResource, InteractionProfile, InteractionProfileName,
     NativeConfigSource, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,
