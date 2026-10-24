@@ -923,18 +923,20 @@ async fn unwired_families_report_each_family() {
     }
 }
 
-#[tokio::test]
-async fn plugin_family_stages_successfully() {
+fn plugin_test_registry(scratch: &Scratch) -> (ProjectRuntimeRegistry, PathBuf) {
     use crate::runtime::plugins::PluginRuntimeOptions;
     const CONFIG_YAML: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
 
-    let scratch = Scratch::new();
     let project_root = scratch.0.join("project");
     let pilot_home = scratch.0.join("pilot_home");
-    std::fs::create_dir(&project_root).unwrap();
+    std::fs::create_dir_all(project_root.join(".pilotdeck")).unwrap();
     std::fs::create_dir(&pilot_home).unwrap();
     std::fs::write(pilot_home.join("pilotdeck.yaml"), CONFIG_YAML).unwrap();
-    std::fs::write(project_root.join("pilotdeck.yaml"), CONFIG_YAML).unwrap();
+    std::fs::write(project_root.join(".pilotdeck/pilotdeck.yaml"), CONFIG_YAML).unwrap();
+    // NativeConfigSource resolves its home from env, independently of the
+    // resource pilot_home option; homedir is only the fallback for `~`.
+    let mut env = Env::new();
+    env.insert("PILOT_HOME".into(), pilot_home.to_str().unwrap().into());
 
     let plugin_options = PluginRuntimeOptions {
         project_root: project_root.clone(),
@@ -944,15 +946,34 @@ async fn plugin_family_stages_successfully() {
         builtin_plugins_enabled: std::collections::HashMap::new(),
     };
 
-    let families = Families::unwired()
-        .with_native_models()
-        .with_tools_mcp()
-        .with_plugins(plugin_options);
+    // Keep the families under test native and supply recording fakes only
+    // for the unrelated families whose native wiring has not landed yet.
+    let probe = Arc::new(Probe::default());
+    let other_family = |family| -> Arc<dyn ResourceFamilySource> {
+        Arc::new(FakeSource {
+            probe: Arc::clone(&probe),
+            family,
+            extra: no_extra,
+            registers_owner: family != Family::ContextStorage,
+            stages: true,
+            publishes: &[],
+        })
+    };
+    let families = Families {
+        lsp: Some(other_family(Family::LspService)),
+        context_storage: other_family(Family::ContextStorage),
+        session_title: Some(other_family(Family::SessionTitleProvider)),
+        memory: other_family(Family::MemoryBundle),
+        ..Families::unwired()
+    }
+    .with_native_models()
+    .with_tools_mcp()
+    .with_plugins(plugin_options);
 
     let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
         pilot_home: pilot_home.clone(),
         cwd: scratch.0.to_path_buf(),
-        env: Env::default(),
+        env,
         homedir: Some(pilot_home),
         builtin_skills_root: None,
         now: Arc::new(|| SystemTime::UNIX_EPOCH),
@@ -961,62 +982,72 @@ async fn plugin_family_stages_successfully() {
         families,
     });
     let registry = ProjectRuntimeRegistry::new(&project_root, Arc::new(factory));
+    (registry, project_root)
+}
+
+#[tokio::test]
+async fn plugin_family_stages_successfully() {
+    let scratch = Scratch::new();
+    let (registry, project_root) = plugin_test_registry(&scratch);
 
     let runtime = registry
         .resolve(Some(&project_root))
         .expect("Factory staging with plugins should succeed");
     let lease = runtime.acquire().expect("Should acquire lease");
     assert_eq!(lease.runtime().project_root(), project_root);
+    let context = lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .expect("Factory resources should be published")
+        .context();
+    let plugin = context
+        .resource(Resource::PluginRuntime)
+        .expect("Native plugin runtime should be staged");
+    assert!(
+        plugin
+            .as_any()
+            .is::<crate::runtime::project::plugins::PluginResources>()
+    );
+    assert!(Arc::ptr_eq(
+        &plugin,
+        &context.owner(Family::PluginRuntime).unwrap()
+    ));
     drop(lease);
     bounded(registry.dispose()).await.unwrap();
 }
 
 #[tokio::test]
 async fn custom_router_registry_stages_after_plugins() {
-    use crate::runtime::plugins::PluginRuntimeOptions;
-    const CONFIG_YAML: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
-
     let scratch = Scratch::new();
-    let project_root = scratch.0.join("project");
-    let pilot_home = scratch.0.join("pilot_home");
-    std::fs::create_dir(&project_root).unwrap();
-    std::fs::create_dir(&pilot_home).unwrap();
-    std::fs::write(pilot_home.join("pilotdeck.yaml"), CONFIG_YAML).unwrap();
-    std::fs::write(project_root.join("pilotdeck.yaml"), CONFIG_YAML).unwrap();
-
-    let plugin_options = PluginRuntimeOptions {
-        project_root: project_root.clone(),
-        pilot_home: pilot_home.clone(),
-        builtin_skills_root: None,
-        builtin_plugins: Vec::new(),
-        builtin_plugins_enabled: std::collections::HashMap::new(),
-    };
-
-    let families = Families::unwired()
-        .with_native_models()
-        .with_tools_mcp()
-        .with_plugins(plugin_options);
-
-    let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
-        pilot_home: pilot_home.clone(),
-        cwd: scratch.0.to_path_buf(),
-        env: Env::default(),
-        homedir: Some(pilot_home),
-        builtin_skills_root: None,
-        now: Arc::new(|| SystemTime::UNIX_EPOCH),
-        config_version: None,
-        runtime_profile_overrides: RuntimeProfileOverrides::default(),
-        families,
-    });
-    let registry = ProjectRuntimeRegistry::new(&project_root, Arc::new(factory));
+    let (registry, project_root) = plugin_test_registry(&scratch);
 
     let runtime = registry
         .resolve(Some(&project_root))
         .expect("Factory staging with custom router should succeed");
     let lease = runtime.acquire().expect("Should acquire lease");
 
-    // Verify that staging succeeded and resources are accessible
     assert_eq!(lease.runtime().project_root(), project_root);
+    let context = lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .expect("Factory resources should be published")
+        .context();
+    // The native custom router source requires the native plugin resource
+    // to be available already; staging in the opposite order must fail.
+    let routers = context
+        .resource(Resource::RouterCustomRouters)
+        .expect("Native custom router registry should be staged after plugins");
+    assert!(
+        routers
+            .as_any()
+            .is::<crate::runtime::project::custom_routers::CustomRouterResources>()
+    );
+    assert!(Arc::ptr_eq(
+        &routers,
+        &context.owner(Family::RouterCustomRouters).unwrap()
+    ));
 
     drop(lease);
     bounded(registry.dispose()).await.unwrap();
