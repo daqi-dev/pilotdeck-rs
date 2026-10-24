@@ -71,17 +71,26 @@ impl ContextStorageResources {
     /// **Isolation.** Every call owns an independent in-memory replacement
     /// cache and [`ToolResultBudget`]. The directory itself is not namespaced
     /// per session: [`ToolResultBudget`] derives the spill file name from the
-    /// scoped `(turnId, toolCallId)` key alone and derives the read alias from
+    /// *sanitized* scoped `(turnId, toolCallId)` key (a run of characters other
+    /// than `[A-Za-z0-9_.-]` becomes one `-`, edge dashes are trimmed, and an
+    /// empty `toolCallId` becomes `tool-call`) and derives the read alias from
     /// its own counter. Callers sharing one root must therefore keep that
-    /// scoped key unique within the root. If two contexts in one directory
-    /// reuse both values, the second write leaves the first file in place (so
-    /// the second result is not persisted) while its preview describes the
-    /// second result: the second context's record references the first
-    /// context's artifact. The measured TS baseline exhibits the same behavior
-    /// for this input; this API makes no shared-directory filename-isolation
-    /// promise.
+    /// derived file name unique within the root; uniqueness of the raw scoped
+    /// key is not sufficient, and callers must not rely on unsafe characters
+    /// to keep results apart. Distinct raw keys can sanitize to the same name,
+    /// for example `c/1` with `c-1`, `c--` with `c`, or `""` with
+    /// `"tool-call"`. Within one budget the replacement cache is keyed by the
+    /// same sanitized key, so a later sanitize-equal tool result returns the
+    /// earlier record without writing. If two contexts in one directory
+    /// collide, the second write leaves the first file in place (so the second
+    /// result is not persisted) while its preview describes the second result:
+    /// the second context's record references the first context's artifact.
+    /// The measured TS baseline exhibits the same behavior for this input;
+    /// this API makes no shared-directory filename-isolation promise.
     /// `context_storage_shared_directory_requires_unique_scoped_keys` locks
-    /// that input boundary and
+    /// the identical-raw-key input boundary,
+    /// `context_storage_shared_directory_requires_unique_sanitized_filenames`
+    /// locks the sanitize-equal boundary (`c/1` versus `c-1`), and
     /// `context_storage_shared_directory_distinguishes_unique_scoped_keys`
     /// locks the unique-key positive control. This API isolates session state,
     /// not a shared directory's filename namespace.

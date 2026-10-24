@@ -2515,6 +2515,48 @@ mod context_storage_tests {
     }
 
     #[tokio::test]
+    async fn context_storage_shared_directory_requires_unique_sanitized_filenames() {
+        let scratch = Scratch::new();
+        let group = stage(&scratch.0, snapshot());
+        let resource = group.context().resource(Resource::ToolResultSpill).unwrap();
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let dir = scratch.0.join(".pilotdeck/tool-results");
+        let first = storage.create_session(&dir).unwrap();
+        let second = storage.create_session(&dir).unwrap();
+        let first_text = "a".repeat(200_001);
+        let second_text = "b".repeat(200_001);
+
+        // These raw tool-call ids differ but both sanitize to `c-1`, so the
+        // shared spill file is `t1-c-1.txt` for both contexts.
+        let first_ref = spill_with(&first, &first_text, "t1", "c/1").await;
+        let second_ref = spill_with(&second, &second_text, "t1", "c-1").await;
+
+        let path = PathBuf::from(text_field(&first_ref, "path"));
+        assert_eq!(second_ref.get("path"), first_ref.get("path"));
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("t1-c-1.txt")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), first_text);
+        // As with an identical raw key, the second preview describes the
+        // second input while the persisted file and read alias still hold the
+        // first context's body.
+        let preview = text_field(&second_ref, "preview");
+        assert!(preview.starts_with('b'));
+        assert!(!preview.contains('a'));
+        assert_ne!(preview, first_text);
+        let alias = text_field(&second_ref, "readFilePath");
+        assert_ne!(alias, text_field(&first_ref, "readFilePath"));
+        assert_eq!(
+            std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
+            first_text
+        );
+    }
+
+    #[tokio::test]
     async fn context_storage_shared_directory_distinguishes_unique_scoped_keys() {
         let scratch = Scratch::new();
         let group = stage(&scratch.0, snapshot());
@@ -3151,6 +3193,23 @@ mod memory_bundle_tests {
             error.message,
             "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported.",
             "a provider-only memory section normalizes enabled to true"
+        );
+        bounded(registry.dispose()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_empty_section_defaults_enabled_and_fails_native() {
+        let scratch = Scratch::new();
+        let yaml = yaml_with_memory("  {}\n");
+        let registry = registry_for_yaml(&scratch, &yaml, silent_families().with_context_memory());
+        let error = match registry.resolve(Some(&scratch.0.join("project"))) {
+            Err(error) => error,
+            Ok(_) => panic!("a present-but-empty memory section must not be treated as absent"),
+        };
+        assert_eq!(
+            error.message,
+            "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported.",
+            "`memory: {{}}` defaults enabled=true and provider=edgeclaw, unlike a missing section"
         );
         bounded(registry.dispose()).await.unwrap();
     }
