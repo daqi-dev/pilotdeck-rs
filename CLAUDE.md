@@ -96,7 +96,7 @@
 `.claude/skills/*` 是厂商缓存的 symlink，不在里面写项目模版；冲突以本表与本文件为准，表外停点按决策分级。
 - **dev-launch**：§2.5 产物写 `_tmp/<YYYYMMDD>-issue-<N>/triage.md`（`check-naming.py`） · §3/§4「停等拍板 / 值不值得」→ 写卡，暂不执行则 READY 条目改 `human` 取下一条（`next-task.sh` 跳过） · §3 >3 天 → 拆小 PR，READY 列 `<码>-pr1`… · §6.6「无 P2 才收敛」→ 按问题分级 · §8 人工合并 → 第 14 条入队 · §8 关单 → PR 写 `Closes #N` 或 `Refs #N`，关前先回复 · §7.0 只剩一家 → READY 改 `blocked` 写缺哪家，不降单评审。
 - **dev-req** Phase0 复述确认 → 写进 triage，按决策分级自决；深度思考 MCP 不可用则跳过。
-- **pr-ready**：Step0 项目模板不建，invariant 以 MEMORY.md 为触发表 · Step3/Step4 → `python3 scripts/run-review-roles.py`（默认四角色并行（10-22 实测：两闸门 8 路、三闸门 12 路 GLM 并发均正常出块）；`--serial` 只在排查时用；不要分次单角色跑再拼块；每角色 600 s，默认 `--runner zai` 即 GLM（`glm-5.3-mb`），`--runner anthropic` 跑 Claude（需 `.env.local` 有 `ANTHROPIC_API_KEY`，现缺；模型通道与已知坑见 memory「model-runners」），任务书 `.claude/workflows/review-*.md`）· Step6 → P0/P1 先修再重跑相关角色，P2 三分，开 PR 贴 `summary.md`。
+- **pr-ready**：Step0 项目模板不建，invariant 以 MEMORY.md 为触发表 · Step3/Step4 → `python3 scripts/run-review-roles.py`（默认四角色并行（10-22 实测：两闸门 8 路、三闸门 12 路 GLM 并发均正常出块）；`--serial` 只在排查时用；不要分次单角色跑再拼块；每角色 600 s，默认 `--runner zai` 即 GLM（`glm-5.3-mb`），`--runner anthropic` 跑 Claude（`.env.local` 的 `ANTHROPIC_API_KEY`，经 llm-center，10-25 起可用；GLM 作者线的非作者正式块用它；模型通道与已知坑见 memory「model-runners」），任务书 `.claude/workflows/review-*.md`）· Step6 → P0/P1 先修再重跑相关角色，P2 三分，开 PR 贴 `summary.md`。
 - **aias-meta-*** 拍板归人：不进连续推进队列，只在人发起时用。`pdrs-review.js` 仅 Claude Code 通道可用。
 
 ## 六、约定

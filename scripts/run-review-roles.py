@@ -4,7 +4,7 @@
 每个角色起一个 `claude -p` 只读进程（工具白名单 Read/Grep/Glob，MCP 全关，不落 session），并行跑；
 默认 `--runner zai`：同一个 Claude Code 外壳接智谱的 Anthropic 兼容接口跑 GLM（密钥取 `.env.local` 的 ZAI_API_KEY，
 只经环境变量传给子进程，不进命令行、不落盘），工具白名单与 init 校验照旧；`--runner anthropic` 用 Claude 模型
-（同样只认 .env.local 的 ANTHROPIC_API_KEY；两通道都不读父环境里的密钥）。子进程环境按白名单从零构造（父 shell 的令牌、网关头、provider 选择器一律不带），
+（同样只认 .env.local 的 ANTHROPIC_API_KEY，也经 llm-center 基址；两通道都不读父环境里的密钥与基址）。子进程环境按白名单从零构造（父 shell 的令牌、网关头、provider 选择器一律不带），
 CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用户/项目/本地 settings 里的 hooks 与插件都不生效
 （真实 CLI 正负对照：项目 SessionStart hook 加隔离不触发、去隔离触发）。
 原始事件流、stderr、最终文本、状态各自落盘。主进程不读角色全文，只汇总 summary.md（含 PR 用结果块）。
@@ -45,7 +45,8 @@ ROLES = {
 }
 ALLOWED_TOOLS = ["Read", "Grep", "Glob"]
 LLM_CENTER_BASE_URL = "https://llm-center.modelbest.co"  # 两通道的钥都走 llm-center；Claude Code 自行拼 /v1/messages，基址须为主机根（带 /v1 会 404）
-# 网关在响应体里回显展示名而非请求名（modelUsage 仍是请求名）；只放行已实测的这一对，其余仍须逐字一致
+# 网关对 GLM 在响应体里回显展示名而非请求名（modelUsage 仍是请求名）；只放行已实测的这一对，其余仍须逐字一致
+# （10-25 实测 claude-opus-5-5 / claude-sonnet-5-5 经 llm-center 原样回显，原件 _tmp/20261025-anth-runner/smoke-*）
 RESP_MODEL_ALIAS = {"glm-5.3-mb": "GLM-5.3"}
 DEFAULT_MODEL = {"zai": "glm-5.3-mb", "anthropic": "claude-sonnet-5-5"}  # 通道正本见 state/memory/20261015-model-runners.md
 
@@ -58,7 +59,7 @@ def env_candidates() -> list[Path]:
 
 
 def load_env_key(name: str, env_file: Path | None = None) -> str:
-    """只从 .env.local 取钥（不读父环境：父 shell 残留的网关键不得被带到官方端点）。"""
+    """只从 .env.local 取钥（不读父环境：父 shell 残留的令牌与网关键不得被带进子进程）。"""
     key = ""
     env = env_file if env_file is not None else next((c for c in env_candidates() if c.is_file()), None)
     if env and env.is_file():
@@ -77,7 +78,7 @@ ENV_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LC_ALL"
 KEY_NAME = {"zai": "ZAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
 
-def runner_env(runner: str, key: str) -> dict[str, str]:
+def runner_env(key: str) -> dict[str, str]:
     """子进程的全部模型相关环境（白名单之外的父环境一概不带）。"""
     return {"ANTHROPIC_API_KEY": key, "ANTHROPIC_BASE_URL": LLM_CENTER_BASE_URL}
 LARGE_DIFF_LINES = 500  # 超过即提示按 --paths 分批（state/memory/20261016-review-bounds.md）
@@ -295,7 +296,7 @@ def main() -> int:
         print(f"run-review-roles: {a.runner} 通道缺 {KEY_NAME[a.runner]}（只认 .env.local / --env-file）；不回退到父环境、其它模型或登录态",
               file=sys.stderr)
         return 2
-    extra_env = runner_env(a.runner, key)
+    extra_env = runner_env(key)
     cmd = build_cmd(a.claude_bin, model, a.budget_usd)
     jobs = []
     for role in roles:
