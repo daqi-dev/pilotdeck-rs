@@ -659,6 +659,7 @@
     "abortBeforeSend": false,
     "hang": true
    },
+   "elapsedAtMostMs": 600,
    "thrown": {
     "name": "ModelProviderError",
     "message": "Model request timed out after 100ms.",
@@ -743,6 +744,7 @@
     "abortBeforeSend": false,
     "hang": true
    },
+   "elapsedAtMostMs": 800,
    "thrown": {
     "name": "ModelProviderError",
     "message": "Model request timed out after 100ms.",
@@ -828,6 +830,7 @@
     "hang": true
    },
    "streamTimeoutMs": 10,
+   "elapsedAtMostMs": 800,
    "thrown": {
     "name": "ModelProviderError",
     "message": "Model request timed out after 300ms.",

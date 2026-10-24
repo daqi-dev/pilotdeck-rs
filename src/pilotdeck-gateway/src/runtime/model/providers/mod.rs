@@ -530,6 +530,32 @@ fn endpoint_candidates(base: &str, version: &str, endpoint: &str) -> Vec<String>
     out
 }
 
+/// `isExpectedProviderResponseShape(protocol, body)` for the non-streaming
+/// `complete()` path (`providerEndpoint.ts:130-143`). The caller only consults
+/// this for an OK response with more than one endpoint candidate; streaming
+/// accepts every OK response and single-endpoint calls never inspect the body.
+/// Google is not a `complete()` protocol (it stays `UnsupportedProtocol`).
+pub(crate) fn expected_complete_response_shape(protocol: &JsValue, body: &JsValue) -> bool {
+    let JsValue::Object(record) = body else {
+        return false;
+    };
+    if is(protocol, "anthropic") {
+        return matches!(record.get("content"), Some(JsValue::Array(_)))
+            || matches!(
+                record.get("type"),
+                Some(JsValue::String(value)) if value.equals_str("message")
+            );
+    }
+    if is(protocol, "openai-responses") {
+        return matches!(
+            record.get("object"),
+            Some(JsValue::String(value)) if value.equals_str("response")
+        ) || matches!(record.get("output"), Some(JsValue::Array(_)))
+            || matches!(record.get("output_text"), Some(JsValue::String(_)));
+    }
+    matches!(record.get("choices"), Some(JsValue::Array(_)))
+}
+
 /// `normalizeProviderBaseUrl(raw)`.
 pub(crate) fn normalize_provider_base_url(raw: &JsValue) -> JsValue {
     let raw = String::from_utf16_lossy(&units(raw));

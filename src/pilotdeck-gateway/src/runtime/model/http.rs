@@ -1591,14 +1591,156 @@ fn dump_request_to_file(final_body: &JsValue, original_request: &JsValue) {
     }
 }
 
+/// Replays the bytes already read for a completeness/shape check, optionally
+/// ending with undici's body failure. A successful 2xx candidate must be handed
+/// back byte-for-byte, and a failed read on the last candidate must still fail
+/// on the caller's `response.text()` the way the tee'd undici body does.
+struct ReplayBody {
+    data: Option<Bytes>,
+    tail_error: bool,
+}
+
+impl hyper::body::Body for ReplayBody {
+    type Data = Bytes;
+    type Error = BodyFailure;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, BodyFailure>>> {
+        let this = self.as_mut().get_mut();
+        if let Some(data) = this.data.take() {
+            return Poll::Ready(Some(Ok(hyper::body::Frame::data(data))));
+        }
+        if this.tail_error {
+            this.tail_error = false;
+            return Poll::Ready(Some(Err(BodyFailure)));
+        }
+        Poll::Ready(None)
+    }
+}
+
+fn replay_body(bytes: Bytes, tail_error: bool) -> ModelBody {
+    ReplayBody {
+        data: (!bytes.is_empty()).then_some(bytes),
+        tail_error,
+    }
+    .boxed()
+}
+
+fn replay_response(
+    parts: hyper::http::response::Parts,
+    bytes: Bytes,
+    tail_error: bool,
+    before_abort: bool,
+) -> Response<(ModelBody, bool)> {
+    Response::from_parts(parts, (replay_body(bytes, tail_error), before_abort))
+}
+
+/// What a non-stream, multi-endpoint 2xx shape probe observed. Only stream
+/// calls and single-endpoint calls skip this. The body read starts after the
+/// response headers arrived; at that point `networkFetch` has returned and
+/// detached its parent-abort listener, so neither `sendProviderRequest`'s
+/// request timer nor a caller abort can stop it. Only undici's body idle
+/// timeout / a socket failure does (r4b real-TS probe).
+enum ShapeProbe {
+    /// The whole body arrived. `parsed` is `None` for empty/invalid JSON, which
+    /// `Response.json()` rejects and therefore treats as the wrong shape.
+    Complete {
+        bytes: Bytes,
+        parsed: Option<JsValue>,
+    },
+    /// A body frame failed (undici `TypeError: terminated`) or the body idle
+    /// timeout fired; the caller must keep the prefix for a possible last
+    /// candidate.
+    ReadError { bytes: Bytes },
+}
+
+/// Which outer event aborts the next endpoint fetch after a rejected shape.
+/// `sendProviderRequest`'s catch rechecks `signal.aborted` and throws the
+/// caller's abort reason even when the timeout fired first (`streamModel.ts:
+/// 748-753`), so a parent abort that happened while the body was draining wins
+/// regardless of deadline ordering. Only when the parent is still un-aborted is
+/// an elapsed deadline reported as the timeout.
+enum HeaderAbort {
+    Timer,
+    Parent,
+}
+
+fn shape_fallback_abort(
+    options: &StreamOptions,
+    deadline: Option<tokio::time::Instant>,
+) -> Option<HeaderAbort> {
+    if options.abort.as_ref().is_some_and(AbortFlag::is_aborted) {
+        return Some(HeaderAbort::Parent);
+    }
+    deadline
+        .is_some_and(|at| tokio::time::Instant::now() >= at)
+        .then_some(HeaderAbort::Timer)
+}
+
+async fn read_shape_probe(body: &mut ModelBody, options: &StreamOptions) -> ShapeProbe {
+    use crate::runtime::network::{Exchange, body_frame};
+    let mut decoder = sse::Utf8Decoder::default();
+    let mut text = String::new();
+    let mut bytes = Vec::new();
+    let mut continuation = false;
+    loop {
+        // A fresh undici `bodyTimeout` per frame, with no request deadline and
+        // no caller abort: both were detached from this body when the headers
+        // arrived, and TS still reads the clone to the end (probe r4b).
+        let frame = body_frame(
+            body,
+            Some(duration(options.body_timeout_ms)),
+            None,
+            &mut continuation,
+        )
+        .await;
+        match frame {
+            Exchange::Response(Some(Ok(frame)), _) => {
+                if let Some(data) = frame.data_ref() {
+                    bytes.extend_from_slice(data);
+                    decoder.decode(data, &mut text);
+                }
+            }
+            Exchange::Response(Some(Err(_)), _) | Exchange::Timeout { .. } => {
+                return ShapeProbe::ReadError {
+                    bytes: Bytes::from(bytes),
+                };
+            }
+            Exchange::Response(None, _) => break,
+            // `None` above means there is no abort source; keep the prefix
+            // rather than inventing an abort result.
+            Exchange::Aborted => {
+                return ShapeProbe::ReadError {
+                    bytes: Bytes::from(bytes),
+                };
+            }
+        }
+    }
+    decoder.finish(&mut text);
+    ShapeProbe::Complete {
+        bytes: Bytes::from(bytes),
+        parsed: parse_json(&text).ok(),
+    }
+}
+
 /// `sendProviderRequest` + `sendWithEndpointFallback` + `networkFetch`.
 ///
 /// `stream` selects the baseline's timeout: streaming resolves
 /// `resolveStreamIdleTimeout` and reports `Stream idle timeout…`; `complete()`
 /// uses `provider.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS`, ignores
 /// `streamTimeoutMs`, and reports `Model request timed out after <ms>ms.`
-/// (`streamModel.ts:716-755`). The timer bounds `sendWithEndpointFallback`
-/// only; `response.text()` runs after it returns, exactly like the baseline.
+/// (`streamModel.ts:716-755`).
+///
+/// The timer bounds every endpoint's *headers* exchange. A 2xx shape body read
+/// starts after the headers arrived, when `networkFetch` has already detached
+/// its parent-abort listener; the remaining clone/`json()` read is therefore
+/// not bounded by this timer (real-TS r4b probe). It still decides whether the
+/// *next* endpoint may be tried: once the timer or caller abort fired, the
+/// outer controller is aborted and the next `networkFetch` rejects before any
+/// request is sent. `response.text()` runs after this function returns, as in
+/// the baseline.
 async fn send_provider_request(
     transport: &dyn ModelHttpTransport,
     provider: &JsValue,
@@ -1658,8 +1800,17 @@ async fn send_provider_request(
     // treats 0/NaN as "no timer"; a negative value schedules Node's 1 ms timer.
     let deadline = (!timeout_ms.is_nan() && timeout_ms != 0.0)
         .then(|| tokio::time::Instant::now() + duration(timeout_ms));
+    let abort_error = |abort: HeaderAbort| match abort {
+        HeaderAbort::Parent => ModelStreamError::abort(),
+        HeaderAbort::Timer => to_provider(NetworkFetchError::new(
+            "network_timeout",
+            timeout_text.clone(),
+            JsValue::Undefined,
+        )),
+    };
     let mut last = None;
-    for endpoint in &endpoints {
+    for (index, endpoint) in endpoints.iter().enumerate() {
+        let last_candidate = index + 1 == count;
         let (url, header_map) = build_http_request(endpoint, &headers).map_err(to_provider)?;
         let response = crate::fetch_redirect::follow(
             url,
@@ -1698,6 +1849,42 @@ async fn send_provider_request(
         if !ok && count != 1 && matches!(status, 400 | 404 | 405) {
             last = Some(response);
             continue;
+        }
+        if ok && !stream && count > 1 {
+            // TS `shouldUseEndpointResponse`: clone and parse the 2xx body
+            // after headers. The read itself is detached from the request
+            // timer, but a rejection moves to the next candidate only while
+            // the outer controller is still un-aborted; the final candidate is
+            // returned even when its shape is wrong or its read failed.
+            let (parts, (mut body, before_abort)) = response.into_parts();
+            match read_shape_probe(&mut body, options).await {
+                ShapeProbe::Complete { bytes, parsed } => {
+                    let accepted = parsed.as_ref().is_some_and(|value| {
+                        providers::expected_complete_response_shape(
+                            field(provider, "protocol"),
+                            value,
+                        )
+                    });
+                    let response = replay_response(parts, bytes, false, before_abort);
+                    if accepted {
+                        return Ok(response);
+                    }
+                    if !last_candidate && let Some(abort) = shape_fallback_abort(options, deadline)
+                    {
+                        return Err(abort_error(abort));
+                    }
+                    last = Some(response);
+                    continue;
+                }
+                ShapeProbe::ReadError { bytes } => {
+                    if !last_candidate && let Some(abort) = shape_fallback_abort(options, deadline)
+                    {
+                        return Err(abort_error(abort));
+                    }
+                    last = Some(replay_response(parts, bytes, true, before_abort));
+                    continue;
+                }
+            }
         }
         return Ok(response);
     }

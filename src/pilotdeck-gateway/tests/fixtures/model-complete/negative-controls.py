@@ -135,6 +135,18 @@ CONTROLS = [
         TIMEOUT_TEST,
     ),
     (
+        # A tenfold timer still satisfies every lower bound (the fixture's
+        # delays also pass), so only the per-case upper bound derived from the
+        # baseline's requested timeout rejects it: 100ms -> ~1000ms against a
+        # 600ms ceiling. This is the P2-1 false-PASS guard for duration scaling.
+        "complete-timeout-duration-scaled-tenfold",
+        """    let deadline = (!timeout_ms.is_nan() && timeout_ms != 0.0)
+        .then(|| tokio::time::Instant::now() + duration(timeout_ms));""",
+        """    let deadline = (!timeout_ms.is_nan() && timeout_ms != 0.0)
+        .then(|| tokio::time::Instant::now() + duration(timeout_ms * 10.0));""",
+        TIMEOUT_TEST,
+    ),
+    (
         # Drop the abort short-circuit: "request aborted" is not a premature
         # close, so the canonical retryable flag would retry 3 times.
         "complete-abort-not-prioritized",

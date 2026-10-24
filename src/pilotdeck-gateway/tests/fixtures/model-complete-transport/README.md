@@ -27,7 +27,10 @@
   `provider.timeoutMs=100` 的定时器触发 `Model request timed out after
   100ms.`（`code: timeout`、`retryable: true`、raw
   `{code: network_timeout, name: NetworkFetchError}`）；重试上限 2 时 3 次
-  fetch。Rust 侧同时断言实际耗时 ≥ 50ms，排除“预置 timeout 错误”的假通过。
+  fetch。Rust 侧同时断言实际耗时 ≥ 50ms，排除“预置 timeout 错误”的假通过；
+  并按 `timeoutMs * (floor(maxRetries)+1) + 500ms` 断言上界（600 / 800 /
+  800ms）。500ms 是预写的调度余量，不是 Rust 实测值；`timeout_ms * 10` 会得到
+  约 1000 / 3000ms，超过上界而被拒绝。
 - `transport-timeout-stream-ignored`：provider 300ms，`options.streamTimeoutMs=10`；
   complete 只认 provider 超时，message 是 300ms 而非 stream idle 的 10ms。
 - `transport-abort-message-request-aborted`：`Error("request aborted",

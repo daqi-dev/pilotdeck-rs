@@ -24,6 +24,15 @@ const ENTRY = 'src/model/streaming/streamModel.ts';
 const sourceSha256 = sourceClosureSha256(baseline, BASELINE_COMMIT, gitExecutable, [ENTRY]);
 const { complete } = await import(pathToFileURL(join(baseline, ENTRY)).href);
 
+/**
+ * Upper-bound slack for the real request timer. The expected wait is
+ * `provider.timeoutMs * attempts` (retries use a 0 base delay); `setTimeout`
+ * cannot fire early. 500ms covers scheduler/loopback jitter for sub-second
+ * waits while still rejecting a `timeout_ms * 10` mutation (1000ms/3000ms).
+ * Derived from the baseline's requested timeout, not from a Rust run.
+ */
+const SCHEDULER_SLACK_MS = 500;
+
 const model = () => ({
   id: 'm',
   capabilities: { maxContextTokens: 1000, maxOutputTokens: 32 },
@@ -171,6 +180,11 @@ for (const spec of specs) {
       hang: behavior.hang ?? false,
     },
     streamTimeoutMs: spec.streamTimeoutMs,
+    // Real TS never waits longer than the requested timer per attempt. This
+    // is absent for non-timeout specs, which are event-count based.
+    elapsedAtMostMs: spec.timeoutMs === undefined
+      ? undefined
+      : spec.timeoutMs * (Math.floor(spec.maxRetries) + 1) + SCHEDULER_SLACK_MS,
     reply: behavior.failTimes === 1
       ? { status: 200, headers: { 'content-type': 'application/json' }, body: successBody }
       : undefined,
