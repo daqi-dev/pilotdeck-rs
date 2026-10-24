@@ -293,7 +293,7 @@ def main() -> int:
     has_issue_err = any("缺 issue 关联" in e for e in errs_real)
     print(f"{'PASS' if not has_issue_err else 'FAIL'} prose 里真实 Closes 算 issue 关联（应不报 issue 错）")
     fails += has_issue_err
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 43} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 47} 例）")
     return 1 if fails else 0
 
 

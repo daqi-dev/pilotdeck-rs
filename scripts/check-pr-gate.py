@@ -127,7 +127,10 @@ def _strip_inline(line: str) -> str:
 
 def strip_code(body: str) -> str:
     """去掉代码块（行首 ``` 或 ~~~ 围栏）与行内代码：文档里引用的标记写法不算标记。
-    围栏只认行首（≤3 空格缩进），所以 HTML 注释里出现的 ``` 不会吞掉后面的真标记。"""
+    围栏只认行首（≤3 空格缩进），所以 HTML 注释里出现的 ``` 不会吞掉后面的真标记。
+    HTML 注释（单行 <!-- ... --> 与跨行 <!-- ... -->）的正文不计入 prose：
+    注释里的 Closes/Refs 等关键词不触发 issue 关联检查。
+    单行完整注释（<!-- ... -->）仍保留在输出中，供 marker_lines 提取结果块等标记。"""
     lines, fence, comment = [], None, False
     for line in body.splitlines():
         if comment:  # 跨行 HTML 注释（CommonMark type-2 HTML 块）里出现的 ``` 不是围栏
