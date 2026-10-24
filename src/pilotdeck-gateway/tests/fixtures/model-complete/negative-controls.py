@@ -19,7 +19,10 @@ Recovery protocol (concurrency P2):
   entry points is the fallback, and a failure of both probes is fatal (never
   treated as zero).
 - Cargo runs in its own process group; on timeout the whole group is signalled
-  (SIGTERM, then SIGKILL) and reaped before the source is restored.
+  (SIGTERM, then SIGKILL) and reaped before the source is restored. The group
+  currently running is tracked, so a SIGTERM/SIGINT/SIGHUP while a test child is
+  alive reclaims that whole group (bounded SIGTERM, then SIGKILL) and confirms it
+  is gone before restoring; the handler is guarded against re-entry.
 """
 from __future__ import annotations
 
@@ -48,6 +51,7 @@ CARGO_CAP = int(os.environ.get("NEGCTL_CARGO_CAP", "4"))
 SLOT_WAIT_SECONDS = float(os.environ.get("NEGCTL_SLOT_WAIT_SECONDS", "1800"))
 TEST_TIMEOUT = float(os.environ.get("NEGCTL_TEST_TIMEOUT", "600"))
 TERM_GRACE = float(os.environ.get("NEGCTL_TERM_GRACE", "10"))
+SIGNAL_GRACE = float(os.environ.get("NEGCTL_SIGNAL_GRACE", "5"))
 STATE_DIR = Path(
     os.environ.get("NEGCTL_STATE_DIR")
     or (
@@ -192,7 +196,10 @@ CONTROLS = [
 ]
 
 _active: dict | None = None
+_active_proc: subprocess.Popen | None = None
+_active_pgid: int | None = None
 _restoring = False
+_handling_signal = False
 
 
 def sha256(data: bytes) -> str:
@@ -249,6 +256,79 @@ def pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def group_alive(pgid: int) -> bool:
+    """Whether any process in `pgid` still exists (zombies count until reaped)."""
+    if pgid <= 0:
+        return False
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def track_proc(proc: subprocess.Popen) -> None:
+    global _active_proc, _active_pgid
+    _active_proc = proc
+    _active_pgid = proc.pid
+
+
+def untrack_proc(proc: subprocess.Popen) -> None:
+    global _active_proc, _active_pgid
+    if _active_proc is proc:
+        _active_proc = None
+        _active_pgid = None
+
+
+def reap_leader_nowait(leader: int) -> bool:
+    """Reap the direct child with a raw waitpid; safe inside a signal handler.
+
+    Popen.wait()/communicate() take an internal lock that the interrupted stack
+    may already hold, so only os.waitpid(WNOHANG) is used here. Without this,
+    the leader would stay a zombie and keep its process group visible.
+    """
+    try:
+        reaped, _ = os.waitpid(leader, os.WNOHANG)
+    except ChildProcessError:
+        return True
+    except OSError:
+        return False
+    return reaped == leader
+
+
+def reclaim_group_for_signal(pgid: int) -> bool:
+    """Bounded SIGTERM -> SIGKILL of `pgid`, safe inside a signal handler."""
+    if not group_alive(pgid):
+        return True
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    deadline = time.monotonic() + SIGNAL_GRACE
+    while time.monotonic() < deadline:
+        reap_leader_nowait(pgid)
+        if not group_alive(pgid):
+            return True
+        time.sleep(0.05)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    deadline = time.monotonic() + SIGNAL_GRACE
+    while time.monotonic() < deadline:
+        reap_leader_nowait(pgid)
+        if not group_alive(pgid):
+            return True
+        time.sleep(0.05)
+    return not group_alive(pgid)
 
 
 def state_matches_this_worktree(state: dict) -> bool:
@@ -349,12 +429,51 @@ def restore_active() -> bool:
         _restoring = False
 
 
+def safe_print(*args, **kwargs) -> None:
+    """Best-effort logging: a closed stdout/stderr must not skip recovery."""
+    try:
+        print(*args, **kwargs)
+    except BaseException:  # noqa: BLE001 - diagnostics only
+        pass
+
+
 def install_signal_handlers() -> None:
     def handler(signum: int, _frame) -> None:
+        global _handling_signal
+        # A second signal while the first handler is reclaiming/restoring must
+        # not recurse into another bounded wait.
+        if _handling_signal:
+            return
+        _handling_signal = True
         try:
-            restore_active()
+            pgid = _active_pgid
+            reaped = True
+            try:
+                if pgid is not None:
+                    reaped = reclaim_group_for_signal(pgid)
+            finally:
+                # Restore even if the reclaim probe itself raised; the group
+                # signal has already been sent at that point.
+                restore_active()
+            if pgid is not None:
+                if reaped:
+                    safe_print(
+                        f"negctl: signal {signum}: reclaimed process group {pgid}",
+                        flush=True,
+                    )
+                else:
+                    safe_print(
+                        f"negctl: signal {signum}: process group {pgid} still alive "
+                        f"after SIGKILL grace {SIGNAL_GRACE}s",
+                        file=sys.stderr,
+                        flush=True,
+                    )
         except BaseException as error:  # noqa: BLE001 - best effort before exit
-            print(f"negctl: signal {signum} restore failed: {error}", file=sys.stderr)
+            safe_print(
+                f"negctl: signal {signum} cleanup failed: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
         finally:
             os._exit(128 + signum)
 
@@ -443,22 +562,35 @@ def wait_for_slot() -> None:
 
 
 def _terminate_group(proc: subprocess.Popen) -> str:
+    """SIGTERM the whole group, then SIGKILL it if any member remains."""
+    pgid = proc.pid
     output = ""
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
+        os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
         pass
     try:
         output = proc.communicate(timeout=TERM_GRACE)[0] or ""
     except subprocess.TimeoutExpired:
+        pass
+    # The leader may exit while a grandchild ignores SIGTERM; confirm the whole
+    # group before restoring the source, then escalate with a bounded wait.
+    deadline = time.monotonic() + TERM_GRACE
+    while time.monotonic() < deadline and group_alive(pgid):
+        time.sleep(0.05)
+    if group_alive(pgid):
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
+            os.killpg(pgid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        deadline = time.monotonic() + TERM_GRACE
+        while time.monotonic() < deadline and group_alive(pgid):
+            time.sleep(0.05)
+    if proc.poll() is None:
         try:
-            output = proc.communicate(timeout=TERM_GRACE)[0] or ""
+            output += proc.communicate(timeout=TERM_GRACE)[0] or ""
         except subprocess.TimeoutExpired:
-            output = ""
+            pass
     return output
 
 
@@ -473,12 +605,31 @@ def run_bounded(cmd: list[str], timeout: float, env: dict | None = None) -> tupl
         text=True,
         start_new_session=True,
     )
+    track_proc(proc)
     try:
-        output = proc.communicate(timeout=timeout)[0] or ""
-        return proc.returncode, output, False
-    except subprocess.TimeoutExpired:
-        output = _terminate_group(proc)
-        return 124, output + f"\n[negctl] timed out after {timeout}s; process group terminated\n", True
+        try:
+            output = proc.communicate(timeout=timeout)[0] or ""
+            return proc.returncode, output, False
+        except subprocess.TimeoutExpired:
+            output = _terminate_group(proc)
+            return (
+                124,
+                output + f"\n[negctl] timed out after {timeout}s; process group terminated\n",
+                True,
+            )
+    finally:
+        # Any path that leaves the child alive (including an unexpected
+        # exception) must not leave a stale active group behind.
+        try:
+            if proc.poll() is None:
+                _terminate_group(proc)
+                if proc.poll() is None:
+                    print(
+                        f"negctl: process group {proc.pid} survived termination",
+                        file=sys.stderr,
+                    )
+        finally:
+            untrack_proc(proc)
 
 
 def run_test(test_name: str) -> tuple[int, str]:

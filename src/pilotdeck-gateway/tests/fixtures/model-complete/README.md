@@ -106,6 +106,13 @@ usage cache 字段丢弃、Responses `output_text` 去重条件反转、Anthropi
 `$TMPDIR/pdrs-negctl-<worktree哈希>`），SIGTERM/SIGINT/SIGHUP 处理器同步恢复；
 SIGKILL 无法执行处理器，下一次启动会因源文件仍等于记录的变异哈希而拒绝运行。
 
+处理器同时记录当前 `run_bounded` 的进程组：收到上述信号时先对该组做**有界**
+回收（SIGTERM，宽限 `NEGCTL_SIGNAL_GRACE`（默认 5s）后 SIGKILL），确认组已结束，
+再恢复源码并清状态；直接子进程用 `waitpid(WNOHANG)` 回收，避免僵尸占住进程组。
+处理器有重入保护，第二个信号不会再次进入有界等待。正常结束、`TimeoutExpired`
+与其它异常路径同样在 `finally` 中清掉进程组跟踪；超时路径会向整组升级 SIGKILL。
+SIGKILL 本身仍不声称有处理器。
+
 ```sh
 python3 …/negative-controls.py --check-state   # 有未恢复变异时退出 3
 python3 …/negative-controls.py --recover       # 只恢复与记录变异哈希一致的源文件
@@ -115,4 +122,4 @@ python3 …/negative-controls.py --self-test-hold     # 供外部信号测试持
 
 cargo 槽位在变异**之前**检查并有界等待；`ps` 被沙箱拒绝时回退到 `pgrep -x`
 的 cargo 入口名，两个探针都失败则拒绝变异（绝不把失败当 0）。子进程以独立
-进程组启动，超时先 SIGTERM 再 SIGKILL 整组并回收。
+进程组启动，超时或收到信号都先 SIGTERM 再 SIGKILL 整组并回收。
