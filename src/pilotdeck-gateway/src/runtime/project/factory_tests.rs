@@ -672,6 +672,41 @@ async fn unwired_families_report_explicit_errors() {
     bounded(registry.dispose()).await.unwrap();
 }
 
+/// Interaction wiring publishes a distinct capability without losing the
+/// execution-world resource/owner installed by the tools family.
+#[tokio::test]
+async fn interaction_staging_publishes_resources() {
+    let group = ProjectResources::new(
+        PathBuf::from("/project"),
+        PathBuf::from("/home"),
+        None,
+        crate::config::Env::new(),
+        Arc::new(|| SystemTime::UNIX_EPOCH),
+        Arc::new(JsValue::Undefined),
+        RuntimeProfile::resolve(&JsValue::Undefined, &RuntimeProfileOverrides::default()),
+    );
+    let context = group.context();
+    assert!(context.resource(Resource::Interaction).is_none());
+    assert!(context.resource(Resource::ExecutionWorld).is_none());
+
+    let families = Families::unwired().with_tools_mcp().with_interaction();
+    families
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .unwrap();
+
+    let interaction = context
+        .resource(Resource::Interaction)
+        .expect("successful interaction staging must publish its resource");
+    let execution_world = context
+        .resource(Resource::ExecutionWorld)
+        .expect("interaction wiring must preserve the execution-world resource");
+    let owner = context.owner(Family::ExecutionWorld).unwrap();
+    assert!(Arc::ptr_eq(&owner, &execution_world));
+    assert!(!Arc::ptr_eq(&interaction, &execution_world));
+    bounded(group.dispose()).await.unwrap();
+}
+
 /// The eight parallel-group disposals start together (`Promise.allSettled`,
 /// ProjectRuntimeResourcesBundle.ts:416-425): a disposal that waits for a
 /// sibling's cleanup signal is unblocked by that sibling's start. A

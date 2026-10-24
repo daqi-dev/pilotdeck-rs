@@ -6,7 +6,8 @@
 //! EventSink, SteerMailbox) belongs to the session/turn layer (A7.2-pr6).
 //!
 //! TS baseline references:
-//! - ProjectExecutionWorldBundle.ts (execution world, sandbox, interaction)
+//! - ProjectExecutionWorldBundle.ts (execution world and sandbox)
+//! - sidecarTurnComposition.ts (independent permission/lifecycle/event ports)
 //! - Permission runtime: runtime/permission.rs
 //! - Hooks: runtime/hooks/runtime.rs (HookRuntime, LifecycleRuntime)
 //! - Event: host/modules/event.rs (EventSink trait)
@@ -43,10 +44,11 @@ impl ResourceFamilySource for InteractionFamilySource {
         Family::ExecutionWorld
     }
 
-    fn stage(&self, _context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
-        let resource = Arc::new(InteractionResource);
-        // Register as part of ExecutionWorld family, like pr3c1's pattern
-        sink.register_owner(self.family(), resource.clone());
+    fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+        // with_interaction replaces the execution-world source, so preserve
+        // its resource and dispose owner before publishing the separate marker.
+        super::tools_mcp::ExecutionWorldFamilySource.stage(context, sink)?;
+        sink.register_resource(Resource::Interaction, Arc::new(InteractionResource));
         Ok(())
     }
 }
