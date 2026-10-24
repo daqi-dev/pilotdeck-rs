@@ -173,7 +173,16 @@ impl ResourceFamilySource for RouterFamilySource {
             accounting: Arc::new(TokenAccountingRuntime::new(config)),
         });
         let mut deps = RouterDeps::new(model.providers.clone());
-        if let Some(custom) = &self.custom_routers {
+        // Prefer staged custom router registry (A6.9-pr3e) over source injection.
+        if let Some(custom_router_resource) = context.resource(Resource::RouterCustomRouters) {
+            let custom_router_resource = custom_router_resource
+                .as_any()
+                .downcast_ref::<super::custom_routers::CustomRouterResources>()
+                .ok_or_else(|| {
+                    RuntimeError::new("Custom router resource is not a native custom router family.")
+                })?;
+            deps.custom_routers = custom_router_resource.registry.clone();
+        } else if let Some(custom) = &self.custom_routers {
             deps.custom_routers = custom.clone();
         }
         if let Some(events) = &self.events {
