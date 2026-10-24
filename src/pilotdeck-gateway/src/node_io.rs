@@ -144,6 +144,28 @@ pub(crate) fn read_file(error: &io::Error, path: &str) -> Option<(&'static str, 
         diagnostic(error, "open", Some(path))
     }
 }
+/// Node's `os.tmpdir()` on unix (`node:lib/os.js`): the first nonempty value
+/// of TMPDIR, then TMP, then TEMP (empty strings are skipped, like JS `||`),
+/// else `/tmp`, with exactly one trailing `/` dropped while the result stays
+/// longer than the root. Callers resolve from raw bytes (`std::env::var_os`),
+/// so a non-UTF-8 TMPDIR is used rather than skipped — Node keeps the bytes,
+/// while `std::env::var` would fall through to the next variable. Probed
+/// against node v22.22.0 (`_tmp/20261025-issue-621-fix-r4/node-probe/`):
+/// `//` collapses to `/` while `///` only to `//`, and relative values pass
+/// through unchanged. Shared by the model request dump and the MCP session
+/// temp dir.
+pub(crate) fn node_tmpdir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStringExt;
+    let mut bytes = ["TMPDIR", "TMP", "TEMP"]
+        .into_iter()
+        .find_map(|key| var(key).filter(|value| !value.is_empty()))
+        .map_or_else(|| b"/tmp".to_vec(), std::ffi::OsString::into_vec);
+    if bytes.len() > 1 && bytes.ends_with(b"/") {
+        bytes.pop();
+    }
+    std::ffi::OsString::from_vec(bytes)
+}
+
 #[derive(Debug)]
 struct Stage {
     source: io::Error,
@@ -334,6 +356,49 @@ mod tests {
             assert!(read_file(&e, "/file").is_none());
             assert!(read_file(&descriptor_error(e, "read"), "/file").is_none());
         }
+    }
+    #[test]
+    fn tmpdir_follows_node_os_tmpdir() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| OsString::from(*value))
+            }
+        };
+        assert_eq!(node_tmpdir(env(&[])), "/tmp");
+        // Empty values fall through to the next variable, like JS `||`.
+        assert_eq!(node_tmpdir(env(&[("TMPDIR", "")])), "/tmp");
+        assert_eq!(node_tmpdir(env(&[("TMPDIR", ""), ("TEMP", "/t/")])), "/t");
+        assert_eq!(node_tmpdir(env(&[("TMPDIR", "/x/"), ("TMP", "/y")])), "/x");
+        assert_eq!(
+            node_tmpdir(env(&[("TMPDIR", ""), ("TMP", ""), ("TEMP", "")])),
+            "/tmp"
+        );
+        // Exactly one trailing `/` goes away, but only past the root.
+        assert_eq!(node_tmpdir(env(&[("TMPDIR", "/tmp/x/")])), "/tmp/x");
+        assert_eq!(node_tmpdir(env(&[("TMPDIR", "/tmp/x//")])), "/tmp/x/");
+        assert_eq!(node_tmpdir(env(&[("TMPDIR", "///")])), "//");
+        assert_eq!(node_tmpdir(env(&[("TMPDIR", "//")])), "/");
+        assert_eq!(node_tmpdir(env(&[("TMPDIR", "/")])), "/");
+        // Relative values pass through unchanged, like node.
+        assert_eq!(node_tmpdir(env(&[("TMPDIR", "relative")])), "relative");
+        // A non-UTF-8 TMPDIR is used, not skipped to the next variable or
+        // `/tmp`: node keeps the raw bytes, `std::env::var` would have
+        // skipped them.
+        let raw = OsString::from_vec(b"/tmp/\xff".to_vec());
+        assert_eq!(
+            node_tmpdir(|key| (key == "TMPDIR").then(|| raw.clone())),
+            raw
+        );
+        // The trailing-`/` trim works on the raw bytes too.
+        assert_eq!(
+            node_tmpdir(|_| Some(OsString::from_vec(b"/tmp/\xff/".to_vec()))),
+            raw
+        );
     }
     #[test]
     fn descriptor_errno_preserves_the_actual_syscall_without_path() {

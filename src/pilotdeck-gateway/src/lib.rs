@@ -85,9 +85,14 @@ pub fn session_chat_dir(
 /// model runtime is covered — that runtime has no process entry of its own.
 /// Exactly once per process (`OnceLock`); the returned `Signal` must stay
 /// held so the disposition stays installed, so it lives in the lock.
-/// Registration must run inside a tokio runtime with the signal driver
-/// enabled; without a runtime it degrades to a stderr note and the default
-/// disposition — no worse than without this guard, and never a panic.
+/// Registration requires a tokio runtime with the signal driver enabled —
+/// every runtime this crate builds in production is `enable_all` (the
+/// gateway binary's `#[tokio::main]` included). Without a runtime on the
+/// calling thread it degrades to a stderr note and the default disposition,
+/// no worse than without this guard; inside a runtime that lacks the signal
+/// driver, tokio's `signal()` panics instead of returning `Err`, so the
+/// `Handle::try_current` guard in `register_sigxfsz` only catches the
+/// no-runtime case.
 #[cfg(unix)]
 pub fn ensure_sigxfsz_ignored() {
     static SIGNAL: std::sync::OnceLock<Option<tokio::signal::unix::Signal>> =

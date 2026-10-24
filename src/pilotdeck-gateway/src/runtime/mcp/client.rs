@@ -692,19 +692,6 @@ fn join_normalized(base: &str, name: &str) -> String {
     }
 }
 
-/// Node's `os.tmpdir()` on POSIX: the first non-empty of `TMPDIR`, `TMP`,
-/// `TEMP`, else `/tmp`; one trailing slash removed.
-fn node_tmpdir(var: impl Fn(&str) -> Option<String>) -> String {
-    let mut path = ["TMPDIR", "TMP", "TEMP"]
-        .into_iter()
-        .find_map(|key| var(key).filter(|value| !value.is_empty()))
-        .unwrap_or_else(|| "/tmp".into());
-    if path.len() > 1 && path.ends_with('/') {
-        path.pop();
-    }
-    path
-}
-
 /// `mkdirSync(path, { recursive: true })`; `''` fails like Node.
 fn mkdir_recursive(base: &str) -> Result<(), McpClientError> {
     if base.is_empty() {
@@ -998,7 +985,12 @@ impl McpClient {
                 if *per_session && storage_root.is_none_or(str::is_empty) {
                     let base = match env_value(env_ref, "PILOTDECK_SESSION_TMPDIR") {
                         Some(base) => base.to_string(),
-                        None => node_tmpdir(|key| std::env::var(key).ok()),
+                        // Non-UTF-8 TMPDIR bytes stay selected here like
+                        // node's `os.tmpdir()`; only the (unrepresentable)
+                        // spelling is lossy for these string consumers.
+                        None => crate::node_io::node_tmpdir(|key| std::env::var_os(key))
+                            .to_string_lossy()
+                            .into_owned(),
                     };
                     mkdir_recursive(&base)?;
                     let prefix = join_normalized(&base, &format!("pilotdeck-mcp-{}-", spec.id));
@@ -1407,20 +1399,7 @@ mod tests {
     }
 
     #[test]
-    fn tmpdir_follows_node_os_tmpdir() {
-        let env = |pairs: &'static [(&'static str, &'static str)]| {
-            move |key: &str| {
-                pairs
-                    .iter()
-                    .find(|(name, _)| *name == key)
-                    .map(|(_, value)| (*value).to_owned())
-            }
-        };
-        assert_eq!(node_tmpdir(env(&[])), "/tmp");
-        assert_eq!(node_tmpdir(env(&[("TMPDIR", "")])), "/tmp");
-        assert_eq!(node_tmpdir(env(&[("TMPDIR", ""), ("TEMP", "/t/")])), "/t");
-        assert_eq!(node_tmpdir(env(&[("TMPDIR", "/x/"), ("TMP", "/y")])), "/x");
-        assert_eq!(node_tmpdir(env(&[("TMPDIR", "/")])), "/");
+    fn mkdir_recursive_empty_fails_like_node() {
         let error = mkdir_recursive("").unwrap_err();
         assert_eq!(
             error.message(),
