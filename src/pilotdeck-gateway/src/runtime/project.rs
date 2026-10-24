@@ -104,12 +104,12 @@ pub trait ProjectRuntimeFactory: Send + Sync {
     fn stage(&self, project_root: &Path, resources: &mut ResourceBundle) -> RuntimeResult;
 }
 
+pub mod custom_routers;
 /// The production factory (`buildRuntime`): config read and resource-family
 /// staging with the baseline's rollback order.
 mod factory;
 pub mod model;
 pub mod plugins;
-pub mod custom_routers;
 pub mod tools_mcp;
 pub use factory::{
     ConfigSource, Families, Family, FamilyResource, InteractionProfile, InteractionProfileName,

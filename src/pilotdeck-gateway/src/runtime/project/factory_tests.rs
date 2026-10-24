@@ -927,7 +927,7 @@ async fn unwired_families_report_each_family() {
 async fn plugin_family_stages_successfully() {
     use crate::runtime::plugins::PluginRuntimeOptions;
     const CONFIG_YAML: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
-    
+
     let scratch = Scratch::new();
     let project_root = scratch.0.join("project");
     let pilot_home = scratch.0.join("pilot_home");
@@ -962,10 +962,10 @@ async fn plugin_family_stages_successfully() {
     });
     let registry = ProjectRuntimeRegistry::new(&project_root, Arc::new(factory));
 
-    let runtime = registry.resolve(Some(&project_root))
+    let runtime = registry
+        .resolve(Some(&project_root))
         .expect("Factory staging with plugins should succeed");
-    let lease = runtime.acquire()
-        .expect("Should acquire lease");
+    let lease = runtime.acquire().expect("Should acquire lease");
     assert_eq!(lease.runtime().project_root(), project_root);
     drop(lease);
     bounded(registry.dispose()).await.unwrap();
@@ -975,7 +975,7 @@ async fn plugin_family_stages_successfully() {
 async fn custom_router_registry_stages_after_plugins() {
     use crate::runtime::plugins::PluginRuntimeOptions;
     const CONFIG_YAML: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
-    
+
     let scratch = Scratch::new();
     let project_root = scratch.0.join("project");
     let pilot_home = scratch.0.join("pilot_home");
@@ -1010,14 +1010,14 @@ async fn custom_router_registry_stages_after_plugins() {
     });
     let registry = ProjectRuntimeRegistry::new(&project_root, Arc::new(factory));
 
-    let runtime = registry.resolve(Some(&project_root))
+    let runtime = registry
+        .resolve(Some(&project_root))
         .expect("Factory staging with custom router should succeed");
-    let lease = runtime.acquire()
-        .expect("Should acquire lease");
-    
+    let lease = runtime.acquire().expect("Should acquire lease");
+
     // Verify that staging succeeded and resources are accessible
     assert_eq!(lease.runtime().project_root(), project_root);
-    
+
     drop(lease);
     bounded(registry.dispose()).await.unwrap();
 }
