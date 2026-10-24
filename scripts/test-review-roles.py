@@ -154,6 +154,8 @@ def _run(gate, rrr, out_base: Path) -> int:
         calls = [json.loads(x) for x in log.read_text().splitlines()]
         if not calls or any(c["base"] != "https://llm-center.modelbest.co" or c["key_is"] != "anth_file" for c in calls):
             fails.append("anthropic-ok：BASE_URL 应为 llm-center 而非父环境值，且只用文件里的 ANTHROPIC_API_KEY（父环境键≠文件键）")
+        if any(polluted & set(c["env"]) for c in calls):
+            fails.append("anthropic-ok：父环境的令牌/网关头/provider 选择器不得进子进程")
         if secret in log.read_text() or anth_secret in log.read_text():
             fails.append("测试日志里出现了密钥原值")
         if rc != 0 or "runner=anthropic model=claude-sonnet-5-5" not in s or gate_errs(s):
