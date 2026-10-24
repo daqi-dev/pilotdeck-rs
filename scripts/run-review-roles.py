@@ -44,7 +44,7 @@ ROLES = {
     "simplify": "review-role-simplify.md",
 }
 ALLOWED_TOOLS = ["Read", "Grep", "Glob"]
-ZAI_BASE_URL = "https://llm-center.modelbest.co"  # Claude Code 自行拼 /v1/messages，基址须为主机根（带 /v1 会 404）
+LLM_CENTER_BASE_URL = "https://llm-center.modelbest.co"  # 两通道的钥都走 llm-center；Claude Code 自行拼 /v1/messages，基址须为主机根（带 /v1 会 404）
 # 网关在响应体里回显展示名而非请求名（modelUsage 仍是请求名）；只放行已实测的这一对，其余仍须逐字一致
 RESP_MODEL_ALIAS = {"glm-5.3-mb": "GLM-5.3"}
 DEFAULT_MODEL = {"zai": "glm-5.3-mb", "anthropic": "claude-sonnet-5-5"}  # 通道正本见 state/memory/20261015-model-runners.md
@@ -79,10 +79,7 @@ KEY_NAME = {"zai": "ZAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
 def runner_env(runner: str, key: str) -> dict[str, str]:
     """子进程的全部模型相关环境（白名单之外的父环境一概不带）。"""
-    env = {"ANTHROPIC_API_KEY": key}
-    if runner == "zai":
-        env["ANTHROPIC_BASE_URL"] = ZAI_BASE_URL
-    return env
+    return {"ANTHROPIC_API_KEY": key, "ANTHROPIC_BASE_URL": LLM_CENTER_BASE_URL}
 LARGE_DIFF_LINES = 500  # 超过即提示按 --paths 分批（state/memory/20261016-review-bounds.md）
 
 
