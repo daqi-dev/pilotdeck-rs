@@ -985,14 +985,21 @@ async fn forwarding_decorator_keeps_interaction_layering() {
     );
 }
 
-/// Builder chains around the interaction selection stay correct: I→T→I,
-/// T→I→T and a repeated T must keep a single marker layering over the native
-/// source. The captured wrapper Arcs pin that `with_interaction` never
-/// double-wraps and that `with_tools_mcp` rebuilds the layer around the native
-/// kernel rather than wrapping the previous wrapper.
+/// Builder chains around the interaction selection keep a working marker
+/// layering over the native source: I→T→I, T→I→T and a repeated T all stage
+/// the native execution world with the interaction marker. The captured
+/// wrapper Arcs pin identity only: `with_interaction` over an already-layered
+/// source returns the same outer Arc, while `with_tools_mcp` returns a
+/// different one. A changed outer Arc cannot by itself tell "rebuilt around
+/// the native kernel" apart from "wrapped the previous wrapper": the inner
+/// source is private and both shapes pass `assert_staged_interaction`. These
+/// two native chains therefore do not prove non-stacking; that a custom
+/// source is replaced is shown separately by
+/// `tools_mcp_replaces_custom_execution_world_after_interaction`.
 #[tokio::test]
 async fn repeated_builder_chains_keep_interaction_capability() {
-    // I -> T -> I.
+    // I -> T -> I: with_interaction keeps the outer Arc's identity (no new
+    // outer layer); this is an identity pin, not a stacking oracle.
     let chained = Families::unwired().with_interaction().with_tools_mcp();
     let wrapper = Arc::clone(&chained.execution_world);
     let chained = chained.with_interaction();
@@ -1002,23 +1009,28 @@ async fn repeated_builder_chains_keep_interaction_capability() {
     );
     assert_staged_interaction(&chained).await;
 
-    // T -> I -> T.
+    // T -> I -> T. The Arc check below is identity-only: a fresh outer Arc
+    // may be a rebuild or a wrap of the previous wrapper.
     let chained = Families::unwired().with_tools_mcp().with_interaction();
     let first_wrapper = Arc::clone(&chained.execution_world);
     let chained = chained.with_tools_mcp();
     assert!(
         !Arc::ptr_eq(&first_wrapper, &chained.execution_world),
-        "with_tools_mcp must rebuild the layer around the native source"
+        "with_tools_mcp must return a new outer execution-world Arc; \
+         identity alone cannot distinguish a rebuild from wrapping the previous wrapper"
     );
     assert_staged_interaction(&chained).await;
 
-    // I -> T -> T: a repeated with_tools_mcp rebuilds, never stacks wrappers.
+    // I -> T -> T: a repeated with_tools_mcp also returns a new outer Arc.
+    // It neither proves nor rules out stacking, since the inner source is
+    // private; the assertion pins identity change only.
     let chained = Families::unwired().with_interaction().with_tools_mcp();
     let first_wrapper = Arc::clone(&chained.execution_world);
     let chained = chained.with_tools_mcp();
     assert!(
         !Arc::ptr_eq(&first_wrapper, &chained.execution_world),
-        "a repeated with_tools_mcp must target the native kernel, not the wrapper"
+        "a repeated with_tools_mcp must return a new outer execution-world Arc; \
+         identity alone cannot distinguish a rebuild from wrapping the previous wrapper"
     );
     assert_staged_interaction(&chained).await;
 }
