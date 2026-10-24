@@ -2161,13 +2161,15 @@ mod memory_bundle_tests {
     use super::*;
     use crate::host::Cancellation;
     use crate::runtime::context::memory::{
-        MemoryFuture, MemoryResolver, MemoryRetrieveInput, MemoryRetrieveResult,
+        MemoryFuture as ContextMemoryFuture, MemoryResolver, MemoryRetrieveInput,
+        MemoryRetrieveResult,
     };
     use crate::runtime::memory::{
-        MemoryBundleError, MemoryConfig, MemoryDisposeFn, MemoryMaintenanceService,
-        MemoryManagementService, MemoryProviderError, MemoryProviderFactoryFn,
-        NativeMemoryProviderOptions, NativeMemoryService, NativeProjectMemoryProvider,
-        NativeProviderFactoryFn, ProjectMemoryBundleOptions, ProjectMemoryProvider,
+        MemoryBundleError, MemoryConfig, MemoryDisposeFn, MemoryFuture as MaintenanceMemoryFuture,
+        MemoryMaintenanceService, MemoryManagementService, MemoryProviderError,
+        MemoryProviderFactoryFn, NativeMemoryProviderOptions, NativeMemoryService,
+        NativeProjectMemoryProvider, NativeProviderFactoryFn, ProjectMemoryBundleOptions,
+        ProjectMemoryProvider,
     };
     use crate::runtime::project::RuntimeResources;
     use crate::runtime::project::memory_bundle::{
@@ -2217,7 +2219,7 @@ mod memory_bundle_tests {
     }
 
     impl MemoryResolver for FakeMemory {
-        fn retrieve(&self, input: MemoryRetrieveInput) -> MemoryFuture {
+        fn retrieve(&self, input: MemoryRetrieveInput) -> ContextMemoryFuture {
             self.retrieve_calls.fetch_add(1, Ordering::SeqCst);
             *self.retrieve_input.lock().unwrap() = Some((
                 input.query.clone(),
@@ -2234,7 +2236,7 @@ mod memory_bundle_tests {
     }
 
     impl MemoryMaintenanceService for FakeMemory {
-        fn run_due_scheduled_maintenance(&self, _reason: &str) -> MemoryFuture<'_, ()> {
+        fn run_due_scheduled_maintenance(&self, _reason: &str) -> MaintenanceMemoryFuture<'_, ()> {
             self.maintenance_calls.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(()) })
         }
@@ -2256,7 +2258,7 @@ mod memory_bundle_tests {
     }
 
     impl NativeMemoryService for FakeMemory {
-        fn run_due_scheduled_maintenance(&self, _reason: &str) -> MemoryFuture<'_, ()> {
+        fn run_due_scheduled_maintenance(&self, _reason: &str) -> MaintenanceMemoryFuture<'_, ()> {
             self.maintenance_calls.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(()) })
         }
