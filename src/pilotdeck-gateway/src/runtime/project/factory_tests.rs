@@ -846,12 +846,13 @@ async fn unwired_families_report_each_family() {
             Family::RouterRuntime => families.router_runtime = Arc::new(NoopSource(family)),
             Family::LspService => families.lsp = Some(Arc::new(NoopSource(family))),
             Family::ExecutionWorld => families.execution_world = Arc::new(NoopSource(family)),
-            Family::ContextStorage => families.context_storage = Arc::new(NoopSource(family)),
+            // ContextStorage and MemoryBundle are now implemented (A6.9-pr3d)
+            Family::ContextStorage => {}
             Family::SessionTitleProvider => {
                 families.session_title = Some(Arc::new(NoopSource(family)))
             }
             Family::McpProvider => families.mcp = Arc::new(NoopSource(family)),
-            Family::MemoryBundle => families.memory = Arc::new(NoopSource(family)),
+            Family::MemoryBundle => {}
             // Absent by default in the baseline; `unwired` leaves them out.
             Family::Compaction | Family::PromptCacheCoordinator => {}
         }
@@ -875,13 +876,12 @@ async fn unwired_families_report_each_family() {
         (Family::RouterRuntime, "A6.9-pr3b"),
         (Family::LspService, "A6.9-pr3c LspService"),
         (Family::ExecutionWorld, "A6.9-pr3c"),
-        (Family::ContextStorage, "A6.9-pr3d"),
+        // ContextStorage and MemoryBundle are now implemented (A6.9-pr3d)
         (
             Family::SessionTitleProvider,
             "A6.9-pr3d createNativeSessionTitleProvider",
         ),
         (Family::McpProvider, "A6.9-pr3c"),
-        (Family::MemoryBundle, "A6.9-pr3d"),
     ] {
         let mut families = Families::unwired();
         for before in STAGE_ORDER

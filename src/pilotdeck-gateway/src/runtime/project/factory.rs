@@ -438,6 +438,13 @@ impl Families {
         self
     }
 
+    /// Wire the context storage and memory families (A6.9-pr3d).
+    pub fn with_context_memory(mut self) -> Self {
+        self.context_storage = Arc::new(super::context_storage::ContextStorageFamilySource);
+        self.memory = Arc::new(super::memory_bundle::MemoryBundleFamilySource);
+        self
+    }
+
     /// Every family not yet wired into the native runtime (A6.9-pr3b..3e).
     /// Staging reports each one explicitly instead of succeeding silently.
     pub fn unwired() -> Self {
@@ -448,12 +455,12 @@ impl Families {
             router_runtime: unsupported(Family::RouterRuntime, "A6.9-pr3b"),
             lsp: None,
             execution_world: unsupported(Family::ExecutionWorld, "A6.9-pr3c"),
-            context_storage: unsupported(Family::ContextStorage, "A6.9-pr3d"),
+            context_storage: Arc::new(super::context_storage::ContextStorageFamilySource),
             compaction: None,
             prompt_cache_coordinator: None,
             session_title: None,
             mcp: unsupported(Family::McpProvider, "A6.9-pr3c"),
-            memory: unsupported(Family::MemoryBundle, "A6.9-pr3d"),
+            memory: Arc::new(super::memory_bundle::MemoryBundleFamilySource),
         }
     }
 }
