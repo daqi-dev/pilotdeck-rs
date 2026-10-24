@@ -33,7 +33,7 @@ send(response(hello, **binding))
 capabilities = read()
 assert capabilities["method"] == "capabilities"
 methods = [dict(name="execute", profiles=["streaming"])]
-if mode == "live-cancel-compaction":
+if mode in ("live-cancel-compaction", "live-cancel-full-aborted"):
     methods.append(dict(name="cancel"))
 send(response(capabilities, **binding, payload=dict(
     capabilitiesVersion="v1", methods=methods)))
@@ -193,6 +193,30 @@ elif mode == "live-cancel-compaction":
             break
     send(agent_event(3, dict(compaction="incomplete"), final=True,
                      outcome="cancelled"))
+elif mode == "live-cancel-full-aborted":
+    # TS AgentLoop.ts:594-611: when the abort signal fires, the loop still
+    # returns a complete result (type "aborted", stopReason
+    # "aborted_streaming", the real turn count and usage) as the module final
+    # — the authoritative Terminal path, unlike the incomplete compaction
+    # final above, which the host surfaces as ExecuteResult::Aborted.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+    send_event(2, dict(type="model_event", sessionId=session, turnId=turn,
+                      event=dict(type="text_delta", text="hello")))
+    while True:
+        frame = read()
+        if frame.get("method") == "cancel":
+            assert frame["reason"] == "user-stop", frame
+            break
+    send(agent_event(3, dict(result=dict(
+        type="aborted", sessionId=session, turnId=turn,
+        stopReason="aborted_streaming", turns=1,
+        usage=dict(inputTokens=12, outputTokens=34, totalTokens=46),
+        permissionDenials=[], startedAt="2026-10-25T00:00:00Z",
+        completedAt="2026-10-25T00:00:01Z",
+        finalMessage=dict(role="assistant",
+                          content=[dict(type="text", text="stopped")])),
+        messages=messages), final=True, outcome="cancelled"))
 elif mode == "live-duplicate-start":
     # Known-illegal lifecycle: a second turn_started must fail the stream closed.
     # A legal event follows the violating one, so a buffered-frame regression
