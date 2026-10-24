@@ -48,6 +48,72 @@ async fn bounded<F: Future>(future: F) -> F::Output {
         .await
         .expect("lifecycle operation hung")
 }
+
+/// Real YAML through the production `NativeConfigSource`: a model entry with no
+/// explicit capabilities and no `memory` section, the shape other tests already
+/// use as `models: {mock: {}}`.
+const CONFIG_YAML_NO_MEMORY: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
+
+/// A family that stages successfully without publishing anything; it isolates
+/// one family under test inside the production registry.
+struct SilentFamily(Family);
+impl ResourceFamilySource for SilentFamily {
+    fn family(&self) -> Family {
+        self.0
+    }
+    fn stage(&self, _: &StageContext, _: &mut StageSink<'_>) -> RuntimeResult {
+        Ok(())
+    }
+}
+fn silent(family: Family) -> Arc<dyn ResourceFamilySource> {
+    Arc::new(SilentFamily(family))
+}
+/// Wire every family staged before context storage/memory so the production
+/// registry reaches the family under test without an unrelated unsupported
+/// family failing first.
+fn silent_families() -> Families {
+    Families {
+        model_runtime: silent(Family::ModelRuntime),
+        plugins: silent(Family::PluginRuntime),
+        router_custom_routers: Some(silent(Family::RouterCustomRouters)),
+        router_runtime: silent(Family::RouterRuntime),
+        lsp: Some(silent(Family::LspService)),
+        execution_world: silent(Family::ExecutionWorld),
+        session_title: Some(silent(Family::SessionTitleProvider)),
+        mcp: silent(Family::McpProvider),
+        ..Families::unwired()
+    }
+}
+/// Write the global and project config the real loader reads, exactly like the
+/// existing registry tests.
+fn write_project_config(scratch: &Scratch, yaml: &str) -> Env {
+    std::fs::create_dir_all(scratch.0.join("project/.pilotdeck")).unwrap();
+    std::fs::write(scratch.0.join("project/.pilotdeck/pilotdeck.yaml"), yaml).unwrap();
+    std::fs::create_dir_all(scratch.0.join("config-home")).unwrap();
+    std::fs::write(scratch.0.join("config-home/pilotdeck.yaml"), yaml).unwrap();
+    let mut env = Env::new();
+    env.insert(
+        "PILOT_HOME".into(),
+        scratch.0.join("config-home").to_string_lossy().into_owned(),
+    );
+    env
+}
+/// One real `ProjectRuntimeRegistry` over `NativeConfigSource`; only the
+/// staged families are fakes.
+fn registry_for_yaml(scratch: &Scratch, yaml: &str, families: Families) -> ProjectRuntimeRegistry {
+    let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+        pilot_home: scratch.0.join("pilot-home"),
+        cwd: scratch.0.to_path_buf(),
+        env: write_project_config(scratch, yaml),
+        homedir: Some(scratch.0.join("pilot-home")),
+        builtin_skills_root: None,
+        now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        config_version: None,
+        runtime_profile_overrides: RuntimeProfileOverrides::default(),
+        families,
+    });
+    ProjectRuntimeRegistry::new(scratch.0.join("project"), Arc::new(factory))
+}
 /// The generator observes each step after a `setImmediate` turn, so every
 /// fire-and-forget cleanup started during the step is part of that step's
 /// observation. Yield until the single-threaded executor has run everything
@@ -1911,6 +1977,7 @@ async fn interaction_registry_rolls_back_failed_post_interaction_family() {
 mod context_storage_tests {
     use super::*;
     use crate::host::modules::context::{ContextInput, ContextRuntime};
+    use crate::runtime::project::RuntimeResources;
     use crate::runtime::project::context_storage::{
         ContextStorageFamilySource, ContextStorageResources, SessionContextStorage,
     };
@@ -1928,21 +1995,39 @@ mod context_storage_tests {
         }})
     }
 
-    fn stage(root: &Path, snapshot: Value) -> ProjectResources {
+    fn default_profile() -> RuntimeProfile {
+        RuntimeProfile::resolve(&JsValue::Undefined, &RuntimeProfileOverrides::default())
+    }
+
+    fn profile_for(config: &Value) -> RuntimeProfile {
+        let agent = pilotdeck_protocol::parse_json(&config["config"]["agent"].to_string()).unwrap();
+        RuntimeProfile::resolve(&agent, &RuntimeProfileOverrides::default())
+    }
+
+    fn stage_with(
+        root: &Path,
+        snapshot: Value,
+        profile: RuntimeProfile,
+        now: Arc<dyn Fn() -> std::time::SystemTime + Send + Sync>,
+    ) -> ProjectResources {
         let group = ProjectResources::new(
             root.to_path_buf(),
             root.join("home"),
             None,
             crate::config::Env::new(),
-            Arc::new(|| UNIX_EPOCH),
+            now,
             Arc::new(pilotdeck_protocol::parse_json(&snapshot.to_string()).unwrap()),
-            RuntimeProfile::resolve(&JsValue::Undefined, &RuntimeProfileOverrides::default()),
+            profile,
         );
         ContextStorageFamilySource
             .stage(&group.context(), &mut group.sink())
             .unwrap();
         assert!(group.context().owner(Family::ContextStorage).is_none());
         group
+    }
+
+    fn stage(root: &Path, snapshot: Value) -> ProjectResources {
+        stage_with(root, snapshot, default_profile(), Arc::new(|| UNIX_EPOCH))
     }
 
     fn input(value: Value) -> ContextInput {
@@ -2032,14 +2117,19 @@ mod context_storage_tests {
         }
     }
 
-    async fn spill(session: &SessionContextStorage, text: &str) -> JsValue {
+    async fn spill_with(
+        session: &SessionContextStorage,
+        text: &str,
+        turn_id: &str,
+        tool_call_id: &str,
+    ) -> JsValue {
         let result = session
             .context_runtime
             .apply_tool_results(input(json!({
-                "turnId": "same-turn",
+                "turnId": turn_id,
                 "messages": [],
                 "toolResultMessage": {"role": "user", "content": [{
-                    "type": "tool_result", "toolCallId": "same-call",
+                    "type": "tool_result", "toolCallId": tool_call_id,
                     "content": [{"type": "text", "text": text}]
                 }]}
             })))
@@ -2057,6 +2147,10 @@ mod context_storage_tests {
             Some(&"tool_result_reference".into())
         );
         content[0].clone()
+    }
+
+    async fn spill(session: &SessionContextStorage, text: &str) -> JsValue {
+        spill_with(session, text, "same-turn", "same-call").await
     }
 
     fn text_field(value: &JsValue, field: &str) -> String {
@@ -2153,6 +2247,309 @@ mod context_storage_tests {
         assert!(
             !custom_root.exists(),
             "composition must not perform spill I/O"
+        );
+    }
+
+    // Two `create_session` inputs are not observable in this composition and
+    // are deliberately not claimed as covered:
+    //
+    // - `ContextOptions.project_root` is consumed only by memory retrieval
+    //   (`prepare.rs` passes it to `MemoryRetrieveInput`), and
+    //   `create_session` leaves `memory_resolver: None`.
+    // - `memory_retrieval_timeout_ms` (the 30_000.0 default and the
+    //   `config.memory.retrievalTimeoutMs` override) is passed only to that
+    //   same memory build.
+    //
+    // Prerequisite before either can be pinned through `create_session`:
+    // context storage must acquire `Resource::Memory` (or another resolver)
+    // and set `Options.memory_resolver`; a slow resolver then makes the
+    // timeout observable. The separate `self.project_root` used by
+    // instruction discovery is covered by the discovery test below.
+
+    fn prepare_input(cwd: &Path) -> ContextInput {
+        let cwd = cwd.to_string_lossy().into_owned();
+        input(json!({
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "cwd": cwd,
+            "provider": "custom",
+            "model": "wide",
+            "permissionMode": "default",
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+            "tools": []
+        }))
+    }
+
+    #[tokio::test]
+    async fn context_storage_profile_surface_changes_user_context_placement() {
+        let scratch = Scratch::new();
+        for (surface, in_system_prompt) in [("system_prompt", true), ("user_message", false)] {
+            let mut config = snapshot();
+            config["config"]["agent"]["runtimeContextSurface"] = json!(surface);
+            let profile = profile_for(&config);
+            let group = stage_with(&scratch.0, config, profile, Arc::new(|| UNIX_EPOCH));
+            let resource = group
+                .context()
+                .resource(Resource::InstructionStorage)
+                .unwrap();
+            let storage = resource
+                .as_any()
+                .downcast_ref::<ContextStorageResources>()
+                .unwrap();
+            let session = storage.create_session(scratch.0.join("spill")).unwrap();
+            let result = session
+                .context_runtime
+                .prepare_for_model(prepare_input(&scratch.0))
+                .await
+                .unwrap();
+            let system_prompt = text_field(&result, "systemPrompt");
+            assert_eq!(
+                system_prompt.contains("<user-context>"),
+                in_system_prompt,
+                "{surface}"
+            );
+            let JsValue::Array(messages) = result.get("messages").unwrap() else {
+                panic!("messages")
+            };
+            if in_system_prompt {
+                assert_eq!(messages.len(), 1, "{surface}");
+            } else {
+                assert_eq!(messages.len(), 2, "{surface}");
+                assert_eq!(messages[0].get("role"), Some(&"user".into()), "{surface}");
+                assert_eq!(
+                    messages[0].get("metadata").unwrap().get("purpose"),
+                    Some(&"runtime_context".into()),
+                    "{surface}"
+                );
+                let JsValue::Array(content) = messages[0].get("content").unwrap() else {
+                    panic!("content")
+                };
+                let text = content[0]
+                    .get("text")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap();
+                assert!(
+                    text.contains("<runtime-context name=\"pilotdeck:user-context:0\">"),
+                    "{surface}"
+                );
+                assert!(text.contains("<user-context>"), "{surface}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn context_storage_resource_clock_reaches_prompt_environment() {
+        let scratch = Scratch::new();
+        let clock = UNIX_EPOCH + Duration::from_secs(1_749_484_800);
+        let group = stage_with(
+            &scratch.0,
+            snapshot(),
+            default_profile(),
+            Arc::new(move || clock),
+        );
+        let resource = group
+            .context()
+            .resource(Resource::InstructionStorage)
+            .unwrap();
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let session = storage.create_session(scratch.0.join("spill")).unwrap();
+        let result = session
+            .context_runtime
+            .prepare_for_model(prepare_input(&scratch.0))
+            .await
+            .unwrap();
+        let prompt = text_field(&result, "systemPrompt");
+        assert!(
+            prompt.contains("<environment>\nnow: 2025-06-09\n</environment>"),
+            "{prompt}"
+        );
+        assert!(!prompt.contains("now: 1970-01-01"), "{prompt}");
+    }
+
+    #[tokio::test]
+    async fn context_storage_discovers_project_and_user_instructions() {
+        let scratch = Scratch::new();
+        let root = scratch.0.clone();
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::write(root.join("PILOTDECK.md"), "PROJECT-INSTRUCTION").unwrap();
+        std::fs::write(root.join("home/PILOTDECK.md"), "USER-INSTRUCTION").unwrap();
+        std::fs::write(root.join("nested/PILOTDECK.md"), "NESTED-INSTRUCTION").unwrap();
+
+        let group = stage(&root, snapshot());
+        let resource = group
+            .context()
+            .resource(Resource::InstructionStorage)
+            .unwrap();
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let session = storage.create_session(root.join("spill")).unwrap();
+        let result = session
+            .context_runtime
+            .prepare_for_model(prepare_input(&root))
+            .await
+            .unwrap();
+        let prompt = text_field(&result, "systemPrompt");
+        assert!(prompt.contains("PROJECT-INSTRUCTION"), "{prompt}");
+        assert!(prompt.contains("USER-INSTRUCTION"), "{prompt}");
+        assert!(
+            !prompt.contains("NESTED-INSTRUCTION"),
+            "discovery cwd is the project root, not an arbitrary descendant: {prompt}"
+        );
+        let JsValue::Array(layers) = result
+            .get("materialization")
+            .unwrap()
+            .get("instructionLayers")
+            .unwrap()
+        else {
+            panic!("instruction layers")
+        };
+        let project_path = root.join("PILOTDECK.md").to_string_lossy().into_owned();
+        let project_layer = layers
+            .iter()
+            .find(|layer| text_field(layer, "path") == project_path)
+            .unwrap();
+        assert_eq!(text_field(project_layer, "scope"), "project");
+        let user_path = root
+            .join("home/PILOTDECK.md")
+            .to_string_lossy()
+            .into_owned();
+        let user_layer = layers
+            .iter()
+            .find(|layer| text_field(layer, "path") == user_path)
+            .unwrap();
+        assert_eq!(text_field(user_layer, "scope"), "user");
+    }
+
+    #[tokio::test]
+    async fn context_storage_real_normalized_config_creates_session_from_model_defaults() {
+        let scratch = Scratch::new();
+        let registry = registry_for_yaml(
+            &scratch,
+            CONFIG_YAML_NO_MEMORY,
+            silent_families().with_context_memory(),
+        );
+        let root = scratch.0.join("project");
+        let runtime = registry
+            .resolve(Some(&root))
+            .expect("the real normalized config must publish a generation");
+        let lease = runtime
+            .acquire()
+            .expect("the published generation is active");
+        let context = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .expect("Factory resources should be published")
+            .context();
+        let resource = context
+            .resource(Resource::InstructionStorage)
+            .expect("context storage must publish InstructionStorage");
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        // `models: {mock: {}}` has no explicit maxContextTokens; the normalized
+        // protocol default (openai: 128000) is the production value.
+        let session = storage
+            .create_session(scratch.0.join("normalized-spill"))
+            .expect("protocol capabilities must supply maxContextTokens");
+        let result = session
+            .context_runtime
+            .try_auto_compact(input(json!({})))
+            .await
+            .unwrap();
+        assert_eq!(
+            result
+                .get("snapshot")
+                .unwrap()
+                .get("maxContextTokens")
+                .unwrap()
+                .as_number(),
+            Some(128000.0)
+        );
+        drop(lease);
+        bounded(registry.dispose()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn context_storage_shared_directory_requires_unique_scoped_keys() {
+        let scratch = Scratch::new();
+        let group = stage(&scratch.0, snapshot());
+        let resource = group.context().resource(Resource::ToolResultSpill).unwrap();
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let dir = scratch.0.join(".pilotdeck/tool-results");
+        let first = storage.create_session(&dir).unwrap();
+        let second = storage.create_session(&dir).unwrap();
+        let first_text = "a".repeat(200_001);
+        let second_text = "b".repeat(200_001);
+
+        let first_ref = spill_with(&first, &first_text, "t1", "c1").await;
+        let second_ref = spill_with(&second, &second_text, "t1", "c1").await;
+
+        let path = PathBuf::from(text_field(&first_ref, "path"));
+        assert_eq!(second_ref.get("path"), first_ref.get("path"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), first_text);
+        // The second preview describes the second input, but its record points
+        // at the first context's file; that file was never replaced.
+        let preview = text_field(&second_ref, "preview");
+        assert!(preview.starts_with('b'));
+        assert!(!preview.contains('a'));
+        assert_ne!(preview, first_text);
+        let alias = text_field(&second_ref, "readFilePath");
+        assert_ne!(alias, text_field(&first_ref, "readFilePath"));
+        assert_eq!(
+            std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
+            first_text
+        );
+    }
+
+    #[tokio::test]
+    async fn context_storage_shared_directory_distinguishes_unique_scoped_keys() {
+        let scratch = Scratch::new();
+        let group = stage(&scratch.0, snapshot());
+        let resource = group.context().resource(Resource::ToolResultSpill).unwrap();
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let dir = scratch.0.join(".pilotdeck/tool-results");
+        let first = storage.create_session(&dir).unwrap();
+        let second = storage.create_session(&dir).unwrap();
+        let first_text = "a".repeat(200_001);
+        let second_text = "b".repeat(200_001);
+
+        let first_ref = spill_with(&first, &first_text, "t1", "c1").await;
+        let second_ref = spill_with(&second, &second_text, "t1", "c2").await;
+
+        for (reference, expected) in [
+            (&first_ref, first_text.as_str()),
+            (&second_ref, second_text.as_str()),
+        ] {
+            let path = PathBuf::from(text_field(reference, "path"));
+            assert!(path.starts_with(&dir));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+            let alias = text_field(reference, "readFilePath");
+            assert_eq!(
+                std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
+                expected
+            );
+        }
+        assert_ne!(first_ref.get("path"), second_ref.get("path"));
+        assert_ne!(
+            first_ref.get("readFilePath"),
+            second_ref.get("readFilePath")
         );
     }
 }
@@ -2613,20 +3010,6 @@ mod memory_bundle_tests {
         bounded(group.dispose()).await.unwrap();
     }
 
-    struct SilentFamily(Family);
-    impl ResourceFamilySource for SilentFamily {
-        fn family(&self) -> Family {
-            self.0
-        }
-        fn stage(&self, _: &StageContext, _: &mut StageSink<'_>) -> RuntimeResult {
-            Ok(())
-        }
-    }
-
-    fn silent(family: Family) -> Arc<dyn ResourceFamilySource> {
-        Arc::new(SilentFamily(family))
-    }
-
     fn memory_registry(
         scratch: &Scratch,
         source: MemoryBundleFamilySource,
@@ -2634,19 +3017,6 @@ mod memory_bundle_tests {
         factory_calls: Arc<AtomicUsize>,
         provider: Arc<FakeMemory>,
     ) -> ProjectRuntimeRegistry {
-        std::fs::create_dir_all(scratch.0.join("project/.pilotdeck")).unwrap();
-        std::fs::write(
-            scratch.0.join("project/.pilotdeck/pilotdeck.yaml"),
-            MEMORY_YAML,
-        )
-        .unwrap();
-        std::fs::create_dir_all(scratch.0.join("config-home")).unwrap();
-        std::fs::write(scratch.0.join("config-home/pilotdeck.yaml"), MEMORY_YAML).unwrap();
-        let mut env = Env::new();
-        env.insert(
-            "PILOT_HOME".into(),
-            scratch.0.join("config-home").to_string_lossy().into_owned(),
-        );
         let factory: MemoryProviderFactoryFn = Arc::new(move |_| {
             factory_calls.fetch_add(1, Ordering::SeqCst);
             if fail.load(Ordering::SeqCst) {
@@ -2657,33 +3027,21 @@ mod memory_bundle_tests {
                 Ok(Some(injected_provider(&provider)))
             }
         });
-        let families = Families {
-            model_runtime: silent(Family::ModelRuntime),
-            plugins: silent(Family::PluginRuntime),
-            router_custom_routers: Some(silent(Family::RouterCustomRouters)),
-            router_runtime: silent(Family::RouterRuntime),
-            lsp: Some(silent(Family::LspService)),
-            execution_world: silent(Family::ExecutionWorld),
-            session_title: Some(silent(Family::SessionTitleProvider)),
-            mcp: silent(Family::McpProvider),
-            ..Families::unwired()
-        }
-        .with_context_memory()
-        .with_memory(source.with_provider_factory(factory));
-        let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
-            pilot_home: scratch.0.join("pilot-home"),
-            cwd: scratch.0.to_path_buf(),
-            env,
-            homedir: Some(scratch.0.join("pilot-home")),
-            builtin_skills_root: None,
-            now: Arc::new(|| SystemTime::UNIX_EPOCH),
-            config_version: None,
-            runtime_profile_overrides: RuntimeProfileOverrides::default(),
-            families,
-        });
-        ProjectRuntimeRegistry::new(scratch.0.join("project"), Arc::new(factory))
+        let families = silent_families()
+            .with_context_memory()
+            .with_memory(source.with_provider_factory(factory));
+        registry_for_yaml(scratch, MEMORY_YAML, families)
     }
 
+    /// Memory is the last staged family in
+    /// `ProjectRuntimeResourcesBundle.ts:387-398` and in
+    /// `ProjectResourcesFactory::stage` (`families.memory.stage(...)?; Ok(())`).
+    /// There is no family after memory, so a "provider created, then a later
+    /// family fails" interleaving cannot exist. The reachable cases are: (a) the
+    /// factory throws before a provider exists, which must leave
+    /// `dispose_calls == 0`, and (b) a complete generation, whose provider is
+    /// disposed exactly once. Do not invent a post-memory family to cover (a)
+    /// differently.
     #[tokio::test]
     async fn memory_registry_stages_injected_provider_and_does_not_publish_failures() {
         let scratch = Scratch::new();
@@ -2714,6 +3072,11 @@ mod memory_bundle_tests {
             2,
             "the second resolve must stage a fresh generation"
         );
+        assert_eq!(
+            provider.dispose_calls.load(Ordering::SeqCst),
+            0,
+            "the factory failed before creating a provider, so there is nothing to dispose"
+        );
 
         fail.store(false, Ordering::SeqCst);
         let runtime = registry
@@ -2740,5 +3103,78 @@ mod memory_bundle_tests {
             1,
             "registry disposal must clean the provider exactly once"
         );
+    }
+
+    fn yaml_with_memory(memory: &str) -> String {
+        format!("{}memory:\n{}", CONFIG_YAML_NO_MEMORY, memory)
+    }
+
+    #[tokio::test]
+    async fn memory_default_without_memory_section_stages_no_provider() {
+        let scratch = Scratch::new();
+        let registry = registry_for_yaml(
+            &scratch,
+            CONFIG_YAML_NO_MEMORY,
+            silent_families().with_context_memory(),
+        );
+        let root = scratch.0.join("project");
+        let runtime = registry
+            .resolve(Some(&root))
+            .expect("an absent memory section is the disabled default");
+        let lease = runtime
+            .acquire()
+            .expect("the published generation is active");
+        let context = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .expect("Factory resources should be published")
+            .context();
+        assert!(context.owner(Family::MemoryBundle).is_some());
+        assert!(context.resource(Resource::Memory).is_none());
+        assert!(context.resource(Resource::MemoryService).is_none());
+        assert!(context.resource(Resource::MemoryManagement).is_none());
+        drop(lease);
+        bounded(registry.dispose()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_default_with_only_provider_normalizes_enabled_and_fails_native() {
+        let scratch = Scratch::new();
+        let yaml = yaml_with_memory("  provider: edgeclaw\n");
+        let registry = registry_for_yaml(&scratch, &yaml, silent_families().with_context_memory());
+        let root = scratch.0.join("project");
+        let error = match registry.resolve(Some(&root)) {
+            Err(error) => error,
+            Ok(_) => panic!("normalized enabled=true must reach the unported native factory"),
+        };
+        assert_eq!(
+            error.message,
+            "ProjectMemoryBundle requires an injected provider factory; the native EdgeClaw provider is not ported.",
+            "a provider-only memory section normalizes enabled to true"
+        );
+        bounded(registry.dispose()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_invalid_types_are_rejected_during_normalization() {
+        for (memory, expected) in [
+            ("  enabled: \"yes\"\n", "memory.enabled must be a boolean."),
+            (
+                "  provider: 5\n",
+                "memory.provider must be a non-empty string.",
+            ),
+        ] {
+            let scratch = Scratch::new();
+            let yaml = yaml_with_memory(memory);
+            let registry =
+                registry_for_yaml(&scratch, &yaml, silent_families().with_context_memory());
+            let error = match registry.resolve(Some(&scratch.0.join("project"))) {
+                Err(error) => error,
+                Ok(_) => panic!("invalid memory types must fail normalization: {memory}"),
+            };
+            assert_eq!(error.message, expected, "{memory}");
+            bounded(registry.dispose()).await.unwrap();
+        }
     }
 }

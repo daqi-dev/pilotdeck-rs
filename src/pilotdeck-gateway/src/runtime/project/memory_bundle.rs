@@ -11,6 +11,17 @@
 //! baseline default. That native EdgeClaw factory is not ported here, so an
 //! enabled `edgeclaw` configuration fails explicitly instead of succeeding or
 //! being silently disabled.
+//!
+//! Type boundary (follow-up #636): this port's [`ProjectMemoryBundleOptions`]
+//! carries only `project_root`, the normalized `{enabled, provider}` selection,
+//! `agent_model`, and the two factories. The TS composition also passes
+//! `modelConfig`, `now` and `telemetry`
+//! (`ProjectRuntimeResourcesBundle.ts:387-398`), so an injected provider here
+//! cannot receive them. `MemoryProviderError`'s `name`, `code` and
+//! `requires_host` are likewise dropped by `From<MemoryBundleError> for
+//! RuntimeError`, which keeps only the message. Full option/error parity
+//! belongs to the native EdgeClaw provider port in #636; this bundle does not
+//! claim TS equivalence for those fields.
 
 use super::{
     DisposeFuture, Family, FamilyResource, Resource, ResourceFamilySource, RuntimeError,
@@ -130,9 +141,11 @@ impl ResourceFamilySource for MemoryBundleFamilySource {
 }
 
 /// Normalized `snapshot.config.memory` as the selection fields the memory
-/// bundle consumes. The snapshot normalization supplies `enabled` (default
-/// true) and `provider` (default `edgeclaw`); `None` means the config has no
-/// memory section at all.
+/// bundle consumes. An absent `memory` section stays absent (`None`) and stages
+/// no provider, matching `parseMemoryConfig.ts` returning `undefined` (and the
+/// native factory then returning `undefined`) for a missing section. When the
+/// section is present, normalization supplies `enabled` (default true) and
+/// `provider` (default `edgeclaw`).
 fn memory_config(snapshot: &JsValue) -> Option<MemoryConfig> {
     let memory = snapshot.get("config")?.get("memory")?;
     Some(MemoryConfig {
