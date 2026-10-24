@@ -1,0 +1,177 @@
+//! Project-generation context storage composition. As in
+//! `ProjectContextStorageBundle.ts:20-35`, the generation shares storage
+//! construction, not context/turn state. Each session composes its own runtime
+//! and tool-result budget (`SessionContextRuntimeBundle.ts:83-89,155-187`).
+
+use super::{
+    Family, FamilyResource, Resource, ResourceFamilySource, RuntimeError, RuntimeResult,
+    StageContext, StageSink,
+};
+use crate::runtime::context::tool_budget::{ToolResultBudget, ToolResultBudgetOptions};
+use crate::runtime::context::{
+    DefaultContextRuntime, InstructionDiscovery, Options as ContextOptions,
+    RuntimeContextSurface as ContextRuntimeContextSurface,
+};
+use pilotdeck_protocol::JsValue;
+use std::{any::Any, path::PathBuf, sync::Arc, time::UNIX_EPOCH};
+
+pub struct ContextStorageFamilySource;
+
+impl ResourceFamilySource for ContextStorageFamilySource {
+    fn family(&self) -> Family {
+        Family::ContextStorage
+    }
+
+    fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+        let clock = context.clock();
+        let resources = Arc::new(ContextStorageResources {
+            snapshot: context.snapshot(),
+            project_root: context.project_root(),
+            pilot_home: context.pilot_home(),
+            runtime_context_surface: convert_runtime_context_surface(
+                context.profile().runtime_context_surface,
+            ),
+            now: Arc::new(move || {
+                clock()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_secs_f64() * 1000.0)
+                    .unwrap_or(0.0)
+            }),
+        });
+        sink.register_resource(Resource::InstructionStorage, resources.clone());
+        sink.register_resource(Resource::ToolResultSpill, resources);
+        Ok(())
+    }
+}
+
+/// Immutable native storage factory published in both context storage slots.
+/// No runtime, replacement cache, or alias counter belongs to the generation.
+pub struct ContextStorageResources {
+    snapshot: Arc<JsValue>,
+    project_root: PathBuf,
+    pilot_home: PathBuf,
+    runtime_context_surface: ContextRuntimeContextSurface,
+    now: Arc<dyn Fn() -> f64 + Send + Sync>,
+}
+
+/// Owned by one session/context composition, including scoped agent contexts.
+pub struct SessionContextStorage {
+    pub context_runtime: DefaultContextRuntime,
+    pub tool_result_budget: Arc<ToolResultBudget>,
+}
+
+impl ContextStorageResources {
+    /// The caller supplies the session storage's directory (normally
+    /// `.pilotdeck/tool-results/<safeId>`) or execution-world spill root, as in
+    /// `ProjectSessionRuntimeBundle.ts:520,574`. There is no project-flat
+    /// default. Even two contexts using the same directory get separate state.
+    pub fn create_session(
+        &self,
+        tool_results_dir: impl Into<PathBuf>,
+    ) -> Result<SessionContextStorage, RuntimeError> {
+        let max_context_tokens = self.max_context_tokens()?;
+        let tool_result_budget = Arc::new(ToolResultBudget::new(ToolResultBudgetOptions::new(
+            tool_results_dir,
+        )));
+        let memory_retrieval_timeout_ms = self
+            .snapshot
+            .get("config")
+            .and_then(|config| config.get("memory"))
+            .and_then(|memory| memory.get("retrievalTimeoutMs"))
+            .and_then(JsValue::as_number)
+            .unwrap_or(30_000.0);
+        let context_runtime = DefaultContextRuntime::new(ContextOptions {
+            max_context_tokens,
+            runtime_context_surface: self.runtime_context_surface,
+            instruction_discovery: Some(InstructionDiscovery::from_environment(
+                self.project_root.clone(),
+                self.project_root.clone(),
+                self.pilot_home.clone(),
+            )),
+            tool_result_budget: Some(tool_result_budget.clone()),
+            project_root: Some(self.project_root.to_string_lossy().into_owned()),
+            memory_retrieval_timeout_ms,
+            now: Some(self.now.clone()),
+            ..ContextOptions::default()
+        });
+        Ok(SessionContextStorage {
+            context_runtime,
+            tool_result_budget,
+        })
+    }
+
+    fn max_context_tokens(&self) -> Result<f64, RuntimeError> {
+        let config = self
+            .snapshot
+            .get("config")
+            .ok_or_else(|| RuntimeError::new("Context storage config is missing."))?;
+        let agent = config
+            .get("agent")
+            .ok_or_else(|| RuntimeError::new("Context storage agent config is missing."))?;
+        let route = agent.get("model");
+        let provider = route
+            .and_then(|route| route.get("provider"))
+            .and_then(JsValue::as_string)
+            .ok_or_else(|| RuntimeError::new("Agent model provider is missing."))?;
+        let model = route
+            .and_then(|route| route.get("model"))
+            .and_then(JsValue::as_string)
+            .ok_or_else(|| RuntimeError::new("Agent model name is missing."))?;
+        // ModelRuntime.ts:27-47 reads this generation's normalized catalog.
+        // Resolve the model even with an override, matching the unconditional
+        // getCapabilities before `agent.maxContextTokens ?? caps.maxContextTokens`
+        // in ProjectSessionRuntimeBundle.ts:513-533.
+        let provider_config = config
+            .get("model")
+            .and_then(|config| config.get("providers"))
+            .and_then(JsValue::as_object)
+            .and_then(|providers| providers.get_key(provider))
+            .ok_or_else(|| {
+                RuntimeError::new(format!(
+                    "Provider {} does not exist.",
+                    String::from_utf16_lossy(provider.units())
+                ))
+            })?;
+        let model_config = provider_config
+            .get("models")
+            .and_then(JsValue::as_object)
+            .and_then(|models| models.get_key(model))
+            .ok_or_else(|| {
+                RuntimeError::new(format!(
+                    "Model {} does not exist in provider {}.",
+                    String::from_utf16_lossy(model.units()),
+                    String::from_utf16_lossy(provider.units())
+                ))
+            })?;
+        agent
+            .get("maxContextTokens")
+            .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+            .or_else(|| {
+                model_config
+                    .get("capabilities")
+                    .and_then(|caps| caps.get("maxContextTokens"))
+            })
+            .and_then(JsValue::as_number)
+            .ok_or_else(|| RuntimeError::new("Model maxContextTokens must be a number."))
+    }
+}
+
+impl FamilyResource for ContextStorageResources {
+    fn dispose(&self) -> super::DisposeFuture<'_> {
+        // The baseline storage bundle has no dispose; sessions own their state.
+        Box::pin(async { Ok(()) })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+fn convert_runtime_context_surface(
+    value: super::RuntimeContextSurface,
+) -> ContextRuntimeContextSurface {
+    match value {
+        super::RuntimeContextSurface::SystemPrompt => ContextRuntimeContextSurface::SystemPrompt,
+        super::RuntimeContextSurface::UserMessage => ContextRuntimeContextSurface::UserMessage,
+    }
+}

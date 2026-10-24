@@ -527,6 +527,36 @@ impl Families {
         self
     }
 
+    /// Wire the native context storage and the default memory family
+    /// (A6.9-pr3d). The memory source has no injected provider factory, so an
+    /// enabled `edgeclaw` config still fails explicitly with
+    /// `NativeProviderNotPorted`; call [`Self::with_memory`] with
+    /// [`super::memory_bundle::MemoryBundleFamilySource::with_provider_factory`]
+    /// (or `with_create_provider`) to supply a real one. This is the exact
+    /// native default of `ProjectMemoryBundle` with no `providerFactory`.
+    pub fn with_context_memory(mut self) -> Self {
+        self.context_storage = Arc::new(super::context_storage::ContextStorageFamilySource);
+        self.memory = Arc::new(super::memory_bundle::MemoryBundleFamilySource::default());
+        self
+    }
+
+    /// Replace only the memory family, keeping the configured context
+    /// storage. Use this after [`Self::with_context_memory`] to inject an
+    /// application-selected provider factory:
+    ///
+    /// ```ignore
+    /// Families::unwired()
+    ///     .with_context_memory()
+    ///     .with_memory(
+    ///         MemoryBundleFamilySource::default()
+    ///             .with_provider_factory(provider_factory),
+    ///     )
+    /// ```
+    pub fn with_memory(mut self, source: super::memory_bundle::MemoryBundleFamilySource) -> Self {
+        self.memory = Arc::new(source);
+        self
+    }
+
     /// Every family not yet wired into the native runtime (A6.9-pr3b..3e).
     /// Staging reports each one explicitly instead of succeeding silently.
     pub fn unwired() -> Self {

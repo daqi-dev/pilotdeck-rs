@@ -104,11 +104,13 @@ pub trait ProjectRuntimeFactory: Send + Sync {
     fn stage(&self, project_root: &Path, resources: &mut ResourceBundle) -> RuntimeResult;
 }
 
+pub mod context_storage;
 pub mod custom_routers;
 /// The production factory (`buildRuntime`): config read and resource-family
 /// staging with the baseline's rollback order.
 mod factory;
 pub mod interaction;
+pub mod memory_bundle;
 pub mod model;
 pub mod plugins;
 pub mod tools_mcp;
@@ -118,6 +120,7 @@ pub use factory::{
     Resource, ResourceFamilySource, RuntimeContextSurface, RuntimeProfile, RuntimeProfileOverrides,
     SandboxMode, StageContext, StageSink, UnsupportedFamily,
 };
+pub use memory_bundle::MemoryBundleFamilySource;
 impl<F> ProjectRuntimeFactory for F
 where
     F: Fn(&Path, &mut ResourceBundle) -> RuntimeResult + Send + Sync,
