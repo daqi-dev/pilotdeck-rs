@@ -16,7 +16,8 @@ async fn configured_runtime_preserves_complete_ts_log_after_dispose() {
         let scratch = scratch::Scratch::new("553-runtime");
         let state = scratch.path().join("state");
         let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
-            background_task_state_dir: Some(state.clone()),
+            disk_spill_dir: Some(state.clone()),
+            snapshot_store: None,
             ..Default::default()
         });
         assert!(!state.exists(), "constructing an idle runtime must not write");

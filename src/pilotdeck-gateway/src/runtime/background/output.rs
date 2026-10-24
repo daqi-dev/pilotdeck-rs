@@ -104,6 +104,52 @@ impl OutputStore {
             }),
         }
     }
+    /// Recover only the bounded tail into memory; older bytes stay on disk.
+    pub(super) fn restore_from_spill(
+        max: usize,
+        path: PathBuf,
+        expected_total: u64,
+    ) -> std::io::Result<Self> {
+        let mut store = Self::with_spill(max, Some(path.clone()));
+        let mut file = match File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && expected_total == 0 => {
+                return Ok(store);
+            }
+            Err(error) => return Err(error),
+        };
+        let total = file.metadata()?.len();
+        if total != expected_total {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Task output at {} has {total} bytes; expected {expected_total}.",
+                    path.display()
+                ),
+            ));
+        }
+        let memory = total.min(max as u64) as usize;
+        let dropped = total - memory as u64;
+        file.seek(SeekFrom::Start(dropped))?;
+        let mut retained = vec![0; memory];
+        file.read_exact(&mut retained)?;
+        if !retained.is_empty() {
+            store.chunks.push_back(retained);
+        }
+        store.total = total;
+        store.memory = memory;
+        store.dropped = dropped;
+        store.spill.as_mut().unwrap().tail = watch::channel(Some(true)).1;
+        Ok(store)
+    }
+
+    /// A pending or failed write must never be advertised as recoverable.
+    pub(super) fn has_durable_output(&self) -> bool {
+        self.spill.as_ref().is_some_and(|spill| {
+            *spill.tail.borrow() == Some(true)
+                && fs::metadata(&spill.path).is_ok_and(|metadata| metadata.len() == self.total)
+        })
+    }
     /// Hold exactly the next accepted write before filesystem I/O.
     #[cfg(test)]
     pub(super) fn gate_next_write(
@@ -249,6 +295,72 @@ impl OutputStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn restored_spill_keeps_a_bounded_ring_and_complete_disk_history() {
+        let scratch = crate::test_scratch::Scratch::new("617-output-restore");
+        let path = scratch.path().join("task.log");
+        fs::write(&path, b"abcdef").unwrap();
+        let mut store = OutputStore::restore_from_spill(4, path.clone(), 6).unwrap();
+        assert_eq!((store.total, store.dropped, store.memory), (6, 2, 4));
+        assert!(store.has_durable_output());
+        let slice = store.read_slice(&JsValue::Number(0.0), &JsValue::Number(6.0));
+        assert_eq!(slice.content, "abcdef");
+        assert_eq!(slice.next_offset, 6.0);
+        assert!(!slice.truncated);
+        let slice = store.read_slice(&JsValue::Number(2.0), &JsValue::Number(4.0));
+        assert_eq!(slice.content, "cdef");
+        store.append(b"gh");
+        store.flush().await;
+        assert_eq!(store.total, 8);
+        assert!(store.has_durable_output());
+        assert_eq!(fs::read(path).unwrap(), b"abcdefgh");
+    }
+
+    #[test]
+    fn restore_rejects_missing_or_mismatched_nonempty_logs() {
+        let scratch = crate::test_scratch::Scratch::new("617-output-invalid");
+        let path = scratch.path().join("task.log");
+        let empty = OutputStore::restore_from_spill(4, path.clone(), 0).unwrap();
+        assert_eq!(empty.total, 0);
+        assert!(!empty.has_durable_output());
+        assert!(matches!(
+            OutputStore::restore_from_spill(4, path.clone(), 6),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        ));
+        fs::write(&path, b"abc").unwrap();
+        for expected in [2, 4] {
+            assert!(matches!(
+                OutputStore::restore_from_spill(4, path.clone(), expected),
+                Err(error) if error.kind() == std::io::ErrorKind::InvalidData
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn durability_requires_a_finished_complete_write_chain() {
+        let scratch = crate::test_scratch::Scratch::new("617-output-durable");
+        let mut store = OutputStore::with_spill(4, Some(scratch.path().join("task.log")));
+        let (entered, release) = store.gate_next_write();
+        store.append(b"abc");
+        entered.await.unwrap();
+        assert!(!store.has_durable_output());
+        release.send(()).unwrap();
+        store.flush().await;
+        assert!(store.has_durable_output());
+        store.spill.as_mut().unwrap().write_error = true;
+        store.append(b"lost");
+        store.flush().await;
+        assert!(!store.has_durable_output());
+        store.spill.as_mut().unwrap().write_error = false;
+        store.append(b"tail");
+        store.flush().await;
+        assert!(
+            !store.has_durable_output(),
+            "a successful tail write must not hide an earlier missing chunk"
+        );
+    }
+
     #[tokio::test]
     async fn begin_close_rejects_append_before_ring_is_released() {
         let mut store = OutputStore::new(10);

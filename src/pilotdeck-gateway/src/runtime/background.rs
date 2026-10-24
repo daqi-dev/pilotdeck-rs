@@ -22,8 +22,8 @@
 //! runtime dropped without `dispose` leaves its children running.
 //!
 //! Deliberate deviations (see the fixture README):
-//! - Snapshot persistence remains for pr2; restored `unknown` tasks cannot
-//!   occur yet. Output spill is enabled by `background_task_state_dir`. Ledger:
+//! - Output spill is enabled by `disk_spill_dir`; `snapshot_store` adds
+//!   restart recovery, including restored `unknown` tasks. Ledger:
 //!   specs/gateway-parity/accepted-diffs.md A6.5-BACKGROUND-PERSIST-001 (unapproved).
 //! - A spawn that Node reports asynchronously (ENOENT, EACCES, ...) never
 //!   emits `exit` in the baseline, so its task stays `running` with no pid
@@ -67,6 +67,9 @@ use std::{
 };
 use tokio::{io::AsyncReadExt, sync::watch};
 
+mod output;
+use output::OutputStore;
+
 /// Epoch milliseconds (`options.now().getTime()`).
 pub type Clock = Arc<dyn Fn() -> f64 + Send + Sync>;
 /// `onCompletion(event)`; a panicking handler never affects settlement.
@@ -88,6 +91,11 @@ fn system_now() -> f64 {
 
 fn units(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
+}
+
+fn output_path(dir: &Path, task_id: &JsString) -> PathBuf {
+    dir.join("output")
+        .join(format!("{}.log", String::from_utf16_lossy(task_id.units())))
 }
 
 fn concat(parts: &[&[u16]]) -> JsString {
@@ -171,9 +179,6 @@ pub struct OutputSlice {
     pub truncated: bool,
 }
 
-mod output;
-use output::OutputStore;
-
 struct ChildState {
     pid: Option<rustix::process::Pid>,
     exited: bool,
@@ -249,12 +254,14 @@ struct RuntimeState {
     dispose_started: bool,
 }
 
-/// `BackgroundTaskRuntimeOptions` (snapshot recovery is a separate follow-up).
+/// `BackgroundTaskRuntimeOptions` with optional disk spill and snapshot store.
 #[derive(Clone, Default)]
 pub struct BackgroundTaskRuntimeOptions {
     /// Execution-world state directory; logs use `<dir>/output/<taskId>.log`.
     /// `None` preserves the memory-only runtime. No implicit user-home writes.
-    pub background_task_state_dir: Option<PathBuf>,
+    pub disk_spill_dir: Option<std::path::PathBuf>,
+    pub snapshot_store:
+        Option<Arc<dyn crate::runtime::background_snapshot::BackgroundTaskSnapshotStore>>,
     pub now: Option<Clock>,
     pub max_tasks: Option<usize>,
     pub on_completion: Option<CompletionHandler>,
@@ -269,7 +276,9 @@ struct Inner {
     max_tasks: usize,
     on_completion: Option<CompletionHandler>,
     completion_preview_bytes: f64,
-    background_task_state_dir: Option<PathBuf>,
+    disk_spill_dir: Option<std::path::PathBuf>,
+    snapshot_store:
+        Option<Arc<dyn crate::runtime::background_snapshot::BackgroundTaskSnapshotStore>>,
 }
 
 /// `StartTaskSpec`. `env: None` inherits the gateway's environment, like
@@ -358,7 +367,12 @@ fn truthy(value: &JsValue) -> bool {
 
 impl BackgroundTaskRuntime {
     pub fn new(options: BackgroundTaskRuntimeOptions) -> Self {
-        Self {
+        // Validate snapshot store requires disk spill
+        if options.snapshot_store.is_some() && options.disk_spill_dir.is_none() {
+            panic!("Background task durable recovery requires disk_spill_dir for output recovery.");
+        }
+
+        let runtime = Self {
             inner: Arc::new(Inner {
                 state: Mutex::new(RuntimeState {
                     entries: Vec::new(),
@@ -371,14 +385,19 @@ impl BackgroundTaskRuntime {
                 now: options.now.unwrap_or_else(|| Arc::new(system_now)),
                 max_tasks: options.max_tasks.unwrap_or(DEFAULT_MAX_TASKS),
                 on_completion: options.on_completion,
-                background_task_state_dir: options.background_task_state_dir,
+                disk_spill_dir: options.disk_spill_dir,
+                snapshot_store: options.snapshot_store,
                 completion_preview_bytes: options
                     .completion_preview_bytes
                     .unwrap_or(DEFAULT_COMPLETION_PREVIEW_BYTES),
             }),
             #[cfg(test)]
             before_spawn: None,
-        }
+        };
+
+        // Restore snapshots if store is available
+        runtime.restore_snapshots();
+        runtime
     }
 
     fn find(&self, task_id: &JsString, access: TaskAccess<'_>) -> Option<Arc<Entry>> {
@@ -569,23 +588,26 @@ impl BackgroundTaskRuntime {
     ) -> Result<BackgroundBashTask, BackgroundTaskError> {
         // The child state is installed before the entry is published, so a
         // concurrent `stop` can never observe a running entry with no handle.
-        let new_entry =
-            |task: BackgroundBashTask, never_exits: bool, child: Option<ChildState>| Entry {
+        let disk_spill_dir = self.inner.disk_spill_dir.clone();
+        let new_entry = |task: BackgroundBashTask, never_exits: bool, child: Option<ChildState>| {
+            let output = OutputStore::with_spill(
+                DEFAULT_MEMORY_BYTES,
+                disk_spill_dir
+                    .as_ref()
+                    .map(|dir| output_path(dir, &task.task_id)),
+            );
+
+            Entry {
                 state: Mutex::new(EntryState {
                     task,
-                    output: OutputStore::with_spill(
-                        DEFAULT_MEMORY_BYTES,
-                        self.inner.background_task_state_dir.as_ref().map(|dir| {
-                            dir.join("output")
-                                .join(format!("{}.log", String::from_utf16_lossy(task_id.units())))
-                        }),
-                    ),
+                    output,
                     child,
                 }),
                 done: watch::channel(false).0,
                 closed: watch::channel(false).0,
                 never_exits,
-            };
+            }
+        };
         let inherited;
         let resolve_env: &[(JsString, JsString)] = match &spec.env {
             Some(env) => env,
@@ -766,6 +788,123 @@ impl BackgroundTaskRuntime {
         while stops.join_next().await.is_some() {}
     }
 
+    fn restore_snapshots(&self) {
+        use crate::runtime::background_snapshot::restore_task;
+
+        let store = match &self.inner.snapshot_store {
+            Some(store) => store,
+            None => return,
+        };
+
+        let disk_spill_dir = match &self.inner.disk_spill_dir {
+            Some(dir) => dir,
+            None => return,
+        };
+
+        let snapshots = store.load();
+        let mut state = self.inner.state.lock().unwrap();
+
+        for snapshot in snapshots {
+            let task = match restore_task(&snapshot.task) {
+                Ok(task) => task,
+                Err(_) => continue, // Skip invalid snapshots
+            };
+
+            let was_unsettled = matches!(task.status, TaskStatus::Pending | TaskStatus::Running);
+            let mut task = task;
+
+            if was_unsettled {
+                task.status = TaskStatus::Unknown;
+                task.pid = None;
+                task.exit_code = None;
+                task.ended_at = None;
+            }
+
+            // Restore output from spill file
+            let output = if snapshot.output.persisted {
+                match OutputStore::restore_from_spill(
+                    DEFAULT_MEMORY_BYTES,
+                    output_path(disk_spill_dir, &task.task_id),
+                    snapshot.output.total_bytes,
+                ) {
+                    Ok(store) => store,
+                    // A missing or incomplete log cannot recover this snapshot.
+                    Err(_) => continue,
+                }
+            } else {
+                OutputStore::with_spill(DEFAULT_MEMORY_BYTES, None)
+            };
+
+            let entry = Arc::new(Entry {
+                state: Mutex::new(EntryState {
+                    task,
+                    output,
+                    child: None,
+                }),
+                done: watch::channel(true).0,
+                closed: watch::channel(false).0,
+                never_exits: false,
+            });
+
+            state.entries.push((
+                entry.state.lock().unwrap().task.task_id.clone(),
+                entry.clone(),
+            ));
+
+            // Best-effort persist the reconciliation
+            if was_unsettled {
+                let store = Arc::clone(store);
+                let entry_clone = Arc::clone(&entry);
+                tokio::spawn(async move {
+                    let _ = Self::persist_entry_static(&store, &entry_clone).await;
+                });
+            }
+        }
+    }
+
+    async fn persist_entry_static(
+        store: &Arc<dyn crate::runtime::background_snapshot::BackgroundTaskSnapshotStore>,
+        entry: &Arc<Entry>,
+    ) -> std::io::Result<()> {
+        use crate::runtime::background_snapshot::{
+            PersistedBackgroundTask, PersistedOutput, persist_task,
+        };
+
+        let flushed = entry.state.lock().unwrap().output.flush();
+        flushed.await;
+        let (task, total_bytes, has_durable) = {
+            let state = entry.state.lock().unwrap();
+            (
+                state.task.clone(),
+                state.output.total,
+                state.output.has_durable_output(),
+            )
+        };
+
+        if total_bytes > 0 && !has_durable {
+            return Err(std::io::Error::other(
+                "Background task output is not fully persisted.",
+            ));
+        }
+
+        let snapshot = PersistedBackgroundTask {
+            task: persist_task(&task),
+            output: PersistedOutput {
+                total_bytes,
+                persisted: has_durable,
+            },
+        };
+
+        store.write(snapshot).await
+    }
+
+    #[allow(dead_code)]
+    async fn persist_entry(&self, entry: &Arc<Entry>) {
+        if let Some(store) = &self.inner.snapshot_store {
+            let _ = Self::persist_entry_static(store, entry).await;
+        }
+    }
+
     /// `dispose()`: refuse new tasks, settle accepted starts, stop every
     /// running task and wait for all to settle, then release the buffers.
     /// Concurrent calls share one disposal.
@@ -806,12 +945,28 @@ impl BackgroundTaskRuntime {
             for entry in &entries {
                 entry.wait_done().await;
             }
-            for entry in &entries {
-                let flushed = entry.state.lock().unwrap().output.begin_close();
+            // Freeze accepted output before taking each write-chain snapshot.
+            let flush_tasks: Vec<_> = entries
+                .iter()
+                .map(|entry| entry.state.lock().unwrap().output.begin_close())
+                .collect();
+            for flushed in flush_tasks {
                 flushed.await;
+            }
+            // Close outputs
+            for entry in &entries {
                 entry.state.lock().unwrap().output.close();
                 entry.closed.send_replace(true);
             }
+
+            // Persist the final, flushed state without relying on spawned-task timing.
+            if let Some(store) = &self.inner.snapshot_store {
+                for entry in &entries {
+                    let _ = Self::persist_entry_static(store, entry).await;
+                }
+                let _ = store.flush().await;
+            }
+
             self.inner.state.lock().unwrap().phase = Phase::Disposed;
             self.inner.disposed.send_replace(true);
         }
@@ -849,12 +1004,13 @@ async fn settle_never_exits(inner: Arc<Inner>, entry: Arc<Entry>) {
 
 impl Inner {
     /// `settleEntry` + `notifyCompletion`, then resolve `done`.
-    fn settle(&self, entry: &Entry) {
-        let event = {
+    fn settle(&self, entry: &Arc<Entry>) {
+        let (event, should_persist) = {
             let mut state = entry.state.lock().unwrap();
             state.task.output_bytes = state.output.total;
             let task = &state.task;
-            match task.ended_at {
+            let should_persist = task.status.is_terminal();
+            let event = match task.ended_at {
                 Some(ended_at) if task.status.is_terminal() => {
                     let total = state.output.total as f64;
                     let preview_bytes = self.completion_preview_bytes.max(0.0);
@@ -877,10 +1033,21 @@ impl Inner {
                     Some(event)
                 }
                 _ => None,
-            }
+            };
+            (event, should_persist)
         };
         if let (Some(event), Some(handler)) = (event, &self.on_completion) {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(event)));
+        }
+        // Persist terminal state after completion notification
+        // Spawn as fire-and-forget; dispose() will flush the snapshot store
+        if should_persist && let Some(store) = &self.snapshot_store {
+            let store = Arc::clone(store);
+            let entry = Arc::clone(entry);
+            tokio::spawn(async move {
+                // Call write() to queue the persist, it will be flushed on dispose
+                let _ = BackgroundTaskRuntime::persist_entry_static(&store, &entry).await;
+            });
         }
         entry.done.send_replace(true);
     }
@@ -1458,9 +1625,14 @@ mod tests {
     #[tokio::test]
     async fn dispose_waits_for_gated_output_write_before_returning() {
         tokio::time::timeout(Duration::from_secs(10), async {
+            use crate::runtime::background_snapshot::JsonFileBackgroundTaskSnapshotStore;
             let scratch = crate::test_scratch::Scratch::new("553-gated-dispose");
+            let snapshot_path = scratch.path().join("snapshot.json");
             let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
-                background_task_state_dir: Some(scratch.path().to_path_buf()),
+                disk_spill_dir: Some(scratch.path().to_path_buf()),
+                snapshot_store: Some(Arc::new(
+                    JsonFileBackgroundTaskSnapshotStore::new(snapshot_path.clone()).unwrap(),
+                )),
                 ..Default::default()
             });
             let task = runtime
@@ -1511,6 +1683,8 @@ mod tests {
                 "dispose returned before the gated write completed"
             );
             assert!(!path.exists(), "no filesystem write before gate release");
+            entry.append(b"rejected after begin_close");
+            assert_eq!(entry.snapshot().output_bytes, bytes.len() as u64);
             release.send(()).unwrap();
             dispose.await;
             let written = std::fs::read(path).unwrap();
@@ -1526,6 +1700,25 @@ mod tests {
                 format!("{:x}", Sha256::digest(&written)),
                 expected["sha256"].as_str().unwrap()
             );
+            let restored = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                disk_spill_dir: Some(scratch.path().to_path_buf()),
+                snapshot_store: Some(Arc::new(
+                    JsonFileBackgroundTaskSnapshotStore::new(snapshot_path).unwrap(),
+                )),
+                ..Default::default()
+            });
+            let slice = restored
+                .get_output(
+                    &task.task_id,
+                    &JsValue::Number(0.0),
+                    &JsValue::Number(bytes.len() as f64),
+                    None,
+                )
+                .unwrap();
+            assert_eq!(slice.content.as_bytes(), bytes);
+            assert_eq!(slice.total_bytes, bytes.len() as f64);
+            assert!(!slice.truncated);
+            restored.dispose().await;
         })
         .await
         .expect("bounded gated dispose probe");
