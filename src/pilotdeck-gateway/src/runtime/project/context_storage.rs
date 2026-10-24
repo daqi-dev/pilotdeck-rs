@@ -31,30 +31,34 @@ impl ResourceFamilySource for ContextStorageFamilySource {
         let pilot_home = context.pilot_home();
         let _env = context.env();
 
-        // Instruction discovery from config
-        // TS baseline enables it by default unless explicitly set to false
-        let instruction_discovery = {
-            let enabled = snapshot
-                .get("config")
-                .and_then(|config| config.get("agent"))
-                .and_then(|agent| agent.get("instructionDiscovery"))
-                .and_then(|value| value.as_bool())
-                .unwrap_or(true); // default is enabled
+        // Instruction discovery: TS baseline unconditionally constructs it
+        // (SessionContextRuntimeBundle.ts:155). No config switch exists.
+        let instruction_discovery = Some(InstructionDiscovery::from_environment(
+            project_root.clone(),
+            project_root.clone(),
+            pilot_home.clone(),
+        ));
 
-            if enabled {
-                // Use from_environment to properly handle PILOTDECK_MANAGED_CONFIG
-                // with empty-string filtering and deferred environment reading
-                Some(InstructionDiscovery::from_environment(
-                    project_root.clone(),
-                    project_root.clone(),
-                    pilot_home.clone(),
-                ))
-            } else {
-                None
-            }
-        };
+        // Read context and memory config from snapshot
+        let max_context_tokens = snapshot
+            .get("config")
+            .and_then(|config| config.get("agent"))
+            .and_then(|agent| agent.get("maxContextTokens"))
+            .and_then(|v| v.as_number())
+            .unwrap_or(8192.0);
+
+        let memory_retrieval_timeout_ms = snapshot
+            .get("config")
+            .and_then(|config| config.get("memory"))
+            .and_then(|memory| memory.get("retrievalTimeoutMs"))
+            .and_then(|v| v.as_number())
+            .unwrap_or(30_000.0);
 
         // Tool result budget: requires tool_results_dir
+        // NOTE: This is project-level, TS baseline uses session-level with <safeId> segment
+        // (ProjectSessionStorage.ts:413). Current form is compatible with read_file_alias_location
+        // but all sessions share the same flat directory. To be revised when session-scope
+        // consumer is wired.
         let tool_results_dir = project_root.join(".pilotdeck").join("tool-results");
         let tool_result_budget = Some(Arc::new(ToolResultBudget::new(
             ToolResultBudgetOptions::new(tool_results_dir),
@@ -72,7 +76,7 @@ impl ResourceFamilySource for ContextStorageFamilySource {
         // Build DefaultContextRuntime with available resources
         let context_runtime = DefaultContextRuntime::new(ContextOptions {
             compaction: None, // Compaction provider is separate family
-            max_context_tokens: 8192.0,
+            max_context_tokens,
             truncate_first_keep_ratio: 0.5,
             extension: None,
             include_extensions_with_custom_system_prompt: false,
@@ -84,7 +88,7 @@ impl ResourceFamilySource for ContextStorageFamilySource {
             tool_result_budget: tool_result_budget.clone(),
             memory_resolver: None, // Memory is separate family
             project_root: Some(project_root.to_string_lossy().into_owned()),
-            memory_retrieval_timeout_ms: 30_000.0,
+            memory_retrieval_timeout_ms,
             prompt_cache_coordinator: None, // Separate family
             now: Some(now_fn),
             platform: None,
