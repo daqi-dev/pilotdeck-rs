@@ -82,6 +82,20 @@ def mutations():
     # Mutation callbacks only edit input evidence. All judgments belong to
     # matrix.check_observations, including the exact rule named in this table.
     return (
+        ('terminal-event-divergence', 'model-stream', 'EVENTS',
+         lambda rows, http, reference: next(row['value'] for row in rows if row['kind'] == 'terminal').update(outcome='failed')),
+        ('wrong-event-type', 'model-stream', 'EVENT_TYPES',
+         lambda rows, http, reference: event_rows(rows)[0]['value'].update(eventType='agent.unknown')),
+        ('completion-reported-as-failure', 'model-stream', 'OUTCOME',
+         lambda rows, http, reference: terminal_edit(rows, lambda terminal: terminal.update(outcome='failed'))),
+        ('provider-status-lost', 'provider-error', 'HTTP_ERROR',
+         lambda rows, http, reference: http[0].update(status=200)),
+        ('provider-failure-reported-as-success', 'provider-error', 'ERROR_AS_SUCCESS',
+         lambda rows, http, reference: terminal_edit(rows, lambda terminal: terminal.update(outcome='completed'))),
+        ('unconfigured-reported-as-success', 'provider-unconfigured', 'UNCONFIGURED_AS_SUCCESS',
+         lambda rows, http, reference: terminal_edit(rows, lambda terminal: terminal.update(outcome='completed'))),
+        ('normal-stream-model-lost', 'model-stream', 'HTTP_MODEL',
+         lambda rows, http, reference: request_edit(http, -1, lambda request: request.update(model='economical'))),
         ('both-sides-wrong-content', 'model-stream', 'CONTENT',
          lambda rows, http, reference: terminal_edit(rows, lambda terminal:
              terminal['payload']['result']['finalMessage']['content'][0].update(text='same-wrong-output'))),
@@ -221,17 +235,79 @@ def load_capture(capture, report):
     return samples
 
 
+def baseline_controls(report):
+    import os
+    import subprocess
+    import tempfile
+
+    original = matrix.BASELINE
+    environment = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    environment.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
+    try:
+        with tempfile.TemporaryDirectory(prefix='a53-source-controls-') as temporary:
+            for name in ('source-symlink', 'directory-symlink', 'untracked-source', 'ignored-source'):
+                root = Path(temporary) / name
+                (root / 'src/nested').mkdir(parents=True)
+                (root / 'src/main.ts').write_text('export const value = 1;\n')
+                (root / 'src/nested/dep.ts').write_text('export const dep = 1;\n')
+                (root / 'package.json').write_text('{"type":"module"}\n')
+                (root / '.gitignore').write_text('src/ignored.js\n')
+
+                def git(*args):
+                    return subprocess.check_output(
+                        ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false',
+                         '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                         '-C', str(root), *args], env=environment, text=True,
+                        stderr=subprocess.PIPE, timeout=10).strip()
+
+                git('init')
+                git('add', '.')
+                git('commit', '-m', 'baseline source control')
+                matrix.BASELINE = git('rev-parse', 'HEAD')
+                positive = {'case': 'baseline-source', 'name': name, 'status': 'FAIL'}
+                report['positiveControls'].append(positive)
+                actual = matrix.baseline_identity(root)
+                matrix.require(set(actual) == {'src/main.ts', 'src/nested/dep.ts', 'package.json'},
+                               'BASELINE_CONTROL: wrong healthy inventory')
+                positive['status'] = 'PASS'
+                if name.endswith('symlink'):
+                    source = root / ('src/main.ts' if name == 'source-symlink' else 'src/nested')
+                    target = root / 'detached'
+                    source.rename(target)
+                    source.symlink_to(os.path.relpath(target, source.parent), target_is_directory=target.is_dir())
+                else:
+                    path = root / 'src' / ('ignored.js' if name == 'ignored-source' else 'extra.js')
+                    path.write_text('export const injected = true;\n')
+                checked = rejection_check(lambda: matrix.baseline_identity(root), 'BASELINE')
+                report['negativeControls'].append({
+                    'case': 'baseline-source', 'name': name, 'expectedRule': 'BASELINE',
+                    'status': checked['status'], 'checks': [checked]})
+    finally:
+        matrix.BASELINE = original
+
+
+def check_capture_report(original):
+    matrix.require(original.get('moduleMatrixStatus') == 'PASS',
+                   'CAPTURE_REPORT: source Module matrix must be PASS')
+
+
 def execute(args, report):
     capture = args.capture.resolve()
     if not capture.is_dir():
         raise ValueError('INPUT: --capture must be the raw matrix output directory')
     source_report = capture / 'report.json'
-    if source_report.exists():
-        data = read_bytes(source_report)
-        original = json.loads(data)
-        report['originalMatrixStatus'] = original.get('moduleMatrixStatus', original.get('status'))
-        report['originalReportSha256'] = sha(data)
+    matrix.require(source_report.is_file(), 'CAPTURE_REPORT: report.json is missing')
+    data = read_bytes(source_report)
+    original = json.loads(data)
+    report['originalMatrixStatus'] = original.get('moduleMatrixStatus')
+    report['originalReportSha256'] = sha(data)
+    check_capture_report(original)
     samples = load_capture(capture, report)
+    report['inputHashes'][str(source_report)] = sha(data)
+    for status in ('FAIL', 'NOT_RUN', None):
+        checked = rejection_check(lambda: check_capture_report({'moduleMatrixStatus': status}), 'CAPTURE_REPORT')
+        report['negativeControls'].append({'name': f'non-passing-source-report-{status}',
+                                           'status': checked['status'], 'checks': [checked]})
     for name, case, expected, mutate in mutations():
         control = {'name': name, 'case': case, 'expectedRule': expected, 'status': 'PASS', 'checks': []}
         report['negativeControls'].append(control)
@@ -288,6 +364,7 @@ def execute(args, report):
             checked = rejection_check(lambda: matrix.check_launch(changed, config), expected)
             report['negativeControls'].append({'name': name, 'mode': mode, 'expectedRule': expected,
                                                'status': checked['status'], 'checks': [checked]})
+    baseline_controls(report)
     for path, expected in report['inputHashes'].items():
         if sha(read_bytes(Path(path))) != expected:
             raise ValueError(f'INPUT_CHANGED: source evidence changed: {path}')

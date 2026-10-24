@@ -35,4 +35,6 @@ python3 pilotdeck-gateway/tests/fixtures/native-topology/run.py \
 
 每个负控只接受预先指定的规则前缀（例如 `MATRIX_COVERAGE`、`EVENT_ORDER`、`CONTENT`）；任意其他异常均判 FAIL，不能以“程序报错”冒充识别了指定问题。其他变异逐侧验证拒绝，共错 content 案额外证明两侧坏输出仍相等。
 
+源矩阵必须有 `report.json` 且 `moduleMatrixStatus=PASS` 才可作负控输入；总体 NOT_RUN 不会因此变成完成。另用临时自建 Git 树分别验证正常源身份、同字节文件/目录 symlink、未跟踪及 ignored 源文件拒绝，源树必须是精确匹配的普通文件集合。这些自建源身份控制与 40 份真实拓扑正控分别记账，不算额外原生入口实测。
+
 真实双配置发现 Rust 普通模型失败把内部 status.text 泄漏到公共 `agent_status`。TS `AgentLoop.ts:383–392` 的事件投影只保留 event/detail；`pilotdeck-agent/src/turn.rs` 改用相同投影，回归测试保留 status 的晚构造顺序和 detail。另一个真实缺陷是 complete 把 Provider 错误降为 Other，修复及金样见 `../native-judge/README.md`。
