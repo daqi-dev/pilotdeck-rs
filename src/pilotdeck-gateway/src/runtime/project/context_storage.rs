@@ -13,7 +13,6 @@ use crate::runtime::context::{
     RuntimeContextSurface as ContextRuntimeContextSurface,
 };
 use std::any::Any;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
@@ -33,27 +32,27 @@ impl ResourceFamilySource for ContextStorageFamilySource {
         let _env = context.env();
 
         // Instruction discovery from config
-        let instruction_discovery = snapshot
-            .get("config")
-            .and_then(|config| config.get("agent"))
-            .and_then(|agent| agent.get("instructionDiscovery"))
-            .and_then(|value| {
-                if value.as_bool() == Some(false) {
-                    None
-                } else {
-                    // InstructionDiscovery needs project_root, cwd, pilot_home, managed_dir
-                    // TS baseline passes projectRoot for both project_root and cwd
-                    let managed_dir = std::env::var("PILOTDECK_MANAGED_CONFIG")
-                        .ok()
-                        .map(PathBuf::from);
-                    Some(InstructionDiscovery::new(
-                        project_root.clone(),
-                        project_root.clone(),
-                        pilot_home.clone(),
-                        managed_dir,
-                    ))
-                }
-            });
+        // TS baseline enables it by default unless explicitly set to false
+        let instruction_discovery = {
+            let enabled = snapshot
+                .get("config")
+                .and_then(|config| config.get("agent"))
+                .and_then(|agent| agent.get("instructionDiscovery"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true); // default is enabled
+
+            if enabled {
+                // Use from_environment to properly handle PILOTDECK_MANAGED_CONFIG
+                // with empty-string filtering and deferred environment reading
+                Some(InstructionDiscovery::from_environment(
+                    project_root.clone(),
+                    project_root.clone(),
+                    pilot_home.clone(),
+                ))
+            } else {
+                None
+            }
+        };
 
         // Tool result budget: requires tool_results_dir
         let tool_results_dir = project_root.join(".pilotdeck").join("tool-results");

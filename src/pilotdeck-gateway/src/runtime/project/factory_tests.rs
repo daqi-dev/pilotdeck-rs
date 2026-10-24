@@ -883,7 +883,7 @@ async fn unwired_families_report_each_family() {
         ),
         (Family::McpProvider, "A6.9-pr3c"),
     ] {
-        let mut families = Families::unwired();
+        let mut families = Families::unwired().with_context_memory();
         for before in STAGE_ORDER
             .into_iter()
             .take_while(|&staged| staged != family)
