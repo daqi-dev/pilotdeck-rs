@@ -98,6 +98,44 @@ elif mode == "live-early-failure":
         turns=0, errors=[dict(code="agent_transcript_error",
                               message="Failed to record accepted input.")]),
         messages=messages), final=True, outcome="failed"))
+elif mode == "live-double-failure":
+    # TurnRunner.ts:397-402 forwards the loop's turn_failed; a finalization
+    # step (:408-419) may then throw and the catch (:437) yields a second
+    # turn_failed before the same error terminal (:439). Two turn_failed
+    # events are therefore a legal TS stream.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+    send_event(2, dict(type="turn_failed", sessionId=session, turnId=turn,
+                      error=dict(code="agent_model_error",
+                                 message="Model request failed.")))
+    send_event(3, dict(type="turn_failed", sessionId=session, turnId=turn,
+                      error=dict(code="agent_persist_error",
+                                 message="Failed to complete the turn.")))
+    send(agent_event(4, dict(result=dict(
+        type="error", sessionId=session, turnId=turn, stopReason="model_error",
+        turns=1, errors=[dict(code="agent_persist_error",
+                              message="Failed to complete the turn.")]),
+        messages=messages), final=True, outcome="failed"))
+elif mode == "live-max-turns":
+    # AgentLoop.ts:2210-2233: max_turns yields a status event and the module
+    # final only, without turn_failed.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+    send_event(2, dict(type="agent_status", sessionId=session, turnId=turn,
+                      event="model", kind="status", text="max turns reached"))
+    send(agent_event(3, dict(result=dict(
+        type="max_turns", sessionId=session, turnId=turn, stopReason="max_turns",
+        turns=3, errors=[dict(code="agent_max_turns",
+                              message="Reached maximum number of turns (3).")]),
+        messages=messages), final=True, outcome="failed"))
+elif mode == "live-cancel-pending":
+    # Codex P1#2 scenario: turn_started is applied, input_accepted is left to
+    # a host callback that never completes, and a valid success final has been
+    # received. The host's bounded cancel exit must still surface that final
+    # even though the unapplied lifecycle events are lost.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+    send(success_final(2))
 elif mode == "live-cancel-compaction":
     send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
@@ -115,8 +153,12 @@ elif mode == "live-cancel-compaction":
                      outcome="cancelled"))
 elif mode == "live-duplicate-start":
     # Known-illegal lifecycle: a second turn_started must fail the stream closed.
+    # A legal event follows the violating one, so a buffered-frame regression
+    # would surface it after the violation error.
     send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(2, dict(type="model_event", sessionId=session, turnId=turn,
+                      event=dict(type="text_delta", text="after violation")))
     sys.stdin.read()
     sys.exit(0)
 else:
