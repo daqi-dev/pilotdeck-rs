@@ -97,7 +97,7 @@ fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[V
         .unwrap()
         .iter()
         .find(|r| r["sessionKey"] == session && r["runId"] == id)
-        .expect(ObserverRule::RegistryRaw.label());
+        .unwrap_or_else(|| panic!("{}", ObserverRule::RegistryRaw.label()));
     assert_eq!(
         raw_record["state"],
         "completed",
