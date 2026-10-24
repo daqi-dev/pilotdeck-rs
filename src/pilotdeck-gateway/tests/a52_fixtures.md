@@ -35,7 +35,10 @@ PDRS_BASELINE=/absolute/path/to/pinned/PilotDeck \
 
 成功路径固定业务事件 `turn_started → input_accepted → turn_completed`。
 实时业务帧、WS final 复本、registry seq/revision/result 以及 raw snapshot
-分别检查。每个 gate 的进入通知先于释放；15 秒仅是失败看门狗。
+分别检查。原生 observer 另有 4 个指定规则负控：丢实时帧、漏 registry event、
+破坏 seq、覆盖 result；必须命中对应规则，普通异常不算检出。
+双连接竞争与 stale close 前均断言 abort 为零，避免错误的提前 abort 掩盖交错。
+每个 gate 的进入通知先于释放；15 秒仅是失败看门狗。
 冷启轮询只等子进程退出，20 秒到期 kill/wait 后失败，不用于挑选通过的交错。
 
 ## #19 六格实测
@@ -67,3 +70,8 @@ barrier / 失败分别注入。生产 registry 的迟到 error 可以覆盖 resu
 - 默认 cargo test 不自动启动 TS 与监听端口；忽略项必须用上面的命令显式执行，
   日志和每个 suite 的 raw manifest 才是实测证据。`cold_restart_child` 是子进程
   辅助入口，无环境变量时不计作一条独立夹具。
+
+旧 `scripts/a5-19/summarize-b.py` 绑定历史单格 sidecar 采集（5 次），不能接收
+本入口四格 20 次的 manifest。本入口直接检查原始 manifest，不调用该历史聚合器；
+现代汇总的兼容修复 [#623](https://github.com/daqi-dev/pilotdeck-rs/issues/623)
+须在 A5.4 聚合验收前完成。

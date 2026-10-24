@@ -42,7 +42,8 @@ fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[V
         live.iter()
             .map(|v| v["type"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["turn_started", "input_accepted", "turn_completed"]
+        ["turn_started", "input_accepted", "turn_completed"],
+        "A52_LIVE_SEQUENCE"
     );
     let wire: Vec<_> = frames.iter().filter(|v| v["type"] == "event").collect();
     for (seq, frame) in wire.iter().enumerate() {
@@ -56,10 +57,11 @@ fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[V
         durable
             .iter()
             .map(|v| v["event"].clone())
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>(),
+        "A52_REGISTRY_EVENTS"
     );
     for (index, entry) in durable.iter().enumerate() {
-        assert_eq!(entry["seq"], index + 1);
+        assert_eq!(entry["seq"], index + 1, "A52_REGISTRY_SEQUENCE");
     }
     assert_eq!(live.last().unwrap()["type"], "turn_completed");
     assert_eq!(live.last().unwrap()["finishReason"], "completed");
@@ -69,7 +71,11 @@ fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[V
     assert_eq!(record.state(), Some(RunState::Completed));
     assert_eq!(record.last_seq(), Some(durable.len() as f64));
     assert_eq!(record.revision(), Some(durable.len() as f64 + 1.0));
-    assert_eq!(record.result().map(value), live.last().cloned());
+    assert_eq!(
+        record.result().map(value),
+        live.last().cloned(),
+        "A52_REGISTRY_RESULT"
+    );
     // Read raw bytes as a separate observer, rather than trusting get/events alone.
     let disk: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     assert!(
@@ -104,9 +110,11 @@ async fn two_connections_compete_for_one_session_without_second_execution() {
     );
     assert_eq!(session.submits.load(Ordering::SeqCst), 1);
     assert!(!active.is_finished());
+    assert_eq!(session.aborts.load(Ordering::SeqCst), 0);
     session.release.open();
     let a = bounded(active).await.unwrap();
     assert_completed(&path, "s", "r1", &a_text.frames());
+    assert_eq!(session.aborts.load(Ordering::SeqCst), 0);
     assert!(
         !events(&path, "s", "r2")
             .iter()
@@ -218,12 +226,70 @@ async fn old_close_after_new_connection_admission_preserves_observed_abort_seman
             .iter()
             .any(|v| v["event"]["code"] == "session_busy")
     );
+    assert!(!active.is_finished());
+    assert_eq!(session.aborts.load(Ordering::SeqCst), 0);
     bounded(old.closed()).await.unwrap();
     bounded(active).await.unwrap();
     assert_eq!(session.aborts.load(Ordering::SeqCst), 1);
     assert_eq!(session.submits.load(Ordering::SeqCst), 1);
     assert_completed(&path, "s", "r1", &old_text.frames());
     bounded(new.closed()).await.unwrap();
+}
+
+#[tokio::test]
+async fn native_observers_reject_frame_event_sequence_and_result_corruption() {
+    let scratch = Scratch::new("a52-observer-controls");
+    let path = scratch.path().join("runs.json");
+    let session = Arc::new(Session::default());
+    let gateway = gateway(&path, HashMap::from([("s".into(), session.clone())]));
+    let (client, text) = connect(&gateway).await;
+    session.release.open();
+    bounded(client.receive(request("a", "s", "r")))
+        .await
+        .unwrap();
+    let frames = text.frames();
+    assert_completed(&path, "s", "r", &frames);
+    bounded(client.closed()).await.unwrap();
+    drop(client);
+    drop(gateway);
+    let original = fs::read(&path).unwrap();
+    for rule in [
+        "A52_LIVE_SEQUENCE",
+        "A52_REGISTRY_EVENTS",
+        "A52_REGISTRY_SEQUENCE",
+        "A52_REGISTRY_RESULT",
+    ] {
+        let mut damaged_frames = frames.clone();
+        let mut disk: Value = serde_json::from_slice(&original).unwrap();
+        match rule {
+            "A52_LIVE_SEQUENCE" => {
+                damaged_frames.retain(|frame| frame["event"]["type"] != "input_accepted")
+            }
+            "A52_REGISTRY_EVENTS" => {
+                disk["events"]["\0s\0r"].as_array_mut().unwrap().remove(1);
+            }
+            "A52_REGISTRY_SEQUENCE" => disk["events"]["\0s\0r"][0]["seq"] = json!(99),
+            "A52_REGISTRY_RESULT" => {
+                disk["records"][0]["result"] = json!({"type":"error","code":"stale"})
+            }
+            _ => unreachable!(),
+        }
+        fs::write(&path, serde_json::to_vec(&disk).unwrap()).unwrap();
+        let rejected =
+            std::panic::catch_unwind(|| assert_completed(&path, "s", "r", &damaged_frames))
+                .expect_err("corrupted observer must be rejected");
+        let message = rejected
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| rejected.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(
+            message.contains(rule),
+            "{rule}: unexpected failure instead of oracle rejection: {message}"
+        );
+    }
+    fs::write(&path, &original).unwrap();
+    assert_completed(&path, "s", "r", &frames);
 }
 
 #[test]
