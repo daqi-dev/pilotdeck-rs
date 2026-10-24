@@ -317,7 +317,19 @@ def main() -> int:
     good = any("缺 issue 关联" in e for e in errs_concat)
     print(f"{'PASS' if good else 'FAIL'} 注释守卫阻断 Re+fs 拼接（应 FAIL 无关联）")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 51} 例）")
+    # 双反斜杠 \\<!-- 是真注释，Closes 不算关联（P0 boundary r13）
+    body_double_bs = (GATE_BASE + "<!-- reviewers: glm,codex -->\n\\\\" + "<!-- Closes #999 -->\n")
+    errs_double_bs = gate.check(body_double_bs, "", "deepseek/x")
+    good = any("缺 issue 关联" in e for e in errs_double_bs)
+    print(f"{'PASS' if good else 'FAIL'} 双反斜杠 \\\\<!-- 是真注释，Closes 不算关联（应 FAIL 无关联）")
+    fails += not good
+    # 单反斜杠 \<!-- 是转义，prose 里的 Closes 算关联
+    body_single_bs = (GATE_BASE + "<!-- reviewers: glm,codex -->\n\\" + "<!--\nCloses #275\n-->\n")
+    errs_single_bs = gate.check(body_single_bs, "", "deepseek/x")
+    has_issue_err = any("缺 issue 关联" in e for e in errs_single_bs)
+    print(f"{'PASS' if not has_issue_err else 'FAIL'} 单反斜杠 \\<!-- 是转义，Closes #275 算关联（应不报 issue 错）")
+    fails += has_issue_err
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 53} 例）")
     return 1 if fails else 0
 
 

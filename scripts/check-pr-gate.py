@@ -259,9 +259,10 @@ def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | No
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
     # HTML 注释里的 Closes/Refs 不触发 issue 关联：用跨行正则挖空所有注释内容。
-    # (?<!\\) 排除转义 \<!-- 起点（它不是真注释）；re.S 跨行以处理行中开的注释；
-    # 替换为 <!-- --> 守卫避免两侧文本拼接造假匹配。
-    prose_for_link = re.sub(r"(?<!\\)<!--.*?-->", "<!-- -->", prose, flags=re.S)
+    # ((?:^|[^\\])(?:\\\\)*) 捕获注释前缀（含偶数个反斜杠），确保 \<!-- 转义（奇数 \）不被挖空，
+    # \\<!-- 双反斜杠（偶数，渲染为字面 \，后跟真注释）正确挖空。re.S 跨行处理行中开的注释。
+    # 替换串 \1<!-- --> 守卫避免两侧文本拼接造假匹配。
+    prose_for_link = re.sub(r"((?:^|[^\\])(?:\\\\)*)<!--.*?-->", r"\1<!-- -->", prose, flags=re.S|re.M)
     if not ISSUE_LINK.search(prose_for_link) and not NO_ISSUE.search(marks):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
     errs.extend(check_reviewers(body, head_ref, trailers))
