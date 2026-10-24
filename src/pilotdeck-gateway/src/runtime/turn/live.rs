@@ -9,14 +9,19 @@
 //! premature finals — all must fail the turn.
 
 use crate::{
-    host::{Cancellation, ExecuteRequest, ExecuteResult, HostClient, HostError, HostHandler},
+    host::{
+        Cancellation, ExecuteRequest, ExecuteResult, HostClient, HostError, HostErrorKind,
+        HostFuture, HostHandler, ReconnectObservation,
+    },
     runtime::{
         project::{DisposeFuture, RuntimeError, RuntimeResult},
         session::{LiveSession, LiveTurn, SessionNext},
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity, parse_json};
+use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
 /// Production LiveSession implementation backed by a HostClient (sidecar process).
 /// The adapter coordinates turn execution with the host and enforces stream integrity.
@@ -48,14 +53,26 @@ impl LiveSession for LiveSessionAdapter {
 
         // Parse execution options from the input
         let request = parse_execute_request(&input, &options)?;
+        let identity = request.identity.clone();
+        // Keep at most one delivered event ahead of the submit consumer.
+        let (events, receiver) = mpsc::channel(1);
+        let handler = Arc::new(StreamHandler {
+            inner: self.handler.clone(),
+            events,
+        });
+        let cancellation = self.cancellation.clone();
 
         Ok(Box::new(LiveTurnStream {
-            client: Some(client),
-            request,
-            handler: self.handler.clone(),
-            cancellation: self.cancellation.clone(),
+            execution: Some(Box::pin(async move {
+                client
+                    .execute_cancellable(request, handler, cancellation)
+                    .await
+            })),
+            result: None,
+            events: receiver,
+            identity,
+            input,
             integrity: StreamIntegrity::new(),
-            started: false,
         }))
     }
 
@@ -83,52 +100,60 @@ impl LiveSession for LiveSessionAdapter {
 
 /// Streaming adapter for one turn execution.
 struct LiveTurnStream {
-    client: Option<HostClient>,
-    request: ExecuteRequest,
-    handler: Arc<dyn HostHandler>,
-    cancellation: Cancellation,
+    // Owned here rather than spawned: dropping the stream drops execute and
+    // lets HostClient clean up its child and outstanding callbacks.
+    execution: Option<HostFuture<ExecuteResult>>,
+    result: Option<Result<ExecuteResult, HostError>>,
+    events: mpsc::Receiver<JsValue>,
+    identity: ExecutionIdentity,
+    input: JsValue,
     integrity: StreamIntegrity,
-    started: bool,
 }
 
 impl LiveTurn for LiveTurnStream {
     fn next(&mut self) -> SessionNext<'_> {
         Box::pin(async move {
-            if !self.started {
-                self.started = true;
-                return self.execute_turn().await;
+            if let Some(execution) = self.execution.as_mut() {
+                self.result = Some(tokio::select! {
+                    // Drain events already applied by the handler before returning
+                    // either the terminal or an execution error. A closed receiver
+                    // disables this arm while execute finishes cleanup.
+                    biased;
+                    Some(event) = self.events.recv() => return Ok(Some(event)),
+                    result = execution => result,
+                });
+                self.execution = None;
             }
-            // After the first call, the stream is exhausted
-            Ok(None)
+            // execute may have queued an event in the very poll that completed
+            // it, after select already polled recv. Keep its result for next().
+            if let Ok(event) = self.events.try_recv() {
+                return Ok(Some(event));
+            }
+            match self.result.take() {
+                Some(result) => self.finish(result),
+                None => Ok(None),
+            }
         })
     }
 }
 
 impl LiveTurnStream {
-    async fn execute_turn(&mut self) -> Result<Option<JsValue>, RuntimeError> {
-        let client = self
-            .client
-            .take()
-            .ok_or_else(|| RuntimeError::new("Turn already executed."))?;
-
-        // Execute the turn through the host client
-        let result = client
-            .execute_cancellable(
-                self.request.clone(),
-                self.handler.clone(),
-                self.cancellation.clone(),
-            )
-            .await;
-
+    fn finish(
+        &self,
+        result: Result<ExecuteResult, HostError>,
+    ) -> Result<Option<JsValue>, RuntimeError> {
         match result {
             Ok(ExecuteResult::Terminal(terminal)) => {
-                // Validate stream integrity
+                // P1-1: observe_event wiring remains part of A7.2-pr6b.
                 self.integrity.observe_terminal()?;
-                Ok(Some(terminal))
+                Ok(Some(self.completed_event(
+                    terminal.get("payload").unwrap_or(&JsValue::Undefined),
+                )))
             }
             Ok(ExecuteResult::Aborted { terminal }) => {
                 self.integrity.observe_aborted()?;
-                Ok(terminal)
+                let terminal = terminal.unwrap_or_else(|| self.aborted_result());
+                Ok(Some(self.completed_event(&terminal)))
             }
             Ok(ExecuteResult::Rejected(error)) => Err(RuntimeError {
                 message: "Turn execution rejected.".into(),
@@ -136,6 +161,107 @@ impl LiveTurnStream {
             }),
             Err(error) => Err(map_host_error(error)),
         }
+    }
+
+    fn completed_event(&self, terminal: &JsValue) -> JsValue {
+        let mut event = JsObject::new();
+        event.insert("type".into(), "turn_completed".into());
+        event.insert(
+            "sessionId".into(),
+            JsValue::String(self.identity.session_id.clone()),
+        );
+        event.insert(
+            "turnId".into(),
+            JsValue::String(self.identity.turn_id.clone()),
+        );
+        event.insert(
+            "result".into(),
+            terminal
+                .get("result")
+                .cloned()
+                .unwrap_or(JsValue::Undefined),
+        );
+        event.insert(
+            "messages".into(),
+            terminal
+                .get("messages")
+                .cloned()
+                .unwrap_or(JsValue::Undefined),
+        );
+        JsValue::Object(event)
+    }
+
+    fn aborted_result(&self) -> JsValue {
+        // agentLoopSidecarClient.ts:1434-1450: both timestamps share one now;
+        // an incomplete compaction final must retain the original messages.
+        let now = SystemExecutionClock.now_iso();
+        let mut result = JsObject::new();
+        for (key, value) in [
+            ("type", "aborted".into()),
+            (
+                "sessionId",
+                JsValue::String(self.identity.session_id.clone()),
+            ),
+            ("turnId", JsValue::String(self.identity.turn_id.clone())),
+            ("stopReason", "aborted_streaming".into()),
+            ("usage", JsValue::Object(JsObject::new())),
+            ("permissionDenials", JsValue::Array(vec![])),
+            ("turns", JsValue::Number(0.0)),
+            ("startedAt", JsValue::String(now.clone())),
+            ("completedAt", JsValue::String(now)),
+        ] {
+            result.insert(key.into(), value);
+        }
+        let mut terminal = JsObject::new();
+        terminal.insert("result".into(), JsValue::Object(result));
+        terminal.insert(
+            "messages".into(),
+            self.input
+                .get("messages")
+                .cloned()
+                .unwrap_or(JsValue::Undefined),
+        );
+        JsValue::Object(terminal)
+    }
+}
+
+/// Preserve host module/lifecycle behavior while exposing applied AgentEvents.
+struct StreamHandler {
+    inner: Arc<dyn HostHandler>,
+    events: mpsc::Sender<JsValue>,
+}
+
+impl HostHandler for StreamHandler {
+    fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
+        self.inner.module_call(call)
+    }
+
+    fn event(&self, event: JsValue) -> HostFuture<()> {
+        let final_event = event.get("final").and_then(JsValue::as_bool) == Some(true);
+        let payload = event.get("payload").cloned();
+        let applied = self.inner.event(event);
+        let events = self.events.clone();
+        Box::pin(async move {
+            applied.await?;
+            // The authoritative final is projected once from ExecuteResult.
+            if !final_event {
+                let payload = payload.ok_or_else(|| {
+                    HostError::new(HostErrorKind::Protocol, "AgentEvent payload is missing.")
+                })?;
+                events.send(payload).await.map_err(|_| {
+                    HostError::new(HostErrorKind::Callback, "LiveTurn event receiver closed.")
+                })?;
+            }
+            Ok(())
+        })
+    }
+
+    fn dispose(&self) -> HostFuture<()> {
+        self.inner.dispose()
+    }
+
+    fn observe_transport(&self, observation: ReconnectObservation) {
+        self.inner.observe_transport(observation);
     }
 }
 
@@ -315,3 +441,7 @@ mod tests {
         assert!(integrity.observe_aborted().is_ok());
     }
 }
+
+#[cfg(test)]
+#[path = "live_stream_tests.rs"]
+mod stream_tests;
