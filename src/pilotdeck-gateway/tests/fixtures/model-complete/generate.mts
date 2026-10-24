@@ -569,6 +569,89 @@ const specs: Spec[] = [
     providerUrl: '/api',
     replies: [{ status: 405, body: '{}' }, json(okBody)],
   },
+  // 2xx endpoint candidates also fall back on protocol shape: TS
+  // `shouldUseEndpointResponse` clones and JSON-parses each non-stream 2xx body
+  // after headers (the read itself is detached from the request timer; see
+  // ../model-complete-timeout/README.md), and
+  // `isExpectedProviderResponseShape` decides whether to keep it. `/api` has
+  // two candidates, so a 200 with `{}` or HTML must move to
+  // `/api/chat/completions` instead of being parsed.
+  {
+    name: 'openai-200-empty-endpoint-fallback',
+    protocol: 'openai',
+    providerUrl: '/api',
+    replies: [{ status: 200, body: '{}' }, json(okBody)],
+  },
+  {
+    name: 'openai-200-html-endpoint-fallback',
+    protocol: 'openai',
+    providerUrl: '/api',
+    replies: [
+      { status: 200, headers: { 'content-type': 'text/html' }, body: '<html>oops</html>' },
+      json(okBody),
+    ],
+  },
+  {
+    name: 'openai-200-valid-first-endpoint-stops',
+    protocol: 'openai',
+    providerUrl: '/api',
+    replies: [
+      json({
+        id: 'chatcmpl-first',
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: 'first-endpoint' },
+          finish_reason: 'stop',
+        }],
+      }),
+      json(okBody),
+    ],
+  },
+  {
+    // Every candidate has a fallback status (200) but the wrong shape, so the
+    // shared loop returns the last Response and `complete()` parses its body.
+    name: 'openai-200-all-wrong-endpoint-fallback',
+    protocol: 'openai',
+    providerUrl: '/api',
+    replies: [
+      { status: 200, body: '{"wrong":1}' },
+      { status: 200, body: '{"last":true}' },
+    ],
+  },
+  {
+    // Anthropic accepts either a content array or `type: "message"`; the two
+    // alternatives are separate cases so neither can hide the other.
+    name: 'anthropic-200-type-endpoint-shape',
+    protocol: 'anthropic',
+    providerUrl: '/api',
+    replies: [{ status: 200, body: '{"type":"message"}' }],
+  },
+  {
+    name: 'anthropic-200-content-endpoint-shape',
+    protocol: 'anthropic',
+    providerUrl: '/api',
+    replies: [{ status: 200, body: '{"content":[]}' }],
+  },
+  // Responses accepts `object: "response"`, an output array, or any string
+  // `output_text` (the empty string is valid; truthiness would reject it).
+  {
+    name: 'responses-200-object-endpoint-shape',
+    protocol: 'openai-responses',
+    providerUrl: '/api',
+    replies: [{ status: 200, body: '{"object":"response"}' }],
+  },
+  {
+    name: 'responses-200-output-endpoint-shape',
+    protocol: 'openai-responses',
+    providerUrl: '/api',
+    replies: [{ status: 200, body: '{"output":[]}' }],
+  },
+  {
+    name: 'responses-200-empty-output-text-endpoint-shape',
+    protocol: 'openai-responses',
+    providerUrl: '/api',
+    replies: [{ status: 200, body: '{"output_text":""}' }],
+  },
 ];
 
 const scrub = (value: unknown): unknown => {

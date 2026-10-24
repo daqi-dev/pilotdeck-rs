@@ -210,7 +210,7 @@ fn case<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
 async fn native_complete_model_matches_real_ts_complete() {
     let oracle = baseline::oracle(ORACLE);
     let cases = array(model_mock::get(&oracle, "cases"));
-    assert_eq!(cases.len(), 45, "unexpected model-complete oracle size");
+    assert_eq!(cases.len(), 54, "unexpected model-complete oracle size");
     for case in cases {
         let name = text(model_mock::get(case, "name"));
         let outcome = run(case).await;
@@ -404,16 +404,20 @@ async fn native_complete_transport_retry_matches_real_ts() {
             "{name}: fetch calls"
         );
         // A request timeout is a real 100/300 ms timer, not a pre-settled
-        // error: prove the exchange actually waited for it.
+        // error: prove the exchange actually waited for it, but not ten times
+        // the baseline's requested timeout.
         if name.starts_with("transport-timeout") {
             assert!(
                 outcome.elapsed >= Duration::from_millis(50),
                 "{name}: timeout fired without waiting ({:?})",
                 outcome.elapsed
             );
+            let maximum = model_mock::get(case, "elapsedAtMostMs")
+                .as_number()
+                .unwrap() as u64;
             assert!(
-                outcome.elapsed < Duration::from_secs(10),
-                "{name}: timeout did not bound the request ({:?})",
+                outcome.elapsed <= Duration::from_millis(maximum),
+                "{name}: timeout took {:?}, upper bound {maximum}ms; the baseline never scales provider.timeoutMs",
                 outcome.elapsed
             );
         }
@@ -540,11 +544,54 @@ async fn complete_empty_and_non_json_bodies_stay_raw_text() {
     }
 }
 
+/// One response from the real-loopback timeout oracle. `delay_ms` is sent only
+/// after the head is flushed (a *body* delay); `delay_headers_ms` happens
+/// before any head byte (a *headers* delay, still bounded by the request
+/// timer).
+#[derive(Clone, Debug, Default)]
+struct LoopbackReply {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    delay_ms: u64,
+    delay_headers_ms: u64,
+    truncate: bool,
+}
+
+fn loopback_reply(value: &JsValue) -> LoopbackReply {
+    let status = model_mock::get(value, "status")
+        .as_number()
+        .unwrap_or(200.0) as u16;
+    let headers = match model_mock::get(value, "headers").as_object() {
+        Some(headers) => headers
+            .entries()
+            .iter()
+            .map(|(name, value)| (name.to_utf8().unwrap(), text(value)))
+            .collect(),
+        None => Vec::new(),
+    };
+    let body = text(model_mock::get(value, "body")).into_bytes();
+    let delay_ms = model_mock::get(value, "delayMs").as_number().unwrap_or(0.0) as u64;
+    let delay_headers_ms = model_mock::get(value, "delayHeadersMs")
+        .as_number()
+        .unwrap_or(0.0) as u64;
+    let truncate = matches!(model_mock::get(value, "truncate"), JsValue::Bool(true));
+    LoopbackReply {
+        status,
+        headers,
+        body,
+        delay_ms,
+        delay_headers_ms,
+        truncate,
+    }
+}
+
 /// A real HTTP/1.1 loopback server for the `HyperModelTransport` replay of the
-/// TS loopback-hang fixture. `behavior` and `httpBody` come from the oracle.
+/// TS loopback fixture. The behavior, body and scripted replies come from the
+/// oracle; every request is recorded so path/body/count are all compared.
 struct Loopback {
     origin: String,
-    requests: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<RecordedRequest>>>,
     stop: Arc<AtomicBool>,
 }
 
@@ -554,25 +601,36 @@ impl Drop for Loopback {
     }
 }
 
-fn start_loopback(behavior: &str, body: &str) -> Loopback {
+fn start_loopback(case: &JsValue) -> Loopback {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     listener.set_nonblocking(true).unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let requests = Arc::new(AtomicUsize::new(0));
+    let requests = Arc::new(Mutex::new(Vec::new()));
     let stop = Arc::new(AtomicBool::new(false));
-    let counter = requests.clone();
+    let recorded = requests.clone();
     let flag = stop.clone();
-    let behavior = behavior.to_string();
-    let body = body.to_string();
+    let behavior = text(model_mock::get(case, "behavior"));
+    let body = model_mock::get(case, "httpBody")
+        .as_string()
+        .map(|value| value.to_utf8().unwrap())
+        .unwrap_or_default();
+    let replies: Vec<LoopbackReply> = model_mock::items(model_mock::get(case, "replies"))
+        .iter()
+        .map(loopback_reply)
+        .collect();
     thread::spawn(move || {
         while !flag.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((mut socket, _)) => {
                     socket.set_nonblocking(false).unwrap();
-                    counter.fetch_add(1, Ordering::SeqCst);
+                    socket.set_nodelay(true).unwrap();
                     let behavior = behavior.clone();
                     let body = body.clone();
-                    thread::spawn(move || serve_loopback(&mut socket, &behavior, &body));
+                    let replies = replies.clone();
+                    let recorded = recorded.clone();
+                    thread::spawn(move || {
+                        serve_loopback(&mut socket, &behavior, &body, &replies, &recorded);
+                    });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(2));
@@ -588,7 +646,37 @@ fn start_loopback(behavior: &str, body: &str) -> Loopback {
     }
 }
 
-fn serve_loopback(socket: &mut std::net::TcpStream, behavior: &str, body: &str) {
+fn write_loopback_head(socket: &mut std::net::TcpStream, reply: &LoopbackReply) -> bool {
+    let reason = hyper::StatusCode::from_u16(reply.status)
+        .ok()
+        .and_then(|status| status.canonical_reason())
+        .unwrap_or("unknown");
+    let length = reply.body.len() + usize::from(reply.truncate) * 10;
+    let mut head = format!("HTTP/1.1 {} {reason}\r\n", reply.status);
+    if !reply
+        .headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+    {
+        head.push_str("content-type: application/json\r\n");
+    }
+    for (name, value) in &reply.headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str(&format!("content-length: {length}\r\n\r\n"));
+    socket
+        .write_all(head.as_bytes())
+        .and_then(|()| socket.flush())
+        .is_ok()
+}
+
+fn serve_loopback(
+    socket: &mut std::net::TcpStream,
+    behavior: &str,
+    delayed_body: &str,
+    replies: &[LoopbackReply],
+    recorded: &Mutex<Vec<RecordedRequest>>,
+) {
     socket.set_read_timeout(Some(Duration::from_secs(5))).ok();
     let mut head = Vec::new();
     let mut buffer = [0u8; 1024];
@@ -599,8 +687,8 @@ fn serve_loopback(socket: &mut std::net::TcpStream, behavior: &str, body: &str) 
             Err(_) => return,
         }
     }
-    let text = String::from_utf8_lossy(&head);
-    let content_length = text
+    let head_text = String::from_utf8_lossy(&head);
+    let content_length = head_text
         .lines()
         .find_map(|line| {
             let (name, value) = line.split_once(':')?;
@@ -613,37 +701,93 @@ fn serve_loopback(socket: &mut std::net::TcpStream, behavior: &str, body: &str) 
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .map_or(head.len(), |index| index + 4);
-    let mut body_read = head.len().saturating_sub(header_end);
-    while body_read < content_length {
+    let mut body = head[header_end.min(head.len())..].to_vec();
+    while body.len() < content_length {
         match socket.read(&mut buffer) {
             Ok(0) => break,
-            Ok(read) => body_read += read,
+            Ok(read) => body.extend_from_slice(&buffer[..read]),
             Err(_) => return,
         }
     }
+    body.truncate(content_length);
+    let mut start = head_text.lines().next().unwrap_or_default().split(' ');
+    let method = start.next().unwrap_or_default().to_string();
+    let path = start.next().unwrap_or_default().to_string();
+    let index = {
+        let mut recorded = recorded.lock().unwrap();
+        recorded.push(RecordedRequest {
+            method,
+            path,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        });
+        recorded.len() - 1
+    };
     match behavior {
         // Accepted but never answered; the client's request timer must fire.
         "hang" | "abort" => thread::sleep(Duration::from_millis(1500)),
         // Headers (and the first body bytes) arrive immediately; the rest
         // outlives provider.timeoutMs, proving the timer ends at send().
-        _ => {
-            let bytes = body.as_bytes();
+        "delayed-body" => {
+            let bytes = delayed_body.as_bytes();
             let split = bytes.len() / 2;
             let response_head = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
                 bytes.len()
             );
-            socket.write_all(response_head.as_bytes()).ok();
-            socket.write_all(&bytes[..split]).ok();
-            socket.flush().ok();
+            if socket.write_all(response_head.as_bytes()).is_err()
+                || socket.write_all(&bytes[..split]).is_err()
+                || socket.flush().is_err()
+            {
+                return;
+            }
             thread::sleep(Duration::from_millis(200));
             socket.write_all(&bytes[split..]).ok();
+            socket.flush().ok();
+        }
+        _ => {
+            let Some(reply) = replies.get(index.min(replies.len().saturating_sub(1))) else {
+                return;
+            };
+            if reply.delay_headers_ms > 0 {
+                thread::sleep(Duration::from_millis(reply.delay_headers_ms));
+            }
+            if !write_loopback_head(socket, reply) {
+                return;
+            }
+            if reply.truncate {
+                socket.write_all(&reply.body).ok();
+                socket.flush().ok();
+                thread::sleep(Duration::from_millis(20));
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+                return;
+            }
+            if reply.delay_ms > 0 {
+                thread::sleep(Duration::from_millis(reply.delay_ms));
+            }
+            socket.write_all(&reply.body).ok();
             socket.flush().ok();
         }
     }
 }
 
-/// Replay the TS loopback-hang fixture through the real `HyperModelTransport`.
+/// The oracle's `requests` shape: method, path and wire body for every accepted
+/// loopback request, in order.
+fn recorded_requests_json(records: &[RecordedRequest]) -> JsValue {
+    JsValue::Array(
+        records
+            .iter()
+            .map(|record| {
+                let mut value = JsObject::new();
+                value.insert("method".into(), record.method.as_str().into());
+                value.insert("path".into(), record.path.as_str().into());
+                value.insert("body".into(), record.body.as_str().into());
+                JsValue::Object(value)
+            })
+            .collect(),
+    )
+}
+
+/// Replay the TS loopback fixture through the real `HyperModelTransport`.
 /// This is the timeout case the mock table cannot express: a real accepted
 /// socket that never sends headers, a delayed body that outlives the request
 /// timer, and an external abort that must not be pre-empted by
@@ -652,23 +796,26 @@ fn serve_loopback(socket: &mut std::net::TcpStream, behavior: &str, body: &str) 
 async fn native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeout() {
     let oracle = baseline::oracle(TIMEOUT_ORACLE);
     let cases = array(model_mock::get(&oracle, "cases"));
-    assert_eq!(cases.len(), 4, "unexpected timeout oracle size");
+    assert_eq!(cases.len(), 17, "unexpected timeout oracle size");
     for case in cases {
         let name = text(model_mock::get(case, "name"));
-        let behavior = text(model_mock::get(case, "behavior"));
-        let http_body = model_mock::get(case, "httpBody")
-            .as_string()
-            .map(|value| value.to_utf8().unwrap())
-            .unwrap_or_default();
-        let server = start_loopback(&behavior, &http_body);
+        let server = start_loopback(case);
         let provider = {
             let mut provider = model_mock::get(case, "provider")
                 .as_object()
                 .cloned()
                 .unwrap();
+            let oracle_url = provider
+                .get("url")
+                .and_then(|value| value.as_string())
+                .map(|value| value.to_utf8().unwrap())
+                .unwrap_or_default();
+            let path = oracle_url
+                .strip_prefix("http://mock.local")
+                .unwrap_or("/v1");
             provider.insert(
                 "url".into(),
-                JsValue::String(format!("{}/v1", server.origin).into()),
+                JsValue::String(format!("{}{path}", server.origin).into()),
             );
             JsValue::Object(provider)
         };
@@ -698,8 +845,14 @@ async fn native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeou
         )
         .await;
         let elapsed = started.elapsed();
+        let recorded = server.requests.lock().unwrap().clone();
         assert_eq!(
-            server.requests.load(Ordering::SeqCst),
+            model_mock::json(&recorded_requests_json(&recorded)),
+            model_mock::json(model_mock::get(case, "requests")),
+            "{name}: wire requests"
+        );
+        assert_eq!(
+            recorded.len(),
             model_mock::get(case, "requestCount").as_number().unwrap() as usize,
             "{name}: loopback request count"
         );
@@ -725,9 +878,17 @@ async fn native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeou
             elapsed >= Duration::from_millis(minimum),
             "{name}: completed after {elapsed:?}, expected at least {minimum}ms"
         );
+        // Per-case upper bound derived by the generator from the baseline's
+        // requested timer/body delay plus documented scheduler slack. The old
+        // shared 10s bound let a `timeout_ms * 10` product bug pass every
+        // 100/300ms case; this one rejects it without changing the real TS
+        // scenario.
+        let maximum = model_mock::get(case, "elapsedAtMostMs")
+            .as_number()
+            .unwrap() as u64;
         assert!(
-            elapsed < Duration::from_secs(10),
-            "{name}: no timer bounded the request ({elapsed:?})"
+            elapsed <= Duration::from_millis(maximum),
+            "{name}: completed after {elapsed:?}, upper bound {maximum}ms; a timer longer than the baseline's requested delay is a failure"
         );
     }
 }

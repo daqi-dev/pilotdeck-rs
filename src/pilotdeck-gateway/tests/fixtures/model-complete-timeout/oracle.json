@@ -50,6 +50,7 @@
  },
  "node": "v22.22.0",
  "locale": "en-US",
+ "schedulerSlackMs": 500,
  "cases": [
   {
    "name": "loopback-provider-timeout-100",
@@ -97,7 +98,9 @@
     },
     "timeoutMs": 100
    },
+   "expectedWaitMs": 100,
    "elapsedAtLeastMs": 50,
+   "elapsedAtMostMs": 600,
    "thrown": {
     "name": "ModelProviderError",
     "message": "Model request timed out after 100ms.",
@@ -174,7 +177,9 @@
     "timeoutMs": 300
    },
    "streamTimeoutMs": 10,
+   "expectedWaitMs": 300,
    "elapsedAtLeastMs": 150,
+   "elapsedAtMostMs": 800,
    "thrown": {
     "name": "ModelProviderError",
     "message": "Model request timed out after 300ms.",
@@ -251,7 +256,9 @@
    },
    "streamTimeoutMs": 10,
    "abortAfterMs": 150,
+   "expectedWaitMs": 150,
    "elapsedAtLeastMs": 100,
+   "elapsedAtMostMs": 650,
    "thrown": {
     "name": "AbortError",
     "message": "This operation was aborted"
@@ -311,7 +318,9 @@
     },
     "timeoutMs": 50
    },
+   "expectedWaitMs": 200,
    "elapsedAtLeastMs": 150,
+   "elapsedAtMostMs": 700,
    "httpBody": "{\"id\":\"chatcmpl-delayed\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"done\"},\"finish_reason\":\"stop\"}]}",
    "response": {
     "role": "assistant",
@@ -341,6 +350,1111 @@
     {
      "method": "POST",
      "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-multi-first-shape-valid-slow-body",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "expectedWaitMs": 120,
+   "elapsedAtLeastMs": 110,
+   "elapsedAtMostMs": 620,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"slow-first\"},\"finish_reason\":\"stop\"}]}",
+     "delayMs": 120
+    },
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "slow-first"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "slow-first"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-multi-last-shape-wrong-slow-body",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "expectedWaitMs": 120,
+   "elapsedAtLeastMs": 110,
+   "elapsedAtMostMs": 620,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "body": "{\"last\":true}",
+     "delayMs": 120
+    }
+   ],
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": {
+     "last": true
+    }
+   },
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-multi-last-shape-valid-slow-body",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "expectedWaitMs": 120,
+   "elapsedAtLeastMs": 110,
+   "elapsedAtMostMs": 620,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "body": "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"slow-last\"},\"finish_reason\":\"stop\"}]}",
+     "delayMs": 120
+    }
+   ],
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "slow-last"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "slow-last"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-multi-first-shape-wrong-slow-body",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "expectedWaitMs": 120,
+   "elapsedAtLeastMs": 110,
+   "elapsedAtMostMs": 620,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}",
+     "delayMs": 120
+    },
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "Model request timed out after 100ms.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "timeout",
+     "message": "Model request timed out after 100ms.",
+     "retryable": true,
+     "raw": {
+      "code": "network_timeout",
+      "name": "NetworkFetchError"
+     },
+     "userHint": "Request timed out for provider \"p\". Increase provider.timeoutMs in Settings → Model Provider → Advanced, or check local network/proxy and provider status.",
+     "settingsFix": {
+      "description": "Increase request timeout for this provider.",
+      "configPath": "model.providers.<id>.timeoutMs"
+     }
+    }
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-single-endpoint-slow-non-json",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "expectedWaitMs": 120,
+   "elapsedAtLeastMs": 110,
+   "elapsedAtMostMs": 620,
+   "replies": [
+    {
+     "status": 200,
+     "headers": {
+      "content-type": "text/html"
+     },
+     "body": "<html>oops</html>",
+     "delayMs": 120
+    }
+   ],
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": "<html>oops</html>"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-delay-headers-beyond-timeout",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "expectedWaitMs": 100,
+   "elapsedAtLeastMs": 90,
+   "elapsedAtMostMs": 600,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}",
+     "delayHeadersMs": 200
+    },
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "Model request timed out after 100ms.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "timeout",
+     "message": "Model request timed out after 100ms.",
+     "retryable": true,
+     "raw": {
+      "code": "network_timeout",
+      "name": "NetworkFetchError"
+     },
+     "userHint": "Request timed out for provider \"p\". Increase provider.timeoutMs in Settings → Model Provider → Advanced, or check local network/proxy and provider status.",
+     "settingsFix": {
+      "description": "Increase request timeout for this provider.",
+      "configPath": "model.providers.<id>.timeoutMs"
+     }
+    }
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-parent-abort-after-headers-shape-valid",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 1000
+   },
+   "abortAfterMs": 50,
+   "expectedWaitMs": 120,
+   "elapsedAtLeastMs": 110,
+   "elapsedAtMostMs": 620,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"after-abort\"},\"finish_reason\":\"stop\"}]}",
+     "delayMs": 120
+    },
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "after-abort"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "after-abort"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-parent-abort-after-headers-shape-wrong",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 1000
+   },
+   "abortAfterMs": 50,
+   "expectedWaitMs": 120,
+   "elapsedAtLeastMs": 110,
+   "elapsedAtMostMs": 620,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}",
+     "delayMs": 120
+    },
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "thrown": {
+    "name": "AbortError",
+    "message": "This operation was aborted"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-parent-abort-wins-over-timeout-shape-wrong",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "abortAfterMs": 50,
+   "expectedWaitMs": 120,
+   "elapsedAtLeastMs": 110,
+   "elapsedAtMostMs": 620,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}",
+     "delayMs": 120
+    },
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "thrown": {
+    "name": "AbortError",
+    "message": "This operation was aborted"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-later-parent-abort-masks-timeout",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "abortAfterMs": 150,
+   "expectedWaitMs": 200,
+   "elapsedAtLeastMs": 190,
+   "elapsedAtMostMs": 700,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}",
+     "delayMs": 200
+    },
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "thrown": {
+    "name": "AbortError",
+    "message": "This operation was aborted"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-body-read-error-then-second",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "expectedWaitMs": 20,
+   "elapsedAtLeastMs": 10,
+   "elapsedAtMostMs": 520,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{\"choices\":",
+     "truncate": true
+    },
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "ok"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "chatcmpl-ok",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "ok"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-last-body-read-error",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "expectedWaitMs": 20,
+   "elapsedAtLeastMs": 10,
+   "elapsedAtMostMs": 520,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}"
+    },
+    {
+     "status": 200,
+     "body": "{\"choices\":",
+     "truncate": true
+    }
+   ],
+   "thrown": {
+    "name": "TypeError",
+    "message": "terminated"
+   },
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "loopback-multi-first-shape-wrong-within-timeout",
+   "behavior": "reply",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 1000
+   },
+   "expectedWaitMs": 50,
+   "elapsedAtLeastMs": 40,
+   "elapsedAtMostMs": 550,
+   "replies": [
+    {
+     "status": 200,
+     "body": "{}",
+     "delayMs": 50
+    },
+    {
+     "status": 200,
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "ok"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "chatcmpl-ok",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "ok"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/chat/completions",
      "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
     }
    ]
