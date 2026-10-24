@@ -652,6 +652,33 @@ const specs: Spec[] = [
     providerUrl: '/api',
     replies: [{ status: 200, body: '{"output_text":""}' }],
   },
+  {
+    // Anthropic's shape is a `content` array or `type: "message"`; a 200 `{}`
+    // is not that shape, so it must move to the second endpoint.
+    name: 'anthropic-200-empty-endpoint-fallback',
+    protocol: 'anthropic',
+    providerUrl: '/api',
+    replies: [{ status: 200, body: '{}' }, json(anthropicBody)],
+  },
+  {
+    // Every Anthropic candidate has the wrong shape; the shared loop keeps the
+    // last Response and `complete()` parses that body instead of falling back.
+    name: 'anthropic-200-all-wrong-endpoint-fallback',
+    protocol: 'anthropic',
+    providerUrl: '/api',
+    replies: [
+      { status: 200, body: '{"wrong":1}' },
+      { status: 200, body: '{"last":true}' },
+    ],
+  },
+  {
+    // Responses' shape is `object: "response"`, an `output` array, or a string
+    // `output_text`; a 200 `{}` is not that shape, so it must move on.
+    name: 'responses-200-empty-endpoint-fallback',
+    protocol: 'openai-responses',
+    providerUrl: '/api',
+    replies: [{ status: 200, body: '{}' }, json(responsesBody)],
+  },
 ];
 
 const scrub = (value: unknown): unknown => {

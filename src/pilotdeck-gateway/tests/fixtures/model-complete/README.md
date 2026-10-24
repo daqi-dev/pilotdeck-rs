@@ -12,7 +12,7 @@ frames 喂同一状态码、响应头和响应体字节，真正调用
 `runtime::model::http::complete_model`，再按 `JSON.stringify` 比较 canonical
 response 或抛出的 `ModelProviderError`；不是只测自写 parser。
 
-覆盖 54 例，三协议各含正常与空 body / 非 JSON：
+覆盖 57 例，三协议各含正常与空 body / 非 JSON：
 
 - anthropic：thinking+signature 与 `thinking.text` 回退、未知 block 忽略、text、
   tool_use、usage（含 cache 与 totalTokens）、`end_turn` / `tool_use` /
@@ -43,13 +43,16 @@ response 或抛出的 `ModelProviderError`；不是只测自写 parser。
   500 HTML 与 503 纯文本保留原始 body 字符串；400 / 404 / 405 在
   `/api`（候选 `[base/v1/chat/completions, base/chat/completions]`）会换到
   第二个 endpoint 成功，金样锁两次请求的 method/path/body 序列。
-- 2xx 形状回退（9 例）：`shouldUseEndpointResponse` 在非 stream 且多候选时
+- 2xx 形状回退（12 例）：`shouldUseEndpointResponse` 在非 stream 且多候选时
   clone + JSON-parse 每个 2xx body，再由 `isExpectedProviderResponseShape`
   按协议判形状。OpenAI 的 `{}`、HTML、全候选错形状会换 endpoint（最后候选
   返回原 body）；合法首候选立即停止。Anthropic 分别接受 `content` 数组与
   `type:"message"`；Responses 分别接受 `object:"response"`、`output` 数组与
-  空字符串 `output_text`（truthiness 会误拒空字符串）。这些 body 都很短；
-  body 读取跨过请求 deadline 的真实时序由
+  空字符串 `output_text`（truthiness 会误拒空字符串）。Anthropic 的 200 `{}`
+  从 `/api/v1/messages` 换到 `/api/messages` 后成功（2 次请求）；Anthropic
+  全候选错形状时返回末项 `{"last":true}`（canonical 为空 content、unknown）。
+  Responses 的 200 `{}` 从 `/api/v1/responses` 换到 `/api/responses` 后成功
+  （2 次请求）。这些 body 都很短；body 读取跨过请求 deadline 的真实时序由
   `../model-complete-timeout/` 的 flushHeaders 回环例覆盖。
 - 429 + `Retry-After`：TS `complete()` 对非 2xx **不重试**，只抛
   `ModelProviderError`（`retryable: true`）；响应头不进入 canonical error
@@ -102,14 +105,19 @@ timeout 1800 python3 \
 `tool_calls`、Responses failed 改成 unknown、Anthropic `refusal` 改成 unknown、
 工具 id 去重后缀从 `_2` 改成 `_1`、complete 对 429 重试、complete 内层重试
 边界改成 `<=`（小数 1.5 上限的请求数与 exhausted 错误形状会变）。另加八个
-本轮变异：complete 请求超时改读 stream idle timeout（`model-complete-timeout`
+r5 变异：complete 请求超时改读 stream idle timeout（`model-complete-timeout`
 的 300ms 例会在 10ms 抛错）、aborted 消息不再优先于 premature（transport
 abort 例从 1 次变 3 次）、请求体多插一个字段（逐字节 body 比较失败）、
 usage cache 字段丢弃、Responses `output_text` 去重条件反转、Anthropic
 `stop_sequence` 视为 unknown、仅空白 tool-call id 改回旧的非 trim 判空
 （`openai-tool-id-whitespace` 不再生成 id）、请求超时改成
-`duration(timeout_ms * 10.0)`（100ms 例约 1000ms，超过 600ms 上界）。每个
-变异都先编译，只接受已编译测试的断言失败。
+`duration(timeout_ms * 10.0)`（100ms 例约 1000ms，超过 600ms 上界）。再加两个
+r6 形状绕过负控：在 `http.rs` 的形状调用处分别把 Anthropic / Responses 的
+判断按协议短路为真，使首候选 200 `{}` 被误接受；只有目标新例
+`anthropic-200-empty-endpoint-fallback` /
+`responses-200-empty-endpoint-fallback` 的 `request count`（或 canonical）
+断言失败才算抓住，输出必须含目标用例名。共 17 条，每个变异都先编译，只接受
+已编译测试的断言失败。
 
 恢复：变异前把原始字节与 SHA-256 写到 worktree 外的状态目录（默认
 `$TMPDIR/pdrs-negctl-<worktree哈希>`），SIGTERM/SIGINT/SIGHUP 处理器同步恢复；

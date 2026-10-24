@@ -210,7 +210,7 @@ fn case<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
 async fn native_complete_model_matches_real_ts_complete() {
     let oracle = baseline::oracle(ORACLE);
     let cases = array(model_mock::get(&oracle, "cases"));
-    assert_eq!(cases.len(), 54, "unexpected model-complete oracle size");
+    assert_eq!(cases.len(), 57, "unexpected model-complete oracle size");
     for case in cases {
         let name = text(model_mock::get(case, "name"));
         let outcome = run(case).await;
