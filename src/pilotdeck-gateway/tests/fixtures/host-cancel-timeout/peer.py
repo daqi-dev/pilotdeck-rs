@@ -48,6 +48,13 @@ def close():
     frames = [json.loads(line) for line in sys.stdin.read().splitlines() if line.strip()]
     assert all(f.get('method') in ('ack', 'cancel') for f in frames), frames
     mark('closing')
+    if mode == 'terminal-ack-stall':
+        # The second non-final application was collected before the deadline
+        # exit, so the host acknowledged it. A deadline-first select would abort
+        # the application without collecting it and never send this ACK.
+        acked = [f.get('lastAppliedSequence') for f in frames
+                 if f.get('method') == 'ack']
+        assert 1 in acked, ('missing ack for the collected application', frames)
     wait('close-release')
     receipt.write_text('PASS ' + mode + '\n')
     sys.exit(0)
@@ -104,9 +111,14 @@ if mode.startswith('terminal-'):
         send(dict(kind='request', messageId='call-1', method='module_call', module='model',
                   runId=request['runId'], operationId=request['operationId'],
                   requestId='callback-request', payload=dict(operation='stream')))
+    elif mode == 'terminal-ack-stall':
+        # A second non-final event. The test blocks its callback and releases it
+        # once the cancel deadline has already passed, so its completed result
+        # is waiting in the host's callback set, uncollected, at deadline time.
+        event(1)
     mark('ready')
     wait('terminal-release')
-    event(1, True)
+    event(2 if mode == 'terminal-ack-stall' else 1, True)
     close()
 else:
     assert mode in ('pending-hello', 'pending-resume', 'silent-resume')

@@ -75,6 +75,42 @@ async fn boundary(signals: &ExecutionSignals, anchor: Instant, receipt: &Receipt
     marker(receipt, "closing").await;
 }
 
+/// Poll a manually-owned execution future exactly once. The immediately-ready
+/// branch makes the select return after the first poll, so the caller (not the
+/// scheduler) decides when the loop observes timers, IO and callback results.
+async fn poll_once<F: std::future::Future>(run: &mut std::pin::Pin<Box<F>>) -> Option<F::Output> {
+    tokio::select! {
+        biased;
+        value = run.as_mut() => Some(value),
+        _ = std::future::ready(()) => None,
+    }
+}
+
+/// Drive a manually-owned execution future until `ready` holds, yielding to
+/// callbacks and fixture IO between polls. The execute future itself is not a
+/// spawned task, so time and callbacks can advance while it is unpolled — the
+/// same state a slow `next()` consumer creates in production.
+async fn drive_until<F: std::future::Future>(
+    run: &mut std::pin::Pin<Box<F>>,
+    ready: impl Fn() -> bool,
+) -> Option<F::Output> {
+    // Real-time watchdog: a paused virtual clock cannot bound cleanup that
+    // waits on a timer, and a fixture that dies without its marker must not
+    // hang the test forever.
+    let watchdog = std::time::Instant::now() + Duration::from_secs(20);
+    while !ready() {
+        assert!(
+            std::time::Instant::now() < watchdog,
+            "manual execute driver did not reach its condition"
+        );
+        if let Some(value) = poll_once(run).await {
+            return Some(value);
+        }
+        tokio::task::yield_now().await;
+    }
+    None
+}
+
 #[tokio::test]
 async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadline() {
     for before in [true, false] {
@@ -178,6 +214,9 @@ impl ApplicationHandler {
             block_sequence: match mode {
                 "terminal-first-stall" => Some(0),
                 "terminal-final-stall" => Some(1),
+                // Second non-final event: parked, then released after the
+                // deadline has already passed but before the loop is polled.
+                "terminal-ack-stall" => Some(1),
                 _ => None,
             },
             block_module: mode == "terminal-module-stall",
@@ -365,4 +404,95 @@ async fn cancellation_terminal_application_released_inside_bound_finishes_normal
         receipt.assert_pass(mode);
         assert_peer_reaped(&receipt).await;
     }
+}
+
+#[tokio::test]
+async fn completed_application_is_collected_before_the_deadline_exit() {
+    // The execute future is owned directly instead of spawned, so the test can
+    // leave it unpolled while virtual time passes (exactly what a slow `next()`
+    // consumer does). Sequence 1's application is parked; the final is received;
+    // the cancel deadline is armed; time advances past it; then the parked
+    // application is released and completes while the loop is still unpolled.
+    // On the next poll its completed result is already waiting in the callback
+    // set: the biased select must collect it (ACK sequence 1) before the
+    // cancel-exit arm drops the queue at the same expired deadline.
+    let (mut command, receipt) = cancel_peer("terminal-ack-stall");
+    let limits = Limits {
+        terminal_drain_timeout: Duration::from_secs(60),
+        ..Limits::default()
+    };
+    let client = HostClient::spawn(&mut command, None, limits).await.unwrap();
+    let signals = client.test_signals.clone();
+    let handler = ApplicationHandler::new("terminal-ack-stall");
+    let cancellation = Cancellation::default();
+    let clock = ManualClock::start();
+    let mut run =
+        Box::pin(client.execute_cancellable(request(), handler.clone(), cancellation.clone()));
+    let settled = drive_until(&mut run, || receipt.0.with_extension("ready").exists()).await;
+    assert!(settled.is_none(), "execute settled before cancellation");
+    // Both non-final events are queued; sequence 1's callback is parked.
+    let settled = drive_until(&mut run, || handler.events.load(Ordering::SeqCst) == 2).await;
+    assert!(settled.is_none(), "execute settled before cancellation");
+    release(&receipt, "terminal-release");
+    let settled = drive_until(&mut run, || signals.final_received.load(Ordering::SeqCst)).await;
+    assert!(settled.is_none(), "execute settled before cancellation");
+    let anchor = Instant::now();
+    cancellation.cancel(Some("test_abort".into()));
+    let settled = drive_until(&mut run, || signals.cancel_deadline.borrow().is_some()).await;
+    assert!(
+        settled.is_none(),
+        "execute settled while arming the deadline"
+    );
+    let deadline = signals.cancel_deadline.borrow().unwrap();
+    assert_eq!(deadline, anchor + POST_CANCEL_EXIT_TIMEOUT);
+    // Expire the deadline while the execution future is NOT polled.
+    tokio::time::advance(deadline + Duration::from_millis(1) - Instant::now()).await;
+    assert_eq!(Instant::now(), deadline + Duration::from_millis(1));
+    // Release the parked application; it completes but stays uncollected.
+    handler.gate.notify_one();
+    wait_for_event("released application completed uncollected", || {
+        handler.applied.lock().unwrap().contains(&1)
+    })
+    .await;
+    assert!(!signals.loop_exited.load(Ordering::SeqCst));
+    // The next poll sees both the expired deadline and the ready completion.
+    let settled = drive_until(&mut run, || signals.loop_exited.load(Ordering::SeqCst)).await;
+    assert!(
+        settled.is_none(),
+        "execute did not stay parked after loop exit"
+    );
+    assert_eq!(Instant::now(), deadline + Duration::from_millis(1));
+    // Keep polling through close; the peer waits for close-release first.
+    let settled = drive_until(&mut run, || receipt.0.with_extension("closing").exists()).await;
+    assert!(
+        settled.is_none(),
+        "execute settled before closing the child"
+    );
+    release(&receipt, "close-release");
+    drop(clock);
+    let result = timeout(Duration::from_secs(10), async move {
+        loop {
+            if let Some(value) = poll_once(&mut run).await {
+                break value;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cleanup stuck")
+    .unwrap();
+    let ExecuteResult::Terminal(terminal) = result else {
+        panic!("lost validated terminal: {result:?}");
+    };
+    assert_eq!(
+        terminal.get("sequence").and_then(JsValue::as_number),
+        Some(2.0)
+    );
+    // Sequence 1 completed, was collected (hence ACKed and released from the
+    // callback set), and only then did the expired deadline exit.
+    assert!(handler.applied.lock().unwrap().contains(&1));
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    // The peer asserted the ACK for sequence 1 arrived before close.
+    receipt.assert_pass("terminal-ack-stall");
+    assert_peer_reaped(&receipt).await;
 }
