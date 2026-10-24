@@ -61,10 +61,40 @@ pub struct SessionContextStorage {
 }
 
 impl ContextStorageResources {
+    /// Build one session/context composition over `tool_results_dir`.
+    ///
     /// The caller supplies the session storage's directory (normally
     /// `.pilotdeck/tool-results/<safeId>`) or execution-world spill root, as in
     /// `ProjectSessionRuntimeBundle.ts:520,574`. There is no project-flat
-    /// default. Even two contexts using the same directory get separate state.
+    /// default.
+    ///
+    /// **Isolation.** Every call owns an independent in-memory replacement
+    /// cache and [`ToolResultBudget`]. The directory itself is not namespaced
+    /// per session: [`ToolResultBudget`] derives the spill file name from the
+    /// scoped `(turnId, toolCallId)` key alone and derives the read alias from
+    /// its own counter. Callers sharing one root must therefore keep that
+    /// scoped key unique within the root. If two contexts in one directory
+    /// reuse both values, the second write leaves the first file in place (so
+    /// the second result is not persisted) while its preview describes the
+    /// second result: the second context's record references the first
+    /// context's artifact. The measured TS baseline exhibits the same behavior
+    /// for this input; this API makes no shared-directory filename-isolation
+    /// promise.
+    /// `context_storage_shared_directory_requires_unique_scoped_keys` locks
+    /// that input boundary and
+    /// `context_storage_shared_directory_distinguishes_unique_scoped_keys`
+    /// locks the unique-key positive control. This API isolates session state,
+    /// not a shared directory's filename namespace.
+    ///
+    /// **Executor isolation.** [`ToolResultBudget`] performs the spill write,
+    /// alias copy and path checks synchronously on the calling task
+    /// (`write_text_if_absent`/`copy_file_if_absent`); `apply_tool_results` is
+    /// async but does not offload that I/O with `spawn_blocking`. A gateway
+    /// that shares the runtime must keep this work off workers that also serve
+    /// heartbeat/protocol deadlines (a dedicated blocking pool, or
+    /// `spawn_blocking` around the whole apply), matching the storage rule in
+    /// `runtime/context/instructions.rs`. Moving the spill I/O itself to
+    /// `spawn_blocking` is tracked by #637.
     pub fn create_session(
         &self,
         tool_results_dir: impl Into<PathBuf>,
