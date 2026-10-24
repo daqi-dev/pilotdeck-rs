@@ -1163,7 +1163,7 @@ async fn provider_exchange_orders_response_timeout_and_parent() {
         let transport = TimedHeaders(Duration::from_millis(response_ms));
         let body = JsValue::Null;
         let mut request = Box::pin(send_provider_request(
-            &transport, &provider, &body, &options,
+            &transport, &provider, &body, &options, true,
         ));
         poll_pending(request.as_mut()).await;
         tokio::time::advance(Duration::from_millis(130)).await;

@@ -26,7 +26,11 @@ type Reply = { status?: number; headers?: Record<string, string>; body: string }
 type Spec = {
   name: string;
   protocol: 'anthropic' | 'openai' | 'openai-responses';
-  reply: Reply;
+  reply?: Reply;
+  /** Multiple replies for endpoint fallback; consumed in request order. */
+  replies?: Reply[];
+  /** Defaults to `/v1`; `/api` yields two candidate endpoints. */
+  providerUrl?: string;
   request?: Record<string, unknown>;
   provider?: Record<string, unknown>;
 };
@@ -133,6 +137,14 @@ const responsesBody = {
     total_tokens: 40,
     input_tokens_details: { cached_tokens: 4 },
   },
+};
+const okBody = {
+  id: 'chatcmpl-ok',
+  choices: [{
+    index: 0,
+    message: { role: 'assistant', content: 'ok' },
+    finish_reason: 'stop',
+  }],
 };
 
 const specs: Spec[] = [
@@ -373,6 +385,190 @@ const specs: Spec[] = [
     protocol: 'openai-responses',
     reply: json(openaiBody),
   },
+  {
+    // `readString(record.thinking) ?? readString(record.text)`: a thinking
+    // block with only `text` falls back; the unknown block is ignored.
+    name: 'anthropic-thinking-text-fallback-end-turn',
+    protocol: 'anthropic',
+    reply: json({
+      id: 'msg_think',
+      content: [
+        { type: 'thinking', text: 'fallback-plan' },
+        { type: 'text', text: 'ok' },
+        { type: 'redacted_thinking', data: 'ignored' },
+      ],
+      stop_reason: 'end_turn',
+    }),
+  },
+  {
+    name: 'anthropic-stop-sequence',
+    protocol: 'anthropic',
+    reply: json({ id: 'msg_stop', content: [], stop_reason: 'stop_sequence' }),
+  },
+  {
+    name: 'anthropic-max-tokens',
+    protocol: 'anthropic',
+    reply: json({ id: 'msg_len', content: [], stop_reason: 'max_tokens' }),
+  },
+  {
+    name: 'anthropic-unknown-stop',
+    protocol: 'anthropic',
+    reply: json({ id: 'msg_unknown', content: [], stop_reason: 'mystery' }),
+  },
+  {
+    // `readNonEmptyString`: whitespace-only trims to empty -> generated id.
+    name: 'openai-tool-id-whitespace',
+    protocol: 'openai',
+    reply: json({
+      id: 'chatcmpl-ws',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          tool_calls: [{ id: '   ', type: 'function', function: { name: 'lookup', arguments: '{}' } }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }),
+  },
+  {
+    // A non-blank id is returned untrimmed, including its surrounding spaces.
+    name: 'openai-tool-id-padded',
+    protocol: 'openai',
+    reply: json({
+      id: 'chatcmpl-pad',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          tool_calls: [{ id: '  call_pad  ', type: 'function', function: { name: 'lookup', arguments: '{}' } }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }),
+  },
+  {
+    // `choice.index` (not the array position) feeds the generated id.
+    name: 'openai-choice-index-2',
+    protocol: 'openai',
+    reply: json({
+      id: 'chatcmpl-idx',
+      choices: [{
+        index: 2,
+        message: {
+          role: 'assistant',
+          tool_calls: [{ type: 'function', function: { name: 'lookup', arguments: '{}' } }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }),
+  },
+  {
+    // Missing arguments -> JSON.parse("{}") path.
+    name: 'openai-arguments-missing',
+    protocol: 'openai',
+    reply: json({
+      id: 'chatcmpl-miss',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          tool_calls: [{ id: 'call_miss', type: 'function', function: { name: 'lookup' } }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }),
+  },
+  {
+    // Empty arguments -> JSON.parse("") and jsonrepair("") both fail.
+    name: 'openai-arguments-empty',
+    protocol: 'openai',
+    reply: json({
+      id: 'chatcmpl-empty',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          tool_calls: [{ id: 'call_empty', type: 'function', function: { name: 'lookup', arguments: '' } }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }),
+  },
+  {
+    // `dedupeInitialOutputText` keeps both blocks when the remaining message
+    // text differs from `output_text`.
+    name: 'responses-output-text-mismatch',
+    protocol: 'openai-responses',
+    reply: json({
+      id: 'resp-mismatch',
+      output_text: 'Hi',
+      output: [{ type: 'message', content: [{ type: 'text', text: 'Ho' }] }],
+      status: 'completed',
+    }),
+  },
+  {
+    // A response id that sanitizes to `response` (the synthetic base fallback)
+    // plus a real nextUniqueToolCallId `_2` collision on the generated id.
+    name: 'responses-response-id-sanitized-collision',
+    protocol: 'openai-responses',
+    reply: json({
+      id: '!!!',
+      output: [
+        { type: 'function_call', call_id: 'call_response_1', name: 'first', arguments: '{}' },
+        { type: 'function_call', name: 'second', arguments: '{}' },
+      ],
+      status: 'completed',
+    }),
+  },
+  {
+    // 401 is not an endpoint-fallback status: `/api` has two candidates but
+    // only the first request is sent.
+    name: 'openai-401-auth',
+    protocol: 'openai',
+    providerUrl: '/api',
+    reply: {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ error: { message: 'bad key' } }),
+    },
+  },
+  {
+    name: 'openai-500-html',
+    protocol: 'openai',
+    reply: {
+      status: 500,
+      headers: { 'content-type': 'text/html' },
+      body: '<html>oops</html>',
+    },
+  },
+  {
+    name: 'responses-503-plain',
+    protocol: 'openai-responses',
+    reply: {
+      status: 503,
+      headers: { 'content-type': 'text/plain' },
+      body: 'upstream unavailable',
+    },
+  },
+  {
+    name: 'openai-400-endpoint-fallback',
+    protocol: 'openai',
+    providerUrl: '/api',
+    replies: [{ status: 400, body: '{}' }, json(okBody)],
+  },
+  {
+    name: 'openai-404-endpoint-fallback',
+    protocol: 'openai',
+    providerUrl: '/api',
+    replies: [{ status: 404, body: '{}' }, json(okBody)],
+  },
+  {
+    name: 'openai-405-endpoint-fallback',
+    protocol: 'openai',
+    providerUrl: '/api',
+    replies: [{ status: 405, body: '{}' }, json(okBody)],
+  },
 ];
 
 const scrub = (value: unknown): unknown => {
@@ -386,7 +582,12 @@ function thrownRecord(error: any) {
   return record;
 }
 
-let current: Reply & { requests: Array<Record<string, unknown>> };
+type Current = {
+  replies: Reply[];
+  used: Reply[];
+  requests: Array<Record<string, unknown>>;
+};
+let current: Current;
 const server = createServer((incoming, outgoing) => {
   const chunks: Buffer[] = [];
   incoming.on('data', (chunk) => chunks.push(chunk));
@@ -396,8 +597,10 @@ const server = createServer((incoming, outgoing) => {
       path: incoming.url,
       body: Buffer.concat(chunks).toString('utf8'),
     });
-    outgoing.writeHead(current.status ?? 200, current.headers ?? { 'content-type': 'application/json' });
-    outgoing.end(current.body);
+    const reply = current.replies[Math.min(current.used.length, current.replies.length - 1)];
+    current.used.push(reply);
+    outgoing.writeHead(reply.status ?? 200, reply.headers ?? { 'content-type': 'application/json' });
+    outgoing.end(reply.body);
   });
 });
 await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready));
@@ -405,22 +608,31 @@ const MOCK = `http://127.0.0.1:${(server.address() as any).port}`;
 
 const cases = [];
 for (const spec of specs) {
-  current = { ...spec.reply, requests: [] };
+  const replies = spec.replies ?? [spec.reply!];
+  if (!replies.length || replies.some((reply) => !reply)) {
+    throw new Error(`${spec.name}: no reply`);
+  }
+  current = { replies, used: [], requests: [] };
+  const providerPath = spec.providerUrl ?? '/v1';
   const caseProvider = { ...provider(spec.protocol), ...(spec.provider ?? {}),
-    url: `$MOCK/v1`.replace('$MOCK', MOCK) };
+    url: `$MOCK${providerPath}`.replace('$MOCK', MOCK) };
   const caseRequest = { ...request, ...(spec.request ?? {}) };
   const result: Record<string, unknown> = {
     name: spec.name,
     protocol: spec.protocol,
     request: caseRequest,
-    provider: { ...caseProvider, url: 'http://mock.local/v1' },
+    provider: { ...caseProvider, url: `http://mock.local${providerPath}` },
   };
   try {
     result.response = await complete(caseRequest as any, { providers: { p: caseProvider } } as any);
   } catch (error) {
     result.thrown = thrownRecord(error);
   }
-  result.reply = { ...spec.reply, body: scrub(spec.reply.body) };
+  const finalReply = current.used[current.used.length - 1];
+  result.reply = { ...finalReply, body: scrub(finalReply.body) };
+  if (current.used.length > 1) {
+    result.replies = current.used.map((reply) => ({ ...reply, body: scrub(reply.body) }));
+  }
   result.requestCount = current.requests.length;
   result.requests = scrub(current.requests);
   cases.push(result);

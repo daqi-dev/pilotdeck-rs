@@ -2490,6 +2490,1384 @@
      "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
     }
    ]
+  },
+  {
+   "name": "anthropic-thinking-text-fallback-end-turn",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "text": "fallback-plan"
+     },
+     {
+      "type": "text",
+      "text": "ok"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "msg_think",
+     "content": [
+      {
+       "type": "thinking",
+       "text": "fallback-plan"
+      },
+      {
+       "type": "text",
+       "text": "ok"
+      },
+      {
+       "type": "redacted_thinking",
+       "data": "ignored"
+      }
+     ],
+     "stop_reason": "end_turn"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"msg_think\",\"content\":[{\"type\":\"thinking\",\"text\":\"fallback-plan\"},{\"type\":\"text\",\"text\":\"ok\"},{\"type\":\"redacted_thinking\",\"data\":\"ignored\"}],\"stop_reason\":\"end_turn\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "anthropic-stop-sequence",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "stop",
+    "raw": {
+     "id": "msg_stop",
+     "content": [],
+     "stop_reason": "stop_sequence"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"msg_stop\",\"content\":[],\"stop_reason\":\"stop_sequence\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "anthropic-max-tokens",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "length",
+    "raw": {
+     "id": "msg_len",
+     "content": [],
+     "stop_reason": "max_tokens"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"msg_len\",\"content\":[],\"stop_reason\":\"max_tokens\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "anthropic-unknown-stop",
+   "protocol": "anthropic",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "anthropic",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [],
+    "finishReason": "unknown",
+    "raw": {
+     "id": "msg_unknown",
+     "content": [],
+     "stop_reason": "mystery"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"msg_unknown\",\"content\":[],\"stop_reason\":\"mystery\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/messages",
+     "body": "{\"model\":\"m\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}],\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-tool-id-whitespace",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_call",
+      "id": "call_chatcmpl-ws_0_0",
+      "name": "lookup",
+      "input": {},
+      "raw": {
+       "id": "   ",
+       "type": "function",
+       "function": {
+        "name": "lookup",
+        "arguments": "{}"
+       }
+      }
+     }
+    ],
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "chatcmpl-ws",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "tool_calls": [
+         {
+          "id": "   ",
+          "type": "function",
+          "function": {
+           "name": "lookup",
+           "arguments": "{}"
+          }
+         }
+        ]
+       },
+       "finish_reason": "tool_calls"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-ws\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"   \",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-tool-id-padded",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_call",
+      "id": "  call_pad  ",
+      "name": "lookup",
+      "input": {},
+      "raw": {
+       "id": "  call_pad  ",
+       "type": "function",
+       "function": {
+        "name": "lookup",
+        "arguments": "{}"
+       }
+      }
+     }
+    ],
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "chatcmpl-pad",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "tool_calls": [
+         {
+          "id": "  call_pad  ",
+          "type": "function",
+          "function": {
+           "name": "lookup",
+           "arguments": "{}"
+          }
+         }
+        ]
+       },
+       "finish_reason": "tool_calls"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-pad\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"  call_pad  \",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-choice-index-2",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_call",
+      "id": "call_chatcmpl-idx_2_0",
+      "name": "lookup",
+      "input": {},
+      "raw": {
+       "type": "function",
+       "function": {
+        "name": "lookup",
+        "arguments": "{}"
+       }
+      }
+     }
+    ],
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "chatcmpl-idx",
+     "choices": [
+      {
+       "index": 2,
+       "message": {
+        "role": "assistant",
+        "tool_calls": [
+         {
+          "type": "function",
+          "function": {
+           "name": "lookup",
+           "arguments": "{}"
+          }
+         }
+        ]
+       },
+       "finish_reason": "tool_calls"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-idx\",\"choices\":[{\"index\":2,\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-arguments-missing",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_call",
+      "id": "call_miss",
+      "name": "lookup",
+      "input": {},
+      "raw": {
+       "id": "call_miss",
+       "type": "function",
+       "function": {
+        "name": "lookup"
+       }
+      }
+     }
+    ],
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "chatcmpl-miss",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "tool_calls": [
+         {
+          "id": "call_miss",
+          "type": "function",
+          "function": {
+           "name": "lookup"
+          }
+         }
+        ]
+       },
+       "finish_reason": "tool_calls"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-miss\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_miss\",\"type\":\"function\",\"function\":{\"name\":\"lookup\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-arguments-empty",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "OpenAI tool call arguments are not valid JSON.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "invalid_tool_arguments",
+     "message": "OpenAI tool call arguments are not valid JSON.",
+     "retryable": true,
+     "raw": {
+      "id": "call_empty",
+      "type": "function",
+      "function": {
+       "name": "lookup",
+       "arguments": ""
+      }
+     }
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-empty\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_empty\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"\"}}]},\"finish_reason\":\"tool_calls\"}]}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-output-text-mismatch",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "Hi"
+     },
+     {
+      "type": "text",
+      "text": "Ho"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "resp-mismatch",
+     "output_text": "Hi",
+     "output": [
+      {
+       "type": "message",
+       "content": [
+        {
+         "type": "text",
+         "text": "Ho"
+        }
+       ]
+      }
+     ],
+     "status": "completed"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"resp-mismatch\",\"output_text\":\"Hi\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"Ho\"}]}],\"status\":\"completed\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-response-id-sanitized-collision",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_call",
+      "id": "call_response_1",
+      "name": "first",
+      "input": {},
+      "raw": {
+       "type": "function_call",
+       "call_id": "call_response_1",
+       "name": "first",
+       "arguments": "{}"
+      }
+     },
+     {
+      "type": "tool_call",
+      "id": "call_response_1_2",
+      "name": "second",
+      "input": {},
+      "raw": {
+       "type": "function_call",
+       "name": "second",
+       "arguments": "{}"
+      }
+     }
+    ],
+    "finishReason": "tool_call",
+    "raw": {
+     "id": "!!!",
+     "output": [
+      {
+       "type": "function_call",
+       "call_id": "call_response_1",
+       "name": "first",
+       "arguments": "{}"
+      },
+      {
+       "type": "function_call",
+       "name": "second",
+       "arguments": "{}"
+      }
+     ],
+     "status": "completed"
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"!!!\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_response_1\",\"name\":\"first\",\"arguments\":\"{}\"},{\"type\":\"function_call\",\"name\":\"second\",\"arguments\":\"{}\"}],\"status\":\"completed\"}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-401-auth",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "bad key",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "auth_error",
+     "status": 401,
+     "message": "bad key",
+     "retryable": false,
+     "raw": {
+      "error": {
+       "message": "bad key"
+      }
+     },
+     "userHint": "API key rejected by provider \"p\". Update the key in Settings → Model Provider or run pilotdeck setup.",
+     "settingsFix": {
+      "description": "Reconfigure API key via setup.",
+      "command": "pilotdeck setup"
+     }
+    }
+   },
+   "reply": {
+    "status": 401,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "{\"error\":{\"message\":\"bad key\"}}"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-500-html",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "Model provider request failed.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "server_error",
+     "status": 500,
+     "message": "Model provider request failed.",
+     "retryable": true,
+     "raw": "<html>oops</html>",
+     "userHint": "Provider returned a server error. Check provider API status/logs, retry later, or switch provider/model in Settings if it repeats."
+    }
+   },
+   "reply": {
+    "status": 500,
+    "headers": {
+     "content-type": "text/html"
+    },
+    "body": "<html>oops</html>"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "responses-503-plain",
+   "protocol": "openai-responses",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai-responses",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "Model provider request failed.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai-responses",
+     "code": "server_error",
+     "status": 503,
+     "message": "Model provider request failed.",
+     "retryable": true,
+     "raw": "upstream unavailable",
+     "userHint": "Provider returned a server error. Check provider API status/logs, retry later, or switch provider/model in Settings if it repeats."
+    }
+   },
+   "reply": {
+    "status": 503,
+    "headers": {
+     "content-type": "text/plain"
+    },
+    "body": "upstream unavailable"
+   },
+   "requestCount": 1,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/v1/responses",
+     "body": "{\"model\":\"m\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"}]}],\"max_output_tokens\":32,\"stream\":false,\"store\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-400-endpoint-fallback",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "ok"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "chatcmpl-ok",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "ok"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+   },
+   "replies": [
+    {
+     "status": 400,
+     "body": "{}"
+    },
+    {
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-404-endpoint-fallback",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "ok"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "chatcmpl-ok",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "ok"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+   },
+   "replies": [
+    {
+     "status": 404,
+     "body": "{}"
+    },
+    {
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
+  },
+  {
+   "name": "openai-405-endpoint-fallback",
+   "protocol": "openai",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/api",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "response": {
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "ok"
+     }
+    ],
+    "finishReason": "stop",
+    "raw": {
+     "id": "chatcmpl-ok",
+     "choices": [
+      {
+       "index": 0,
+       "message": {
+        "role": "assistant",
+        "content": "ok"
+       },
+       "finish_reason": "stop"
+      }
+     ]
+    }
+   },
+   "reply": {
+    "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+   },
+   "replies": [
+    {
+     "status": 405,
+     "body": "{}"
+    },
+    {
+     "body": "{\"id\":\"chatcmpl-ok\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}"
+    }
+   ],
+   "requestCount": 2,
+   "requests": [
+    {
+     "method": "POST",
+     "path": "/api/v1/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    },
+    {
+     "method": "POST",
+     "path": "/api/chat/completions",
+     "body": "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":32,\"stream\":false}"
+    }
+   ]
   }
  ]
 }
