@@ -151,7 +151,8 @@ def _run(gate, rrr, out_base: Path) -> int:
 
         log.write_text("")
         rc, s = run("anthropic-ok", "ok", runner="anthropic")
-        if any(json.loads(x)["base"] != "https://llm-center.modelbest.co" or json.loads(x)["key_is"] != "anth_file" for x in log.read_text().splitlines()):
+        calls = [json.loads(x) for x in log.read_text().splitlines()]
+        if not calls or any(c["base"] != "https://llm-center.modelbest.co" or c["key_is"] != "anth_file" for c in calls):
             fails.append("anthropic-ok：BASE_URL 应为 llm-center 而非父环境值，且只用文件里的 ANTHROPIC_API_KEY（父环境键≠文件键）")
         if secret in log.read_text() or anth_secret in log.read_text():
             fails.append("测试日志里出现了密钥原值")
