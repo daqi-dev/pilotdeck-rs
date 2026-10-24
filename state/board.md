@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-25 02:14 · by GLM(glm-5.3-mb·#589实现)
+updated: 2026-10-25 03:08 · by GLM(glm-5.3-mb·#589 fix-r2)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
@@ -18,9 +18,12 @@ updated: 2026-10-25 02:14 · by GLM(glm-5.3-mb·#589实现)
 - #587 | impl | doing | A6.9-pr3d 上下文与持久资源接入factory；aa1a052d0d0c5e6b9
 - #586 | impl | doing | A6.9-pr3c2 交互与hooks资源接入factory；ae8e582bd5d62ea93
 - #588 | impl | doing | A6.9-pr3e 插件与customRouter接入factory；a65f64068c70051b3
-- #589 | impl | doing | A7.2-pr6a LiveSession事件完整性接线已提交本树待持有人核验；worktree=issue-589-live-integrity，实现GLM
+- #589 | impl | doing | A7.2-pr6a LiveSession事件完整性接线；fix-r2 取消事实边界修正完成（validate_event 接收路 hook + 终态严格校验 + 负控/红探针），已提交本树待持有人核验；worktree=issue-589-live-integrity，实现GLM
 - #590 | impl | blocked | A7.2-pr6b sidecar格+四格矩阵；前置#589
 <!-- READY:END -->
+
+> ## 2026-10-25 03:08 · #589/#590 fix-r2 取消事实边界修正（GLM glm-5.3-mb，wt=issue-589-live-integrity）
+> 轮 1 的两条 P1 已修正：删除 `events_stopped_by_cancel_exit = cancellation.is_cancelled()` 宽容映射（取消请求本身不证明 host 走了 cancel exit 或 sidecar 少发了事件）。改为准确事实源：`HostHandler::validate_event` 同步 hook 在 host 接收路上（wire 身份/序列/payload 校验与非权威 turn_completed 抑制之后、入应用队列之前）观察收到的全部事件——即便其应用回调被 cancel exit 丢弃，lifecycle 也已被观察；`finish()` 对 module final 严格校验（success/max_turns→InputAccepted，error→Failed，aborted 任意，未知拒绝），取消不再改变任何判定。负控与红探针：peer.py 新增 live-cancel-pending-failure / live-missing-accepted / live-failed-then-success / live-failed-then-max-turns 四模式；红探针在修复之上临时复原轮 1 宽容逻辑，三条取消类负控转红（47 绿 3 红）、其余含合法 cancel-exit 用例保持绿，随后还原并复测绿（50/0）。producer 路径上队列中待决 turn_failed 可满足 error 终态（behind-pending-callback 测试）。原 P1 的第二次 turn_failed 属 TS 终结化重入合法（保留）；duplicate_lifecycle 测试修正为 turn_started/input_accepted 重复仍拒、turn_failed 重复允许。定向 live 50/0、host 106/0（含 hook 排序/先于应用失败两条新测试）、全量 lib 1318/0、fmt/clippy 0 警告、parity README 冻结哈希 f8958a32… 一致、`git diff --check` 干净。证据 `_tmp/20261025-issue-589-live-integrity/fix-r2/`（design.md、03 红探针 patch+log、RESULT.md）。本轮仅本地 commit 未推送，未宣称 formal run-review-roles 已过，不自行评审，不关闭 #589/#590。
 
 > ## 2026-10-25 02:14 · #589/#590 LiveSession 生产事件完整性接线（GLM glm-5.3-mb，wt=issue-589-live-integrity）
 > 完成有界实现：`runtime/turn/live.rs` 事件观察接入生产路径（select recv 与同 poll try_recv 两条排空路径）；StreamIntegrity 改为真实 lifecycle 机（turn_started 开流、input_accepted/turn_failed 恰一次、sidecar turn_completed 到达即违规、module final 唯一权威终态按 outcome 分流校验）；violation fail-closed 释放 execution/active slot/子进程。去掉正向测试的手工 integrity 预置，peer.py 扩出 live-normal/live-early-failure/live-cancel-compaction/live-duplicate-start 模式。定向 37/0、全量 lib 1303/0、fmt/clippy 过、parity README 冻结哈希一致。证据 `_tmp/20261025-issue-589-live-integrity/`，RESULT.md 在证据目录。Refs #589 #590，未宣称生产入口/四格矩阵/真实 provider 实效完成。待持有人核验、gitleaks、推送与两家非作者评审。

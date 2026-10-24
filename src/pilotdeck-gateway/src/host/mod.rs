@@ -309,6 +309,16 @@ pub trait HostHandler: Send + Sync + 'static {
     fn event(&self, _event: JsValue) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
+    /// Synchronous lifecycle validation, called on the execution driver task
+    /// after an event passed wire identity/sequence/payload validation and the
+    /// host suppressed a non-authoritative turn_completed, but before it is
+    /// queued for application — a violating event is never applied and never
+    /// ACKed. Not called for the authoritative final, which the caller
+    /// projects from ExecuteResult instead. Must not block. Default: no
+    /// behavior; an error fails the execution closed.
+    fn validate_event(&self, _payload: &JsValue) -> Result<(), HostError> {
+        Ok(())
+    }
     /// Passive, synchronous telemetry. Must not block; panics are isolated from
     /// execution, like TS client:1135-1140's best-effort transport observer.
     fn observe_transport(&self, _observation: ReconnectObservation) {}

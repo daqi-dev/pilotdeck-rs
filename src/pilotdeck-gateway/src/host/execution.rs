@@ -399,6 +399,18 @@ pub(super) async fn run(
                         next_sequence += 1.0;
                         // TS:680 suppresses the non-authoritative turn_completed projection.
                         if !event.final_event && text_is(event.payload.get("type"), "turn_completed") { continue; }
+                        // Lifecycle validation after the wire checks and the
+                        // suppression above, before the application queue: a
+                        // violating event is never applied and never ACKed. The
+                        // authoritative final is skipped; the caller projects
+                        // it from ExecuteResult.
+                        if !event.final_event
+                            && let Err(error) = handler.validate_event(
+                                raw.get("payload").expect("validated event payload"),
+                            )
+                        {
+                            return Err(error);
+                        }
                         terminal_received = event.final_event;
                         if events.len() >= limits.queue_capacity {
                             return Err(HostError::new(HostErrorKind::Limit, "Host event application queue full."));
