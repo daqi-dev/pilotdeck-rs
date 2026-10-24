@@ -146,6 +146,7 @@ struct StreamIntegrity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum IntegrityState {
     Initial,
     Started,
@@ -162,6 +163,7 @@ impl StreamIntegrity {
         }
     }
 
+    #[allow(dead_code)]
     fn observe_event(&self, event_type: &str) -> Result<(), RuntimeError> {
         let mut state = self.state.lock().unwrap();
 
@@ -246,13 +248,13 @@ fn extract_string(obj: &JsValue, key: &str) -> Result<JsString, RuntimeError> {
                 JsValue::String(s) => Some(s.clone()),
                 _ => None,
             })
-            .ok_or_else(|| RuntimeError::new(&format!("Missing or invalid field: {}", key))),
+            .ok_or_else(|| RuntimeError::new(format!("Missing or invalid field: {}", key))),
         _ => Err(RuntimeError::new("Expected object")),
     }
 }
 
 fn map_host_error(error: HostError) -> RuntimeError {
-    RuntimeError::new(&format!("Host execution failed: {}", error.message))
+    RuntimeError::new(format!("Host execution failed: {}", error.message))
 }
 
 #[cfg(test)]
