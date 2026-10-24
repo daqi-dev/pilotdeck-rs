@@ -147,23 +147,27 @@ pub(crate) fn read_file(error: &io::Error, path: &str) -> Option<(&'static str, 
 /// Node's `os.tmpdir()` on unix (`node:lib/os.js`): the first nonempty value
 /// of TMPDIR, then TMP, then TEMP (empty strings are skipped, like JS `||`),
 /// else `/tmp`, with exactly one trailing `/` dropped while the result stays
-/// longer than the root. Callers resolve from raw bytes (`std::env::var_os`),
-/// so a non-UTF-8 TMPDIR is used rather than skipped — Node keeps the bytes,
-/// while `std::env::var` would fall through to the next variable. Probed
-/// against node v22.22.0 (`_tmp/20261025-issue-621-fix-r4/node-probe/`):
-/// `//` collapses to `/` while `///` only to `//`, and relative values pass
-/// through unchanged. Shared by the model request dump and the MCP session
-/// temp dir.
-pub(crate) fn node_tmpdir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> std::ffi::OsString {
-    use std::os::unix::ffi::OsStringExt;
-    let mut bytes = ["TMPDIR", "TMP", "TEMP"]
+/// longer than the root. Node reads `process.env` as already-decoded strings,
+/// so a non-UTF-8 value is decoded lossily (`\xff` becomes U+FFFD) and then
+/// used like any other value: it is neither kept as raw bytes nor skipped.
+/// Probed against node v22.22.0 (`_tmp/20261025-issue-621-fix-r4/node-probe/`,
+/// `_tmp/20261025-issue-621-takeover/node-tmpdir-nonutf8-probe/`): `//`
+/// collapses to `/` while `///` only to `//`, relative values pass through,
+/// and `TMPDIR=/d\xff` writes into `/d\u{FFFD}`. Shared by the model request
+/// dump and the MCP session temp dir.
+pub(crate) fn node_tmpdir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> String {
+    let mut path = ["TMPDIR", "TMP", "TEMP"]
         .into_iter()
-        .find_map(|key| var(key).filter(|value| !value.is_empty()))
-        .map_or_else(|| b"/tmp".to_vec(), std::ffi::OsString::into_vec);
-    if bytes.len() > 1 && bytes.ends_with(b"/") {
-        bytes.pop();
+        .find_map(|key| {
+            var(key)
+                .map(|value| value.to_string_lossy().into_owned())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "/tmp".into());
+    if path.len() > 1 && path.ends_with('/') {
+        path.pop();
     }
-    std::ffi::OsString::from_vec(bytes)
+    path
 }
 
 #[derive(Debug)]
@@ -386,18 +390,20 @@ mod tests {
         assert_eq!(node_tmpdir(env(&[("TMPDIR", "/")])), "/");
         // Relative values pass through unchanged, like node.
         assert_eq!(node_tmpdir(env(&[("TMPDIR", "relative")])), "relative");
-        // A non-UTF-8 TMPDIR is used, not skipped to the next variable or
-        // `/tmp`: node keeps the raw bytes, `std::env::var` would have
-        // skipped them.
+        // A non-UTF-8 TMPDIR is decoded lossily and then used, like node's
+        // already-decoded `process.env`: not skipped to TMP, not kept raw.
         let raw = OsString::from_vec(b"/tmp/\xff".to_vec());
         assert_eq!(
-            node_tmpdir(|key| (key == "TMPDIR").then(|| raw.clone())),
-            raw
+            node_tmpdir(|key| match key {
+                "TMPDIR" => Some(raw.clone()),
+                "TMP" => Some("/next".into()),
+                _ => None,
+            }),
+            "/tmp/\u{FFFD}"
         );
-        // The trailing-`/` trim works on the raw bytes too.
         assert_eq!(
             node_tmpdir(|_| Some(OsString::from_vec(b"/tmp/\xff/".to_vec()))),
-            raw
+            "/tmp/\u{FFFD}"
         );
     }
     #[test]
