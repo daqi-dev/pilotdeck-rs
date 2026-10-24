@@ -48,6 +48,20 @@ def baseline_identity(baseline):
     require(commit == BASELINE, 'BASELINE: wrong fixed commit')
     # Compare actual bytes to Git objects, including assume-unchanged files.
     files = subprocess.check_output(['git', '-C', str(baseline), 'ls-tree', '-rz', 'HEAD', '--', 'src', 'package.json'])
+    # Match baseline_source_guard.mjs: equal bytes through a symlink are not
+    # equal module identity (Node resolves imports relative to the real path).
+    source_root = baseline / 'src'
+    require(source_root.is_dir() and not source_root.is_symlink(), 'BASELINE: invalid source root')
+    actual_names = {'package.json'}
+    for directory, children, names in os.walk(source_root, followlinks=False):
+        for name in children:
+            require(not (Path(directory) / name).is_symlink(), 'BASELINE: source directory symlink')
+        for name in names:
+            path = Path(directory) / name
+            require(path.is_file() and not path.is_symlink(), f'BASELINE: non-regular source {path}')
+            actual_names.add(path.relative_to(baseline).as_posix())
+    package = baseline / 'package.json'
+    require(package.is_file() and not package.is_symlink(), 'BASELINE: non-regular package.json')
     hashes = {}
     for row in files.split(b'\0'):
         if not row:
@@ -60,6 +74,7 @@ def baseline_identity(baseline):
         require(actual == oid, f'BASELINE: modified source {path}')
         hashes[os.fsdecode(name)] = hashlib.sha256(data).hexdigest()
     require(len(hashes) > 0, 'BASELINE: empty source inventory')
+    require(set(hashes) == actual_names, 'BASELINE: untracked, ignored or missing source files')
     return hashes
 
 
