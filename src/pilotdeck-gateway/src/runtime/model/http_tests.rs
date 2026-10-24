@@ -1972,13 +1972,65 @@ fn limit_guard_nests_and_drop_restores_the_shared_default() {
 // races, no touching any pre-existing temp entries — every path is created
 // inside a throwaway per-test directory.
 
-/// A private throwaway directory per test (never shared with other users or
-/// other runs; the pid keeps concurrent test binaries apart).
-fn dump_scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("pdrs-dump-test-{}-{}", std::process::id(), tag));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A private throwaway directory acquired exclusively for one test. The name
+/// is a fresh UUID (a pid is *not* unique: it is reused after a process
+/// dies), so nothing another user, process, or previous run left behind can
+/// be under it; on collision (a UUID clash) the next name is tried instead of
+/// deleting anything. Only a directory this guard actually created is
+/// removed, and only while it still carries the owner token written at
+/// acquisition, so drop-time cleanup can never delete a same-named directory
+/// planted in between. `PDRS_DUMP_TEST_ROOT` redirects the parent root for
+/// isolated verification; tests never probe or delete predictable names in
+/// the shared temp directory.
+struct DumpScratch {
+    dir: std::path::PathBuf,
+    token: String,
+}
+impl DumpScratch {
+    fn acquire(tag: &str) -> Self {
+        let root = std::env::var("PDRS_DUMP_TEST_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir());
+        for _ in 0..8 {
+            let id = uuid::Uuid::new_v4();
+            let dir = root.join(format!("pdrs-dump-test-{tag}-{id}"));
+            // Exclusive create (no create_dir_all): a missing root fails
+            // loudly instead of reaching into an unexpected tree.
+            if std::fs::create_dir(&dir).is_ok() {
+                let token = format!("owner:{id}\n");
+                if std::fs::write(dir.join(".owner"), &token).is_err() {
+                    let _ = std::fs::remove_dir_all(&dir);
+                    panic!("dump scratch: cannot write owner token into {dir:?}");
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                }
+                return Self { dir, token };
+            }
+            // Colliding with a pre-existing entry: try the next UUID. Never
+            // remove the colliding entry — it is not ours.
+        }
+        panic!("dump scratch: could not exclusively create a test directory in {root:?}");
+    }
+}
+impl Drop for DumpScratch {
+    fn drop(&mut self) {
+        // Remove only what this guard acquired, and only while the owner
+        // token still matches (a directory without it was never ours).
+        if let Ok(token) = std::fs::read_to_string(self.dir.join(".owner"))
+            && token == self.token
+        {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+}
+impl std::ops::Deref for DumpScratch {
+    type Target = std::path::Path;
+    fn deref(&self) -> &Self::Target {
+        &self.dir
+    }
 }
 
 fn fixed_names<'a>(names: &'a [&'a str]) -> impl FnMut() -> String + 'a {
@@ -1993,7 +2045,7 @@ fn fixed_names<'a>(names: &'a [&'a str]) -> impl FnMut() -> String + 'a {
 #[cfg(unix)]
 #[test]
 fn dump_creation_refuses_to_follow_a_pre_existing_symlink() {
-    let dir = dump_scratch("symlink");
+    let dir = DumpScratch::acquire("symlink");
     // The victim stands in for another user's (or our own) sensitive data.
     let victim = dir.join("victim.json");
     std::fs::write(&victim, "SECRET-VICTIM-DATA").unwrap();
@@ -2013,12 +2065,11 @@ fn dump_creation_refuses_to_follow_a_pre_existing_symlink() {
         std::fs::read_to_string(&victim).unwrap(),
         "SECRET-VICTIM-DATA"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn dump_creation_refuses_to_truncate_an_existing_file() {
-    let dir = dump_scratch("existing");
+    let dir = DumpScratch::acquire("existing");
     let taken = dir.join("taken.json");
     std::fs::write(&taken, "PRE-EXISTING").unwrap();
     let path = write_dump_exclusively(
@@ -2032,12 +2083,11 @@ fn dump_creation_refuses_to_truncate_an_existing_file() {
     // A same-millisecond collision (TS `Date.now()` alone) truncates; the
     // exclusive create moves to the next name and leaves the first intact.
     assert_eq!(std::fs::read_to_string(&taken).unwrap(), "PRE-EXISTING");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn dump_creation_reports_failure_when_all_candidates_exist() {
-    let dir = dump_scratch("exhausted");
+    let dir = DumpScratch::acquire("exhausted");
     for name in ["taken1.json", "taken2.json"] {
         std::fs::write(dir.join(name), "PRE-EXISTING").unwrap();
     }
@@ -2048,7 +2098,7 @@ fn dump_creation_reports_failure_when_all_candidates_exist() {
             &mut fixed_names(&["taken1.json", "taken2.json"]),
             2,
         )
-        .is_none()
+        .is_err()
     );
     assert_eq!(
         std::fs::read_to_string(dir.join("taken1.json")).unwrap(),
@@ -2058,12 +2108,11 @@ fn dump_creation_reports_failure_when_all_candidates_exist() {
         std::fs::read_to_string(dir.join("taken2.json")).unwrap(),
         "PRE-EXISTING"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn dump_files_are_owner_only() {
-    let dir = dump_scratch("permissions");
+    let dir = DumpScratch::acquire("permissions");
     let path = write_dump_exclusively(&dir, "{}", &mut fixed_names(&["fresh.json"]), 8)
         .expect("fresh candidate must be used");
     let file = std::fs::File::open(&path).unwrap();
@@ -2073,5 +2122,46 @@ fn dump_files_are_owner_only() {
         let mode = file.metadata().unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "dump must stay private to this user");
     }
-    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// `Date.now()` alone (TS `streamModel.ts:199-200`) lets same-millisecond
+// requests overwrite each other's dumps; the production name generator adds
+// the pid and a process-wide monotonic sequence, which must hold however the
+// callers interleave.
+#[test]
+fn dump_names_stay_unique_within_one_millisecond() {
+    const NOW_MS: u128 = 1_758_000_000_000;
+    const THREADS: usize = 32;
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(THREADS));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let barrier = barrier.clone();
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                sender.send(next_dump_name(NOW_MS)).unwrap();
+            })
+        })
+        .collect();
+    drop(sender);
+    let mut names: Vec<String> = receiver.iter().collect();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    let pid = std::process::id();
+    for name in &names {
+        assert!(
+            name.starts_with(&format!("pilotdeck_request_{NOW_MS}_{pid}_")),
+            "name lost its timestamp/pid shape: {name}"
+        );
+        assert!(name.ends_with(".json"));
+    }
+    names.sort();
+    names.dedup();
+    assert_eq!(
+        names.len(),
+        THREADS,
+        "same-millisecond names must stay distinct"
+    );
 }

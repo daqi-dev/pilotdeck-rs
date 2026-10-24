@@ -1567,7 +1567,13 @@ async fn provider_exchange(
 /// pre-existing symlink or truncating an existing file), with owner-only
 /// permissions, under a name unique to this process
 /// (specs/gateway-parity/diffs/A6.4-MODEL-DUMP-SECURE-001).
-fn dump_request_to_file(final_body: &JsValue, model: &JsValue) {
+///
+/// The dumped body is the outgoing wire body (after `extraBody` merging and,
+/// for Google, after the SDK's `config` → `generationConfig` projection), not
+/// the pre-SDK `buildModelRequest` object TS serializes; the projection
+/// divergence is registered in the same entry. A failed write returns the
+/// `writeFileSync`-shaped error so callers can surface it like TS.
+fn dump_request_to_file(final_body: &JsValue, model: &JsValue) -> Result<(), DumpFailure> {
     // Model name for the log message. The Google path carries its model in
     // the URL, not in the outgoing JSON body, so callers pass it in.
     let model = model
@@ -1584,30 +1590,130 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) {
                 Err(_) => compact,
             }
         }
-        _ => return, // Failed to serialize; skip the dump.
+        _ => return Ok(()), // Failed to serialize; skip the dump.
     };
 
-    // Concurrent dumps never share a name: within this process the sequence
-    // is monotonic, and across processes the pid disagrees. TS uses
-    // `Date.now()` alone (`streamModel.ts:199-200`), where same-millisecond
-    // requests overwrite each other's dumps.
+    let path = write_dump_exclusively(
+        &std::env::temp_dir(),
+        &json,
+        &mut || {
+            next_dump_name(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or_default(),
+            )
+        },
+        8,
+    )?;
+    println!(
+        "[model-debug] Request dumped to {} (model={})",
+        path.display(),
+        model
+    );
+    Ok(())
+}
+
+/// One dump file name: the caller's clock reading, this process, and a
+/// process-wide monotonic sequence keep concurrent dumps from sharing a name.
+/// TS uses `Date.now()` alone (`streamModel.ts:199-200`), where
+/// same-millisecond requests overwrite each other's dumps.
+fn next_dump_name(now_ms: u128) -> String {
     static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let pid = std::process::id();
-    let mut next_name = || {
-        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or_default();
-        format!("pilotdeck_request_{timestamp}_{pid}_{sequence}.json")
-    };
-    if let Some(path) = write_dump_exclusively(&std::env::temp_dir(), &json, &mut next_name, 8) {
-        println!(
-            "[model-debug] Request dumped to {} (model={})",
-            path.display(),
-            model
-        );
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!(
+        "pilotdeck_request_{now_ms}_{}_{}.json",
+        std::process::id(),
+        sequence
+    )
+}
+
+/// What a failed dump write observes as, mirroring the `writeFileSync` throw
+/// the TS paths surface (`streamModel.ts:196-203,395-401`): Node's `code`,
+/// its lowercase errno description, the failing syscall, and the path for
+/// the `open '<path>'` argument Node prints.
+#[derive(Debug)]
+struct DumpFailure {
+    code: Option<&'static str>,
+    description: Option<String>,
+    syscall: &'static str,
+    path: Option<std::path::PathBuf>,
+    errno: Option<i32>,
+    /// Text for the unmapped-errno fallback (candidate exhaustion has no TS
+    /// counterpart: `writeFileSync` truncates instead of refusing).
+    fallback: String,
+}
+impl DumpFailure {
+    fn from_io(
+        error: &std::io::Error,
+        syscall: &'static str,
+        path: Option<&std::path::Path>,
+    ) -> Self {
+        let (code, description) = errno_name(error).map_or((None, None), |(code, description)| {
+            (Some(code), Some(description))
+        });
+        Self {
+            code,
+            description,
+            syscall,
+            path: path.map(std::path::Path::to_path_buf),
+            errno: error.raw_os_error(),
+            fallback: error.to_string(),
+        }
     }
+
+    /// Node's message shape: `ENOENT: no such file or directory, open '<path>'`
+    /// (the path is an argument of `open` only; a write failure has none).
+    fn message(&self) -> String {
+        let Some(code) = self.code else {
+            return format!(
+                "Failed to {} dump file: {}",
+                if self.syscall == "write" {
+                    "write"
+                } else {
+                    "create"
+                },
+                self.fallback
+            );
+        };
+        let description = self.description.as_deref().unwrap_or("unknown error");
+        if self.syscall == "open"
+            && let Some(path) = &self.path
+        {
+            format!("{code}: {description}, open '{}'", path.display())
+        } else {
+            format!("{code}: {description}, {}", self.syscall)
+        }
+    }
+}
+
+/// Node's `code` and its lowercase errno description for the syscalls a dump
+/// write can fail on, from the platform's `strerror` text (locale-independent
+/// in Rust). Unmapped errnos return `None` and fall back to Rust's own text.
+fn errno_name(error: &std::io::Error) -> Option<(&'static str, String)> {
+    let raw = error.to_string();
+    let description = raw.split(" (os error").next()?.trim().to_ascii_lowercase();
+    let code = match description.as_str() {
+        "no such file or directory" => "ENOENT",
+        "permission denied" => "EACCES",
+        "i/o error" | "input/output error" => "EIO",
+        "no space left on device" => "ENOSPC",
+        "read-only file system" => "EROFS",
+        "not a directory" => "ENOTDIR",
+        "name too long" => "ENAMETOOLONG",
+        "disk quota exceeded" => "EDQUOT",
+        "operation not permitted" => "EPERM",
+        "file exists" => "EEXIST",
+        "too many levels of symbolic links" => "ELOOP",
+        _ => return None,
+    };
+    // Node prints `i/o error` for EIO on every platform.
+    let description = if code == "EIO" {
+        "i/o error".to_string()
+    } else {
+        description
+    };
+    Some((code, description))
 }
 
 /// Writes `contents` under `dir` to the first candidate name from
@@ -1616,12 +1722,14 @@ fn dump_request_to_file(final_body: &JsValue, model: &JsValue) {
 /// a pre-existing symlink or truncate an existing file, so a predictable
 /// name cannot be used to overwrite other data, and owner-only permissions
 /// keep the dump unreadable to other users even in a shared temp directory.
+/// A partial file from a failed `write_all` is left in place, like TS's
+/// `writeFileSync`.
 fn write_dump_exclusively(
     dir: &std::path::Path,
     contents: &str,
     next_name: &mut dyn FnMut() -> String,
     candidates: usize,
-) -> Option<std::path::PathBuf> {
+) -> Result<std::path::PathBuf, DumpFailure> {
     use std::io::Write;
     for _ in 0..candidates {
         let path = dir.join(next_name());
@@ -1634,25 +1742,63 @@ fn write_dump_exclusively(
         }
         match options.open(&path) {
             Ok(mut file) => {
-                return match file.write_all(contents.as_bytes()) {
-                    Ok(()) => Some(path),
-                    Err(e) => {
-                        eprintln!("[model-debug] Failed to write request dump: {e}");
-                        None
-                    }
-                };
+                return file
+                    .write_all(contents.as_bytes())
+                    .map(|()| path)
+                    .map_err(|error| DumpFailure::from_io(&error, "write", None));
             }
             // A concurrent creator or pre-planted file with this name: move
             // to the next candidate instead of truncating it.
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => {
-                eprintln!("[model-debug] Failed to create dump file: {e}");
-                return None;
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(DumpFailure::from_io(&error, "open", Some(&path))),
         }
     }
-    eprintln!("[model-debug] Failed to create dump file: every name candidate exists");
-    None
+    Err(DumpFailure {
+        code: None,
+        description: None,
+        syscall: "open",
+        path: None,
+        errno: None,
+        fallback: "every name candidate already exists".into(),
+    })
+}
+
+/// `toProviderError(provider, <fs error>)`: the canonical error the TS Google
+/// catch yields for a failed dump `writeFileSync` — no SDK send, no retry, one
+/// non-retryable `error` event (`streamModel.ts:395-401` → `:461-495`).
+fn dump_failure_error(provider: &JsValue, failure: &DumpFailure) -> ModelStreamError {
+    // The fs Error's own fields, as Node's `JSON.stringify` projects them.
+    let mut raw = JsObject::new();
+    if let Some(errno) = failure.errno {
+        raw.insert("errno".into(), JsValue::Number(f64::from(errno)));
+    }
+    if let Some(code) = failure.code {
+        raw.insert("code".into(), code.into());
+    }
+    raw.insert("syscall".into(), failure.syscall.into());
+    if let Some(path) = &failure.path {
+        raw.insert(
+            "path".into(),
+            JsValue::String(JsString::from(path.display().to_string().as_str())),
+        );
+    }
+    let mut canonical = normalize_model_error(
+        &provider_id(provider),
+        &protocol(provider),
+        ErrorInput::Error(&JsError {
+            message: JsString::from(failure.message().as_str()),
+            code: failure.code.map(JsString::from),
+            network_code: None,
+            raw: JsValue::Object(raw),
+        }),
+        None,
+    );
+    // A dump write failure never carries a retryable code or status in TS
+    // (`is_retryable(None, "ENOENT")` is false); pin the same for the
+    // unmapped-errno and candidate-exhaustion fallbacks, whose
+    // message-derived codes could otherwise look retryable.
+    canonical.insert("retryable".into(), JsValue::Bool(false));
+    ModelStreamError::Provider(canonical)
 }
 
 /// Replays the bytes already read for a completeness/shape check, optionally
@@ -1880,7 +2026,17 @@ async fn send_provider_request(
     // PILOTDECK_DUMP_REQUEST: debug aid that writes the provider request body
     // to a file under the OS temp directory (TS `streamModel.ts:196-203`).
     if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
-        dump_request_to_file(&final_body, field(body, "model"));
+        // TS throws the raw fs Error out of the generator here (the dump
+        // sits outside the send try). Swallowing the failure and continuing
+        // to send is this port's pre-existing behavior (already in main,
+        // unchanged by this candidate's diff); registered in
+        // A6.4-MODEL-DUMP-SECURE-001.
+        if let Err(failure) = dump_request_to_file(&final_body, field(body, "model")) {
+            eprintln!(
+                "[model-debug] Failed to write request dump: {}",
+                failure.message()
+            );
+        }
     }
 
     let encoded = Bytes::from(encoded);
@@ -2307,7 +2463,13 @@ async fn send_google_request(
     // (TS `streamModel.ts:395-401`). Google carries its model in the URL, so
     // the log line's model comes from the canonical request, not the body.
     if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
-        dump_request_to_file(&final_body, model);
+        // A failed write surfaces like TS: the throw lands in the Google
+        // attempt catch → `toProviderError` → one non-retryable error event,
+        // and the SDK send never happens (probe: 0 server hits with a
+        // dead TMPDIR, `streamModel.ts:395-401` → `:461-495`).
+        if let Err(failure) = dump_request_to_file(&final_body, model) {
+            return Err((dump_failure_error(provider, &failure), false));
+        }
     }
     let endpoint = providers::google::endpoint(provider, model).map_err(|error| (error, false))?;
     let (url, header_map) = build_http_request(&endpoint, &headers)
