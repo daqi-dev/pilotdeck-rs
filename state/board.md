@@ -22,6 +22,9 @@ updated: 2026-10-24 13:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #590 | impl | blocked | A7.2-pr6b sidecar格+四格矩阵；前置#589
 <!-- READY:END -->
 
+> ## 2026-10-25 · #621 fix-r2（GLM，wt-621-takeover，claude/issue-621-fix-r1）
+> 两家非作者评审（opus 四角色 + DeepSeek）必修项全部落地：`raw.errno` 改 libuv 负值、errno 映射复用 `node_io` 生成表（删手写 strerror 表）、dump 改仅流式触发（complete 不 dump，核 TS streamModel.ts:124/:196/:395 后门控）、集成测试逐字段断言 `error.raw`（含 normalize 不覆写的 lib 正控）、补 EACCES/ENOTDIR 写失败用例与 complete 负控、`PROXY_ENV_KEYS` 测试副本合并进 `tests/common/proxy_env.rs`、账本 A6.4 调用点范围/⑤ 如实改写。TS 探针重做（fix-r1 的已不在树上）：`_tmp/20261025-issue-621-fix-r2/ts-probe/`，四形实测（ENOENT/EACCES/ENOTDIR/EFBIG）钉 errno 负值、retryable 全 false、write 阶段 raw 无 path。红绿证据 red-*.log，结果 `RESULT.md`。验证：lib 1343/0、dump_request 4/0、count_proxy 6/0、mcp_proxy 1/0、fmt/clippy/-D warnings、check_frozen PASS（18）、冻结 README 哈希一致。P3 项按分级不在本轮。下一步：本地提交（不推送）。
+
 > ## 2026-10-24 · #625 A5.2 原生观察面负控（Codex，wt-625-negctl）
 > 补齐 finishReason/runId/state/raw snapshot 四项指定标签负控，原生矩阵由 8 项增至 12 项；raw 先校验目标记录身份，再对齐完整 record/events，说明与 TS 预注册规则的映射及适用边界，不改冻结文件。下一步完成真实成功场景与全部反例复算、双非作者评审并合入；最终测试与收尾证据贴 #625 关联 PR。本轮不改变 A5.4 整体完成状态。
 

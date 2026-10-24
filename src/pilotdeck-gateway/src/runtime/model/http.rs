@@ -11,7 +11,8 @@
 //! HTTP redirects follow undici through `crate::fetch_redirect::follow`
 //! (#360-1), including the Google SDK transport. Not ported here: invocation
 //! audit staging (`options.invocation`, A6.4-pr10). Both provider paths
-//! support `PILOTDECK_DUMP_REQUEST` for inspecting outgoing request bodies.
+//! support `PILOTDECK_DUMP_REQUEST` for inspecting outgoing request bodies,
+//! on the streaming sends only — TS never dumps from `complete()`.
 //! The outgoing HTTP proxy (`cli/proxy.ts`) is implemented here and wired into
 //! all provider-side HTTP transports (MCP, model, count, and hook call sites)
 //! via [`proxy_https_connector`].
@@ -1560,7 +1561,8 @@ async fn provider_exchange(
 
 /// Debug helper that writes the request body to a JSON file under the OS
 /// temp directory when `PILOTDECK_DUMP_REQUEST=1`. Matches TS
-/// `streamModel.ts:196-203,395-401` in trigger, directory and log line. The
+/// `streamModel.ts:196-203,395-401` in trigger (streaming attempts only),
+/// directory and log line. The
 /// file name and creation mode intentionally diverge from the TS
 /// `Date.now()` / `writeFileSync` pair: a dump carries the whole
 /// conversation, so it is created exclusively (never following a
@@ -1649,15 +1651,21 @@ impl DumpFailure {
         syscall: &'static str,
         path: Option<&std::path::Path>,
     ) -> Self {
-        let (code, description) = errno_name(error).map_or((None, None), |(code, description)| {
-            (Some(code), Some(description))
-        });
+        // `code` and its lowercase description come from the Node v22 libuv
+        // table generated into `node_io` (oracle-tested against Node itself);
+        // the platform's strerror text drifts from it (ELOOP, EDQUOT, ...).
+        let (code, description) = crate::node_io::lookup(error)
+            .map_or((None, None), |(code, description)| {
+                (Some(code), Some(description.to_string()))
+            });
         Self {
             code,
             description,
             syscall,
             path: path.map(std::path::Path::to_path_buf),
-            errno: error.raw_os_error(),
+            // Node's fs errors carry libuv's signed errno (uv_errno_t is the
+            // negated OS errno: ENOENT surfaces as -2, EACCES as -13).
+            errno: error.raw_os_error().map(|raw| -raw),
             fallback: error.to_string(),
         }
     }
@@ -1685,35 +1693,6 @@ impl DumpFailure {
             format!("{code}: {description}, {}", self.syscall)
         }
     }
-}
-
-/// Node's `code` and its lowercase errno description for the syscalls a dump
-/// write can fail on, from the platform's `strerror` text (locale-independent
-/// in Rust). Unmapped errnos return `None` and fall back to Rust's own text.
-fn errno_name(error: &std::io::Error) -> Option<(&'static str, String)> {
-    let raw = error.to_string();
-    let description = raw.split(" (os error").next()?.trim().to_ascii_lowercase();
-    let code = match description.as_str() {
-        "no such file or directory" => "ENOENT",
-        "permission denied" => "EACCES",
-        "i/o error" | "input/output error" => "EIO",
-        "no space left on device" => "ENOSPC",
-        "read-only file system" => "EROFS",
-        "not a directory" => "ENOTDIR",
-        "name too long" => "ENAMETOOLONG",
-        "disk quota exceeded" => "EDQUOT",
-        "operation not permitted" => "EPERM",
-        "file exists" => "EEXIST",
-        "too many levels of symbolic links" => "ELOOP",
-        _ => return None,
-    };
-    // Node prints `i/o error` for EIO on every platform.
-    let description = if code == "EIO" {
-        "i/o error".to_string()
-    } else {
-        description
-    };
-    Some((code, description))
 }
 
 /// Writes `contents` under `dir` to the first candidate name from
@@ -2024,8 +2003,10 @@ async fn send_provider_request(
         .unwrap_or_default();
 
     // PILOTDECK_DUMP_REQUEST: debug aid that writes the provider request body
-    // to a file under the OS temp directory (TS `streamModel.ts:196-203`).
-    if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
+    // to a file under the OS temp directory. TS dumps only inside the stream
+    // loop (`streamModel.ts:196-203`); `complete()` calls `sendProviderRequest`
+    // directly without it (`:124`), so the non-streaming path stays cold.
+    if stream && std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
         // TS throws the raw fs Error out of the generator here (the dump
         // sits outside the send try). Swallowing the failure and continuing
         // to send is this port's pre-existing behavior (already in main,

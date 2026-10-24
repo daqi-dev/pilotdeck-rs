@@ -2165,3 +2165,90 @@ fn dump_names_stay_unique_within_one_millisecond() {
         "same-millisecond names must stay distinct"
     );
 }
+
+// `DumpFailure::from_io` maps errnos through the Node v22 libuv table
+// generated into `node_io`, not the platform's strerror text: darwin/glibc
+// print "File name too long" for ENAMETOOLONG while Node prints libuv's
+// "name too long", and ELOOP likewise drifts. The errno carries libuv's sign
+// (uv_errno_t is the negated OS errno; Node's fs errors report ENOENT as -2
+// — TS probe `_tmp/20261025-issue-621-fix-r2/ts-probe/`).
+#[test]
+fn dump_failure_maps_errnos_through_the_libuv_table() {
+    for (raw, code, description) in [
+        (libc::ENOENT, "ENOENT", "no such file or directory"),
+        (libc::EACCES, "EACCES", "permission denied"),
+        (libc::ENOTDIR, "ENOTDIR", "not a directory"),
+        (libc::ENAMETOOLONG, "ENAMETOOLONG", "name too long"),
+        (libc::ELOOP, "ELOOP", "too many symbolic links encountered"),
+        (libc::EFBIG, "EFBIG", "file too large"),
+        (libc::EIO, "EIO", "i/o error"),
+    ] {
+        let failure = DumpFailure::from_io(
+            &std::io::Error::from_raw_os_error(raw),
+            "open",
+            Some(std::path::Path::new("/tmp/pilotdeck_request_1.json")),
+        );
+        assert_eq!(failure.code, Some(code), "errno {raw}");
+        assert_eq!(
+            failure.description.as_deref(),
+            Some(description),
+            "errno {raw}"
+        );
+        assert_eq!(failure.errno, Some(-raw), "libuv-signed errno for {raw}");
+        assert_eq!(
+            failure.message(),
+            format!("{code}: {description}, open '/tmp/pilotdeck_request_1.json'"),
+            "errno {raw}"
+        );
+    }
+    // A write-stage failure (open succeeded, write failed) has no path in
+    // Node's error and no `open '<path>'` argument in the message (TS probe:
+    // `EFBIG: file too large, write` with `raw:{errno,code,syscall}`).
+    let write = DumpFailure::from_io(
+        &std::io::Error::from_raw_os_error(libc::EFBIG),
+        "write",
+        None,
+    );
+    assert_eq!(write.errno, Some(-libc::EFBIG));
+    assert_eq!(write.message(), "EFBIG: file too large, write");
+}
+
+// The canonical Google error event for a failed dump write: `raw` is the fs
+// Error's own enumerable fields (`normalize_model_error` keeps the `raw` it is
+// handed), `code` falls through the classifiers to the fs `code`, and
+// `retryable` is false — TS `isRetryable(undefined, "ENOENT")` is false for
+// every errno code (probe: ENOENT/EACCES/ENOTDIR/EFBIG all false).
+#[test]
+fn dump_failure_error_projects_the_node_fs_error() {
+    let provider = parse_json(r#"{"id":"dump-provider","protocol":"google"}"#).unwrap();
+    let failure = DumpFailure::from_io(
+        &std::io::Error::from_raw_os_error(libc::ENOENT),
+        "open",
+        Some(std::path::Path::new("/tmp/pilotdeck_request_1.json")),
+    );
+    let ModelStreamError::Provider(canonical) = dump_failure_error(&provider, &failure) else {
+        panic!("a dump write failure is a provider error");
+    };
+    assert_eq!(
+        canonical.get("code").and_then(JsValue::as_string),
+        Some(&JsString::from("ENOENT"))
+    );
+    assert_eq!(canonical.get("retryable"), Some(&JsValue::Bool(false)));
+    let raw = canonical.get("raw").expect("raw survives normalization");
+    assert_eq!(
+        raw.get("errno"),
+        Some(&JsValue::Number(f64::from(-libc::ENOENT)))
+    );
+    assert_eq!(
+        raw.get("code").and_then(JsValue::as_string),
+        Some(&JsString::from("ENOENT"))
+    );
+    assert_eq!(
+        raw.get("syscall").and_then(JsValue::as_string),
+        Some(&JsString::from("open"))
+    );
+    assert_eq!(
+        raw.get("path").and_then(JsValue::as_string),
+        Some(&JsString::from("/tmp/pilotdeck_request_1.json"))
+    );
+}

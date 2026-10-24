@@ -15,7 +15,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::Request;
 use pilotdeck_gateway::runtime::model::http::{
     ModelHttpTransport, StreamOptions, StreamOutput, TransportFailure, TransportFuture,
-    stream_model,
+    complete_model, stream_model,
 };
 use pilotdeck_protocol::parse_json;
 use serde_json::{Value, json};
@@ -181,7 +181,9 @@ fn run_case(protocol: &str, enabled: Option<&str>) {
 
 #[test]
 fn dump_request_creates_file() {
-    for protocol in ["openai", "google"] {
+    // The generic send path is shared by all three HTTP protocols, so the
+    // positive control covers each of them.
+    for protocol in ["openai", "anthropic", "openai-responses", "google"] {
         run_case(protocol, Some("1"));
     }
 }
@@ -197,95 +199,187 @@ fn dump_request_disabled_by_default() {
     }
 }
 
-/// A failed dump write surfaces like TS (`streamModel.ts:196-203,395-401`,
-/// probe evidence in `_tmp/20261025-issue-621-fix-r1/ts-probe/`): the child
-/// runs with a temp directory that does not exist, so the exclusive create
-/// fails with ENOENT.
-///
-/// Google: the SDK send never happens — zero transport calls — and the
-/// attempt yields exactly one non-retryable `error` event with code ENOENT
-/// and the `writeFileSync`-shaped raw fields. OpenAI: this port's
-/// pre-existing (already in main) swallow-and-continue behavior — the send
-/// proceeds and only stderr mentions the failure; registered in
-/// A6.4-MODEL-DUMP-SECURE-001.
-#[test]
-fn dump_request_write_failure_semantics() {
-    for protocol in ["google", "openai"] {
-        let marker = format!(
-            "dump-marker-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let root = CaseRoot::acquire("write-fail");
-        let missing_tmp = root.join("nonexistent-tmpdir");
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "dump_child", "--ignored", "--nocapture"])
-            .env("PDRS_DUMP_PROTOCOL", protocol)
-            .env("PDRS_DUMP_MARKER", &marker)
-            .env("PDRS_DUMP_MODE", "write-fail")
-            .env("PILOTDECK_DUMP_REQUEST", "1")
-            .env("TMPDIR", &missing_tmp)
-            .output()
-            .expect("run isolated dump write-failure case");
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(
-            output.status.success(),
-            "{protocol} write-fail:\n{stdout}\n{stderr}"
-        );
-        assert!(
-            dump_files_in(&root).is_empty(),
-            "{protocol} write-fail must not write any dump file"
-        );
-        match protocol {
-            "google" => {
-                assert!(
-                    !stdout.contains("SENT_BODY="),
-                    "Google send must not run after a failed dump: {stdout}"
-                );
-                let code = stdout
-                    .lines()
-                    .find_map(|line| line.strip_prefix("ERROR_CODE="))
-                    .unwrap_or_else(|| panic!("no error event reported: {stdout}"));
-                assert_eq!(code, "ENOENT");
-                let retryable = stdout
-                    .lines()
-                    .find_map(|line| line.strip_prefix("ERROR_RETRYABLE="))
-                    .expect("error event must carry retryable");
-                assert_eq!(retryable, "false");
-                let message = stdout
-                    .lines()
-                    .find_map(|line| line.strip_prefix("ERROR_MESSAGE="))
-                    .expect("error event must carry a message");
-                assert!(
-                    message.starts_with("ENOENT: no such file or directory, open '"),
-                    "Node writeFileSync message shape: {message}"
-                );
-                assert!(
-                    message.contains("pilotdeck_request_"),
-                    "message names the dump path: {message}"
-                );
-                assert!(
-                    !stderr.contains("[model-debug]"),
-                    "Google path must surface, not swallow, the failure: {stderr}"
-                );
+/// How the child's temp directory is broken, and what the exclusive create
+/// reports for it. These are the three write-failure shapes TS was probed
+/// with (`_tmp/20261025-issue-621-fix-r2/ts-probe/`); the errno numbers are
+/// the same on darwin and linux.
+fn broken_tmpdir(root: &std::path::Path, kind: &str) -> std::path::PathBuf {
+    match kind {
+        // ENOENT: the directory does not exist.
+        "enoent" => root.join("nonexistent-tmpdir"),
+        // EACCES: a directory this run created and then closed for writing.
+        "eacces" => {
+            let dir = root.join("noaccess-tmpdir");
+            std::fs::create_dir(&dir).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
             }
-            "openai" => {
-                assert!(
-                    stdout.contains("SENT_BODY="),
-                    "OpenAI pre-existing behavior sends on: {stdout}"
-                );
-                assert!(
-                    stderr.contains("[model-debug] Failed to write request dump"),
-                    "failure is still visible on stderr: {stderr}"
-                );
-            }
-            _ => unreachable!(),
+            dir
+        }
+        // ENOTDIR: a path component is a regular file.
+        _ => {
+            std::fs::write(root.join("blocker-file"), "not a directory").unwrap();
+            root.join("blocker-file").join("sub")
         }
     }
+}
+
+/// A failed dump write surfaces like TS (`streamModel.ts:196-203,395-401`,
+/// probe evidence in `_tmp/20261025-issue-621-fix-r2/ts-probe/`): the child
+/// runs with a temp directory that fails the exclusive create with ENOENT,
+/// EACCES, or ENOTDIR.
+///
+/// Google: the SDK send never happens — zero transport calls — and the
+/// attempt yields one non-retryable `error` event whose `code`, `message`,
+/// and `raw` (libuv-signed `errno`, `code`, `syscall`, `path` for open-stage
+/// failures) match the TS probe. OpenAI: this port's pre-existing (already in
+/// main) swallow-and-continue behavior — the send proceeds and only stderr
+/// mentions the failure; registered in A6.4-MODEL-DUMP-SECURE-001.
+#[test]
+fn dump_request_write_failure_semantics() {
+    for (kind, code, errno, description) in [
+        ("enoent", "ENOENT", "-2", "no such file or directory"),
+        ("eacces", "EACCES", "-13", "permission denied"),
+        ("enotdir", "ENOTDIR", "-20", "not a directory"),
+    ] {
+        for protocol in ["google", "openai"] {
+            let marker = format!(
+                "dump-marker-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            let root = CaseRoot::acquire("write-fail");
+            let broken = broken_tmpdir(&root, kind);
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "dump_child", "--ignored", "--nocapture"])
+                .env("PDRS_DUMP_PROTOCOL", protocol)
+                .env("PDRS_DUMP_MARKER", &marker)
+                .env("PDRS_DUMP_MODE", "write-fail")
+                .env("PILOTDECK_DUMP_REQUEST", "1")
+                .env("TMPDIR", &broken)
+                .output()
+                .expect("run isolated dump write-failure case");
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert!(
+                output.status.success(),
+                "{protocol}/{kind} write-fail:\n{stdout}\n{stderr}"
+            );
+            assert!(
+                dump_files_in(&root).is_empty(),
+                "{protocol}/{kind} write-fail must not write any dump file"
+            );
+            match protocol {
+                "google" => {
+                    assert!(
+                        !stdout.contains("SENT_BODY="),
+                        "{protocol}/{kind}: Google send must not run after a failed dump: {stdout}"
+                    );
+                    let line = |prefix: &str| {
+                        stdout
+                            .lines()
+                            .find_map(|line| line.strip_prefix(prefix))
+                            .unwrap_or_else(|| {
+                                panic!("{protocol}/{kind}: no {prefix} line: {stdout}")
+                            })
+                    };
+                    let expect_line = |prefix: &str, expected: &str, what: &str| {
+                        assert_eq!(line(prefix), expected, "{protocol}/{kind}: {what}");
+                    };
+                    expect_line("ERROR_CODE=", code, "error code");
+                    expect_line("ERROR_RETRYABLE=", "false", "retryable");
+                    expect_line("ERROR_RAW_ERRNO=", errno, "raw errno (libuv sign)");
+                    expect_line("ERROR_RAW_CODE=", code, "raw code");
+                    expect_line("ERROR_RAW_SYSCALL=", "open", "raw syscall");
+                    // `raw` is the fs Error's own projection, so the path is
+                    // the dump candidate under the broken TMPDIR.
+                    let raw_path = line("ERROR_RAW_PATH=");
+                    let prefix = broken.to_string_lossy();
+                    assert!(
+                        raw_path.starts_with(prefix.as_ref()),
+                        "{protocol}/{kind}: raw path under the broken TMPDIR: {raw_path}"
+                    );
+                    assert!(
+                        raw_path.contains("pilotdeck_request_"),
+                        "{protocol}/{kind}: raw path names the dump: {raw_path}"
+                    );
+                    let message = line("ERROR_MESSAGE=");
+                    assert_eq!(
+                        message,
+                        &format!("{code}: {description}, open '{raw_path}'"),
+                        "{protocol}/{kind}: Node writeFileSync message shape"
+                    );
+                    assert!(
+                        !stderr.contains("[model-debug]"),
+                        "{protocol}/{kind}: Google path must surface, not swallow, the failure: {stderr}"
+                    );
+                }
+                "openai" => {
+                    assert!(
+                        stdout.contains("SENT_BODY="),
+                        "{protocol}/{kind}: OpenAI pre-existing behavior sends on: {stdout}"
+                    );
+                    assert!(
+                        stderr.contains("[model-debug] Failed to write request dump"),
+                        "{protocol}/{kind}: failure is still visible on stderr: {stderr}"
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+/// TS `complete()` never dumps: `streamModel.ts:124` calls
+/// `sendProviderRequest` directly, outside the stream loop's dump gate at
+/// `:196`. The Rust send path is shared by `complete_model` and
+/// `stream_model`, so this pins that the non-streaming call stays cold even
+/// with `PILOTDECK_DUMP_REQUEST=1`.
+#[test]
+fn dump_request_not_triggered_by_complete() {
+    let marker = format!(
+        "dump-marker-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let root = CaseRoot::acquire("complete");
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "dump_child", "--ignored", "--nocapture"])
+        .env("PDRS_DUMP_PROTOCOL", "openai")
+        .env("PDRS_DUMP_MARKER", &marker)
+        .env("PDRS_DUMP_MODE", "complete")
+        .env("PILOTDECK_DUMP_REQUEST", "1")
+        .env("TMPDIR", &*root)
+        .output()
+        .expect("run isolated complete dump case");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(output.status.success(), "complete:\n{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("SENT_BODY="),
+        "complete() must still send: {stdout}"
+    );
+    assert!(
+        !stdout.contains("[model-debug]"),
+        "complete() must not dump: {stdout}"
+    );
+    assert!(
+        !stderr.contains("[model-debug]"),
+        "complete() must not log a dump: {stderr}"
+    );
+    assert!(
+        dump_files_in(&root).is_empty(),
+        "complete() must not write any dump file: {:?}",
+        &*root
+    );
 }
 
 #[tokio::test]
@@ -306,7 +400,7 @@ async fn dump_child() {
         &json!({"providers": {"dump-provider": {
             "id": "dump-provider", "protocol": protocol,
             "url": "http://dump.invalid/v1", "apiKey": "test-only",
-            "retry": {"streamMaxRetries": 0},
+            "retry": {"streamMaxRetries": 0, "requestMaxRetries": 0},
             "extraBody": {"dumpMarker": marker},
             "models": {"dump-model": {
                 "id": "dump-model", "capabilities": {"supportsStreaming": true},
@@ -318,21 +412,39 @@ async fn dump_child() {
     .unwrap();
     let transport = CaptureTransport::default();
     let mut error_event: Option<pilotdeck_protocol::JsValue> = None;
+    let mut collect_error = |output: StreamOutput| {
+        if let StreamOutput::Event(event) = output
+            && event
+                .get("type")
+                .and_then(|value| value.as_string())
+                .is_some_and(|kind| kind.equals_str("error"))
+        {
+            error_event = Some(event.clone());
+        }
+    };
+    if mode == "complete" {
+        // TS `complete()` never dumps; the shared send path must stay cold.
+        let result = complete_model(&transport, &request, &config, &StreamOptions::default()).await;
+        let bodies = transport.0.lock().unwrap();
+        assert!(
+            result.is_err(),
+            "transport failure must propagate: {result:?}"
+        );
+        assert_eq!(
+            bodies.len(),
+            1,
+            "complete() must reach the provider send exactly once: {result:?}"
+        );
+        assert_eq!(bodies[0]["dumpMarker"], marker);
+        println!("SENT_BODY={}", bodies[0]);
+        return;
+    }
     let result = stream_model(
         &transport,
         &request,
         &config,
         &StreamOptions::default(),
-        &mut |output| {
-            if let StreamOutput::Event(event) = output
-                && event
-                    .get("type")
-                    .and_then(|value| value.as_string())
-                    .is_some_and(|kind| kind.equals_str("error"))
-            {
-                error_event = Some(event.clone());
-            }
-        },
+        &mut collect_error,
     )
     .await;
     let bodies = transport.0.lock().unwrap();
@@ -370,6 +482,26 @@ async fn dump_child() {
                 }
             );
             println!("ERROR_MESSAGE={}", text("message"));
+            // The fs Error's own projection TS keeps as `raw`: print each
+            // field, or `MISSING` when absent, so the parent can pin presence
+            // and value separately.
+            let raw = error.get("raw");
+            let raw_field = |name: &str| raw.and_then(|raw| raw.get(name));
+            match raw_field("errno") {
+                Some(pilotdeck_protocol::JsValue::Number(value)) => {
+                    println!("ERROR_RAW_ERRNO={value}");
+                }
+                _ => println!("ERROR_RAW_ERRNO=MISSING"),
+            }
+            let raw_text = |name: &str| {
+                raw_field(name)
+                    .and_then(pilotdeck_protocol::JsValue::as_string)
+                    .and_then(|value| value.to_utf8().ok())
+                    .unwrap_or_else(|| "MISSING".to_string())
+            };
+            println!("ERROR_RAW_CODE={}", raw_text("code"));
+            println!("ERROR_RAW_SYSCALL={}", raw_text("syscall"));
+            println!("ERROR_RAW_PATH={}", raw_text("path"));
         } else {
             assert_eq!(
                 bodies.len(),
