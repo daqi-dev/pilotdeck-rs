@@ -369,11 +369,6 @@ pub enum TurnEvent {
         event: JsString,
         detail: BoundarySnapshot,
     },
-    AgentStatusText {
-        event: JsString,
-        text: JsString,
-        detail: BoundarySnapshot,
-    },
     Failed {
         error: BoundarySnapshot,
     },
@@ -3405,12 +3400,6 @@ fn finish_ordinary_model_error(
         .and_then(JsValue::as_string)
         .cloned()
         .ok_or_else(|| wrong_reply("model failure status event"))?;
-    let text = status
-        .value()
-        .get("text")
-        .and_then(JsValue::as_string)
-        .cloned()
-        .ok_or_else(|| wrong_reply("model failure status text"))?;
     let detail = status
         .value()
         .get("detail")
@@ -3420,11 +3409,8 @@ fn finish_ordinary_model_error(
         ports.events,
         &mut state.timeline,
         ports.input,
-        TurnEvent::AgentStatusText {
-            event,
-            text,
-            detail,
-        },
+        // AgentLoop.toAgentStatusEvent excludes the internal status text.
+        TurnEvent::AgentStatus { event, detail },
     )?;
     emit_event(
         ports.events,
@@ -8275,6 +8261,15 @@ mod ordinary_model_error_terminal_order_tests {
     struct Events(Log);
     impl TurnEventPort for Events {
         fn emit(&mut self, event: BoundarySnapshot) -> PortResult<()> {
+            if event.value().get("type") == Some(&JsValue::from("agent_status")) {
+                // TS keeps text on the internal callback, but omits it from
+                // the public event while preserving detail unchanged.
+                assert!(event.value().get("text").is_none());
+                assert_eq!(
+                    event.value().get("detail"),
+                    Some(&pilotdeck_protocol::parse_json(r#"{"visible":true}"#).unwrap())
+                );
+            }
             self.0.lock().unwrap().push(
                 event
                     .value()

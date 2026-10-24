@@ -137,7 +137,7 @@ pub fn event(input: &TurnInput, event: &TurnEvent) -> BoundarySnapshot {
         TurnEvent::Continued { .. } => "turn_continued",
         TurnEvent::StopRequested => "stop_requested",
         TurnEvent::StopFailure { .. } | TurnEvent::StopFailureBoundary { .. } => "stop_failure",
-        TurnEvent::AgentStatus { .. } | TurnEvent::AgentStatusText { .. } => "agent_status",
+        TurnEvent::AgentStatus { .. } => "agent_status",
         TurnEvent::Failed { .. } => "turn_failed",
         TurnEvent::Completed { .. } => "turn_completed",
     };
@@ -220,15 +220,6 @@ pub fn event(input: &TurnInput, event: &TurnEvent) -> BoundarySnapshot {
         }
         TurnEvent::AgentStatus { event, detail } => {
             text(&mut out, "event", event);
-            put(&mut out, "detail", detail.value().clone());
-        }
-        TurnEvent::AgentStatusText {
-            event,
-            text: status_text,
-            detail,
-        } => {
-            text(&mut out, "event", event);
-            text(&mut out, "text", status_text);
             put(&mut out, "detail", detail.value().clone());
         }
         TurnEvent::ModelRequestStarted { route } => {

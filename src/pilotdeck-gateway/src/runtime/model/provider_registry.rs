@@ -479,11 +479,28 @@ impl RouterModelInvocation for NativeModelInvocationProvider {
                 .await
                 .map_err(|e| match e {
                     ModelStreamError::Request { code, message, .. } => {
-                        crate::runtime::model::router::RouterInvokeError::request(code, message)
+                        RouterInvokeError::request(code, message)
                     }
-                    other => {
-                        crate::runtime::model::router::RouterInvokeError::other(other.message())
-                    }
+                    // classifyAndRoute.ts distinguishes ModelProviderError from
+                    // generic Error: its code is observable and retryable=false
+                    // must stop judge retries after the first HTTP response.
+                    ModelStreamError::Provider(error) => RouterInvokeError::provider(
+                        error
+                            .get("code")
+                            .and_then(JsValue::as_string)
+                            .cloned()
+                            .unwrap_or_default(),
+                        error
+                            .get("message")
+                            .and_then(JsValue::as_string)
+                            .cloned()
+                            .unwrap_or_default(),
+                        error
+                            .get("retryable")
+                            .and_then(JsValue::as_bool)
+                            .unwrap_or(false),
+                    ),
+                    other => RouterInvokeError::other(other.message()),
                 })
         })
     }
