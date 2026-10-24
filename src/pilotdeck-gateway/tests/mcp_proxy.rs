@@ -15,6 +15,8 @@
 
 #[path = "common/baseline.rs"]
 mod baseline;
+#[path = "common/proxy_env.rs"]
+mod proxy_env;
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -24,6 +26,7 @@ use pilotdeck_gateway::runtime::mcp::{
 };
 use pilotdeck_gateway::runtime::model::http::{ProxyInstallMode, ProxySettings};
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
+use proxy_env::PROXY_ENV_KEYS;
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use scratch::Scratch;
 use std::{
@@ -37,15 +40,6 @@ use tokio::io::AsyncBufReadExt;
 static UNDEFINED: JsValue = JsValue::Undefined;
 const ORACLE: &str = include_str!("fixtures/mcp-proxy/oracle.json");
 const TLS: &str = include_str!("fixtures/mcp-proxy/proxy-tls.json");
-const PROXY_ENV_KEYS: [&str; 7] = [
-    "PILOTDECK_PROXY",
-    "https_proxy",
-    "HTTPS_PROXY",
-    "http_proxy",
-    "HTTP_PROXY",
-    "no_proxy",
-    "NO_PROXY",
-];
 
 fn oracle() -> JsValue {
     baseline::oracle(ORACLE)
