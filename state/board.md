@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-24 13:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+updated: 2026-10-25 02:14 · by GLM(glm-5.3-mb·#589实现)
 - gate-#275 | coord | blocked | #275 闸门作者谱系：draft,待非draft后处理
 - #150 | coord | human | draft PR,待人定
 - #19 | coord | human | 人定暂缓(10-17)
@@ -18,9 +18,12 @@ updated: 2026-10-24 13:50 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #587 | impl | doing | A6.9-pr3d 上下文与持久资源接入factory；aa1a052d0d0c5e6b9
 - #586 | impl | doing | A6.9-pr3c2 交互与hooks资源接入factory；ae8e582bd5d62ea93
 - #588 | impl | doing | A6.9-pr3e 插件与customRouter接入factory；a65f64068c70051b3
-- #589 | impl | ready | A7.2-pr6a LiveSession+SubmitHost（待核pr3c-3e状态）
+- #589 | impl | doing | A7.2-pr6a LiveSession事件完整性接线已提交本树待持有人核验；worktree=issue-589-live-integrity，实现GLM
 - #590 | impl | blocked | A7.2-pr6b sidecar格+四格矩阵；前置#589
 <!-- READY:END -->
+
+> ## 2026-10-25 02:14 · #589/#590 LiveSession 生产事件完整性接线（GLM glm-5.3-mb，wt=issue-589-live-integrity）
+> 完成有界实现：`runtime/turn/live.rs` 事件观察接入生产路径（select recv 与同 poll try_recv 两条排空路径）；StreamIntegrity 改为真实 lifecycle 机（turn_started 开流、input_accepted/turn_failed 恰一次、sidecar turn_completed 到达即违规、module final 唯一权威终态按 outcome 分流校验）；violation fail-closed 释放 execution/active slot/子进程。去掉正向测试的手工 integrity 预置，peer.py 扩出 live-normal/live-early-failure/live-cancel-compaction/live-duplicate-start 模式。定向 37/0、全量 lib 1303/0、fmt/clippy 过、parity README 冻结哈希一致。证据 `_tmp/20261025-issue-589-live-integrity/`，RESULT.md 在证据目录。Refs #589 #590，未宣称生产入口/四格矩阵/真实 provider 实效完成。待持有人核验、gitleaks、推送与两家非作者评审。
 
 > ## 2026-10-24 · #625 A5.2 原生观察面负控（Codex，wt-625-negctl）
 > 补齐 finishReason/runId/state/raw snapshot 四项指定标签负控，原生矩阵由 8 项增至 12 项；raw 先校验目标记录身份，再对齐完整 record/events，说明与 TS 预注册规则的映射及适用边界，不改冻结文件。下一步完成真实成功场景与全部反例复算、双非作者评审并合入；最终测试与收尾证据贴 #625 关联 PR。本轮不改变 A5.4 整体完成状态。
