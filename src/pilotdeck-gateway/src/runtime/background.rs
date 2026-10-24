@@ -563,12 +563,31 @@ impl BackgroundTaskRuntime {
             state.pending_starts += 1;
             (task_id, task)
         };
+        // Queue the initial metadata before spawning can produce output or
+        // settle the task. Pending is recoverable as Unknown after a crash.
+        let initial_snapshot = self.inner.snapshot_store.as_ref().map(|store| {
+            use crate::runtime::background_snapshot::{
+                PersistedBackgroundTask, PersistedOutput, persist_task,
+            };
+            store.write(PersistedBackgroundTask {
+                task: persist_task(&entry),
+                output: PersistedOutput {
+                    total_bytes: 0,
+                    persisted: false,
+                },
+            })
+        });
         #[cfg(test)]
         if let Some(before_spawn) = &self.before_spawn {
             before_spawn();
         }
         let result = self.spawn_task(task_id, entry, spec);
         self.inner.starts.send_modify(|starts| *starts -= 1);
+        // Release the start reservation before awaiting: dropping the caller
+        // must not strand dispose(), and the store owns the accepted write.
+        if let Some(snapshot) = initial_snapshot {
+            let _ = snapshot.await;
+        }
         result
     }
 
@@ -1621,6 +1640,58 @@ pub fn background_tasks_in_registry(
 mod tests {
     use super::*;
     use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn start_persists_unsettled_task_before_dispose_for_restart() {
+        use crate::runtime::background_snapshot::{
+            BackgroundTaskSnapshotStore, JsonFileBackgroundTaskSnapshotStore,
+        };
+        let scratch = crate::test_scratch::Scratch::new("617-start-snapshot");
+        let path = scratch.path().join("snapshot.json");
+        let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+            disk_spill_dir: Some(scratch.path().to_path_buf()),
+            snapshot_store: Some(Arc::new(
+                JsonFileBackgroundTaskSnapshotStore::new(path.clone()).unwrap(),
+            )),
+            ..Default::default()
+        });
+        let task = runtime
+            .start(StartTaskSpec {
+                command: JsValue::from("sleep 30"),
+                cwd: "/".into(),
+                env: None,
+                session_id: JsValue::from("session"),
+                agent_id: JsValue::from("agent"),
+                kind: JsValue::Undefined,
+            })
+            .await
+            .unwrap();
+        // Capture on-disk state before any terminal transition or dispose.
+        let store = JsonFileBackgroundTaskSnapshotStore::new(path).unwrap();
+        let persisted = store.load();
+        let live_status = runtime.get(&task.task_id, None).unwrap().status;
+        let restored = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+            disk_spill_dir: Some(scratch.path().to_path_buf()),
+            snapshot_store: Some(Arc::new(store)),
+            ..Default::default()
+        });
+        let recovered = restored.get(&task.task_id, None);
+        // Reap the real process before assertions can fail.
+        runtime.dispose().await;
+        restored.dispose().await;
+
+        assert_eq!(live_status, TaskStatus::Running);
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].task.status, "pending");
+        assert_eq!(persisted[0].output.total_bytes, 0);
+        let recovered = recovered.expect("start must persist without dispose or settle");
+        assert_eq!(recovered.status, TaskStatus::Unknown);
+        assert_eq!(recovered.task_id, task.task_id);
+        assert_eq!(recovered.session_id, task.session_id);
+        assert_eq!(recovered.agent_id, task.agent_id);
+        assert_eq!(recovered.pid, None);
+        assert_eq!(recovered.exit_code, None);
+    }
 
     #[tokio::test]
     async fn dispose_waits_for_gated_output_write_before_returning() {
