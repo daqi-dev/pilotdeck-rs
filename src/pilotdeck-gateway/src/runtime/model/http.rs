@@ -1543,6 +1543,50 @@ async fn provider_exchange(
     }
 }
 
+/// Debug helper that writes the request body to a timestamped JSON file in /tmp
+/// when `PILOTDECK_DUMP_REQUEST=1`. Matches TS `streamModel.ts:196-203,395-401`.
+fn dump_request_to_file(final_body: &JsValue, original_request: &JsValue) {
+    use std::io::Write;
+
+    // Extract model name for the log message (from the original canonical request).
+    let model = field(original_request, "model")
+        .as_string()
+        .and_then(|s| s.to_utf8().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Format as pretty-printed JSON (TS uses `JSON.stringify(body, null, 2)`).
+    let json = match crate::js_value::json_stringify(final_body) {
+        Ok(Some(compact)) => {
+            // Parse and re-stringify with indentation.
+            match serde_json::from_str::<serde_json::Value>(&compact) {
+                Ok(value) => serde_json::to_string_pretty(&value).unwrap_or(compact),
+                Err(_) => compact,
+            }
+        }
+        _ => return, // Failed to serialize; skip the dump.
+    };
+
+    // Write to /tmp/pilotdeck_request_<timestamp>.json
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = format!("/tmp/pilotdeck_request_{}.json", timestamp);
+
+    match std::fs::File::create(&path) {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(json.as_bytes()) {
+                eprintln!("[model-debug] Failed to write request dump: {}", e);
+            } else {
+                println!("[model-debug] Request dumped to {} (model={})", path, model);
+            }
+        }
+        Err(e) => {
+            eprintln!("[model-debug] Failed to create dump file: {}", e);
+        }
+    }
+}
+
 /// `sendProviderRequest` + `sendWithEndpointFallback` + `networkFetch`.
 async fn send_provider_request(
     transport: &dyn ModelHttpTransport,
@@ -1558,6 +1602,13 @@ async fn send_provider_request(
             ModelStreamError::thrown("RangeError", crate::js_value::StackOverflow::MESSAGE)
         })?
         .unwrap_or_default();
+
+    // PILOTDECK_DUMP_REQUEST: debug aid that writes the provider request body
+    // to a timestamped file in /tmp (TS `streamModel.ts:196-203,395-401`).
+    if std::env::var("PILOTDECK_DUMP_REQUEST").as_deref() == Ok("1") {
+        dump_request_to_file(&final_body, body);
+    }
+
     let encoded = Bytes::from(encoded);
     let endpoints = providers::chat_endpoint_candidates(provider);
     let count = endpoints.len();
