@@ -1,0 +1,414 @@
+//! A5.2 native regressions. The complete #19 TS-only matrix is deliberately
+//! exercised separately by a52_baseline: it is not a Rust correction oracle.
+#[path = "common/a52.rs"]
+mod fixture;
+#[path = "common/scratch.rs"]
+mod scratch;
+use fixture::*;
+use pilotdeck_gateway::storage::{
+    ContentAddressedWorkspaceSnapshotRecorder, FileRunRegistry, RunAcceptInput, RunState,
+    SnapshotState, WorkspaceSnapshotConfig, WorkspaceSnapshotInput,
+};
+use pilotdeck_protocol::{JsValue, stringify_json};
+use scratch::Scratch;
+use serde_json::{Value, json};
+use std::{
+    collections::HashMap,
+    fs,
+    process::Command,
+    sync::{Arc, atomic::Ordering},
+};
+
+fn value(v: &JsValue) -> Value {
+    serde_json::from_str(&stringify_json(v).unwrap().unwrap()).unwrap()
+}
+fn events(path: &std::path::Path, session: &str, id: &str) -> Vec<Value> {
+    FileRunRegistry::open(path)
+        .unwrap()
+        .events(&run(session, id), None, None)
+        .unwrap()
+        .iter()
+        .map(value)
+        .collect()
+}
+fn assert_completed(path: &std::path::Path, session: &str, id: &str, frames: &[Value]) {
+    let live: Vec<_> = frames
+        .iter()
+        .filter(|v| v["type"] == "event" && v["final"] == false && v["event"].is_object())
+        .map(|v| v["event"].clone())
+        .collect();
+    let durable = events(path, session, id);
+    assert_eq!(
+        live.iter()
+            .map(|v| v["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["turn_started", "input_accepted", "turn_completed"]
+    );
+    let wire: Vec<_> = frames.iter().filter(|v| v["type"] == "event").collect();
+    for (seq, frame) in wire.iter().enumerate() {
+        assert_eq!(frame["seq"], seq);
+    }
+    assert_eq!(wire.iter().filter(|v| v["final"] == true).count(), 1);
+    assert_eq!(wire.last().unwrap()["final"], true);
+    assert_eq!(wire.last().unwrap()["event"], *live.last().unwrap());
+    assert_eq!(
+        live,
+        durable
+            .iter()
+            .map(|v| v["event"].clone())
+            .collect::<Vec<_>>()
+    );
+    for (index, entry) in durable.iter().enumerate() {
+        assert_eq!(entry["seq"], index + 1);
+    }
+    assert_eq!(live.last().unwrap()["type"], "turn_completed");
+    assert_eq!(live.last().unwrap()["finishReason"], "completed");
+    assert!(live.iter().all(|v| v["runId"] == id));
+    let fresh = FileRunRegistry::open(path).unwrap();
+    let record = fresh.get(&run(session, id)).unwrap().unwrap();
+    assert_eq!(record.state(), Some(RunState::Completed));
+    assert_eq!(record.last_seq(), Some(durable.len() as f64));
+    assert_eq!(record.revision(), Some(durable.len() as f64 + 1.0));
+    assert_eq!(record.result().map(value), live.last().cloned());
+    // Read raw bytes as a separate observer, rather than trusting get/events alone.
+    let disk: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert!(
+        disk["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["sessionKey"] == session && r["runId"] == id && r["state"] == "completed")
+    );
+}
+
+#[tokio::test]
+async fn two_connections_compete_for_one_session_without_second_execution() {
+    let scratch = Scratch::new("a52-two-clients");
+    let path = scratch.path().join("runs.json");
+    let session = Arc::new(Session::default());
+    let gateway = gateway(&path, HashMap::from([("s".into(), session.clone())]));
+    let (a, a_text) = connect(&gateway).await;
+    let (b, b_text) = connect(&gateway).await;
+    let active = tokio::spawn(async move {
+        a.receive(request("a", "s", "r1")).await.unwrap();
+        a
+    });
+    bounded(session.entered.wait()).await;
+    bounded(b.receive(request("b", "s", "r2"))).await.unwrap();
+    let rejected = b_text.frames();
+    assert!(
+        rejected
+            .iter()
+            .any(|v| v["event"]["code"] == "session_busy"),
+        "{rejected:?}"
+    );
+    assert_eq!(session.submits.load(Ordering::SeqCst), 1);
+    assert!(!active.is_finished());
+    session.release.open();
+    let a = bounded(active).await.unwrap();
+    assert_completed(&path, "s", "r1", &a_text.frames());
+    assert!(
+        !events(&path, "s", "r2")
+            .iter()
+            .any(|v| v["event"]["type"] == "turn_started")
+    );
+    bounded(a.closed()).await.unwrap();
+    bounded(b.closed()).await.unwrap();
+}
+
+#[tokio::test]
+async fn independent_sessions_progress_while_the_other_is_blocked() {
+    let scratch = Scratch::new("a52-multi-session");
+    let path = scratch.path().join("runs.json");
+    let first = Arc::new(Session::default());
+    let second = Arc::new(Session::default());
+    let gateway = gateway(
+        &path,
+        HashMap::from([("s1".into(), first.clone()), ("s2".into(), second.clone())]),
+    );
+    let (a, a_text) = connect(&gateway).await;
+    let (b, b_text) = connect(&gateway).await;
+    let a_task = tokio::spawn(async move {
+        a.receive(request("a", "s1", "r1")).await.unwrap();
+        a
+    });
+    let b_task = tokio::spawn(async move {
+        b.receive(request("b", "s2", "r2")).await.unwrap();
+        b
+    });
+    bounded(async {
+        tokio::join!(first.entered.wait(), second.entered.wait());
+    })
+    .await;
+    first.release.open();
+    let a = bounded(a_task).await.unwrap();
+    assert_completed(&path, "s1", "r1", &a_text.frames());
+    assert!(!b_task.is_finished());
+    assert_eq!(
+        FileRunRegistry::open(&path)
+            .unwrap()
+            .get(&run("s2", "r2"))
+            .unwrap()
+            .unwrap()
+            .state(),
+        Some(RunState::Running)
+    );
+    assert!(
+        !events(&path, "s2", "r2")
+            .iter()
+            .any(|v| v["event"]["type"] == "turn_completed")
+    );
+    second.release.open();
+    let b = bounded(b_task).await.unwrap();
+    assert_completed(&path, "s2", "r2", &b_text.frames());
+    assert_eq!(first.aborts.load(Ordering::SeqCst), 0);
+    assert_eq!(second.aborts.load(Ordering::SeqCst), 0);
+    bounded(a.closed()).await.unwrap();
+    bounded(b.closed()).await.unwrap();
+}
+
+#[tokio::test]
+async fn old_close_after_new_connection_admission_preserves_observed_abort_semantics() {
+    // Baseline production reconnect-first ordering is NOT a promise that old
+    // close cannot abort. TS run-production-b.py measures that stale close can
+    // still abort the current run. Lock this behavior without changing A5.1.
+    let scratch = Scratch::new("a52-reconnect");
+    let path = scratch.path().join("runs.json");
+    let session = Arc::new(Session::default());
+    let gateway = gateway(&path, HashMap::from([("s".into(), session.clone())]));
+    let (old, old_text) = connect(&gateway).await;
+    let (new, new_text) = connect(&gateway).await;
+    let old_request = old.clone();
+    let active = tokio::spawn(async move {
+        old_request
+            .receive(request("old", "s", "r1"))
+            .await
+            .unwrap();
+    });
+    bounded(session.entered.wait()).await;
+    let previous = old_text.frames()[0]["interactionBinding"].clone();
+    bounded(
+        new.receive(
+            json!({"type":"request","id":"reconnect","method":"reconnect_interaction",
+        "params":{"sessionKey":"s","previousBinding":previous}})
+            .to_string(),
+        ),
+    )
+    .await
+    .unwrap();
+    let reconnect = new_text
+        .frames()
+        .into_iter()
+        .find(|v| v["id"] == "reconnect")
+        .unwrap();
+    assert_eq!(
+        reconnect["result"]["outcome"], "reconnected",
+        "{reconnect:?}"
+    );
+    assert_eq!(
+        reconnect["result"]["binding"],
+        new_text.frames()[0]["interactionBinding"]
+    );
+    bounded(new.receive(request("new", "s", "r2")))
+        .await
+        .unwrap();
+    assert!(
+        new_text
+            .frames()
+            .iter()
+            .any(|v| v["event"]["code"] == "session_busy")
+    );
+    bounded(old.closed()).await.unwrap();
+    bounded(active).await.unwrap();
+    assert_eq!(session.aborts.load(Ordering::SeqCst), 1);
+    assert_eq!(session.submits.load(Ordering::SeqCst), 1);
+    assert_completed(&path, "s", "r1", &old_text.frames());
+    bounded(new.closed()).await.unwrap();
+}
+
+#[test]
+fn registry_failed_write_does_not_publish_uncommitted_snapshot_and_can_retry() {
+    let scratch = Scratch::new("a52-registry-failure");
+    let parent = scratch.path().join("store");
+    let saved = scratch.path().join("saved");
+    fs::create_dir(&parent).unwrap();
+    let path = parent.join("runs.json");
+    let registry = FileRunRegistry::open(&path).unwrap();
+    let input = RunAcceptInput {
+        run: run("s", "r"),
+        request_material: "request".into(),
+    };
+    registry.accept(&input).unwrap();
+    let before = fs::read(&path).unwrap();
+    fs::rename(&parent, &saved).unwrap();
+    fs::write(&parent, b"not a directory").unwrap();
+    let event = js(json!({"type":"error","runId":"r","code":"turn_timeout"}));
+    let error = registry.append(&input.run, &event).unwrap_err();
+    assert!(
+        matches!(error, pilotdeck_gateway::storage::RunRegistryError::Io(_)),
+        "{error:?}"
+    );
+    assert_eq!(fs::read(saved.join("runs.json")).unwrap(), before);
+    fs::remove_file(&parent).unwrap();
+    fs::rename(&saved, &parent).unwrap();
+    let fresh = FileRunRegistry::open(&path).unwrap();
+    let record = fresh.get(&input.run).unwrap().unwrap();
+    assert_eq!(record.state(), Some(RunState::Accepted));
+    assert_eq!(record.last_seq(), Some(0.0));
+    assert!(record.result().is_none());
+    assert!(fresh.events(&input.run, None, None).unwrap().is_empty());
+    fresh.append(&input.run, &event).unwrap();
+    assert_eq!(
+        fresh.get(&input.run).unwrap().unwrap().result(),
+        Some(&event)
+    );
+}
+
+#[test]
+fn snapshot_store_failure_is_observable_and_not_cached_as_success() {
+    let scratch = Scratch::new("a52-snapshot-failure");
+    let workspace = scratch.path().join("workspace");
+    let store = scratch.path().join("snapshots");
+    fs::create_dir(&workspace).unwrap();
+    fs::write(workspace.join("evidence.txt"), "original").unwrap();
+    fs::write(&store, "blocks snapshot directory").unwrap();
+    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new(WorkspaceSnapshotConfig {
+        root: store.to_str().unwrap().into(),
+        snapshot_root: store.to_str().unwrap().into(),
+    });
+    let input = WorkspaceSnapshotInput {
+        workspace_id: "w".into(),
+        session_id: "s".into(),
+        turn_id: "r".into(),
+        run_id: "r".into(),
+        workspace_dir: workspace.to_str().unwrap().into(),
+        workspace_stable: None,
+        failure_kind: None,
+        failure_reason: None,
+    };
+    assert!(recorder.capture_pre_user(&input).is_err());
+    assert_eq!(
+        fs::read_to_string(&store).unwrap(),
+        "blocks snapshot directory"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.join("evidence.txt")).unwrap(),
+        "original"
+    );
+    fs::remove_file(&store).unwrap();
+    fs::create_dir(&store).unwrap();
+    let result = recorder.capture_pre_user(&input).unwrap();
+    assert_eq!(result.state, SnapshotState::Committed);
+    assert!(result.error.is_none());
+    let manifest = result.manifest_path.unwrap();
+    assert!(std::path::Path::new(&manifest).exists());
+    assert!(
+        std::path::Path::new(&manifest)
+            .parent()
+            .unwrap()
+            .join("_COMMITTED")
+            .exists()
+    );
+}
+
+#[test]
+fn cold_restart_fences_accepted_and_running_without_inventing_unknown_result() {
+    let scratch = Scratch::new("a52-cold-restart");
+    for initial in ["accepted", "running", "unknown"] {
+        let path = scratch.path().join(format!("{initial}.json"));
+        let stdout = scratch.path().join(format!("{initial}.stdout"));
+        let stderr = scratch.path().join(format!("{initial}.stderr"));
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "cold_restart_child", "--nocapture"])
+            .env("PDRS_A52_CHILD_PATH", &path)
+            .env("PDRS_A52_CHILD_STATE", initial)
+            .stdout(fs::File::create(&stdout).unwrap())
+            .stderr(fs::File::create(&stderr).unwrap())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        // Poll only for process termination; the clock never selects a passing
+        // interleaving. Expiry kills/reaps this exact child and fails the test.
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                child.wait().unwrap();
+                panic!(
+                    "cold child {pid} did not exit: {}",
+                    fs::read_to_string(&stderr).unwrap()
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert!(
+            status.success(),
+            "{}\n{}",
+            fs::read_to_string(&stdout).unwrap(),
+            fs::read_to_string(&stderr).unwrap()
+        );
+        let before: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let old = &before["records"][0];
+        assert_eq!(old["ownerPid"], pid);
+        assert_ne!(pid, std::process::id());
+        assert_eq!(
+            old["state"],
+            if initial == "unknown" {
+                "interrupted"
+            } else {
+                initial
+            }
+        );
+        let fresh = FileRunRegistry::open(&path).unwrap();
+        let record = fresh.get(&run("s", "r")).unwrap().unwrap();
+        assert_eq!(record.state(), Some(RunState::Interrupted));
+        assert_eq!(record.last_seq(), old["lastSeq"].as_f64());
+        assert_eq!(
+            record.revision(),
+            Some(old["revision"].as_f64().unwrap() + if initial == "unknown" { 0.0 } else { 1.0 })
+        );
+        assert_eq!(record.result().map(value), old.get("result").cloned());
+        let after: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(before["events"], after["events"]);
+        assert_eq!(
+            events(&path, "s", "r"),
+            before["events"]["\0s\0r"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        );
+        assert!(matches!(
+            fresh.append(&run("s", "r"), &js(json!({"type":"error","code":"late"}))),
+            Err(pilotdeck_gateway::storage::RunRegistryError::Terminal(_))
+        ));
+    }
+}
+
+#[test]
+fn cold_restart_child() {
+    let Some(path) = std::env::var_os("PDRS_A52_CHILD_PATH") else {
+        return;
+    };
+    let registry = FileRunRegistry::open(path).unwrap();
+    let input = RunAcceptInput {
+        run: run("s", "r"),
+        request_material: "request".into(),
+    };
+    registry.accept(&input).unwrap();
+    match std::env::var("PDRS_A52_CHILD_STATE").unwrap().as_str() {
+        "accepted" => {}
+        "running" => registry
+            .append(&input.run, &js(json!({"type":"turn_started","runId":"r"})))
+            .unwrap(),
+        "unknown" => registry
+            .append(
+                &input.run,
+                &js(json!({"type":"error","runId":"r","code":"result_unknown"})),
+            )
+            .unwrap(),
+        other => panic!("unknown initial state {other}"),
+    }
+}
