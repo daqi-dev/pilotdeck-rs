@@ -2603,7 +2603,7 @@ mod context_storage_tests {
             std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
             first_text
         );
-        // A cache miss would persist `b` and add a second alias; a hit writes nothing.
+        // A miss keeps `a` (write-if-absent), adds an alias and a new record; a hit writes nothing.
         assert_eq!(refs_entries(), aliases_after_first);
         assert_eq!(aliases_after_first.len(), 1);
     }
