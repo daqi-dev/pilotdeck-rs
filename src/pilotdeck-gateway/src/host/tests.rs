@@ -1589,10 +1589,13 @@ async fn validate_event_failure_fails_execution_before_application() {
 }
 #[tokio::test]
 async fn validate_event_rejection_is_never_acked_on_the_wire() {
-    // Wire-level ACK receipt for the rejection path: the peer's dedicated mode
-    // records every host frame it receives until its stdin EOF, so "a violating
-    // event is never ACKed" is asserted from the peer's own record rather than
-    // inferred from the host's error return.
+    // ACK receipt for the rejection path: the peer's dedicated mode records
+    // every host frame it actually receives until its stdin EOF, so "a
+    // violating event is never ACKed" is asserted from the peer's own record
+    // rather than inferred from the host's error return. Limitation: it only
+    // sees frames the host wrote before closing; an ACK queued in the last
+    // synchronous step before the error return and never flushed would not
+    // show up here, so this is not a full wire receipt.
     let mode = "ack-eof-recorder";
     let handler = Arc::new(RecordingHook {
         fail_on: Some("text_delta"),
