@@ -1497,6 +1497,7 @@ fn turn_scope_drop_after_runtime_shutdown_does_not_panic() {
 struct RecordingHook {
     seen: std::sync::Mutex<Vec<String>>,
     applied: AtomicUsize,
+    disposed: AtomicUsize,
     fail_on: Option<&'static str>,
 }
 impl Default for RecordingHook {
@@ -1504,11 +1505,16 @@ impl Default for RecordingHook {
         Self {
             seen: std::sync::Mutex::new(Vec::new()),
             applied: AtomicUsize::new(0),
+            disposed: AtomicUsize::new(0),
             fail_on: None,
         }
     }
 }
 impl HostHandler for RecordingHook {
+    fn dispose(&self) -> HostFuture<()> {
+        self.disposed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(()) })
+    }
     fn module_call(&self, _call: JsValue) -> HostFuture<JsObject> {
         Box::pin(async { Ok(JsObject::new()) })
     }
@@ -1580,4 +1586,51 @@ async fn validate_event_failure_fails_execution_before_application() {
         0,
         "a violating event must not be applied to the handler"
     );
+}
+#[tokio::test]
+async fn validate_event_rejection_is_never_acked_on_the_wire() {
+    // Wire-level ACK receipt for the rejection path: the peer's dedicated mode
+    // records every host frame it receives until its stdin EOF, so "a violating
+    // event is never ACKed" is asserted from the peer's own record rather than
+    // inferred from the host's error return.
+    let mode = "ack-eof-recorder";
+    let handler = Arc::new(RecordingHook {
+        fail_on: Some("text_delta"),
+        ..RecordingHook::default()
+    });
+    let (mut command, receipt) = peer(mode);
+    let client = HostClient::spawn(&mut command, Some(&"fixture".into()), limits())
+        .await
+        .unwrap();
+    let pid = client.child_id().expect("owned peer pid");
+    let result = client.execute(request(), handler.clone()).await;
+    let error = result.expect_err("hook rejection must fail the execution");
+    assert_eq!(error.kind, HostErrorKind::Protocol);
+    assert!(error.message.contains("test hook rejected text_delta"));
+    assert_eq!(
+        handler.applied.load(Ordering::SeqCst),
+        0,
+        "a violating event must not be applied to the handler"
+    );
+    assert_eq!(
+        handler.disposed.load(Ordering::SeqCst),
+        1,
+        "cleanup must dispose the handler exactly once"
+    );
+    // The peer writes its record after the host closes its stdin, so it may
+    // still be in flight when the error arrives; wait briefly before judging.
+    let record = receipt.0.with_extension("acks");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut text = std::fs::read_to_string(&record).unwrap_or_default();
+    while text.is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+        text = std::fs::read_to_string(&record).unwrap_or_default();
+    }
+    assert_eq!(
+        text.trim(),
+        "[]",
+        "peer received host frames for a validation-rejected event: {text}"
+    );
+    assert_reaped(pid).await;
+    println!("HOST_REJECT {mode}: wire ACK record empty; applied=0; disposed=1; child reaped");
 }

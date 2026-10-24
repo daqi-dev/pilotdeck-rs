@@ -43,6 +43,7 @@ known_modes.update({
     'frame-boundary', 'cancel-write-failure', 'cancel-duplicate-acceptance', 'event-then-disconnect',
     'cancel-before-timeout', 'cancel-before-disconnect',
     'batched-split-frames', 'accepted-then-rejected', 'close-term-cleanup',
+    'ack-eof-recorder',
     'event-order', 'host-cancel-before-acceptance-hang',
     'host-cancel-after-acceptance-hang', 'host-cancel-no-terminal-hang',
     'host-cancel-late-terminal',
@@ -293,6 +294,22 @@ if mode == 'cancel-write-failure':
     send(event())
     send(event(sequence=1, final=True))
     write_receipt()
+    sys.exit(0)
+if mode == 'ack-eof-recorder':
+    # Wire ACK receipt for the lifecycle-rejection path: emit one applicable
+    # event, then record every host frame until stdin EOF instead of blocking
+    # on the expected ACK read. A host that ACKs a validation-rejected event
+    # (or writes anything else before closing) is exposed in the .acks record;
+    # the Rust test asserts that record is empty after the failed execute.
+    assert receipt is not None
+    send(event())
+    acks = []
+    for line in sys.stdin:
+        if line.strip():
+            frame = json.loads(line)
+            acks.append({key: frame.get(key)
+                         for key in ('method', 'lastAppliedSequence')})
+    receipt.with_suffix('.acks').write_text(json.dumps(acks) + '\n')
     sys.exit(0)
 if mode.startswith('cancel-'):
     local_abort = mode != 'cancel-compaction-no-local'
