@@ -1,9 +1,11 @@
 //! Async count transport. HTTPS uses the provider transport's rustls connector
-//! (`super::http::https_connector`, A6.4-pr5).
+//! through the shared proxy-aware `super::http::proxy_https_connector`
+//! (A6.4-pr5), reading the outgoing proxy from the environment exactly like
+//! the model and hook transports.
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::{HeaderMap, Method, Request, Response, body::Body};
-use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
 use std::future::Future;
@@ -37,7 +39,7 @@ pub trait ProviderCountTransport: Send + Sync {
 
 #[derive(Clone)]
 pub struct HyperCountTransport {
-    client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>,
+    client: Client<hyper_rustls::HttpsConnector<super::http::ProxyConnect>, Full<Bytes>>,
 }
 impl HyperCountTransport {
     /// Trust exactly `roots` (tests use a throwaway CA).
@@ -46,8 +48,12 @@ impl HyperCountTransport {
     }
     fn from_config(config: rustls::ClientConfig) -> Self {
         Self {
-            client: Client::builder(TokioExecutor::new())
-                .build(super::http::https_connector(config)),
+            client: Client::builder(TokioExecutor::new()).build(
+                super::http::proxy_https_connector(
+                    config,
+                    super::http::ProxyConfig::from_settings(None),
+                ),
+            ),
         }
     }
 }

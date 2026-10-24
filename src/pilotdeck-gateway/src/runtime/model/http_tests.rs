@@ -1966,3 +1966,112 @@ fn limit_guard_nests_and_drop_restores_the_shared_default() {
     }
     assert_eq!(string_limit(), 0x1fffffe8);
 }
+
+// --- PILOTDECK_DUMP_REQUEST safe creation (A6.4-MODEL-DUMP-SECURE-001) ---
+// Deterministic conflict/permission checks for `write_dump_exclusively`: no
+// races, no touching any pre-existing temp entries — every path is created
+// inside a throwaway per-test directory.
+
+/// A private throwaway directory per test (never shared with other users or
+/// other runs; the pid keeps concurrent test binaries apart).
+fn dump_scratch(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("pdrs-dump-test-{}-{}", std::process::id(), tag));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn fixed_names<'a>(names: &'a [&'a str]) -> impl FnMut() -> String + 'a {
+    let mut index = 0;
+    move || {
+        let name = names[index].to_string();
+        index += 1;
+        name
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn dump_creation_refuses_to_follow_a_pre_existing_symlink() {
+    let dir = dump_scratch("symlink");
+    // The victim stands in for another user's (or our own) sensitive data.
+    let victim = dir.join("victim.json");
+    std::fs::write(&victim, "SECRET-VICTIM-DATA").unwrap();
+    std::os::unix::fs::symlink(&victim, dir.join("taken.json")).unwrap();
+    let path = write_dump_exclusively(
+        &dir,
+        "{\"dump\":true}",
+        &mut fixed_names(&["taken.json", "free.json"]),
+        8,
+    )
+    .expect("second candidate must be used");
+    assert_eq!(path, dir.join("free.json"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"dump\":true}");
+    // O_CREAT|O_EXCL refused the symlink: the victim was neither truncated
+    // nor turned into the dump.
+    assert_eq!(
+        std::fs::read_to_string(&victim).unwrap(),
+        "SECRET-VICTIM-DATA"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn dump_creation_refuses_to_truncate_an_existing_file() {
+    let dir = dump_scratch("existing");
+    let taken = dir.join("taken.json");
+    std::fs::write(&taken, "PRE-EXISTING").unwrap();
+    let path = write_dump_exclusively(
+        &dir,
+        "{\"dump\":true}",
+        &mut fixed_names(&["taken.json", "free.json"]),
+        8,
+    )
+    .expect("second candidate must be used");
+    assert_eq!(path, dir.join("free.json"));
+    // A same-millisecond collision (TS `Date.now()` alone) truncates; the
+    // exclusive create moves to the next name and leaves the first intact.
+    assert_eq!(std::fs::read_to_string(&taken).unwrap(), "PRE-EXISTING");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn dump_creation_reports_failure_when_all_candidates_exist() {
+    let dir = dump_scratch("exhausted");
+    for name in ["taken1.json", "taken2.json"] {
+        std::fs::write(dir.join(name), "PRE-EXISTING").unwrap();
+    }
+    assert!(
+        write_dump_exclusively(
+            &dir,
+            "{\"dump\":true}",
+            &mut fixed_names(&["taken1.json", "taken2.json"]),
+            2,
+        )
+        .is_none()
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("taken1.json")).unwrap(),
+        "PRE-EXISTING"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("taken2.json")).unwrap(),
+        "PRE-EXISTING"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn dump_files_are_owner_only() {
+    let dir = dump_scratch("permissions");
+    let path = write_dump_exclusively(&dir, "{}", &mut fixed_names(&["fresh.json"]), 8)
+        .expect("fresh candidate must be used");
+    let file = std::fs::File::open(&path).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = file.metadata().unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "dump must stay private to this user");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
