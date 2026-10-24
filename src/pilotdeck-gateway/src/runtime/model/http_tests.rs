@@ -1592,3 +1592,304 @@ async fn google_headers_continue_into_first_frame() {
 async fn google_headers_continue_into_error_text() {
     assert_headers_reach_first_body(true, true).await;
 }
+
+// ---------------------------------------------------------------------------
+// Non-stream multi-endpoint shape probe: V8 `MAX_STRING_LENGTH` bound.
+//
+// TS `shouldUseEndpointResponse` runs `await response.clone().json()` for every
+// 2xx candidate while `endpoints.length > 1`. The clone reads the body to EOF
+// first; only then does the byte→string conversion throw. A body over V8's
+// 536870888 UTF-16-unit limit therefore rejects the shape (fall back), while
+// the last candidate is still returned and its later `response.text()` throws
+// the same plain `Error: Cannot create a string longer than 0x1fffffe8
+// characters` (real probes `probe-shape-string-limit-valid.mts` and
+// `-last.mts` in the issue's `_tmp/20261025-issue-610`).
+
+fn complete_config() -> (JsValue, JsValue) {
+    let request = parse_json(
+        r#"{"provider":"p","model":"m","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],"maxOutputTokens":32}"#,
+    )
+    .unwrap();
+    let config = parse_json(
+        r#"{"providers":{"p":{"id":"p","protocol":"openai","url":"http://127.0.0.1:18080/api","apiKey":"k","headers":{},"retry":{"requestMaxRetries":0,"baseDelayMs":0,"maxDelayMs":0},"models":{"m":{"id":"m","capabilities":{"maxContextTokens":1000,"maxOutputTokens":32},"multimodal":{"input":["text"]}}}}}}"#,
+    )
+    .unwrap();
+    (request, config)
+}
+
+fn complete_config_with_timeout(timeout_ms: f64) -> (JsValue, JsValue) {
+    let (request, mut config) = complete_config();
+    let mut provider = field(field(&config, "providers"), "p").clone();
+    put(&mut provider, "timeoutMs", JsValue::Number(timeout_ms));
+    let mut providers = JsObject::new();
+    providers.insert("p".into(), provider);
+    put(&mut config, "providers", JsValue::Object(providers));
+    (request, config)
+}
+
+const TEST_TINY_CHOICES: &[u8] = br#"{"choices":[]}"#;
+/// 53 UTF-16 units, valid OpenAI shape, over every small test limit below.
+const TEST_OVERLONG_CHOICES: &[u8] = br#"{"choices":[],"pad":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}"#;
+
+#[derive(Clone, Copy)]
+enum TestFrame {
+    Data(&'static [u8]),
+    /// Sleep before yielding this frame; the timer starts on its first poll.
+    After(Duration, &'static [u8]),
+    /// undici `TypeError: terminated`.
+    Error,
+}
+
+struct SequenceBody {
+    frames: std::collections::VecDeque<TestFrame>,
+    timer: Option<Pin<Box<tokio::time::Sleep>>>,
+}
+impl hyper::body::Body for SequenceBody {
+    type Data = Bytes;
+    type Error = BodyFailure;
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, BodyFailure>>> {
+        let Some(frame) = self.frames.front().copied() else {
+            return std::task::Poll::Ready(None);
+        };
+        match frame {
+            TestFrame::Data(data) => {
+                self.frames.pop_front();
+                std::task::Poll::Ready(Some(Ok(hyper::body::Frame::data(Bytes::from_static(data)))))
+            }
+            TestFrame::After(delay, data) => {
+                if self.timer.is_none() {
+                    self.timer = Some(Box::pin(tokio::time::sleep(delay)));
+                }
+                std::task::ready!(self.timer.as_mut().unwrap().as_mut().poll(cx));
+                self.timer = None;
+                self.frames.pop_front();
+                std::task::Poll::Ready(Some(Ok(hyper::body::Frame::data(Bytes::from_static(data)))))
+            }
+            TestFrame::Error => {
+                self.frames.pop_front();
+                std::task::Poll::Ready(Some(Err(BodyFailure::Terminated)))
+            }
+        }
+    }
+}
+
+/// Scripted transport with ordered frame timing; one entry per endpoint.
+struct Sequence(std::sync::Mutex<Vec<(u16, Vec<TestFrame>)>>);
+impl ModelHttpTransport for Sequence {
+    fn send(&self, _: Request<Full<Bytes>>) -> TransportFuture {
+        let (status, frames) = self.0.lock().unwrap().remove(0);
+        let body = SequenceBody {
+            frames: frames.into(),
+            timer: None,
+        }
+        .boxed();
+        TransportFuture::ready(Ok(Response::builder().status(status).body(body).unwrap()))
+    }
+}
+fn sequence(replies: Vec<Vec<TestFrame>>) -> Sequence {
+    Sequence(std::sync::Mutex::new(
+        replies.into_iter().map(|frames| (200, frames)).collect(),
+    ))
+}
+
+/// The cap counts UTF-16 units of the decoded text (not bytes). This body is
+/// 24 units but 27 bytes, and the first `é` is split across two frames.
+#[tokio::test]
+async fn complete_shape_probe_counts_utf16_units_not_bytes() {
+    let _limit = LimitGuard::set(24);
+    let (request, config) = complete_config();
+    let transport = sequence(vec![vec![
+        TestFrame::Data(b"{\"choices\":[],\"n\":\"\xc3"),
+        TestFrame::Data(b"\xa9\xc3\xa9\xc3\xa9\"}"),
+    ]]);
+    let result = complete_model(&transport, &request, &config, &StreamOptions::default())
+        .await
+        .expect("exactly the limit is still a valid string");
+    assert!(matches!(result, JsValue::Object(_)));
+    assert!(
+        transport.0.lock().unwrap().is_empty(),
+        "under-limit candidate must be accepted without fallback"
+    );
+}
+
+/// An over-limit first candidate may only fall back after the body reaches
+/// EOF: the body frames are 40ms apart and both must be drained first.
+#[tokio::test(start_paused = true)]
+async fn complete_shape_probe_drains_overlong_first_body_before_fallback() {
+    let _limit = LimitGuard::set(32);
+    let (request, config) = complete_config();
+    let transport = sequence(vec![
+        vec![
+            TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
+            TestFrame::After(Duration::from_millis(40), b" "),
+        ],
+        vec![TestFrame::Data(TEST_TINY_CHOICES)],
+    ]);
+    let started = tokio::time::Instant::now();
+    let result = complete_model(&transport, &request, &config, &StreamOptions::default())
+        .await
+        .expect("second candidate accepted");
+    assert!(matches!(result, JsValue::Object(_)));
+    assert!(
+        transport.0.lock().unwrap().is_empty(),
+        "both endpoints were requested"
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(70),
+        "fallback happened before the over-limit body reached EOF: {:?}",
+        started.elapsed()
+    );
+}
+
+/// The last candidate is still returned after the over-long clone read; its
+/// later `response.text()` throws the real V8 plain `Error`, not
+/// `TypeError: terminated` or `RangeError`.
+#[tokio::test(start_paused = true)]
+async fn complete_shape_probe_last_overlong_body_throws_v8_error_after_eof() {
+    let _limit = LimitGuard::set(32);
+    let (request, config) = complete_config();
+    let transport = sequence(vec![
+        vec![TestFrame::Data(b"{}")],
+        vec![
+            TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
+            TestFrame::After(Duration::from_millis(40), b" "),
+        ],
+    ]);
+    let started = tokio::time::Instant::now();
+    let error = complete_model(&transport, &request, &config, &StreamOptions::default())
+        .await
+        .expect_err("overlong last body must throw");
+    assert!(error.name().equals_str("Error"), "{error:?}");
+    assert_eq!(
+        error.message_text(),
+        crate::fetch_redirect::STRING_TOO_LONG,
+        "real TS: Error, not RangeError/TypeError"
+    );
+    assert!(
+        transport.0.lock().unwrap().is_empty(),
+        "both endpoints were requested"
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(70),
+        "error was raised before the body reached EOF: {:?}",
+        started.elapsed()
+    );
+}
+
+/// A first candidate whose over-long body finishes after the outer request
+/// deadline: the next endpoint must not be requested; the timer is reported.
+#[tokio::test(start_paused = true)]
+async fn complete_shape_probe_overlong_body_past_deadline_reports_timeout() {
+    let _limit = LimitGuard::set(32);
+    let (request, config) = complete_config_with_timeout(20.0);
+    let transport = sequence(vec![
+        vec![
+            TestFrame::Data(TEST_OVERLONG_CHOICES),
+            TestFrame::After(Duration::from_millis(50), b" "),
+        ],
+        vec![TestFrame::Data(TEST_TINY_CHOICES)],
+    ]);
+    let error = complete_model(&transport, &request, &config, &StreamOptions::default())
+        .await
+        .expect_err("deadline must win");
+    assert!(
+        error
+            .message_text()
+            .contains("Model request timed out after 20ms."),
+        "{error:?}"
+    );
+    assert_eq!(
+        transport.0.lock().unwrap().len(),
+        1,
+        "the second endpoint must not be requested after the timer fired"
+    );
+}
+
+/// A caller abort during the over-long body read also wins after EOF (the
+/// clone read is detached from the parent signal, exactly like TS).
+#[tokio::test(start_paused = true)]
+async fn complete_shape_probe_overlong_body_parent_abort_wins_after_eof() {
+    let _limit = LimitGuard::set(32);
+    let (request, config) = complete_config();
+    let abort = AbortFlag::new();
+    let options = StreamOptions {
+        abort: Some(abort.clone()),
+        ..StreamOptions::default()
+    };
+    let started = tokio::time::Instant::now();
+    let transport = sequence(vec![
+        vec![
+            TestFrame::Data(TEST_OVERLONG_CHOICES),
+            TestFrame::After(Duration::from_millis(50), b" "),
+        ],
+        vec![TestFrame::Data(TEST_TINY_CHOICES)],
+    ]);
+    let mut pending = Box::pin(complete_model(&transport, &request, &config, &options));
+    poll_pending(pending.as_mut()).await;
+    tokio::time::advance(Duration::from_millis(30)).await;
+    // Deliver the parent event with its original time while the detached
+    // body read is still waiting for its 50ms frame.
+    abort.cancel_at(started + Duration::from_millis(20));
+    tokio::time::advance(Duration::from_millis(30)).await;
+    let error = poll_ready(pending.as_mut())
+        .await
+        .expect_err("parent abort must win");
+    assert!(error.name().equals_str("AbortError"), "{error:?}");
+    assert_eq!(
+        transport.0.lock().unwrap().len(),
+        1,
+        "the second endpoint must not be requested after the abort"
+    );
+}
+
+/// Body read failures keep priority over a string overflow: the clone read
+/// rejects with `TypeError: terminated`, so the last candidate's replayed
+/// body reports that category rather than the V8 string error.
+#[tokio::test]
+async fn complete_shape_probe_body_error_beats_string_overflow_on_last() {
+    let _limit = LimitGuard::set(32);
+    let (request, config) = complete_config();
+    let transport = sequence(vec![
+        vec![TestFrame::Data(b"{}")],
+        vec![TestFrame::Data(TEST_OVERLONG_CHOICES), TestFrame::Error],
+    ]);
+    let error = complete_model(&transport, &request, &config, &StreamOptions::default())
+        .await
+        .expect_err("body failure must throw");
+    assert!(
+        error.name().equals_str("TypeError") && error.message_text() == "terminated",
+        "{error:?}"
+    );
+    assert!(transport.0.lock().unwrap().is_empty());
+}
+
+/// At EOF an incomplete UTF-8 sequence becomes U+FFFD; that unit counts
+/// toward V8's limit just like decoded text (TS TextDecoder stream mode).
+#[tokio::test]
+async fn shape_probe_counts_eof_replacement_against_string_limit() {
+    {
+        let _limit = LimitGuard::set(2);
+        let mut body = replay_body(Bytes::from_static(b"{}\xc3"), None);
+        assert!(matches!(
+            read_shape_probe(&mut body, &StreamOptions::default()).await,
+            ShapeProbe::StringTooLong
+        ));
+    }
+    {
+        let _limit = LimitGuard::set(3);
+        let mut body = replay_body(Bytes::from_static(b"{}\xc3"), None);
+        assert!(matches!(
+            read_shape_probe(&mut body, &StreamOptions::default()).await,
+            ShapeProbe::Complete { .. }
+        ));
+    }
+}
+
+/// Production builds must use V8's limit, not a test/configurable threshold.
+#[test]
+fn shape_string_limit_defaults_to_v8_max() {
+    assert_eq!(string_limit(), super::super::count_http::MAX_STRING_LENGTH);
+}

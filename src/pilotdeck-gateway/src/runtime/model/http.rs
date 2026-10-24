@@ -204,12 +204,21 @@ impl TransportFailure {
         }
     }
 }
-/// A response body read failure (undici `TypeError: terminated`).
-#[derive(Debug)]
-pub struct BodyFailure;
+/// A response body read failure. `Terminated` is undici's
+/// `TypeError: terminated` (socket failure or body idle timeout);
+/// `StringTooLong` is the V8 error replay of a drained over-limit shape body
+/// on the last candidate (real TS `response.text()`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyFailure {
+    Terminated,
+    StringTooLong,
+}
 impl std::fmt::Display for BodyFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("terminated")
+        match self {
+            Self::Terminated => f.write_str("terminated"),
+            Self::StringTooLong => f.write_str(crate::fetch_redirect::STRING_TOO_LONG),
+        }
     }
 }
 impl std::error::Error for BodyFailure {}
@@ -936,7 +945,7 @@ impl ModelHttpTransport for HyperModelTransport {
                 .request(request)
                 .await
                 .map_err(|error| TransportFailure::fetch_failed(cause_code(&error)))?;
-            Ok(response.map(|body| body.map_err(|_| BodyFailure).boxed()))
+            Ok(response.map(|body| body.map_err(|_| BodyFailure::Terminated).boxed()))
         })
     }
 }
@@ -1592,12 +1601,13 @@ fn dump_request_to_file(final_body: &JsValue, original_request: &JsValue) {
 }
 
 /// Replays the bytes already read for a completeness/shape check, optionally
-/// ending with undici's body failure. A successful 2xx candidate must be handed
-/// back byte-for-byte, and a failed read on the last candidate must still fail
-/// on the caller's `response.text()` the way the tee'd undici body does.
+/// ending with the body failure the caller's `response.text()` must observe. A
+/// successful 2xx candidate must be handed back byte-for-byte, a failed read on
+/// the last candidate still fails the way the tee'd undici body does, and a
+/// drained over-limit body reports V8's plain `Error`.
 struct ReplayBody {
     data: Option<Bytes>,
-    tail_error: bool,
+    tail: Option<BodyFailure>,
 }
 
 impl hyper::body::Body for ReplayBody {
@@ -1612,18 +1622,17 @@ impl hyper::body::Body for ReplayBody {
         if let Some(data) = this.data.take() {
             return Poll::Ready(Some(Ok(hyper::body::Frame::data(data))));
         }
-        if this.tail_error {
-            this.tail_error = false;
-            return Poll::Ready(Some(Err(BodyFailure)));
+        if let Some(tail) = this.tail.take() {
+            return Poll::Ready(Some(Err(tail)));
         }
         Poll::Ready(None)
     }
 }
 
-fn replay_body(bytes: Bytes, tail_error: bool) -> ModelBody {
+fn replay_body(bytes: Bytes, tail: Option<BodyFailure>) -> ModelBody {
     ReplayBody {
         data: (!bytes.is_empty()).then_some(bytes),
-        tail_error,
+        tail,
     }
     .boxed()
 }
@@ -1631,10 +1640,10 @@ fn replay_body(bytes: Bytes, tail_error: bool) -> ModelBody {
 fn replay_response(
     parts: hyper::http::response::Parts,
     bytes: Bytes,
-    tail_error: bool,
+    tail: Option<BodyFailure>,
     before_abort: bool,
 ) -> Response<(ModelBody, bool)> {
-    Response::from_parts(parts, (replay_body(bytes, tail_error), before_abort))
+    Response::from_parts(parts, (replay_body(bytes, tail), before_abort))
 }
 
 /// What a non-stream, multi-endpoint 2xx shape probe observed. Only stream
@@ -1654,6 +1663,12 @@ enum ShapeProbe {
     /// timeout fired; the caller must keep the prefix for a possible last
     /// candidate.
     ReadError { bytes: Bytes },
+    /// The decoded body passed V8's `MAX_STRING_LENGTH` (UTF-16 units). TS
+    /// `copy.json()` reads the whole clone to EOF, then the byte→string
+    /// conversion throws a plain `Error`; the candidate is rejected. The
+    /// original body is drained and discarded, so the last candidate replays
+    /// that error instead of retaining 512 MiB.
+    StringTooLong,
 }
 
 /// Which outer event aborts the next endpoint fetch after a rejected shape.
@@ -1685,6 +1700,8 @@ async fn read_shape_probe(body: &mut ModelBody, options: &StreamOptions) -> Shap
     let mut text = String::new();
     let mut bytes = Vec::new();
     let mut continuation = false;
+    let mut units = 0usize;
+    let mut too_long = false;
     loop {
         // A fresh undici `bodyTimeout` per frame, with no request deadline and
         // no caller abort: both were detached from this body when the headers
@@ -1699,8 +1716,26 @@ async fn read_shape_probe(body: &mut ModelBody, options: &StreamOptions) -> Shap
         match frame {
             Exchange::Response(Some(Ok(frame)), _) => {
                 if let Some(data) = frame.data_ref() {
+                    if too_long {
+                        // TS has not converted the clone body to a string yet;
+                        // keep draining so EOF / the body idle timeout still
+                        // decide the outer fallback timing, but retain nothing
+                        // once the candidate can only be rejected.
+                        continue;
+                    }
                     bytes.extend_from_slice(data);
+                    let start = text.len();
                     decoder.decode(data, &mut text);
+                    // V8's cap counts UTF-16 code units of the decoded text,
+                    // exactly like `response_text` below.
+                    units += text[start..].encode_utf16().count();
+                    if units > string_limit() {
+                        // `copy.json()` reads the body to EOF before the
+                        // byte→string conversion throws; do not fall back early.
+                        too_long = true;
+                        text = String::new();
+                        bytes = Vec::new();
+                    }
                 }
             }
             Exchange::Response(Some(Err(_)), _) | Exchange::Timeout { .. } => {
@@ -1718,7 +1753,17 @@ async fn read_shape_probe(body: &mut ModelBody, options: &StreamOptions) -> Shap
             }
         }
     }
+    if too_long {
+        return ShapeProbe::StringTooLong;
+    }
+    // A trailing incomplete UTF-8 sequence becomes one U+FFFD at EOF; count
+    // that unit too (the real string conversion sees it).
+    let start = text.len();
     decoder.finish(&mut text);
+    units += text[start..].encode_utf16().count();
+    if units > string_limit() {
+        return ShapeProbe::StringTooLong;
+    }
     ShapeProbe::Complete {
         bytes: Bytes::from(bytes),
         parsed: parse_json(&text).ok(),
@@ -1865,7 +1910,7 @@ async fn send_provider_request(
                             value,
                         )
                     });
-                    let response = replay_response(parts, bytes, false, before_abort);
+                    let response = replay_response(parts, bytes, None, before_abort);
                     if accepted {
                         return Ok(response);
                     }
@@ -1881,7 +1926,28 @@ async fn send_provider_request(
                     {
                         return Err(abort_error(abort));
                     }
-                    last = Some(replay_response(parts, bytes, true, before_abort));
+                    last = Some(replay_response(
+                        parts,
+                        bytes,
+                        Some(BodyFailure::Terminated),
+                        before_abort,
+                    ));
+                    continue;
+                }
+                ShapeProbe::StringTooLong => {
+                    // The body was already drained to EOF above; only now may
+                    // the rejected shape try the next candidate, and the last
+                    // candidate must surface V8's plain `Error` from text().
+                    if !last_candidate && let Some(abort) = shape_fallback_abort(options, deadline)
+                    {
+                        return Err(abort_error(abort));
+                    }
+                    last = Some(replay_response(
+                        parts,
+                        Bytes::new(),
+                        Some(BodyFailure::StringTooLong),
+                        before_abort,
+                    ));
                     continue;
                 }
             }
@@ -1915,8 +1981,18 @@ async fn response_text(
         .await
         {
             Exchange::Aborted => return Err(ModelStreamError::abort()),
-            Exchange::Timeout { .. } | Exchange::Response(Some(Err(_)), _) => {
+            Exchange::Timeout { .. }
+            | Exchange::Response(Some(Err(BodyFailure::Terminated)), _) => {
                 return Err(ModelStreamError::thrown("TypeError", "terminated"));
+            }
+            // The drained over-limit shape body on the last candidate: real TS
+            // `response.text()` throws V8's plain `Error`, not `RangeError`
+            // (probe `probe-shape-string-limit-last.mts`).
+            Exchange::Response(Some(Err(BodyFailure::StringTooLong)), _) => {
+                return Err(ModelStreamError::thrown(
+                    "Error",
+                    crate::fetch_redirect::STRING_TOO_LONG,
+                ));
             }
             Exchange::Response(None, _) => break,
             Exchange::Response(Some(Ok(frame)), _) => {
@@ -2070,7 +2146,8 @@ async fn read_frame(
 }
 
 /// V8's string length limit (`MAX_STRING_LENGTH` UTF-16 units), shared by
-/// every cross-event string accumulator of the stream path.
+/// every cross-event string accumulator of the stream path and the non-stream
+/// shape probe.
 #[cfg(not(test))]
 pub(crate) fn string_limit() -> usize {
     super::count_http::MAX_STRING_LENGTH

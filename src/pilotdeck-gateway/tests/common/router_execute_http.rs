@@ -32,7 +32,7 @@ impl hyper::body::Body for ReplyBody {
             "hold" => Poll::Pending,
             "destroy" => {
                 self.end.clear();
-                Poll::Ready(Some(Err(BodyFailure)))
+                Poll::Ready(Some(Err(BodyFailure::Terminated)))
             }
             _ => Poll::Ready(None),
         }

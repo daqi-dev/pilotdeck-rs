@@ -37,7 +37,7 @@ impl hyper::body::Body for MatrixBody {
             std::task::ready!(timer.as_mut().poll(cx));
         }
         if self.event == "rejected" {
-            return Poll::Ready(Some(Err(BodyFailure)));
+            return Poll::Ready(Some(Err(BodyFailure::Terminated)));
         }
         Poll::Ready(
             self.data
