@@ -995,3 +995,10 @@ TS 原值保存在 `src/pilotdeck-gateway/tests/fixtures/html-markdown/oracle.js
 - **仍未对齐（本条剩余范围，pr2）**：任务快照 `state.json` 写入、启动恢复（restore 等长校验、pending / running → unknown）、默认 state dir（显式配置优先，否则 `projectRoot/.pilotdeck/background-tasks`，`src/tool/execution-world/ExecutionWorldBundle.ts:177-178`）与 nsjail 目录接线。
 - **机器判据**：lib 内 `runtime::background::output::oracle_tests`（重放 `tests/fixtures/background-output/oracle.json` 真实 TS 金样 11 组 122 步，两次生成一致）、`tests/background_output.rs`（真实 shell 接线与 dispose 后完整日志）、`runtime::background` 的 dispose 写盘闸门单测与 `tests/background_tasks.rs`；`tests/fixtures/background-output/negative.py` 18 条源码变异负控全部检出。
 - **批准记录**：人批 2026-10-23「A6.5-BACKGROUND-PERSIST-001 … 修」；本条为第一部分完成的状态追加，剩余部分仍按原条目（未消除）。
+
+### A6.5-BACKGROUND-PERSIST-001 · 当前状态（追加，不改上文；#553 pr2 / #617）
+
+- **当前状态**：任务快照写入与启动恢复已实现——`src/pilotdeck-gateway/src/runtime/background_snapshot.rs`：`JsonFileBackgroundTaskSnapshotStore`（atomic replace via temp + rename），`start()` 写 pending/running 快照（crash 后可恢复），`settle()`/`dispose()` 写 terminal 快照；`restore_snapshots()` 启动时恢复，pending/running → unknown；`write()` 串行化（spawn 串行链，不双写）。
+- **仍未对齐（本条剩余范围，pr3）**：默认 state dir（显式配置优先，否则 `projectRoot/.pilotdeck/background-tasks`，`src/tool/execution-world/ExecutionWorldBundle.ts:177-178`）与 nsjail 目录接线。
+- **机器判据**：`tests/background_persist.rs`（快照持久化与重启恢复全流程）、`tests/snapshot_unit.rs`（snapshot store 单元测试）；`cargo test -p pilotdeck-gateway --lib` 1266 passed。
+- **批准记录**：同上文；本条为第二部分完成的状态追加，剩余部分仍按原条目（未消除）。
