@@ -2418,7 +2418,10 @@ fn parse_openai_complete_response(raw: &JsValue, _provider_id: &JsValue) -> JsVa
     }
 
     // Handle text content
-    if let Some(text) = field(message, "content").as_string().filter(|s| !s.is_empty()) {
+    if let Some(text) = field(message, "content")
+        .as_string()
+        .filter(|s| !s.is_empty())
+    {
         content.push(object([
             ("type", "text".into()),
             ("text", JsValue::String(text.clone())),
