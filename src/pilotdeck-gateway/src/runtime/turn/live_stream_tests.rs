@@ -15,6 +15,9 @@ struct Handler {
     calls: AtomicUsize,
     disposed: AtomicUsize,
     fail_event: bool,
+    /// Leaves the input_accepted callback pending forever, so a received final
+    /// stays unapplied and only the host's bounded cancel exit can surface it.
+    block_input_accepted: bool,
 }
 
 impl HostHandler for Handler {
@@ -24,11 +27,17 @@ impl HostHandler for Handler {
     }
 
     fn event(&self, event: JsValue) -> HostFuture<()> {
+        let block = self.block_input_accepted
+            && event.get("payload").and_then(|payload| payload.get("type"))
+                == Some(&"input_accepted".into());
         self.events.lock().unwrap().push(event);
         let fail = self.fail_event;
         Box::pin(async move {
             if fail {
                 Err(HostError::new(HostErrorKind::Callback, "event failed"))
+            } else if block {
+                // Controllable pending callback (TurnScope shutdown cancels it).
+                std::future::pending().await
             } else {
                 Ok(())
             }
@@ -68,6 +77,8 @@ fn stream(execution: HostFuture<ExecuteResult>, events: mpsc::Receiver<JsValue>)
         integrity: StreamIntegrity::new(),
         violated: false,
         active: None,
+        // A stream built directly is never cancelled: strict terminal checks.
+        cancellation: Cancellation::default(),
     }
 }
 
@@ -334,6 +345,48 @@ async fn session(mode: &str, handler: Arc<Handler>) -> LiveSessionAdapter {
     })
 }
 
+/// A session whose spawned sidecar child PIDs are recorded, so tests can
+/// observe that a failed-closed stream actually reaped its child process.
+async fn session_tracking_children(
+    mode: &str,
+    handler: Arc<Handler>,
+) -> (LiveSessionAdapter, Arc<Mutex<Vec<u32>>>) {
+    let children = Arc::new(Mutex::new(Vec::new()));
+    let tracked = children.clone();
+    let mode = mode.to_owned();
+    let adapter = LiveSessionAdapter::new(move || {
+        let tracked = tracked.clone();
+        let mode = mode.clone();
+        let handler = handler.clone();
+        Box::pin(async move {
+            let client = spawn_client(&mode).await?;
+            if let Some(pid) = client.child_id() {
+                tracked.lock().unwrap().push(pid);
+            }
+            Ok((client, handler as Arc<dyn HostHandler>))
+        })
+    });
+    (adapter, children)
+}
+
+/// kill(pid, 0) style probe: succeeds while the child exists, SRCH once the
+/// process is gone. Mirrors host::tests::assert_reaped.
+async fn assert_reaped(pid: u32) {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            match rustix::process::test_kill_process(
+                rustix::process::Pid::from_raw(pid as i32).unwrap(),
+            ) {
+                Err(rustix::io::Errno::SRCH) => break,
+                Ok(()) => tokio::time::sleep(Duration::from_millis(10)).await,
+                Err(error) => panic!("cannot inspect sidecar child {pid}: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("sidecar child was not closed after the stream failed closed");
+}
+
 #[tokio::test]
 async fn host_normal_lifecycle_streams_events_and_projects_authoritative_final_once() {
     let handler = Arc::new(Handler::default());
@@ -365,7 +418,10 @@ async fn host_normal_lifecycle_streams_events_and_projects_authoritative_final_o
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     // turn_started, input_accepted, three intermediates and the applied final;
-    // the sidecar's own turn_completed is suppressed by the host.
+    // the sidecar's own turn_completed never reaches the handler either: the
+    // host suppresses it (host/execution.rs, mirroring
+    // agentLoopSidecarClient.ts:680-684), so the session-level rejection of a
+    // turn_completed is only reachable through direct construction.
     assert_eq!(handler.events.lock().unwrap().len(), 6);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
@@ -395,9 +451,187 @@ async fn host_early_failure_completes_before_input_accepted() {
 }
 
 #[tokio::test]
+async fn host_second_turn_failed_from_finalization_failure_is_accepted() {
+    // TurnRunner.ts:397-402 forwards the loop's turn_failed; a finalization
+    // step (:408-419) may then throw and the catch (:437) yields a second
+    // turn_failed before the same error terminal (:439). Rejecting the second
+    // one would drop a legal TS error-final stream.
+    let handler = Arc::new(Handler::default());
+    let session = session("live-double-failure", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    for event_type in [
+        "turn_started",
+        "input_accepted",
+        "turn_failed",
+        "turn_failed",
+    ] {
+        let event = next(turn.as_mut()).await.unwrap().unwrap();
+        assert_eq!(event.get("type"), Some(&event_type.into()), "{event_type}");
+    }
+    let completed = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+    let result = completed.get("result").unwrap();
+    assert_eq!(result.get("type"), Some(&"error".into()));
+    assert_eq!(result.get("stopReason"), Some(&"model_error".into()));
+    assert_eq!(
+        completed.get("messages"),
+        input().get("messages"),
+        "the error terminal still retains the turn messages"
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.events.lock().unwrap().len(), 5);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn host_max_turns_terminal_completes_without_turn_failed() {
+    // AgentLoop.ts:2210-2233: max_turns yields a status event and the module
+    // final only; no turn_failed may be required on this legal terminal.
+    let handler = Arc::new(Handler::default());
+    let session = session("live-max-turns", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    for event_type in ["turn_started", "input_accepted", "agent_status"] {
+        let event = next(turn.as_mut()).await.unwrap().unwrap();
+        assert_eq!(event.get("type"), Some(&event_type.into()), "{event_type}");
+    }
+    let completed = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+    let result = completed.get("result").unwrap();
+    assert_eq!(result.get("type"), Some(&"max_turns".into()));
+    assert_eq!(result.get("stopReason"), Some(&"max_turns".into()));
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.events.lock().unwrap().len(), 4);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancel_exit_returns_the_host_validated_final_when_lifecycle_events_were_stopped() {
+    // The pending input_accepted callback keeps the received success final
+    // unapplied; after cancellation the host's bounded cancel exit
+    // (POST_CANCEL_EXIT_TIMEOUT, host/execution.rs) stops applying events and
+    // returns that already-validated final anyway. The session must project
+    // it instead of rejecting the missing observed lifecycle.
+    let handler = Arc::new(Handler {
+        block_input_accepted: true,
+        ..Handler::default()
+    });
+    let session = session("live-cancel-pending", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    session.abort(&"user-stop".into()).unwrap();
+    let completed = next(turn.as_mut()).await.unwrap().unwrap();
+    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+    let result = completed.get("result").unwrap();
+    assert_eq!(result.get("type"), Some(&"success".into()));
+    assert_eq!(
+        completed.get("messages"),
+        input().get("messages"),
+        "the cancel-exit final still retains the turn messages"
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn events_after_a_violation_settle_to_none_even_when_buffered() {
+    // A legal event already buffered behind the violating one must never be
+    // delivered after the stream has failed closed; next() settles to None.
+    let (tx, rx) = mpsc::channel(1);
+    let sender = tokio::spawn(async move {
+        tx.send(parse_json(r#"{"type":"turn_started"}"#).unwrap())
+            .await
+            .unwrap();
+        tx.send(parse_json(r#"{"type":"turn_started"}"#).unwrap())
+            .await
+            .unwrap();
+        tx.send(parse_json(r#"{"type":"model_event"}"#).unwrap())
+            .await
+            .unwrap();
+    });
+    let mut turn = stream(
+        Box::pin(std::future::pending()),
+        rx,
+    );
+    assert_eq!(
+        next(&mut turn).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    let error = next(&mut turn).await.unwrap_err();
+    assert!(
+        error
+            .message
+            .contains("turn_started after the turn already opened"),
+        "{error:?}"
+    );
+    // The legal model_event is now buffered behind the violation; it must
+    // not surface through either delivery path.
+    sender.await.unwrap();
+    assert_eq!(next(&mut turn).await.unwrap(), None);
+    assert_eq!(next(&mut turn).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn cancelled_stream_keeps_a_validated_final_with_partial_lifecycle() {
+    // The same session-level rule without the host's 5 s cancel-exit wait:
+    // after cancellation, a Terminal with an unobserved lifecycle projects
+    // instead of failing the turn, and the stream still closes afterwards.
+    let (tx, rx) = mpsc::channel(1);
+    let terminal = parse_json(
+        r#"{"result":{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1},"messages":[]}"#,
+    )
+    .unwrap();
+    let started =
+        parse_json(r#"{"type":"turn_started","sessionId":"session","turnId":"turn"}"#).unwrap();
+    let sender = tx.clone();
+    let mut turn = stream(
+        Box::pin(async move {
+            sender.send(started).await.unwrap();
+            drop(tx);
+            Ok(ExecuteResult::Terminal(terminal))
+        }),
+        rx,
+    );
+    let cancellation = Cancellation::default();
+    cancellation.cancel(Some("user-stop".into()));
+    turn.cancellation = cancellation;
+    assert_eq!(
+        next(&mut turn).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    let completed = next(&mut turn).await.unwrap().unwrap();
+    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+    assert_eq!(completed.get("result").unwrap().get("type"), Some(&"success".into()));
+    assert_eq!(next(&mut turn).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn uncancelled_stream_still_rejects_a_final_with_partial_lifecycle() {
+    // The cancel-exit relaxation must not weaken the strict rule: without
+    // cancellation, a success terminal without input_accepted still fails.
+    let (_tx, rx) = mpsc::channel(1);
+    let terminal = parse_json(
+        r#"{"result":{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1},"messages":[]}"#,
+    )
+    .unwrap();
+    let mut turn = stream(
+        Box::pin(async move { Ok(ExecuteResult::Terminal(terminal)) }),
+        rx,
+    );
+    let error = next(&mut turn).await.unwrap_err();
+    assert!(
+        error.message.contains("terminal without proper lifecycle"),
+        "{error:?}"
+    );
+    assert_eq!(next(&mut turn).await.unwrap(), None);
+}
+
+#[tokio::test]
 async fn host_stream_rejects_events_before_turn_started_and_releases_the_host() {
     let handler = Arc::new(Handler::default());
-    let session = session("turn-completed", handler.clone()).await;
+    let (session, children) = session_tracking_children("turn-completed", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     // The adversarial peer streams text_delta events with no turn_started;
     // the first delivered event must fail the turn closed.
@@ -415,6 +649,9 @@ async fn host_stream_rejects_events_before_turn_started_and_releases_the_host() 
     })
     .await
     .expect("dropping execute must dispose its handler");
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    // The misbehaving sidecar process itself was closed, not just the stream.
+    assert_reaped(*children.lock().unwrap().first().unwrap()).await;
     assert!(!handler.events.lock().unwrap().is_empty());
     // The active turn slot was released with the violation.
     let replacement = session.submit(input(), options());
@@ -457,7 +694,8 @@ async fn incomplete_compaction_final_yields_original_messages_then_none() {
 #[tokio::test]
 async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
     let handler = Arc::new(Handler::default());
-    let session = session("live-duplicate-start", handler.clone()).await;
+    let (session, children) =
+        session_tracking_children("live-duplicate-start", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     let first = next(turn.as_mut()).await.unwrap().unwrap();
     assert_eq!(first.get("type"), Some(&"turn_started".into()));
@@ -468,6 +706,8 @@ async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
             .contains("turn_started after the turn already opened"),
         "{error:?}"
     );
+    // The peer also streams a legal model_event after the violating one; it
+    // must never be delivered after the stream has failed closed.
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     timeout(Duration::from_secs(5), async {
@@ -477,6 +717,10 @@ async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
     })
     .await
     .expect("dropping execute must dispose its handler");
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    // Dropping execute closes the peer's whole process group: the peer, which
+    // would otherwise block on stdin, actually exits.
+    assert_reaped(*children.lock().unwrap().first().unwrap()).await;
     // The slot is free again after the violation.
     assert!(session.submit(input(), options()).is_ok());
 }
