@@ -8,7 +8,7 @@
      且 sibling / concurrency / boundary / simplify 四个角色都在、都是 PASS；
      或有 `<!-- pr-gate:waiver <理由≥8字> -->`（纯文档/纯状态 PR 用，理由会打印出来供评审看）。
   2. 有 issue 关联：`Closes|Fixes|Resolves #N`（合并即关单，GitHub 定顺序）或 `Refs #N`（一单多 PR，单保持开），
-     或 `<!-- no-issue <理由> -->`。
+     或 `<!-- no-issue <理由> -->`。HTML 注释（单行 `<!-- ... -->` 或跨行）内部的关键词不算，须写在 prose 里。
   3. 谁写谁不审（CLAUDE.md「当前协作与持续推进」）：PR 描述有 `<!-- reviewers: A,B -->`，列出双谱系评审的两家；
      作者谱系（可以多家）＝ 分支前缀谱系 ∪ 所有 author 标记里的已知谱系 ∪ 提交 Co-Authored-By / Agent: / Model: 署名：
        - 只做加法：多个 author 标记取并集，author 标记读原文（不剥代码），所以任何写法都只会多算作者、不会少算；
