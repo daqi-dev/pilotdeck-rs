@@ -131,15 +131,15 @@ elif mode == "live-max-turns":
 elif mode == "live-cancel-pending":
     # Codex P1#2 scenario: turn_started is applied, input_accepted is left to
     # a host callback that never completes, and a valid success final has been
-    # received. The host's bounded cancel exit must still surface that final
-    # even though the unapplied lifecycle events are lost.
+    # received. The host's bounded cancel exit still surfaces that final, but
+    # the consumer never received input_accepted, so the session rejects it.
     send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
     send(success_final(2))
 elif mode == "live-cancel-pending-failure":
     # The same pending callback, but with turn_failed and an error final
-    # queued behind it: the error terminal requires turn_failed, which the
-    # consumer never sees because its application never completes.
+    # queued behind it: the consumer never sees turn_failed either, so the
+    # degraded error terminal is rejected instead of published.
     send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
     send_event(2, dict(type="turn_failed", sessionId=session, turnId=turn,
@@ -150,6 +150,16 @@ elif mode == "live-cancel-pending-failure":
         turns=1, errors=[dict(code="agent_model_error",
                               message="Model request failed.")]),
         messages=messages), final=True, outcome="failed"))
+elif mode == "live-cancel-blocked-model-event":
+    # P2 negative control: no input_accepted ever. The test handler blocks the
+    # model_event application, so the success final can be received but never
+    # applied. The abort's bounded cancel exit returns that received final;
+    # the session must still reject it because the consumer only saw
+    # turn_started.
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="model_event", sessionId=session, turnId=turn,
+                      event=dict(type="text_delta", text="blocked")))
+    send(success_final(2))
 elif mode == "live-missing-accepted":
     # Negative control (a)/(c): a success final without input_accepted. No
     # amount of cancellation makes this a legal terminal; only an

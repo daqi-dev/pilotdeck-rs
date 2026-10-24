@@ -18,6 +18,10 @@ struct Handler {
     /// Leaves the input_accepted callback pending forever, so a received final
     /// stays unapplied and only the host's bounded cancel exit can surface it.
     block_input_accepted: bool,
+    /// Leaves the model_event callback pending forever. Non-lifecycle events
+    /// are applied too, so the application queue (final included) cannot grow
+    /// past it; the final is received but can never be applied.
+    block_model_event: bool,
     /// Rejects input_accepted in validate_event: a legal lifecycle payload an
     /// inner handler refuses, to prove the StreamHandler wrapper forwards the
     /// inner contract's rejection instead of silently skipping it.
@@ -31,9 +35,12 @@ impl HostHandler for Handler {
     }
 
     fn event(&self, event: JsValue) -> HostFuture<()> {
-        let block = self.block_input_accepted
-            && event.get("payload").and_then(|payload| payload.get("type"))
-                == Some(&"input_accepted".into());
+        let payload_type = event
+            .get("payload")
+            .and_then(|payload| payload.get("type"))
+            .cloned();
+        let block = (self.block_input_accepted && payload_type == Some("input_accepted".into()))
+            || (self.block_model_event && payload_type == Some("model_event".into()));
         self.events.lock().unwrap().push(event);
         let fail = self.fail_event;
         Box::pin(async move {
@@ -96,6 +103,7 @@ fn stream(
             .identity,
         input: input(),
         integrity,
+        delivered: StreamIntegrity::new(),
         active: None,
     }
 }
@@ -616,13 +624,16 @@ async fn inner_validation_rejection_fails_the_stream_before_application() {
 }
 
 #[tokio::test]
-async fn cancel_exit_returns_the_host_validated_final_when_lifecycle_events_were_stopped() {
+async fn cancel_exit_success_without_delivered_input_accepted_is_rejected() {
     // The pending input_accepted callback keeps the received success final
     // unapplied; after cancellation the host's bounded cancel exit
     // (POST_CANCEL_EXIT_TIMEOUT, host/execution.rs) stops applying events and
-    // returns that already-validated final anyway. The session projects it
-    // strictly: the receive-path hook observed input_accepted when it arrived,
-    // so no cancellation-based relaxation is involved.
+    // returns that already-validated final anyway. The consumer never received
+    // input_accepted, so it must not be told the turn succeeded: TS reads the
+    // final only after yielding every earlier event
+    // (agentLoopSidecarClient.ts:552-683), and submit.rs only commits accepted
+    // input when it sees input_accepted. Fail closed instead of accepting on
+    // the receive-path fact.
     let handler = Arc::new(Handler {
         block_input_accepted: true,
         ..Handler::default()
@@ -634,27 +645,22 @@ async fn cancel_exit_returns_the_host_validated_final_when_lifecycle_events_were
         Some(&"turn_started".into())
     );
     session.abort(&"user-stop".into()).unwrap();
-    let completed = next(turn.as_mut()).await.unwrap().unwrap();
-    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
-    let result = completed.get("result").unwrap();
-    assert_eq!(result.get("type"), Some(&"success".into()));
-    assert_eq!(
-        completed.get("messages"),
-        input().get("messages"),
-        "the cancel-exit final still retains the turn messages"
+    let error = next(turn.as_mut()).await.unwrap_err();
+    assert!(
+        error.message.contains("terminal without proper lifecycle"),
+        "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
-async fn queued_turn_failed_behind_a_pending_callback_satisfies_the_error_terminal() {
+async fn queued_turn_failed_dropped_by_the_cancel_exit_is_rejected() {
     // The pending input_accepted callback also holds back turn_failed and the
-    // error final, which stay in the host's application queue. The hook
-    // observed them at receive time, so the cancel-exit final validates
-    // strictly: the error terminal requires turn_failed, and it was received
-    // even though the consumer never saw it. Observing only the pending
-    // event could not prove this.
+    // error final. The hook observed them at receive time, but the consumer
+    // never did, so the error terminal would reach submit without its
+    // turn_failed and the failure code would degrade. TS only publishes the
+    // final after yielding turn_failed; fail closed.
     let handler = Arc::new(Handler {
         block_input_accepted: true,
         ..Handler::default()
@@ -666,16 +672,58 @@ async fn queued_turn_failed_behind_a_pending_callback_satisfies_the_error_termin
         Some(&"turn_started".into())
     );
     session.abort(&"user-stop".into()).unwrap();
-    let completed = next(turn.as_mut()).await.unwrap().unwrap();
-    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
-    let result = completed.get("result").unwrap();
-    assert_eq!(result.get("type"), Some(&"error".into()));
-    assert_eq!(
-        completed.get("messages"),
-        input().get("messages"),
-        "the cancel-exit final still retains the turn messages"
+    let error = next(turn.as_mut()).await.unwrap_err();
+    assert!(
+        error.message.contains("terminal without proper lifecycle"),
+        "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancel_exit_success_without_input_accepted_rejects_the_relaxed_path() {
+    // P2 negative control: this test really reaches the host's cancel exit
+    // (host/execution.rs:296-302), unlike the three lifecycle negative
+    // controls whose finals are applied normally. turn_started is delivered;
+    // a non-lifecycle model_event blocks the application callback forever, so
+    // the success final is received into known_terminal but can never be
+    // applied, and input_accepted is never sent at all. When the abort's
+    // POST_CANCEL_EXIT_TIMEOUT expires the host returns that received final.
+    // The session must reject it: a future relaxation of the form "a terminal
+    // returned by the cancel exit skips the lifecycle check" must not turn
+    // this green.
+    let handler = Arc::new(Handler {
+        block_model_event: true,
+        ..Handler::default()
+    });
+    let session = session("live-cancel-blocked-model-event", handler.clone()).await;
+    let mut turn = session.submit(input(), options()).unwrap();
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    session.abort(&"user-stop".into()).unwrap();
+    let error = next(turn.as_mut()).await.unwrap_err();
+    assert!(
+        error.message.contains("terminal without proper lifecycle"),
+        "{error:?}"
+    );
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    // The final never reached the module-side handler, so the rejected terminal
+    // came from the cancel-exit branch, not from normal application.
+    let applied = handler.events.lock().unwrap();
+    assert_eq!(
+        applied.len(),
+        2,
+        "turn_started and the blocked model_event were applied; no final"
+    );
+    assert_eq!(
+        applied[1]
+            .get("payload")
+            .and_then(|payload| payload.get("type")),
+        Some(&"model_event".into())
+    );
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
