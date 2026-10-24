@@ -1125,6 +1125,9 @@ impl YieldGate {
 }
 
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS: f64 = UNDICI_BODY_TIMEOUT_MS;
+/// `DEFAULT_REQUEST_TIMEOUT_MS` (`streamModel.ts:714`): the non-streaming
+/// fallback when the provider has no `timeoutMs`.
+const DEFAULT_REQUEST_TIMEOUT_MS: f64 = 600_000.0;
 /// `UNDICI_TRANSPORT_TIMEOUT_MS` (`cli/proxy.ts`, = LITELLM_COMPLETION_HTTP_FALLBACK_MS).
 pub use crate::runtime::network::UNDICI_BODY_TIMEOUT_MS;
 const REPEATED_CHUNK_LIMIT: f64 = 100.0;
@@ -1511,7 +1514,7 @@ async fn provider_exchange(
     transport: &dyn ModelHttpTransport,
     request: Request<Full<Bytes>>,
     options: &StreamOptions,
-    deadline: tokio::time::Instant,
+    deadline: Option<tokio::time::Instant>,
     failure: impl FnOnce(TransportFailure) -> ModelStreamError,
     timeout: impl FnOnce() -> ModelStreamError,
 ) -> Result<Response<(ModelBody, bool)>, (ModelStreamError, bool)> {
@@ -1521,7 +1524,7 @@ async fn provider_exchange(
         send,
         wait_abort(&options.abort),
         || options.abort.as_ref().and_then(AbortFlag::abort_event_at),
-        Some(deadline),
+        deadline,
     )
     .await
     {
@@ -1589,13 +1592,41 @@ fn dump_request_to_file(final_body: &JsValue, original_request: &JsValue) {
 }
 
 /// `sendProviderRequest` + `sendWithEndpointFallback` + `networkFetch`.
+///
+/// `stream` selects the baseline's timeout: streaming resolves
+/// `resolveStreamIdleTimeout` and reports `Stream idle timeout…`; `complete()`
+/// uses `provider.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS`, ignores
+/// `streamTimeoutMs`, and reports `Model request timed out after <ms>ms.`
+/// (`streamModel.ts:716-755`). The timer bounds `sendWithEndpointFallback`
+/// only; `response.text()` runs after it returns, exactly like the baseline.
 async fn send_provider_request(
     transport: &dyn ModelHttpTransport,
     provider: &JsValue,
     body: &JsValue,
     options: &StreamOptions,
+    stream: bool,
 ) -> Result<Response<(ModelBody, bool)>, ModelStreamError> {
-    let timeout_ms = idle_timeout_ms(provider, options);
+    let (timeout_ms, timeout_text) = if stream {
+        let ms = idle_timeout_ms(provider, options);
+        (
+            ms,
+            format!(
+                "Stream idle timeout: no data received for {}ms",
+                crate::js_value::number_string(ms)
+            ),
+        )
+    } else {
+        let ms = field(provider, "timeoutMs")
+            .as_number()
+            .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS);
+        (
+            ms,
+            format!(
+                "Model request timed out after {}ms.",
+                crate::js_value::number_string(ms)
+            ),
+        )
+    };
     let final_body = providers::final_body(body, provider);
     let headers = providers::provider_headers(provider, &final_body);
     let encoded = crate::js_value::json_stringify(&final_body)
@@ -1623,7 +1654,10 @@ async fn send_provider_request(
     };
     // This timer surrounds every endpoint and redirect. Race each observable
     // transport exchange before follow() can erase its scheduled_at() source.
-    let deadline = tokio::time::Instant::now() + duration(timeout_ms);
+    // TS `const timeout = effectiveTimeoutMs ? setTimeout(...) : undefined`
+    // treats 0/NaN as "no timer"; a negative value schedules Node's 1 ms timer.
+    let deadline = (!timeout_ms.is_nan() && timeout_ms != 0.0)
+        .then(|| tokio::time::Instant::now() + duration(timeout_ms));
     let mut last = None;
     for endpoint in &endpoints {
         let (url, header_map) = build_http_request(endpoint, &headers).map_err(to_provider)?;
@@ -1634,6 +1668,7 @@ async fn send_provider_request(
             encoded.clone(),
             || to_provider(NetworkFetchError::classify("fetch failed", None)),
             |request| async {
+                let timeout_text = timeout_text.clone();
                 provider_exchange(
                     transport,
                     request,
@@ -1648,10 +1683,7 @@ async fn send_provider_request(
                     || {
                         to_provider(NetworkFetchError::new(
                             "network_timeout",
-                            format!(
-                                "Stream idle timeout: no data received for {}ms",
-                                crate::js_value::number_string(timeout_ms)
-                            ),
+                            timeout_text,
                             JsValue::Undefined,
                         ))
                     },
@@ -1958,7 +1990,7 @@ async fn send_google_request(
                 transport,
                 request,
                 options,
-                deadline,
+                Some(deadline),
                 |failure| ModelStreamError::thrown("TypeError", failure.message),
                 || {
                     ModelStreamError::thrown(
@@ -2607,7 +2639,13 @@ fn parse_openai_complete_response(
                 pilotdeck_protocol::number::number_to_string(choice_index),
                 tool_index
             );
-            let id = id_state.choose(non_empty_string(field(record, "id")).cloned(), generated);
+            // TS `readNonEmptyString(record.id)`: trim only decides emptiness;
+            // a non-blank id is returned untrimmed (streamModel's sibling and
+            // the Responses parser already use this helper).
+            let id = id_state.choose(
+                non_empty_trimmed_string(field(record, "id")).cloned(),
+                generated,
+            );
             content.push(object([
                 ("type", "tool_call".into()),
                 ("id", JsValue::String(id)),
@@ -2886,11 +2924,14 @@ fn retry_decide_request(provider: &JsValue, attempt: f64, random: f64) -> (f64, 
     )
 }
 
-/// `isRetryableRequestError` (`streamModel.ts`): abort and non-network
-/// `Error`s are not retried; a provider error retries on its own flag or a
-/// premature-close message.
+/// `isRetryableRequestError` (`streamModel.ts:565`): `isAbortError` is the
+/// first test and wins over a premature-close message. It matches either
+/// `name === "AbortError"` or a message containing `aborted`, so a
+/// `ModelProviderError` (retryable: true) with "request aborted" is not
+/// retried. A provider error retries on its own flag or a premature-close
+/// message; other errors retry on a network-ish message.
 fn is_retryable_request_error(error: &ModelStreamError) -> bool {
-    if error.name().equals_str("AbortError") {
+    if error.is_abort() {
         return false;
     }
     let message = String::from_utf16_lossy(error.message().units()).to_ascii_lowercase();
@@ -2948,19 +2989,20 @@ pub async fn complete_model(
         throw_if_aborted(options)?;
         let (provider_now, model_now) = providers::validate_model_request(&current, config)?;
         let body = providers::build_model_request(&current, &provider_now, &model_now)?;
-        let response = match send_provider_request(transport, &provider, &body, options).await {
-            Ok(response) => response,
-            Err(error) => {
-                if attempt < max_retries && is_retryable_request_error(&error) {
-                    let (_, delay_ms) =
-                        retry_decide_request(&provider, attempt, (options.random)());
-                    let _ = delay(delay_ms, options).await?;
-                    attempt += 1.0;
-                    continue;
+        let response =
+            match send_provider_request(transport, &provider, &body, options, false).await {
+                Ok(response) => response,
+                Err(error) => {
+                    if attempt < max_retries && is_retryable_request_error(&error) {
+                        let (_, delay_ms) =
+                            retry_decide_request(&provider, attempt, (options.random)());
+                        let _ = delay(delay_ms, options).await?;
+                        attempt += 1.0;
+                        continue;
+                    }
+                    return Err(error);
                 }
-                return Err(error);
-            }
-        };
+            };
         let status = response.status().as_u16();
         let (mut body_stream, before_abort) = response.into_body();
         // TS `response.text()` is outside the send try/catch: a mid-body
@@ -3035,7 +3077,8 @@ pub async fn stream_model(
             sink(StreamOutput::RetryProgress(JsValue::Object(value)));
         };
 
-        let response = match send_provider_request(transport, &provider, &body, options).await {
+        let response = match send_provider_request(transport, &provider, &body, options, true).await
+        {
             Ok(response) => response,
             Err(error) => {
                 if attempt < max_retries && is_retryable_stream_error(&error) {

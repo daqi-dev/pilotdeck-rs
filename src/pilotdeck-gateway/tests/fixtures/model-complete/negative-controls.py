@@ -42,6 +42,7 @@ TARGET = os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))
 TEST = "native_complete_model_matches_real_ts_complete"
 RETRY_TEST = "complete_429_is_retryable_but_is_not_retried"
 TRANSPORT_TEST = "native_complete_transport_retry_matches_real_ts"
+TIMEOUT_TEST = "native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeout"
 
 CARGO_CAP = int(os.environ.get("NEGCTL_CARGO_CAP", "4"))
 SLOT_WAIT_SECONDS = float(os.environ.get("NEGCTL_SLOT_WAIT_SECONDS", "1800"))
@@ -117,6 +118,76 @@ CONTROLS = [
         "                if attempt < max_retries && is_retryable_request_error(&error) {",
         "                if attempt <= max_retries && is_retryable_request_error(&error) {",
         TRANSPORT_TEST,
+    ),
+    (
+        # If complete() reused the stream idle resolver, the 300ms
+        # streamTimeoutMs=10 case would fire at 10ms and report the stream
+        # message instead of `Model request timed out after 300ms.`.
+        "complete-timeout-uses-stream-idle",
+        """        let ms = field(provider, "timeoutMs")
+            .as_number()
+            .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS);""",
+        """        let ms = idle_timeout_ms(provider, options);""",
+        TIMEOUT_TEST,
+    ),
+    (
+        # Drop the abort short-circuit: "request aborted" is not a premature
+        # close, so the canonical retryable flag would retry 3 times.
+        "complete-abort-not-prioritized",
+        """fn is_retryable_request_error(error: &ModelStreamError) -> bool {
+    if error.is_abort() {
+        return false;
+    }""",
+        """fn is_retryable_request_error(error: &ModelStreamError) -> bool {
+    if false && error.is_abort() {
+        return false;
+    }""",
+        TRANSPORT_TEST,
+    ),
+    (
+        # Add one wire field; the per-case method/path/body comparison must
+        # reject it even though canonical response and request count match.
+        "complete-request-body-extra-field",
+        "    let final_body = providers::final_body(body, provider);",
+        """    let final_body = {
+        let mut value = providers::final_body(body, provider);
+        if let JsValue::Object(object) = &mut value {
+            object.insert("negctl_extra".into(), JsValue::Bool(true));
+        }
+        value
+    };""",
+        TEST,
+    ),
+    (
+        "anthropic-usage-cache-read-dropped",
+        '    let cache_read = read("cache_read_input_tokens");',
+        "    let cache_read: Option<f64> = None;",
+        TEST,
+    ),
+    (
+        # Invert the dedupe condition: the duplicate is kept and the
+        # non-matching mismatch case drops its first message block.
+        "responses-output-text-dedupe-inverted",
+        "    if JsString::from_utf16(rest) == *output_text {",
+        "    if JsString::from_utf16(rest) != *output_text {",
+        TEST,
+    ),
+    (
+        "anthropic-stop-sequence-unknown",
+        '        Some("end_turn" | "stop_sequence") => "stop".into(),',
+        '        Some("end_turn") => "stop".into(),',
+        TEST,
+    ),
+    (
+        # The old helper decides emptiness on the raw string, so a
+        # whitespace-only id is kept instead of generating a fresh id.
+        "openai-tool-id-whitespace-kept",
+        """            let id = id_state.choose(
+                non_empty_trimmed_string(field(record, "id")).cloned(),
+                generated,
+            );""",
+        """            let id = id_state.choose(non_empty_string(field(record, "id")).cloned(), generated);""",
+        TEST,
     ),
 ]
 

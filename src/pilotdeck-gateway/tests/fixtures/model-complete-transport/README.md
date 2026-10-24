@@ -10,7 +10,7 @@
 运行，只让 `fetch` 在前若干次发送时抛错，或返回一个合法 `Response`。因此
 金样钉住的是 TS 基线的重试边界与最终错误形状，而不是自写 mock 的期望。
 
-覆盖 7 例：
+覆盖 13 例：
 
 - `transport-max-retries-0` / `-1` / `-1.5` / `-2`：同一 `fetch failed` 下
   `fetch` 调用数分别为 1 / 2 / 2 / 3。TS 的循环是
@@ -23,6 +23,23 @@
   `AbortError`，`fetch` 调用 0 次。
 - `transport-fail-once-then-success`：第一次失败、第二次返回真实 `Response`，
   最终 canonical response 与 TS 逐字一致，`fetch` 调用 2 次。
+- `transport-timeout-100` / `-100-retried`：受控 fetch 永不 settle，真实
+  `provider.timeoutMs=100` 的定时器触发 `Model request timed out after
+  100ms.`（`code: timeout`、`retryable: true`、raw
+  `{code: network_timeout, name: NetworkFetchError}`）；重试上限 2 时 3 次
+  fetch。Rust 侧同时断言实际耗时 ≥ 50ms，排除“预置 timeout 错误”的假通过。
+- `transport-timeout-stream-ignored`：provider 300ms，`options.streamTimeoutMs=10`；
+  complete 只认 provider 超时，message 是 300ms 而非 stream idle 的 10ms。
+- `transport-abort-message-request-aborted`：`Error("request aborted",
+  {cause:{code:"ECONNRESET"}})`。`isRetryableRequestError` 先看
+  `isAbortError`，虽然 canonical 是 `connection_reset`、`retryable: true`，
+  但只发送 1 次。金样 `diagnostic` 同时记录原始 name/message/cause 与
+  canonical raw（`{code: network_connection_reset, cause: {}, name:
+  NetworkFetchError}`）。
+- `transport-abort-plus-premature`：同一 cause 但 message 为
+  `request aborted: premature close`，abort 仍优先，1 次。
+- `transport-premature-only`：只有 `premature close`（无 aborted）时按
+  retryable canonical 走满 3 次，证明上一条不是“减少重试”的副作用。
 
 body 读取失败在 TS 的 `try` 之外（`response.text()` 不在发送 catch 中），
 所以本金样不把 body 异常混进 send 重试；`complete_model` 的 body 读取也在

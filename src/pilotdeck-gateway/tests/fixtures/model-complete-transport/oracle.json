@@ -98,7 +98,8 @@
    "fetch": {
     "failTimes": 1000,
     "message": "fetch failed",
-    "abortBeforeSend": false
+    "abortBeforeSend": false,
+    "hang": false
    },
    "thrown": {
     "name": "ModelProviderError",
@@ -119,6 +120,22 @@
       "description": "Increase request timeout for this provider.",
       "configPath": "model.providers.<id>.timeoutMs"
      }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "timeout",
+     "message": "fetch failed",
+     "retryable": true,
+     "raw": {
+      "code": "network_fetch_failed",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    },
+    "normalized": {
+     "name": "Error",
+     "message": "fetch failed"
     }
    },
    "fetchCalls": 1
@@ -170,7 +187,8 @@
    "fetch": {
     "failTimes": 1000,
     "message": "fetch failed",
-    "abortBeforeSend": false
+    "abortBeforeSend": false,
+    "hang": false
    },
    "thrown": {
     "name": "ModelProviderError",
@@ -191,6 +209,22 @@
       "description": "Increase request timeout for this provider.",
       "configPath": "model.providers.<id>.timeoutMs"
      }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "timeout",
+     "message": "fetch failed",
+     "retryable": true,
+     "raw": {
+      "code": "network_fetch_failed",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    },
+    "normalized": {
+     "name": "Error",
+     "message": "fetch failed"
     }
    },
    "fetchCalls": 2
@@ -242,13 +276,20 @@
    "fetch": {
     "failTimes": 1000,
     "message": "fetch failed",
-    "abortBeforeSend": false
+    "abortBeforeSend": false,
+    "hang": false
    },
    "thrown": {
     "name": "Error",
     "message": "complete() exhausted all retry attempts without a result."
    },
-   "fetchCalls": 2
+   "fetchCalls": 2,
+   "diagnostic": {
+    "normalized": {
+     "name": "Error",
+     "message": "fetch failed"
+    }
+   }
   },
   {
    "name": "transport-max-retries-2",
@@ -297,7 +338,8 @@
    "fetch": {
     "failTimes": 1000,
     "message": "fetch failed",
-    "abortBeforeSend": false
+    "abortBeforeSend": false,
+    "hang": false
    },
    "thrown": {
     "name": "ModelProviderError",
@@ -318,6 +360,22 @@
       "description": "Increase request timeout for this provider.",
       "configPath": "model.providers.<id>.timeoutMs"
      }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "timeout",
+     "message": "fetch failed",
+     "retryable": true,
+     "raw": {
+      "code": "network_fetch_failed",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    },
+    "normalized": {
+     "name": "Error",
+     "message": "fetch failed"
     }
    },
    "fetchCalls": 3
@@ -369,7 +427,8 @@
    "fetch": {
     "failTimes": 1000,
     "message": "boom",
-    "abortBeforeSend": false
+    "abortBeforeSend": false,
+    "hang": false
    },
    "thrown": {
     "name": "ModelProviderError",
@@ -385,6 +444,22 @@
       "cause": {},
       "name": "NetworkFetchError"
      }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "network_fetch_failed",
+     "message": "boom",
+     "retryable": false,
+     "raw": {
+      "code": "network_fetch_failed",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    },
+    "normalized": {
+     "name": "Error",
+     "message": "boom"
     }
    },
    "fetchCalls": 1
@@ -436,7 +511,8 @@
    "fetch": {
     "failTimes": 1000,
     "message": "fetch failed",
-    "abortBeforeSend": true
+    "abortBeforeSend": true,
+    "hang": false
    },
    "thrown": {
     "name": "AbortError",
@@ -491,7 +567,8 @@
    "fetch": {
     "failTimes": 1,
     "message": "fetch failed",
-    "abortBeforeSend": false
+    "abortBeforeSend": false,
+    "hang": false
    },
    "reply": {
     "status": 200,
@@ -523,7 +600,533 @@
      ]
     }
    },
-   "fetchCalls": 2
+   "fetchCalls": 2,
+   "diagnostic": {
+    "normalized": {
+     "name": "Error",
+     "message": "fetch failed"
+    }
+   }
+  },
+  {
+   "name": "transport-timeout-100",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "fetch": {
+    "failTimes": 1000,
+    "message": "fetch failed",
+    "abortBeforeSend": false,
+    "hang": true
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "Model request timed out after 100ms.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "timeout",
+     "message": "Model request timed out after 100ms.",
+     "retryable": true,
+     "raw": {
+      "code": "network_timeout",
+      "name": "NetworkFetchError"
+     },
+     "userHint": "Request timed out for provider \"p\". Increase provider.timeoutMs in Settings → Model Provider → Advanced, or check local network/proxy and provider status.",
+     "settingsFix": {
+      "description": "Increase request timeout for this provider.",
+      "configPath": "model.providers.<id>.timeoutMs"
+     }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "timeout",
+     "message": "Model request timed out after 100ms.",
+     "retryable": true,
+     "raw": {
+      "code": "network_timeout",
+      "name": "NetworkFetchError"
+     }
+    }
+   },
+   "fetchCalls": 1
+  },
+  {
+   "name": "transport-timeout-100-retried",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 2,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 100
+   },
+   "fetch": {
+    "failTimes": 1000,
+    "message": "fetch failed",
+    "abortBeforeSend": false,
+    "hang": true
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "Model request timed out after 100ms.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "timeout",
+     "message": "Model request timed out after 100ms.",
+     "retryable": true,
+     "raw": {
+      "code": "network_timeout",
+      "name": "NetworkFetchError"
+     },
+     "userHint": "Request timed out for provider \"p\". Increase provider.timeoutMs in Settings → Model Provider → Advanced, or check local network/proxy and provider status.",
+     "settingsFix": {
+      "description": "Increase request timeout for this provider.",
+      "configPath": "model.providers.<id>.timeoutMs"
+     }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "timeout",
+     "message": "Model request timed out after 100ms.",
+     "retryable": true,
+     "raw": {
+      "code": "network_timeout",
+      "name": "NetworkFetchError"
+     }
+    }
+   },
+   "fetchCalls": 3
+  },
+  {
+   "name": "transport-timeout-stream-ignored",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 0,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    },
+    "timeoutMs": 300
+   },
+   "fetch": {
+    "failTimes": 1000,
+    "message": "fetch failed",
+    "abortBeforeSend": false,
+    "hang": true
+   },
+   "streamTimeoutMs": 10,
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "Model request timed out after 300ms.",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "timeout",
+     "message": "Model request timed out after 300ms.",
+     "retryable": true,
+     "raw": {
+      "code": "network_timeout",
+      "name": "NetworkFetchError"
+     },
+     "userHint": "Request timed out for provider \"p\". Increase provider.timeoutMs in Settings → Model Provider → Advanced, or check local network/proxy and provider status.",
+     "settingsFix": {
+      "description": "Increase request timeout for this provider.",
+      "configPath": "model.providers.<id>.timeoutMs"
+     }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "timeout",
+     "message": "Model request timed out after 300ms.",
+     "retryable": true,
+     "raw": {
+      "code": "network_timeout",
+      "name": "NetworkFetchError"
+     }
+    }
+   },
+   "fetchCalls": 1
+  },
+  {
+   "name": "transport-abort-message-request-aborted",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 2,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "fetch": {
+    "failTimes": 1000,
+    "message": "request aborted",
+    "causeCode": "ECONNRESET",
+    "abortBeforeSend": false,
+    "hang": false
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "request aborted",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "connection_reset",
+     "message": "request aborted",
+     "retryable": true,
+     "raw": {
+      "code": "network_connection_reset",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "connection_reset",
+     "message": "request aborted",
+     "retryable": true,
+     "raw": {
+      "code": "network_connection_reset",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    },
+    "normalized": {
+     "name": "Error",
+     "message": "request aborted",
+     "cause": {
+      "code": "ECONNRESET"
+     },
+     "causeCode": "ECONNRESET"
+    }
+   },
+   "fetchCalls": 1
+  },
+  {
+   "name": "transport-abort-plus-premature",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 2,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "fetch": {
+    "failTimes": 1000,
+    "message": "request aborted: premature close",
+    "causeCode": "ECONNRESET",
+    "abortBeforeSend": false,
+    "hang": false
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "request aborted: premature close",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "connection_reset",
+     "message": "request aborted: premature close",
+     "retryable": true,
+     "raw": {
+      "code": "network_connection_reset",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "connection_reset",
+     "message": "request aborted: premature close",
+     "retryable": true,
+     "raw": {
+      "code": "network_connection_reset",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    },
+    "normalized": {
+     "name": "Error",
+     "message": "request aborted: premature close",
+     "cause": {
+      "code": "ECONNRESET"
+     },
+     "causeCode": "ECONNRESET"
+    }
+   },
+   "fetchCalls": 1
+  },
+  {
+   "name": "transport-premature-only",
+   "request": {
+    "provider": "p",
+    "model": "m",
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "hi"
+       }
+      ]
+     }
+    ],
+    "maxOutputTokens": 32
+   },
+   "provider": {
+    "id": "p",
+    "protocol": "openai",
+    "url": "http://mock.local/v1",
+    "apiKey": "fixture-key",
+    "headers": {},
+    "retry": {
+     "requestMaxRetries": 2,
+     "baseDelayMs": 0,
+     "maxDelayMs": 0
+    },
+    "models": {
+     "m": {
+      "id": "m",
+      "capabilities": {
+       "maxContextTokens": 1000,
+       "maxOutputTokens": 32
+      },
+      "multimodal": {
+       "input": [
+        "text"
+       ]
+      }
+     }
+    }
+   },
+   "fetch": {
+    "failTimes": 1000,
+    "message": "premature close",
+    "causeCode": "ECONNRESET",
+    "abortBeforeSend": false,
+    "hang": false
+   },
+   "thrown": {
+    "name": "ModelProviderError",
+    "message": "premature close",
+    "error": {
+     "provider": "p",
+     "protocol": "openai",
+     "code": "connection_reset",
+     "message": "premature close",
+     "retryable": true,
+     "raw": {
+      "code": "network_connection_reset",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    }
+   },
+   "diagnostic": {
+    "canonical": {
+     "code": "connection_reset",
+     "message": "premature close",
+     "retryable": true,
+     "raw": {
+      "code": "network_connection_reset",
+      "cause": {},
+      "name": "NetworkFetchError"
+     }
+    },
+    "normalized": {
+     "name": "Error",
+     "message": "premature close",
+     "cause": {
+      "code": "ECONNRESET"
+     },
+     "causeCode": "ECONNRESET"
+    }
+   },
+   "fetchCalls": 3
   }
  ]
 }

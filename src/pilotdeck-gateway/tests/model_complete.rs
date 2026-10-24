@@ -19,8 +19,8 @@ use hyper::{
 use pilotdeck_gateway::runtime::{
     model::{
         http::{
-            BodyFailure, ModelHttpTransport, StreamOptions, TransportFailure, TransportFuture,
-            complete_model,
+            BodyFailure, HyperModelTransport, ModelHttpTransport, StreamOptions, TransportFailure,
+            TransportFuture, complete_model,
         },
         router::AbortFlag,
     },
@@ -29,16 +29,21 @@ use pilotdeck_gateway::runtime::{
 use pilotdeck_protocol::{JsObject, JsValue};
 use std::{
     collections::VecDeque,
+    io::{Read, Write},
+    net::TcpListener,
     pin::Pin,
     sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll},
+    thread,
+    time::{Duration, Instant},
 };
 
 const ORACLE: &str = include_str!("fixtures/model-complete/oracle.json");
 const TRANSPORT_ORACLE: &str = include_str!("fixtures/model-complete-transport/oracle.json");
+const TIMEOUT_ORACLE: &str = include_str!("fixtures/model-complete-timeout/oracle.json");
 
 struct FrameBody(VecDeque<Bytes>);
 
@@ -55,25 +60,57 @@ impl Body for FrameBody {
 }
 
 /// The `Peer`/frames transport used by `model_factory.rs`: every reply is a
-/// status, headers and a sequence of body frames, and every send is counted.
+/// status, headers and a sequence of body frames, and every send is recorded
+/// (method, path and wire body) so the oracle's real `requests` can be
+/// compared, not only the request count.
+#[derive(Clone, Debug)]
+struct RecordedRequest {
+    method: String,
+    path: String,
+    body: String,
+}
+
+type Reply = (u16, Vec<(String, String)>, Vec<Bytes>);
+
 struct Peer {
-    status: u16,
-    headers: Vec<(String, String)>,
-    frames: Vec<Bytes>,
+    replies: Vec<Reply>,
     sent: Arc<AtomicUsize>,
+    recorded: Arc<Mutex<Vec<RecordedRequest>>>,
 }
 
 impl ModelHttpTransport for Peer {
-    fn send(&self, _request: Request<Full<Bytes>>) -> TransportFuture {
-        self.sent.fetch_add(1, Ordering::SeqCst);
-        let mut response = Response::builder().status(self.status);
-        for (name, value) in &self.headers {
+    fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture {
+        let call = self.sent.fetch_add(1, Ordering::SeqCst);
+        let (parts, body) = request.into_parts();
+        // `Full<Bytes>` in http-body-util 0.1.3 has no `into_inner`; poll the
+        // single data frame instead (the body is always immediately ready).
+        let mut body = body;
+        let mut collected = Vec::new();
+        let mut context = Context::from_waker(std::task::Waker::noop());
+        while let Poll::Ready(Some(Ok(frame))) = Pin::new(&mut body).poll_frame(&mut context) {
+            if let Ok(data) = frame.into_data() {
+                collected.extend_from_slice(&data);
+            }
+        }
+        let path = parts
+            .uri
+            .path_and_query()
+            .map(|value| value.as_str().to_string())
+            .unwrap_or_else(|| parts.uri.path().to_string());
+        self.recorded.lock().unwrap().push(RecordedRequest {
+            method: parts.method.as_str().to_string(),
+            path,
+            body: String::from_utf8_lossy(&collected).into_owned(),
+        });
+        let (status, headers, frames) = &self.replies[call.min(self.replies.len() - 1)];
+        let mut response = Response::builder().status(*status);
+        for (name, value) in headers {
             response = response.header(
                 HeaderName::from_bytes(name.as_bytes()).unwrap(),
                 HeaderValue::from_str(value).unwrap(),
             );
         }
-        let body = FrameBody(self.frames.iter().cloned().collect()).boxed();
+        let body = FrameBody(frames.iter().cloned().collect()).boxed();
         ExchangeFuture::ready(Ok(response.body(body).unwrap()))
     }
 }
@@ -117,11 +154,10 @@ fn config(provider: &JsValue) -> JsValue {
 
 struct Outcome {
     result: Result<JsValue, pilotdeck_gateway::runtime::model::http::ModelStreamError>,
-    requests: usize,
+    requests: Vec<RecordedRequest>,
 }
 
-async fn run(case: &JsValue) -> Outcome {
-    let reply = model_mock::get(case, "reply");
+fn reply_parts(reply: &JsValue) -> Reply {
     let status = model_mock::get(reply, "status")
         .as_number()
         .map_or(200, |status| status as u16);
@@ -133,21 +169,34 @@ async fn run(case: &JsValue) -> Outcome {
             .collect(),
         _ => Vec::new(),
     };
-    let sent = Arc::new(AtomicUsize::new(0));
-    let peer = Peer {
+    (
         status,
         headers,
-        frames: frames(&text(model_mock::get(reply, "body"))),
+        frames(&text(model_mock::get(reply, "body"))),
+    )
+}
+
+async fn run(case: &JsValue) -> Outcome {
+    // A fallback case records each reply it consumed; a single-reply case still
+    // has just `reply`. Replay the same status/body sequence for the endpoint
+    // candidates the Rust request builder actually sends to.
+    let replies: Vec<Reply> = match model_mock::get(case, "replies") {
+        JsValue::Array(items) => items.iter().map(reply_parts).collect(),
+        _ => vec![reply_parts(model_mock::get(case, "reply"))],
+    };
+    let sent = Arc::new(AtomicUsize::new(0));
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let peer = Peer {
+        replies,
         sent: sent.clone(),
+        recorded: recorded.clone(),
     };
     let request = model_mock::get(case, "request");
     let provider = model_mock::get(case, "provider");
     let config = config(provider);
     let result = complete_model(&peer, request, &config, &StreamOptions::default()).await;
-    Outcome {
-        result,
-        requests: sent.load(Ordering::SeqCst),
-    }
+    let requests = recorded.lock().unwrap().clone();
+    Outcome { result, requests }
 }
 
 fn case<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
@@ -161,15 +210,47 @@ fn case<'a>(oracle: &'a JsValue, name: &str) -> &'a JsValue {
 async fn native_complete_model_matches_real_ts_complete() {
     let oracle = baseline::oracle(ORACLE);
     let cases = array(model_mock::get(&oracle, "cases"));
-    assert_eq!(cases.len(), 28, "unexpected model-complete oracle size");
+    assert_eq!(cases.len(), 45, "unexpected model-complete oracle size");
     for case in cases {
         let name = text(model_mock::get(case, "name"));
         let outcome = run(case).await;
+        let expected_count = model_mock::get(case, "requestCount").as_number().unwrap() as usize;
         assert_eq!(
-            outcome.requests,
-            model_mock::get(case, "requestCount").as_number().unwrap() as usize,
+            outcome.requests.len(),
+            expected_count,
             "{name}: request count"
         );
+        // The oracle records the real TS wire requests. Compare every method,
+        // path and body byte so a provider-body or endpoint regression cannot
+        // pass on matching counts alone.
+        let expected_requests = array(model_mock::get(case, "requests"));
+        assert_eq!(
+            expected_requests.len(),
+            expected_count,
+            "{name}: oracle requests length"
+        );
+        for (index, (actual, expected)) in outcome
+            .requests
+            .iter()
+            .zip(expected_requests.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                actual.method,
+                text(model_mock::get(expected, "method")),
+                "{name}: request {index} method"
+            );
+            assert_eq!(
+                actual.path,
+                text(model_mock::get(expected, "path")),
+                "{name}: request {index} path"
+            );
+            assert_eq!(
+                actual.body,
+                text(model_mock::get(expected, "body")),
+                "{name}: request {index} body"
+            );
+        }
         if let Some(expected) = case.get("response") {
             let actual = outcome
                 .result
@@ -204,6 +285,8 @@ type ScriptedReply = (u16, Vec<(String, String)>, Vec<Bytes>);
 struct Scripted {
     fail_times: usize,
     message: String,
+    cause_code: Option<&'static str>,
+    hang: bool,
     reply: Option<ScriptedReply>,
     sent: Arc<AtomicUsize>,
 }
@@ -211,12 +294,17 @@ struct Scripted {
 impl ModelHttpTransport for Scripted {
     fn send(&self, _request: Request<Full<Bytes>>) -> TransportFuture {
         let call = self.sent.fetch_add(1, Ordering::SeqCst);
+        if self.hang {
+            // A transport that never settles; only the request timer can end
+            // the exchange, exactly like a real accepted-but-silent socket.
+            return TransportFuture::io(std::future::pending());
+        }
         if call < self.fail_times {
-            let failure = if self.message == "fetch failed" {
+            let failure = if self.message == "fetch failed" && self.cause_code.is_none() {
                 TransportFailure::fetch_failed(None)
             } else {
                 TransportFailure {
-                    cause_code: None,
+                    cause_code: self.cause_code,
                     message: self.message.clone(),
                 }
             };
@@ -237,25 +325,16 @@ impl ModelHttpTransport for Scripted {
     }
 }
 
-async fn run_transport(case: &JsValue) -> Outcome {
+struct TransportOutcome {
+    result: Result<JsValue, pilotdeck_gateway::runtime::model::http::ModelStreamError>,
+    requests: usize,
+    elapsed: Duration,
+}
+
+async fn run_transport(case: &JsValue) -> TransportOutcome {
     let reply = model_mock::get(case, "reply");
     let reply = if matches!(reply, JsValue::Object(_)) {
-        let status = model_mock::get(reply, "status")
-            .as_number()
-            .map_or(200, |status| status as u16);
-        let headers = match model_mock::get(reply, "headers") {
-            JsValue::Object(headers) => headers
-                .entries()
-                .iter()
-                .map(|(name, value)| (String::from_utf16_lossy(name.units()), text(value)))
-                .collect(),
-            _ => Vec::new(),
-        };
-        Some((
-            status,
-            headers,
-            frames(&text(model_mock::get(reply, "body"))),
-        ))
+        Some(reply_parts(reply))
     } else {
         None
     };
@@ -267,6 +346,10 @@ async fn run_transport(case: &JsValue) -> Outcome {
         .as_string()
         .map(|value| value.to_utf8().unwrap())
         .unwrap_or_default();
+    let cause_code = model_mock::get(behavior, "causeCode")
+        .as_string()
+        .map(|value| Box::leak(value.to_utf8().unwrap().into_boxed_str()) as &'static str);
+    let hang = model_mock::get(behavior, "hang").as_bool().unwrap_or(false);
     let abort_before_send = model_mock::get(behavior, "abortBeforeSend")
         .as_bool()
         .unwrap_or(false);
@@ -275,22 +358,30 @@ async fn run_transport(case: &JsValue) -> Outcome {
     let transport = Scripted {
         fail_times,
         message,
+        cause_code,
+        hang,
         reply,
         sent: sent.clone(),
     };
-    let mut options = StreamOptions::default();
-    if abort_before_send {
+    let abort = abort_before_send.then(|| {
         let abort = AbortFlag::new();
         abort.abort();
-        options.abort = Some(abort);
-    }
+        abort
+    });
+    let options = StreamOptions {
+        stream_timeout_ms: model_mock::get(case, "streamTimeoutMs").as_number(),
+        abort,
+        ..StreamOptions::default()
+    };
     let request = model_mock::get(case, "request");
     let provider = model_mock::get(case, "provider");
     let config = config(provider);
+    let started = Instant::now();
     let result = complete_model(&transport, request, &config, &options).await;
-    Outcome {
+    TransportOutcome {
         result,
         requests: sent.load(Ordering::SeqCst),
+        elapsed: started.elapsed(),
     }
 }
 
@@ -303,7 +394,7 @@ async fn run_transport(case: &JsValue) -> Outcome {
 async fn native_complete_transport_retry_matches_real_ts() {
     let oracle = baseline::oracle(TRANSPORT_ORACLE);
     let cases = array(model_mock::get(&oracle, "cases"));
-    assert_eq!(cases.len(), 7, "unexpected transport oracle size");
+    assert_eq!(cases.len(), 13, "unexpected transport oracle size");
     for case in cases {
         let name = text(model_mock::get(case, "name"));
         let outcome = run_transport(case).await;
@@ -312,6 +403,20 @@ async fn native_complete_transport_retry_matches_real_ts() {
             model_mock::get(case, "fetchCalls").as_number().unwrap() as usize,
             "{name}: fetch calls"
         );
+        // A request timeout is a real 100/300 ms timer, not a pre-settled
+        // error: prove the exchange actually waited for it.
+        if name.starts_with("transport-timeout") {
+            assert!(
+                outcome.elapsed >= Duration::from_millis(50),
+                "{name}: timeout fired without waiting ({:?})",
+                outcome.elapsed
+            );
+            assert!(
+                outcome.elapsed < Duration::from_secs(10),
+                "{name}: timeout did not bound the request ({:?})",
+                outcome.elapsed
+            );
+        }
         if let Some(expected) = case.get("response") {
             let actual = outcome
                 .result
@@ -382,7 +487,7 @@ async fn complete_429_is_retryable_but_is_not_retried() {
     let oracle = baseline::oracle(ORACLE);
     let case = case(&oracle, "anthropic-429-retry-after");
     let outcome = run(case).await;
-    assert_eq!(outcome.requests, 1, "complete() must not retry a 429");
+    assert_eq!(outcome.requests.len(), 1, "complete() must not retry a 429");
     let error = match outcome.result {
         Err(error) => error,
         Ok(value) => panic!("expected 429 error, got {}", model_mock::json(&value)),
@@ -419,7 +524,7 @@ async fn complete_empty_and_non_json_bodies_stay_raw_text() {
         "responses-non-json",
     ] {
         let outcome = run(case(&oracle, name)).await;
-        assert_eq!(outcome.requests, 1);
+        assert_eq!(outcome.requests.len(), 1);
         let value = outcome
             .result
             .unwrap_or_else(|error| panic!("{name}: unexpected error {error:?}"));
@@ -432,6 +537,198 @@ async fn complete_empty_and_non_json_bodies_stay_raw_text() {
         assert!(array(model_mock::get(&value, "content")).is_empty());
         assert_eq!(text(model_mock::get(&value, "finishReason")), "unknown");
         assert!(matches!(model_mock::get(&value, "raw"), JsValue::String(_)));
+    }
+}
+
+/// A real HTTP/1.1 loopback server for the `HyperModelTransport` replay of the
+/// TS loopback-hang fixture. `behavior` and `httpBody` come from the oracle.
+struct Loopback {
+    origin: String,
+    requests: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for Loopback {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+}
+
+fn start_loopback(behavior: &str, body: &str) -> Loopback {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let requests = Arc::new(AtomicUsize::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let counter = requests.clone();
+    let flag = stop.clone();
+    let behavior = behavior.to_string();
+    let body = body.to_string();
+    thread::spawn(move || {
+        while !flag.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((mut socket, _)) => {
+                    socket.set_nonblocking(false).unwrap();
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    let behavior = behavior.clone();
+                    let body = body.clone();
+                    thread::spawn(move || serve_loopback(&mut socket, &behavior, &body));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    Loopback {
+        origin,
+        requests,
+        stop,
+    }
+}
+
+fn serve_loopback(socket: &mut std::net::TcpStream, behavior: &str, body: &str) {
+    socket.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    let mut head = Vec::new();
+    let mut buffer = [0u8; 1024];
+    while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+        match socket.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => head.extend_from_slice(&buffer[..read]),
+            Err(_) => return,
+        }
+    }
+    let text = String::from_utf8_lossy(&head);
+    let content_length = text
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    let header_end = head
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map_or(head.len(), |index| index + 4);
+    let mut body_read = head.len().saturating_sub(header_end);
+    while body_read < content_length {
+        match socket.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => body_read += read,
+            Err(_) => return,
+        }
+    }
+    match behavior {
+        // Accepted but never answered; the client's request timer must fire.
+        "hang" | "abort" => thread::sleep(Duration::from_millis(1500)),
+        // Headers (and the first body bytes) arrive immediately; the rest
+        // outlives provider.timeoutMs, proving the timer ends at send().
+        _ => {
+            let bytes = body.as_bytes();
+            let split = bytes.len() / 2;
+            let response_head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                bytes.len()
+            );
+            socket.write_all(response_head.as_bytes()).ok();
+            socket.write_all(&bytes[..split]).ok();
+            socket.flush().ok();
+            thread::sleep(Duration::from_millis(200));
+            socket.write_all(&bytes[split..]).ok();
+            socket.flush().ok();
+        }
+    }
+}
+
+/// Replay the TS loopback-hang fixture through the real `HyperModelTransport`.
+/// This is the timeout case the mock table cannot express: a real accepted
+/// socket that never sends headers, a delayed body that outlives the request
+/// timer, and an external abort that must not be pre-empted by
+/// `streamTimeoutMs`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_complete_timeout_uses_provider_timeout_and_ignores_stream_timeout() {
+    let oracle = baseline::oracle(TIMEOUT_ORACLE);
+    let cases = array(model_mock::get(&oracle, "cases"));
+    assert_eq!(cases.len(), 4, "unexpected timeout oracle size");
+    for case in cases {
+        let name = text(model_mock::get(case, "name"));
+        let behavior = text(model_mock::get(case, "behavior"));
+        let http_body = model_mock::get(case, "httpBody")
+            .as_string()
+            .map(|value| value.to_utf8().unwrap())
+            .unwrap_or_default();
+        let server = start_loopback(&behavior, &http_body);
+        let provider = {
+            let mut provider = model_mock::get(case, "provider")
+                .as_object()
+                .cloned()
+                .unwrap();
+            provider.insert(
+                "url".into(),
+                JsValue::String(format!("{}/v1", server.origin).into()),
+            );
+            JsValue::Object(provider)
+        };
+        let config = config(&provider);
+        let abort = model_mock::get(case, "abortAfterMs")
+            .as_number()
+            .map(|abort_after| {
+                let abort = AbortFlag::new();
+                let signal = abort.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(abort_after as u64)).await;
+                    signal.abort();
+                });
+                abort
+            });
+        let options = StreamOptions {
+            stream_timeout_ms: model_mock::get(case, "streamTimeoutMs").as_number(),
+            abort,
+            ..StreamOptions::default()
+        };
+        let started = Instant::now();
+        let result = complete_model(
+            &HyperModelTransport::new(),
+            model_mock::get(case, "request"),
+            &config,
+            &options,
+        )
+        .await;
+        let elapsed = started.elapsed();
+        assert_eq!(
+            server.requests.load(Ordering::SeqCst),
+            model_mock::get(case, "requestCount").as_number().unwrap() as usize,
+            "{name}: loopback request count"
+        );
+        if let Some(expected) = case.get("response") {
+            let value = result.unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            assert_eq!(
+                model_mock::json(&value),
+                model_mock::json(expected),
+                "{name}"
+            );
+        } else if let Some(expected) = case.get("thrown") {
+            let error = result.expect_err(&name);
+            assert_eq!(
+                model_mock::json(&model_mock::thrown(&error)),
+                model_mock::json(expected),
+                "{name}"
+            );
+        }
+        let minimum = model_mock::get(case, "elapsedAtLeastMs")
+            .as_number()
+            .unwrap() as u64;
+        assert!(
+            elapsed >= Duration::from_millis(minimum),
+            "{name}: completed after {elapsed:?}, expected at least {minimum}ms"
+        );
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "{name}: no timer bounded the request ({elapsed:?})"
+        );
     }
 }
 
@@ -449,4 +746,12 @@ fn regenerates_model_complete_oracle_identically() {
 #[ignore]
 fn regenerates_model_complete_transport_oracle_identically() {
     baseline::regenerates_identically("model-complete-transport");
+}
+
+/// Rebuild the real-loopback timeout oracle from the fixed baseline and
+/// require byte-identical output.
+#[test]
+#[ignore]
+fn regenerates_model_complete_timeout_oracle_identically() {
+    baseline::regenerates_identically("model-complete-timeout");
 }
