@@ -827,23 +827,31 @@ impl Utf8Stream {
     }
 }
 
-/// Production reads always use Node's global string bound. Unit tests can
-/// shrink it on their current thread to exercise the actual body call sites
-/// without allocating a 512 MiB string.
+/// Production reads always use Node's global string bound (V8
+/// `MAX_STRING_LENGTH`). Unit tests can shrink it on their current thread to
+/// exercise the actual body call sites without allocating a 512 MiB string.
+///
+/// There is one function and one default tail expression for both builds. A
+/// test only overrides it explicitly through [`StringLimitGuard`]; with no
+/// override the test build runs the same `fetch_redirect::MAX_STRING_LENGTH`
+/// expression as production. The production build does not compile the
+/// override branch.
 fn string_limit() -> usize {
-    #[cfg(not(test))]
-    {
-        fetch_redirect::MAX_STRING_LENGTH
-    }
     #[cfg(test)]
     {
-        STRING_LIMIT.with(std::cell::Cell::get)
+        if let Some(limit) = STRING_LIMIT.with(std::cell::Cell::get) {
+            return limit;
+        }
     }
+    fetch_redirect::MAX_STRING_LENGTH
 }
 
 #[cfg(test)]
 thread_local! {
-    static STRING_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(fetch_redirect::MAX_STRING_LENGTH) };
+    /// `None` (the default) means "use the shared V8 bound"; only
+    /// [`StringLimitGuard`] sets a shrunken test limit, and nested guards
+    /// restore the previous value on drop.
+    static STRING_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 /// Both streamable response.text() and response.json() use undici's body
@@ -1727,10 +1735,11 @@ mod tests {
         }
     }
 
-    struct StringLimitGuard(usize);
+    /// Restores the thread's limit even if the test's assertion panics.
+    struct StringLimitGuard(Option<usize>);
     impl StringLimitGuard {
         fn set(limit: usize) -> Self {
-            Self(STRING_LIMIT.with(|cell| cell.replace(limit)))
+            Self(STRING_LIMIT.with(|cell| cell.replace(Some(limit))))
         }
     }
     impl Drop for StringLimitGuard {
@@ -1739,9 +1748,52 @@ mod tests {
         }
     }
 
+    /// Pin V8's real contract literal (Node 22.22
+    /// `buffer.constants.MAX_STRING_LENGTH`), not the constant against
+    /// itself: a mutation of the shared default tail must fail here (#642).
+    #[test]
+    fn string_limit_defaults_to_v8_max() {
+        assert_eq!(string_limit(), 0x1fffffe8);
+    }
+
+    /// Nested guards restore the previous override, and the outermost drop
+    /// returns to the shared production default rather than leaving an
+    /// override behind.
+    #[test]
+    fn string_limit_guard_nests_and_drop_restores_the_shared_default() {
+        assert_eq!(string_limit(), 0x1fffffe8);
+        {
+            let _outer = StringLimitGuard::set(4);
+            assert_eq!(string_limit(), 4);
+            {
+                let _inner = StringLimitGuard::set(8);
+                assert_eq!(string_limit(), 8);
+            }
+            assert_eq!(string_limit(), 4);
+        }
+        assert_eq!(string_limit(), 0x1fffffe8);
+    }
+
+    /// A panicking test body still restores the default: the guard's Drop
+    /// runs while unwinding, so the override cannot leak past the test.
+    #[test]
+    fn string_limit_guard_restores_the_default_across_a_panic() {
+        let result = std::panic::catch_unwind(|| {
+            let _limit = StringLimitGuard::set(4);
+            // The override is visible, so this literal assert must panic.
+            assert_eq!(string_limit(), 0x1fffffe8);
+        });
+        assert!(
+            result.is_err(),
+            "the override must make the inner assert fail"
+        );
+        assert_eq!(string_limit(), 0x1fffffe8);
+    }
+
     #[tokio::test]
     async fn streamable_body_uses_global_string_limit() {
-        assert_eq!(string_limit(), fetch_redirect::MAX_STRING_LENGTH);
+        // Literal V8 contract, not the constant against itself (#642).
+        assert_eq!(string_limit(), 0x1fffffe8);
         let _limit = StringLimitGuard::set(8);
         let signal = ToolCancellation::default();
         let exact = streamable_text(Full::new(Bytes::from_static(b"12345678")), &signal, false)
@@ -1772,7 +1824,8 @@ mod tests {
 
     #[tokio::test]
     async fn sse_body_uses_global_string_limit() {
-        assert_eq!(string_limit(), fetch_redirect::MAX_STRING_LENGTH);
+        // Literal V8 contract, not the constant against itself (#642).
+        assert_eq!(string_limit(), 0x1fffffe8);
         let _limit = StringLimitGuard::set(16);
         let signal = ToolCancellation::default();
         // A pending line is bounded even before its newline arrives.
