@@ -356,6 +356,56 @@ async fn exchange_within(port: u16, request: &[u8], limit: Duration) -> std::io:
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "no response"))?
 }
 
+/// Like [`exchange_lenient`], but reports whether the server actually ended the
+/// connection (EOF or reset) instead of leaving it idle until `limit`.
+async fn exchange_until_eof(port: u16, request: &[u8], limit: Duration) -> (Vec<u8>, bool) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect");
+    let _ = tokio::time::timeout(limit, stream.write_all(request)).await;
+    let mut response = Vec::new();
+    let closed = tokio::time::timeout(limit, stream.read_to_end(&mut response))
+        .await
+        .is_ok();
+    (response, closed)
+}
+
+/// A chunked request; the body is sent as `chunks` so `Limited` can reject it
+/// mid-stream (there is no Content-Length for the precheck to catch).
+fn chunked_request(
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    chunks: &[&[u8]],
+) -> Vec<u8> {
+    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+    for (name, value) in headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+    request.push_str("Transfer-Encoding: chunked\r\n\r\n");
+    let mut bytes = request.into_bytes();
+    for chunk in chunks {
+        bytes.extend_from_slice(format!("{:x}\r\n", chunk.len()).as_bytes());
+        bytes.extend_from_slice(chunk);
+        bytes.extend_from_slice(b"\r\n");
+    }
+    bytes.extend_from_slice(b"0\r\n\r\n");
+    bytes
+}
+
+fn assert_close_without_keep_alive(response: &[u8], expected: u16, note: &str) {
+    assert_eq!(status(response), expected, "{note}: {response:?}");
+    let head = String::from_utf8_lossy(response).to_ascii_lowercase();
+    assert!(
+        head.contains("connection: close"),
+        "{note}: expected an explicit close, got {head}"
+    );
+    assert!(
+        !head.contains("keep-alive:"),
+        "{note}: a close response must not advertise Keep-Alive: {head}"
+    );
+}
+
 /// Reads exactly one HTTP message (head plus Content-Length body) so a
 /// keep-alive stream is left idle, not with unread response bytes.
 async fn read_response(stream: &mut TcpStream) -> Vec<u8> {
@@ -607,8 +657,11 @@ async fn default_idle_keep_alive_connection_closes_after_six_seconds() {
 async fn partial_next_request_resets_keep_alive_inactivity_timer() {
     let (store, directory) = file_store("idle-reset");
     let limits = ServeLimits {
-        headers_timeout: Duration::from_secs(2),
-        keep_alive_timeout: Duration::from_millis(800),
+        // Original deadline t=2 s; the partial head arrives at t=1 s and moves
+        // it to t=3 s. The 2.5 s no-EOF check is 0.5 s past the old deadline
+        // and 0.5 s before the new one, so load cannot turn the assertion red.
+        headers_timeout: Duration::from_secs(5),
+        keep_alive_timeout: Duration::from_secs(2),
         keep_alive_timeout_buffer: Duration::ZERO,
         ..ServeLimits::default()
     };
@@ -618,14 +671,14 @@ async fn partial_next_request_resets_keep_alive_inactivity_timer() {
     let response = read_response(&mut stream).await;
     assert!(response.starts_with(b"HTTP/1.1 405"), "{response:?}");
 
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
     stream
         .write_all(b"POST /v1/gateway-user-dialog-store/list HTTP/1.1\r\nHost: h\r\nX-Partial: ")
         .await
         .unwrap();
 
     let mut byte = [0u8; 1];
-    let early = tokio::time::timeout(Duration::from_millis(600), stream.read(&mut byte)).await;
+    let early = tokio::time::timeout(Duration::from_millis(1_500), stream.read(&mut byte)).await;
     assert!(
         early.is_err(),
         "keep-alive inactivity was not reset by the partial head: {early:?}"
@@ -814,6 +867,242 @@ async fn persistent_responses_advertise_keep_alive_like_node() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+// ---------------------------------------------------------------------------
+// Responses that return before the request body is consumed
+// ---------------------------------------------------------------------------
+//
+// The TS server collects the whole body before it calls the handler, so Node
+// drains an unread body with `_dump` and keeps the connection alive
+// (`_tmp/20261025-issue-679/fix-r2/probe/node-real-server.out.txt`: a full
+// 1 MiB body keeps `Connection: keep-alive` + `Keep-Alive: timeout=5` and a
+// second request succeeds on 401/404; Node rejects GET-with-body with 500 but
+// still keeps the connection, while Rust precheck answers 405). Rust's early
+// rejection deliberately does not
+// read that body (`A7.4-HTTPSTORE-AUTH-BEFORE-BODY-001`), and hyper closes a
+// connection whose body it could not drain in one poll. These responses
+// therefore carry an explicit `Connection: close` instead of advertising a
+// connection that is about to die (`.../probe/rust-raw-before.log` shows the old
+// `keep-alive` + `timeout=5` followed by EOF for every case below).
+
+const UNREAD_BODY_BYTES: usize = 1024 * 1024;
+
+async fn early_response_raw(tag: &str, request: &[u8], expected: u16) {
+    let (store, directory) = file_store(tag);
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let (response, closed) = exchange_until_eof(port, request, Duration::from_secs(10)).await;
+    assert_close_without_keep_alive(&response, expected, tag);
+    assert!(
+        closed,
+        "{tag}: the server left the connection open after an unread-body response"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+async fn early_response_with_body(
+    tag: &str,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    expected: u16,
+) {
+    let request = http_request(method, path, headers, body);
+    early_response_raw(tag, &request, expected).await;
+}
+
+#[tokio::test]
+async fn method_rejection_with_unread_body_closes_connection() {
+    let body = vec![b'a'; UNREAD_BODY_BYTES];
+    early_response_with_body(
+        "unread-405",
+        "GET",
+        &format!("{STORE_PATH_PREFIX}list"),
+        &[],
+        &body,
+        405,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn unknown_operation_with_unread_body_closes_connection() {
+    let body = vec![b'a'; UNREAD_BODY_BYTES];
+    early_response_with_body("unread-404", "POST", "/x", &[], &body, 404).await;
+}
+
+#[tokio::test]
+async fn unauthorized_with_unread_body_closes_connection() {
+    let body = vec![b'a'; UNREAD_BODY_BYTES];
+    early_response_with_body(
+        "unread-401",
+        "POST",
+        &format!("{STORE_PATH_PREFIX}list"),
+        &[("Content-Type", "application/json")],
+        &body,
+        401,
+    )
+    .await;
+    // The review's other interleaving: the peer promised a body but has not
+    // sent it yet. precheck still answers, and the connection must close.
+    let withheld = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Content-Type: application/json\r\nContent-Length: {UNREAD_BODY_BYTES}\r\n\r\n"
+    );
+    early_response_raw("unread-401-withheld", withheld.as_bytes(), 401).await;
+}
+
+/// The Content-Length precheck rejects a > `max_body_bytes` body without
+/// reading it, both when the body is absent and when the peer has already sent
+/// it.
+#[tokio::test]
+async fn oversized_content_length_rejection_closes_connection() {
+    let body = vec![b'a'; 3 * 1024 * 1024]; // default cap is 2 MiB
+    early_response_with_body(
+        "unread-413-content-length",
+        "POST",
+        &format!("{STORE_PATH_PREFIX}list"),
+        &[
+            ("Authorization", &format!("Bearer {TOKEN}")),
+            ("Content-Type", "application/json"),
+        ],
+        &body,
+        413,
+    )
+    .await;
+    // The review's exact interleaving: Content-Length says over the cap but the
+    // body has not arrived at all.
+    let withheld = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\n\r\n",
+        3 * 1024 * 1024
+    );
+    early_response_raw("unread-413-withheld", withheld.as_bytes(), 413).await;
+}
+
+/// `Limited` stops at the first byte over the cap, so the rest of a chunked
+/// body is still unread even though the response is built inside the body
+/// reader. Node has no cap; the early 413 is the registered body-limit
+/// deviation.
+#[tokio::test]
+async fn oversized_chunked_body_rejection_closes_connection() {
+    let chunk = vec![b'a'; 1024 * 1024];
+    let request = chunked_request(
+        "POST",
+        &format!("{STORE_PATH_PREFIX}list"),
+        &[
+            ("Authorization", &format!("Bearer {TOKEN}")),
+            ("Content-Type", "application/json"),
+        ],
+        &[&chunk, &chunk, &chunk],
+    );
+    let (store, directory) = file_store("unread-413-chunked");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(10)).await;
+    assert_close_without_keep_alive(&response, 413, "unread-413-chunked");
+    assert!(closed, "the connection stayed open after a chunked 413");
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Node v22.22.0 answers HTTP/1.0 with `Connection: close` even when the
+/// request carries `Connection: keep-alive` (measured against the real TS
+/// server: `.../probe/node-real-server.out.txt`, plus a focused probe showing
+/// `res.shouldKeepAlive === true` but `Connection: close` on the wire). Rust
+/// must not let hyper turn the parsed keep-alive into an advertisement.
+#[tokio::test]
+async fn http_10_requests_close_like_node() {
+    let (store, directory) = file_store("http-1.0-close");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    for request in [
+        "GET /x HTTP/1.0\r\nHost: h\r\nConnection: keep-alive\r\n\r\n",
+        "GET /x HTTP/1.0\r\nHost: h\r\n\r\n",
+    ] {
+        let (response, closed) =
+            exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
+        assert_close_without_keep_alive(&response, 405, request);
+        assert!(closed, "{request:?}: HTTP/1.0 connection stayed open");
+    }
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// `server.close()` during an in-flight request used to produce
+/// `connection: close` (hyper's `graceful_shutdown`) next to our stale
+/// `Keep-Alive: timeout=5` (`.../probe/rust-shutdown.log`). The response must
+/// be one coherent close.
+#[tokio::test]
+async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
+    let directory = temp_dir("shutdown-advertisement");
+    let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+    let store = Arc::new(BlockingStore {
+        inner: FileGatewayUserDialogStore::new(StoreOptions::new(directory.clone())).unwrap(),
+        entered: Mutex::new(0),
+        released: AtomicBool::new(false),
+        condvar: Condvar::new(),
+        entered_tx,
+    });
+    let (server, port) = start_limited(
+        store.clone() as Arc<dyn LiveGatewayUserDialogStore>,
+        ServeLimits::default(),
+    )
+    .await;
+    let body = put_body();
+    let request = http_request(
+        "POST",
+        &format!("{STORE_PATH_PREFIX}put"),
+        &[
+            ("Authorization", &format!("Bearer {TOKEN}")),
+            ("Content-Type", "application/json"),
+        ],
+        &body,
+    );
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(&request).await.unwrap();
+    // The blocking store proves the request is in flight before shutdown. No
+    // deadline race: without this signal the store would not release.
+    tokio::time::timeout(Duration::from_secs(5), entered_rx.recv())
+        .await
+        .expect("the request never reached dispatch")
+        .expect("entered channel closed");
+    let close_task = tokio::spawn(async move { server.close().await });
+    // The connection future is parked on `spawn_blocking`, so the shutdown
+    // branch is polled while the request is still in flight. This is an
+    // ordering yield, not a deadline assertion.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    store.released.store(true, Ordering::SeqCst);
+    store.condvar.notify_all();
+
+    let response = tokio::time::timeout(Duration::from_secs(5), read_response(&mut stream))
+        .await
+        .expect("the in-flight response never arrived");
+    assert_eq!(status(&response), 200, "{response:?}");
+    let head = String::from_utf8_lossy(&response).to_ascii_lowercase();
+    assert!(
+        head.contains("connection: close"),
+        "hyper disables keep-alive on shutdown, so the response must say close: {head}"
+    );
+    assert!(
+        !head.contains("keep-alive:"),
+        "a close response must not keep the stale Keep-Alive advertisement: {head}"
+    );
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut byte))
+        .await
+        .expect("the shutdown connection stayed open");
+    assert_eq!(
+        read.unwrap(),
+        0,
+        "expected EOF after the in-flight response"
+    );
+    tokio::time::timeout(Duration::from_secs(5), close_task)
+        .await
+        .expect("close() hung after the in-flight request")
+        .unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// HEAD responses are written as `Encoder::length(0)` and hyper drops the
 /// (non-empty) `KeepAliveBody` without polling it, so only the body's `Drop`
 /// can arm the idle timer. Without it both connections stay in
@@ -822,18 +1111,42 @@ async fn persistent_responses_advertise_keep_alive_like_node() {
 async fn head_requests_arm_idle_timer_and_release_permits() {
     let (store, directory) = file_store("head-idle");
     let limits = ServeLimits {
-        headers_timeout: Duration::from_secs(5),
-        keep_alive_timeout: Duration::from_millis(200),
+        // The idle deadline is 1 s, not 200 ms: the permits are first held by
+        // incomplete request heads, so the overflow precondition is bounded by
+        // the 30 s headersTimeout instead of racing the idle deadline.
+        headers_timeout: Duration::from_secs(30),
+        keep_alive_timeout: Duration::from_secs(1),
         keep_alive_timeout_buffer: Duration::ZERO,
         max_connections: 2,
         ..ServeLimits::default()
     };
     let (server, port) = start_limited(store, limits).await;
+    let mut incomplete = http_head();
+    incomplete.truncate(incomplete.len() - 2); // no final CRLF: head stays incomplete
     let mut heads = Vec::new();
     for _ in 0..2 {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        stream.write_all(&http_head()).await.unwrap();
-        let head = read_head(&mut stream).await;
+        stream.write_all(&incomplete).await.unwrap();
+        heads.push(stream);
+    }
+    // Retry rather than assuming the two sockets were accepted first; both
+    // permits are provably held once a fresh connection answers 503.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let overflow = exchange(port, &http_get(true)).await.unwrap();
+        if status(&overflow) == 503 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the incomplete HEAD heads never held both permits"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    for stream in &mut heads {
+        stream.write_all(b"\r\n").await.unwrap();
+        let head = read_head(stream).await;
         assert!(
             head.starts_with("HTTP/1.1 405"),
             "HEAD must reach precheck: {head:?}"
@@ -842,25 +1155,18 @@ async fn head_requests_arm_idle_timer_and_release_permits() {
             head.to_ascii_lowercase().contains("content-length:"),
             "HEAD keeps the entity length in the head: {head:?}"
         );
-        heads.push(stream);
     }
-    // Both permits are held even though neither response has a body on the wire.
-    let overflow = exchange(port, &http_get(true)).await.unwrap();
-    assert_eq!(
-        status(&overflow),
-        503,
-        "the two HEAD connections should hold every permit"
-    );
-
+    // The HEAD responses have no body on the wire, so only the body's Drop can
+    // arm the idle timer for each connection.
     for stream in &mut heads {
         let mut byte = [0u8; 1];
-        let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut byte))
+        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut byte))
             .await
             .expect("a HEAD keep-alive connection outlived the idle timer");
         assert_eq!(read.unwrap(), 0, "expected EOF on the idle HEAD connection");
     }
 
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let response = exchange(port, &http_get(true)).await.unwrap();
         if status(&response) == 405 {
@@ -915,13 +1221,16 @@ async fn empty_response_body_arms_idle_timer_without_a_body_poll() {
     });
 
     let mut client = client;
+    // The idle deadline is armed when the server writes/drops the response,
+    // which happens after this point. Taking `started` before the write makes
+    // the lower bound independent of client-side scheduling after `read_head`.
+    let started = Instant::now();
     client
         .write_all(b"GET / HTTP/1.1\r\nHost: h\r\n\r\n")
         .await
         .unwrap();
     let head = read_head(&mut client).await;
     assert!(head.starts_with("HTTP/1.1 204"), "{head:?}");
-    let started = Instant::now();
     let mut byte = [0u8; 1];
     let read = tokio::time::timeout(Duration::from_secs(2), client.read(&mut byte))
         .await
@@ -950,29 +1259,41 @@ async fn empty_response_body_arms_idle_timer_without_a_body_poll() {
 async fn client_read_shutdown_still_releases_head_connection_permit() {
     let (store, directory) = file_store("head-client-read-shutdown");
     let limits = ServeLimits {
-        headers_timeout: Duration::from_secs(5),
-        keep_alive_timeout: Duration::from_millis(200),
+        // Same decoupling as the HEAD test: hold the permit with an incomplete
+        // head (30 s headersTimeout), then let the 1 s idle deadline close it.
+        headers_timeout: Duration::from_secs(30),
+        keep_alive_timeout: Duration::from_secs(1),
         keep_alive_timeout_buffer: Duration::ZERO,
         max_connections: 1,
         ..ServeLimits::default()
     };
     let (server, port) = start_limited(store, limits).await;
     let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-    stream.write_all(&http_head()).await.unwrap();
+    let mut incomplete = http_head();
+    incomplete.truncate(incomplete.len() - 2);
+    stream.write_all(&incomplete).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if status(&exchange(port, &http_get(true)).await.unwrap()) == 503 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the incomplete HEAD head never held the only permit"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    stream.write_all(b"\r\n").await.unwrap();
     let head = read_head(&mut stream).await;
     assert!(head.starts_with("HTTP/1.1 405"), "{head:?}");
     let stream = stream.into_std().expect("into_std");
     stream
         .shutdown(std::net::Shutdown::Read)
         .expect("shutdown read half");
-    assert_eq!(
-        status(&exchange(port, &http_get(true)).await.unwrap()),
-        503,
-        "the idle HEAD connection should hold the only permit"
-    );
 
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // The peer can no longer observe EOF, so permit release is the event that
+    // proves the idle timer closed the connection.
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let response = exchange(port, &http_get(true)).await.unwrap();
         if status(&response) == 405 {
