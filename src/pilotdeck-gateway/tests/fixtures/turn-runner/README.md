@@ -11,7 +11,7 @@ export PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/turn-runner/generate.mts /tmp/new-turn-runner-fixture
 scripts/cargo-slots.sh
-export CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-741b/_build/cargo-target
+export CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-741c/_build/cargo-target
 cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway \
   --test recorder_completion -- --include-ignored
 ```
@@ -28,14 +28,14 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 ```sh
 scripts/cargo-slots.sh
-export CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-741b/_build/cargo-target
+export CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-741c/_build/cargo-target
 PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
   cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway \
   --lib runtime::turn::runner::tests -- --include-ignored
 python3 src/pilotdeck-gateway/tests/fixtures/turn-runner/runner_negative.py /tmp/new-runner-negative
 ```
 
-runner 负控默认20项（两个 terminal 分支分别变异，每个锚点 count == 1），可在输出目录后传具体变异名。与旧 recorder 负控一样使用共享保护器，不能在变异期间另起同树 cargo 或改源码。`test_sources` 仅在 cfg(test) 存在，让 recorder 与直接 writer 调用共用同一确定性来源。
+runner 负控默认25项（两个 terminal 分支分别变异，每个锚点 count == 1），可在输出目录后传具体变异名。与旧 recorder 负控一样使用共享保护器，不能在变异期间另起同树 cargo 或改源码。`test_sources` 仅在 cfg(test) 存在，让 recorder 与直接 writer 调用共用同一确定性来源。
 
 待接续：LiveSessionAdapter 注入/接线、active slot 与不可取消 I/O 的共同所有权、AgentLoop-only integrity、真实 TS sidecar 的 Rust 宿主验收、旧 Python peer 与兄弟测试同步、已有可见 failure status 回调去重、hooks/steer/artifact/session 元数据收尾。取消/early-final 实测差异见 specs/gateway-parity/diffs/A7.2-TURN-{ABORT,EARLYFINAL}-001.md（未批准）。本切片不关闭 #741/#589。
 
@@ -89,3 +89,11 @@ runner 负控默认20项（两个 terminal 分支分别变异，每个锚点 cou
 `recording_negative.py <新证据目录>` 使用同一三个公共 helper，对这些新分支逐项变异，要求运行时 RED 与恢复 PASS。原 runner/recorder 负控仍适用且锚点未改。重生成继续使用已存在的 ignored `runner_regenerates_identically`，须显式运行；生成器仍 recursive mkdir + `flag:'wx'`。
 
 尚未完成的完整接线范围仍为上面“待接续”及本包 RESULT 的最终清单；所有 live_* 用例仍是接手要求，不因新增端口而改成已验收。
+
+## #741 送审前 fix-r2
+
+新增 `invalid-result-{turn,session,number,array,null}-{idle,step}` 十格真实 TurnRunner 探针；step 格在 loop 内调用真实 recorder.recordModelRequest 后返回异常 result，原输入保存在 rawResult。turn/null 四格由同名 runner 用例逐字节对拍；session/number/array 六格按 A7.2-TURN-INVALID-RESULT-001 验证 Rust 错误终态与关闭，不冒充 TS 一致。每格都有独立 Rust 用例，invalid-result-early-return 负控必须同时击中全部十格。
+
+`loop-{missing,undefined,null}-message` 三格记录 TS JSON 结果及 statusTextOwn/statusTextUndefined。TS live 对象有 text:undefined，但 wire JSON 省略；Rust agent_status 按 wire 形状省略 text，保留 null。failureMessageUndefined 标记让 Rust 回放恢复真实 Undefined 输入，turn_failed.error 保留原始输入；detail 的 undefined 字段同样省略。
+
+三套负控共用 `_negative_common.py` 的 scoped/unscoped mutate 与有界 cargo run，仍各自使用 negative_process 的 mutating_sources；所有变异要求运行时断言失败，恢复正控后才记录通过。当前 runner 负控 25 项，recorder 10 项，recording 31 项。使用本树 target：`CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-741c/_build/cargo-target`。既有 ignored `runner_regenerates_identically` 覆盖扩展后的完整 fixture。
