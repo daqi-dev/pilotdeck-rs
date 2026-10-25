@@ -520,7 +520,7 @@
       "code": "E2BIG",
       "syscall": "stat",
       "path": "",
-      "message": "E2BIG: argument list too long, stat"
+      "message": "E2BIG: argument list too long, stat ''"
     },
     {
       "code": "E2BIG",
@@ -537,7 +537,7 @@
       "code": "E2BIG",
       "syscall": "open",
       "path": "",
-      "message": "E2BIG: argument list too long, open"
+      "message": "E2BIG: argument list too long, open ''"
     },
     {
       "code": "E2BIG",
@@ -554,7 +554,7 @@
       "code": "E2BIG",
       "syscall": "read",
       "path": "",
-      "message": "E2BIG: argument list too long, read"
+      "message": "E2BIG: argument list too long, read ''"
     },
     {
       "code": "E2BIG",
@@ -571,7 +571,7 @@
       "code": "E2BIG",
       "syscall": "fstat",
       "path": "",
-      "message": "E2BIG: argument list too long, fstat"
+      "message": "E2BIG: argument list too long, fstat ''"
     },
     {
       "code": "E2BIG",
@@ -588,7 +588,7 @@
       "code": "E2BIG",
       "syscall": "scandir",
       "path": "",
-      "message": "E2BIG: argument list too long, scandir"
+      "message": "E2BIG: argument list too long, scandir ''"
     },
     {
       "code": "E2BIG",
@@ -605,7 +605,7 @@
       "code": "E2BIG",
       "syscall": "realpath",
       "path": "",
-      "message": "E2BIG: argument list too long, realpath"
+      "message": "E2BIG: argument list too long, realpath ''"
     },
     {
       "code": "E2BIG",
@@ -622,7 +622,7 @@
       "code": "EACCES",
       "syscall": "stat",
       "path": "",
-      "message": "EACCES: permission denied, stat"
+      "message": "EACCES: permission denied, stat ''"
     },
     {
       "code": "EACCES",
@@ -639,7 +639,7 @@
       "code": "EACCES",
       "syscall": "open",
       "path": "",
-      "message": "EACCES: permission denied, open"
+      "message": "EACCES: permission denied, open ''"
     },
     {
       "code": "EACCES",
@@ -656,7 +656,7 @@
       "code": "EACCES",
       "syscall": "read",
       "path": "",
-      "message": "EACCES: permission denied, read"
+      "message": "EACCES: permission denied, read ''"
     },
     {
       "code": "EACCES",
@@ -673,7 +673,7 @@
       "code": "EACCES",
       "syscall": "fstat",
       "path": "",
-      "message": "EACCES: permission denied, fstat"
+      "message": "EACCES: permission denied, fstat ''"
     },
     {
       "code": "EACCES",
@@ -690,7 +690,7 @@
       "code": "EACCES",
       "syscall": "scandir",
       "path": "",
-      "message": "EACCES: permission denied, scandir"
+      "message": "EACCES: permission denied, scandir ''"
     },
     {
       "code": "EACCES",
@@ -707,7 +707,7 @@
       "code": "EACCES",
       "syscall": "realpath",
       "path": "",
-      "message": "EACCES: permission denied, realpath"
+      "message": "EACCES: permission denied, realpath ''"
     },
     {
       "code": "EACCES",
@@ -724,7 +724,7 @@
       "code": "EADDRINUSE",
       "syscall": "stat",
       "path": "",
-      "message": "EADDRINUSE: address already in use, stat"
+      "message": "EADDRINUSE: address already in use, stat ''"
     },
     {
       "code": "EADDRINUSE",
@@ -741,7 +741,7 @@
       "code": "EADDRINUSE",
       "syscall": "open",
       "path": "",
-      "message": "EADDRINUSE: address already in use, open"
+      "message": "EADDRINUSE: address already in use, open ''"
     },
     {
       "code": "EADDRINUSE",
@@ -758,7 +758,7 @@
       "code": "EADDRINUSE",
       "syscall": "read",
       "path": "",
-      "message": "EADDRINUSE: address already in use, read"
+      "message": "EADDRINUSE: address already in use, read ''"
     },
     {
       "code": "EADDRINUSE",
@@ -775,7 +775,7 @@
       "code": "EADDRINUSE",
       "syscall": "fstat",
       "path": "",
-      "message": "EADDRINUSE: address already in use, fstat"
+      "message": "EADDRINUSE: address already in use, fstat ''"
     },
     {
       "code": "EADDRINUSE",
@@ -792,7 +792,7 @@
       "code": "EADDRINUSE",
       "syscall": "scandir",
       "path": "",
-      "message": "EADDRINUSE: address already in use, scandir"
+      "message": "EADDRINUSE: address already in use, scandir ''"
     },
     {
       "code": "EADDRINUSE",
@@ -809,7 +809,7 @@
       "code": "EADDRINUSE",
       "syscall": "realpath",
       "path": "",
-      "message": "EADDRINUSE: address already in use, realpath"
+      "message": "EADDRINUSE: address already in use, realpath ''"
     },
     {
       "code": "EADDRINUSE",
@@ -826,7 +826,7 @@
       "code": "EADDRNOTAVAIL",
       "syscall": "stat",
       "path": "",
-      "message": "EADDRNOTAVAIL: address not available, stat"
+      "message": "EADDRNOTAVAIL: address not available, stat ''"
     },
     {
       "code": "EADDRNOTAVAIL",
@@ -843,7 +843,7 @@
       "code": "EADDRNOTAVAIL",
       "syscall": "open",
       "path": "",
-      "message": "EADDRNOTAVAIL: address not available, open"
+      "message": "EADDRNOTAVAIL: address not available, open ''"
     },
     {
       "code": "EADDRNOTAVAIL",
@@ -860,7 +860,7 @@
       "code": "EADDRNOTAVAIL",
       "syscall": "read",
       "path": "",
-      "message": "EADDRNOTAVAIL: address not available, read"
+      "message": "EADDRNOTAVAIL: address not available, read ''"
     },
     {
       "code": "EADDRNOTAVAIL",
@@ -877,7 +877,7 @@
       "code": "EADDRNOTAVAIL",
       "syscall": "fstat",
       "path": "",
-      "message": "EADDRNOTAVAIL: address not available, fstat"
+      "message": "EADDRNOTAVAIL: address not available, fstat ''"
     },
     {
       "code": "EADDRNOTAVAIL",
@@ -894,7 +894,7 @@
       "code": "EADDRNOTAVAIL",
       "syscall": "scandir",
       "path": "",
-      "message": "EADDRNOTAVAIL: address not available, scandir"
+      "message": "EADDRNOTAVAIL: address not available, scandir ''"
     },
     {
       "code": "EADDRNOTAVAIL",
@@ -911,7 +911,7 @@
       "code": "EADDRNOTAVAIL",
       "syscall": "realpath",
       "path": "",
-      "message": "EADDRNOTAVAIL: address not available, realpath"
+      "message": "EADDRNOTAVAIL: address not available, realpath ''"
     },
     {
       "code": "EADDRNOTAVAIL",
@@ -928,7 +928,7 @@
       "code": "EAFNOSUPPORT",
       "syscall": "stat",
       "path": "",
-      "message": "EAFNOSUPPORT: address family not supported, stat"
+      "message": "EAFNOSUPPORT: address family not supported, stat ''"
     },
     {
       "code": "EAFNOSUPPORT",
@@ -945,7 +945,7 @@
       "code": "EAFNOSUPPORT",
       "syscall": "open",
       "path": "",
-      "message": "EAFNOSUPPORT: address family not supported, open"
+      "message": "EAFNOSUPPORT: address family not supported, open ''"
     },
     {
       "code": "EAFNOSUPPORT",
@@ -962,7 +962,7 @@
       "code": "EAFNOSUPPORT",
       "syscall": "read",
       "path": "",
-      "message": "EAFNOSUPPORT: address family not supported, read"
+      "message": "EAFNOSUPPORT: address family not supported, read ''"
     },
     {
       "code": "EAFNOSUPPORT",
@@ -979,7 +979,7 @@
       "code": "EAFNOSUPPORT",
       "syscall": "fstat",
       "path": "",
-      "message": "EAFNOSUPPORT: address family not supported, fstat"
+      "message": "EAFNOSUPPORT: address family not supported, fstat ''"
     },
     {
       "code": "EAFNOSUPPORT",
@@ -996,7 +996,7 @@
       "code": "EAFNOSUPPORT",
       "syscall": "scandir",
       "path": "",
-      "message": "EAFNOSUPPORT: address family not supported, scandir"
+      "message": "EAFNOSUPPORT: address family not supported, scandir ''"
     },
     {
       "code": "EAFNOSUPPORT",
@@ -1013,7 +1013,7 @@
       "code": "EAFNOSUPPORT",
       "syscall": "realpath",
       "path": "",
-      "message": "EAFNOSUPPORT: address family not supported, realpath"
+      "message": "EAFNOSUPPORT: address family not supported, realpath ''"
     },
     {
       "code": "EAFNOSUPPORT",
@@ -1030,7 +1030,7 @@
       "code": "EAGAIN",
       "syscall": "stat",
       "path": "",
-      "message": "EAGAIN: resource temporarily unavailable, stat"
+      "message": "EAGAIN: resource temporarily unavailable, stat ''"
     },
     {
       "code": "EAGAIN",
@@ -1047,7 +1047,7 @@
       "code": "EAGAIN",
       "syscall": "open",
       "path": "",
-      "message": "EAGAIN: resource temporarily unavailable, open"
+      "message": "EAGAIN: resource temporarily unavailable, open ''"
     },
     {
       "code": "EAGAIN",
@@ -1064,7 +1064,7 @@
       "code": "EAGAIN",
       "syscall": "read",
       "path": "",
-      "message": "EAGAIN: resource temporarily unavailable, read"
+      "message": "EAGAIN: resource temporarily unavailable, read ''"
     },
     {
       "code": "EAGAIN",
@@ -1081,7 +1081,7 @@
       "code": "EAGAIN",
       "syscall": "fstat",
       "path": "",
-      "message": "EAGAIN: resource temporarily unavailable, fstat"
+      "message": "EAGAIN: resource temporarily unavailable, fstat ''"
     },
     {
       "code": "EAGAIN",
@@ -1098,7 +1098,7 @@
       "code": "EAGAIN",
       "syscall": "scandir",
       "path": "",
-      "message": "EAGAIN: resource temporarily unavailable, scandir"
+      "message": "EAGAIN: resource temporarily unavailable, scandir ''"
     },
     {
       "code": "EAGAIN",
@@ -1115,7 +1115,7 @@
       "code": "EAGAIN",
       "syscall": "realpath",
       "path": "",
-      "message": "EAGAIN: resource temporarily unavailable, realpath"
+      "message": "EAGAIN: resource temporarily unavailable, realpath ''"
     },
     {
       "code": "EAGAIN",
@@ -1132,7 +1132,7 @@
       "code": "EALREADY",
       "syscall": "stat",
       "path": "",
-      "message": "EALREADY: connection already in progress, stat"
+      "message": "EALREADY: connection already in progress, stat ''"
     },
     {
       "code": "EALREADY",
@@ -1149,7 +1149,7 @@
       "code": "EALREADY",
       "syscall": "open",
       "path": "",
-      "message": "EALREADY: connection already in progress, open"
+      "message": "EALREADY: connection already in progress, open ''"
     },
     {
       "code": "EALREADY",
@@ -1166,7 +1166,7 @@
       "code": "EALREADY",
       "syscall": "read",
       "path": "",
-      "message": "EALREADY: connection already in progress, read"
+      "message": "EALREADY: connection already in progress, read ''"
     },
     {
       "code": "EALREADY",
@@ -1183,7 +1183,7 @@
       "code": "EALREADY",
       "syscall": "fstat",
       "path": "",
-      "message": "EALREADY: connection already in progress, fstat"
+      "message": "EALREADY: connection already in progress, fstat ''"
     },
     {
       "code": "EALREADY",
@@ -1200,7 +1200,7 @@
       "code": "EALREADY",
       "syscall": "scandir",
       "path": "",
-      "message": "EALREADY: connection already in progress, scandir"
+      "message": "EALREADY: connection already in progress, scandir ''"
     },
     {
       "code": "EALREADY",
@@ -1217,7 +1217,7 @@
       "code": "EALREADY",
       "syscall": "realpath",
       "path": "",
-      "message": "EALREADY: connection already in progress, realpath"
+      "message": "EALREADY: connection already in progress, realpath ''"
     },
     {
       "code": "EALREADY",
@@ -1234,7 +1234,7 @@
       "code": "EBADF",
       "syscall": "stat",
       "path": "",
-      "message": "EBADF: bad file descriptor, stat"
+      "message": "EBADF: bad file descriptor, stat ''"
     },
     {
       "code": "EBADF",
@@ -1251,7 +1251,7 @@
       "code": "EBADF",
       "syscall": "open",
       "path": "",
-      "message": "EBADF: bad file descriptor, open"
+      "message": "EBADF: bad file descriptor, open ''"
     },
     {
       "code": "EBADF",
@@ -1268,7 +1268,7 @@
       "code": "EBADF",
       "syscall": "read",
       "path": "",
-      "message": "EBADF: bad file descriptor, read"
+      "message": "EBADF: bad file descriptor, read ''"
     },
     {
       "code": "EBADF",
@@ -1285,7 +1285,7 @@
       "code": "EBADF",
       "syscall": "fstat",
       "path": "",
-      "message": "EBADF: bad file descriptor, fstat"
+      "message": "EBADF: bad file descriptor, fstat ''"
     },
     {
       "code": "EBADF",
@@ -1302,7 +1302,7 @@
       "code": "EBADF",
       "syscall": "scandir",
       "path": "",
-      "message": "EBADF: bad file descriptor, scandir"
+      "message": "EBADF: bad file descriptor, scandir ''"
     },
     {
       "code": "EBADF",
@@ -1319,7 +1319,7 @@
       "code": "EBADF",
       "syscall": "realpath",
       "path": "",
-      "message": "EBADF: bad file descriptor, realpath"
+      "message": "EBADF: bad file descriptor, realpath ''"
     },
     {
       "code": "EBADF",
@@ -1336,7 +1336,7 @@
       "code": "EBUSY",
       "syscall": "stat",
       "path": "",
-      "message": "EBUSY: resource busy or locked, stat"
+      "message": "EBUSY: resource busy or locked, stat ''"
     },
     {
       "code": "EBUSY",
@@ -1353,7 +1353,7 @@
       "code": "EBUSY",
       "syscall": "open",
       "path": "",
-      "message": "EBUSY: resource busy or locked, open"
+      "message": "EBUSY: resource busy or locked, open ''"
     },
     {
       "code": "EBUSY",
@@ -1370,7 +1370,7 @@
       "code": "EBUSY",
       "syscall": "read",
       "path": "",
-      "message": "EBUSY: resource busy or locked, read"
+      "message": "EBUSY: resource busy or locked, read ''"
     },
     {
       "code": "EBUSY",
@@ -1387,7 +1387,7 @@
       "code": "EBUSY",
       "syscall": "fstat",
       "path": "",
-      "message": "EBUSY: resource busy or locked, fstat"
+      "message": "EBUSY: resource busy or locked, fstat ''"
     },
     {
       "code": "EBUSY",
@@ -1404,7 +1404,7 @@
       "code": "EBUSY",
       "syscall": "scandir",
       "path": "",
-      "message": "EBUSY: resource busy or locked, scandir"
+      "message": "EBUSY: resource busy or locked, scandir ''"
     },
     {
       "code": "EBUSY",
@@ -1421,7 +1421,7 @@
       "code": "EBUSY",
       "syscall": "realpath",
       "path": "",
-      "message": "EBUSY: resource busy or locked, realpath"
+      "message": "EBUSY: resource busy or locked, realpath ''"
     },
     {
       "code": "EBUSY",
@@ -1438,7 +1438,7 @@
       "code": "ECANCELED",
       "syscall": "stat",
       "path": "",
-      "message": "ECANCELED: operation canceled, stat"
+      "message": "ECANCELED: operation canceled, stat ''"
     },
     {
       "code": "ECANCELED",
@@ -1455,7 +1455,7 @@
       "code": "ECANCELED",
       "syscall": "open",
       "path": "",
-      "message": "ECANCELED: operation canceled, open"
+      "message": "ECANCELED: operation canceled, open ''"
     },
     {
       "code": "ECANCELED",
@@ -1472,7 +1472,7 @@
       "code": "ECANCELED",
       "syscall": "read",
       "path": "",
-      "message": "ECANCELED: operation canceled, read"
+      "message": "ECANCELED: operation canceled, read ''"
     },
     {
       "code": "ECANCELED",
@@ -1489,7 +1489,7 @@
       "code": "ECANCELED",
       "syscall": "fstat",
       "path": "",
-      "message": "ECANCELED: operation canceled, fstat"
+      "message": "ECANCELED: operation canceled, fstat ''"
     },
     {
       "code": "ECANCELED",
@@ -1506,7 +1506,7 @@
       "code": "ECANCELED",
       "syscall": "scandir",
       "path": "",
-      "message": "ECANCELED: operation canceled, scandir"
+      "message": "ECANCELED: operation canceled, scandir ''"
     },
     {
       "code": "ECANCELED",
@@ -1523,7 +1523,7 @@
       "code": "ECANCELED",
       "syscall": "realpath",
       "path": "",
-      "message": "ECANCELED: operation canceled, realpath"
+      "message": "ECANCELED: operation canceled, realpath ''"
     },
     {
       "code": "ECANCELED",
@@ -1540,7 +1540,7 @@
       "code": "ECONNABORTED",
       "syscall": "stat",
       "path": "",
-      "message": "ECONNABORTED: software caused connection abort, stat"
+      "message": "ECONNABORTED: software caused connection abort, stat ''"
     },
     {
       "code": "ECONNABORTED",
@@ -1557,7 +1557,7 @@
       "code": "ECONNABORTED",
       "syscall": "open",
       "path": "",
-      "message": "ECONNABORTED: software caused connection abort, open"
+      "message": "ECONNABORTED: software caused connection abort, open ''"
     },
     {
       "code": "ECONNABORTED",
@@ -1574,7 +1574,7 @@
       "code": "ECONNABORTED",
       "syscall": "read",
       "path": "",
-      "message": "ECONNABORTED: software caused connection abort, read"
+      "message": "ECONNABORTED: software caused connection abort, read ''"
     },
     {
       "code": "ECONNABORTED",
@@ -1591,7 +1591,7 @@
       "code": "ECONNABORTED",
       "syscall": "fstat",
       "path": "",
-      "message": "ECONNABORTED: software caused connection abort, fstat"
+      "message": "ECONNABORTED: software caused connection abort, fstat ''"
     },
     {
       "code": "ECONNABORTED",
@@ -1608,7 +1608,7 @@
       "code": "ECONNABORTED",
       "syscall": "scandir",
       "path": "",
-      "message": "ECONNABORTED: software caused connection abort, scandir"
+      "message": "ECONNABORTED: software caused connection abort, scandir ''"
     },
     {
       "code": "ECONNABORTED",
@@ -1625,7 +1625,7 @@
       "code": "ECONNABORTED",
       "syscall": "realpath",
       "path": "",
-      "message": "ECONNABORTED: software caused connection abort, realpath"
+      "message": "ECONNABORTED: software caused connection abort, realpath ''"
     },
     {
       "code": "ECONNABORTED",
@@ -1642,7 +1642,7 @@
       "code": "ECONNREFUSED",
       "syscall": "stat",
       "path": "",
-      "message": "ECONNREFUSED: connection refused, stat"
+      "message": "ECONNREFUSED: connection refused, stat ''"
     },
     {
       "code": "ECONNREFUSED",
@@ -1659,7 +1659,7 @@
       "code": "ECONNREFUSED",
       "syscall": "open",
       "path": "",
-      "message": "ECONNREFUSED: connection refused, open"
+      "message": "ECONNREFUSED: connection refused, open ''"
     },
     {
       "code": "ECONNREFUSED",
@@ -1676,7 +1676,7 @@
       "code": "ECONNREFUSED",
       "syscall": "read",
       "path": "",
-      "message": "ECONNREFUSED: connection refused, read"
+      "message": "ECONNREFUSED: connection refused, read ''"
     },
     {
       "code": "ECONNREFUSED",
@@ -1693,7 +1693,7 @@
       "code": "ECONNREFUSED",
       "syscall": "fstat",
       "path": "",
-      "message": "ECONNREFUSED: connection refused, fstat"
+      "message": "ECONNREFUSED: connection refused, fstat ''"
     },
     {
       "code": "ECONNREFUSED",
@@ -1710,7 +1710,7 @@
       "code": "ECONNREFUSED",
       "syscall": "scandir",
       "path": "",
-      "message": "ECONNREFUSED: connection refused, scandir"
+      "message": "ECONNREFUSED: connection refused, scandir ''"
     },
     {
       "code": "ECONNREFUSED",
@@ -1727,7 +1727,7 @@
       "code": "ECONNREFUSED",
       "syscall": "realpath",
       "path": "",
-      "message": "ECONNREFUSED: connection refused, realpath"
+      "message": "ECONNREFUSED: connection refused, realpath ''"
     },
     {
       "code": "ECONNREFUSED",
@@ -1744,7 +1744,7 @@
       "code": "ECONNRESET",
       "syscall": "stat",
       "path": "",
-      "message": "ECONNRESET: connection reset by peer, stat"
+      "message": "ECONNRESET: connection reset by peer, stat ''"
     },
     {
       "code": "ECONNRESET",
@@ -1761,7 +1761,7 @@
       "code": "ECONNRESET",
       "syscall": "open",
       "path": "",
-      "message": "ECONNRESET: connection reset by peer, open"
+      "message": "ECONNRESET: connection reset by peer, open ''"
     },
     {
       "code": "ECONNRESET",
@@ -1778,7 +1778,7 @@
       "code": "ECONNRESET",
       "syscall": "read",
       "path": "",
-      "message": "ECONNRESET: connection reset by peer, read"
+      "message": "ECONNRESET: connection reset by peer, read ''"
     },
     {
       "code": "ECONNRESET",
@@ -1795,7 +1795,7 @@
       "code": "ECONNRESET",
       "syscall": "fstat",
       "path": "",
-      "message": "ECONNRESET: connection reset by peer, fstat"
+      "message": "ECONNRESET: connection reset by peer, fstat ''"
     },
     {
       "code": "ECONNRESET",
@@ -1812,7 +1812,7 @@
       "code": "ECONNRESET",
       "syscall": "scandir",
       "path": "",
-      "message": "ECONNRESET: connection reset by peer, scandir"
+      "message": "ECONNRESET: connection reset by peer, scandir ''"
     },
     {
       "code": "ECONNRESET",
@@ -1829,7 +1829,7 @@
       "code": "ECONNRESET",
       "syscall": "realpath",
       "path": "",
-      "message": "ECONNRESET: connection reset by peer, realpath"
+      "message": "ECONNRESET: connection reset by peer, realpath ''"
     },
     {
       "code": "ECONNRESET",
@@ -1846,7 +1846,7 @@
       "code": "EDESTADDRREQ",
       "syscall": "stat",
       "path": "",
-      "message": "EDESTADDRREQ: destination address required, stat"
+      "message": "EDESTADDRREQ: destination address required, stat ''"
     },
     {
       "code": "EDESTADDRREQ",
@@ -1863,7 +1863,7 @@
       "code": "EDESTADDRREQ",
       "syscall": "open",
       "path": "",
-      "message": "EDESTADDRREQ: destination address required, open"
+      "message": "EDESTADDRREQ: destination address required, open ''"
     },
     {
       "code": "EDESTADDRREQ",
@@ -1880,7 +1880,7 @@
       "code": "EDESTADDRREQ",
       "syscall": "read",
       "path": "",
-      "message": "EDESTADDRREQ: destination address required, read"
+      "message": "EDESTADDRREQ: destination address required, read ''"
     },
     {
       "code": "EDESTADDRREQ",
@@ -1897,7 +1897,7 @@
       "code": "EDESTADDRREQ",
       "syscall": "fstat",
       "path": "",
-      "message": "EDESTADDRREQ: destination address required, fstat"
+      "message": "EDESTADDRREQ: destination address required, fstat ''"
     },
     {
       "code": "EDESTADDRREQ",
@@ -1914,7 +1914,7 @@
       "code": "EDESTADDRREQ",
       "syscall": "scandir",
       "path": "",
-      "message": "EDESTADDRREQ: destination address required, scandir"
+      "message": "EDESTADDRREQ: destination address required, scandir ''"
     },
     {
       "code": "EDESTADDRREQ",
@@ -1931,7 +1931,7 @@
       "code": "EDESTADDRREQ",
       "syscall": "realpath",
       "path": "",
-      "message": "EDESTADDRREQ: destination address required, realpath"
+      "message": "EDESTADDRREQ: destination address required, realpath ''"
     },
     {
       "code": "EDESTADDRREQ",
@@ -1948,7 +1948,7 @@
       "code": "EEXIST",
       "syscall": "stat",
       "path": "",
-      "message": "EEXIST: file already exists, stat"
+      "message": "EEXIST: file already exists, stat ''"
     },
     {
       "code": "EEXIST",
@@ -1965,7 +1965,7 @@
       "code": "EEXIST",
       "syscall": "open",
       "path": "",
-      "message": "EEXIST: file already exists, open"
+      "message": "EEXIST: file already exists, open ''"
     },
     {
       "code": "EEXIST",
@@ -1982,7 +1982,7 @@
       "code": "EEXIST",
       "syscall": "read",
       "path": "",
-      "message": "EEXIST: file already exists, read"
+      "message": "EEXIST: file already exists, read ''"
     },
     {
       "code": "EEXIST",
@@ -1999,7 +1999,7 @@
       "code": "EEXIST",
       "syscall": "fstat",
       "path": "",
-      "message": "EEXIST: file already exists, fstat"
+      "message": "EEXIST: file already exists, fstat ''"
     },
     {
       "code": "EEXIST",
@@ -2016,7 +2016,7 @@
       "code": "EEXIST",
       "syscall": "scandir",
       "path": "",
-      "message": "EEXIST: file already exists, scandir"
+      "message": "EEXIST: file already exists, scandir ''"
     },
     {
       "code": "EEXIST",
@@ -2033,7 +2033,7 @@
       "code": "EEXIST",
       "syscall": "realpath",
       "path": "",
-      "message": "EEXIST: file already exists, realpath"
+      "message": "EEXIST: file already exists, realpath ''"
     },
     {
       "code": "EEXIST",
@@ -2050,7 +2050,7 @@
       "code": "EFAULT",
       "syscall": "stat",
       "path": "",
-      "message": "EFAULT: bad address in system call argument, stat"
+      "message": "EFAULT: bad address in system call argument, stat ''"
     },
     {
       "code": "EFAULT",
@@ -2067,7 +2067,7 @@
       "code": "EFAULT",
       "syscall": "open",
       "path": "",
-      "message": "EFAULT: bad address in system call argument, open"
+      "message": "EFAULT: bad address in system call argument, open ''"
     },
     {
       "code": "EFAULT",
@@ -2084,7 +2084,7 @@
       "code": "EFAULT",
       "syscall": "read",
       "path": "",
-      "message": "EFAULT: bad address in system call argument, read"
+      "message": "EFAULT: bad address in system call argument, read ''"
     },
     {
       "code": "EFAULT",
@@ -2101,7 +2101,7 @@
       "code": "EFAULT",
       "syscall": "fstat",
       "path": "",
-      "message": "EFAULT: bad address in system call argument, fstat"
+      "message": "EFAULT: bad address in system call argument, fstat ''"
     },
     {
       "code": "EFAULT",
@@ -2118,7 +2118,7 @@
       "code": "EFAULT",
       "syscall": "scandir",
       "path": "",
-      "message": "EFAULT: bad address in system call argument, scandir"
+      "message": "EFAULT: bad address in system call argument, scandir ''"
     },
     {
       "code": "EFAULT",
@@ -2135,7 +2135,7 @@
       "code": "EFAULT",
       "syscall": "realpath",
       "path": "",
-      "message": "EFAULT: bad address in system call argument, realpath"
+      "message": "EFAULT: bad address in system call argument, realpath ''"
     },
     {
       "code": "EFAULT",
@@ -2152,7 +2152,7 @@
       "code": "EFBIG",
       "syscall": "stat",
       "path": "",
-      "message": "EFBIG: file too large, stat"
+      "message": "EFBIG: file too large, stat ''"
     },
     {
       "code": "EFBIG",
@@ -2169,7 +2169,7 @@
       "code": "EFBIG",
       "syscall": "open",
       "path": "",
-      "message": "EFBIG: file too large, open"
+      "message": "EFBIG: file too large, open ''"
     },
     {
       "code": "EFBIG",
@@ -2186,7 +2186,7 @@
       "code": "EFBIG",
       "syscall": "read",
       "path": "",
-      "message": "EFBIG: file too large, read"
+      "message": "EFBIG: file too large, read ''"
     },
     {
       "code": "EFBIG",
@@ -2203,7 +2203,7 @@
       "code": "EFBIG",
       "syscall": "fstat",
       "path": "",
-      "message": "EFBIG: file too large, fstat"
+      "message": "EFBIG: file too large, fstat ''"
     },
     {
       "code": "EFBIG",
@@ -2220,7 +2220,7 @@
       "code": "EFBIG",
       "syscall": "scandir",
       "path": "",
-      "message": "EFBIG: file too large, scandir"
+      "message": "EFBIG: file too large, scandir ''"
     },
     {
       "code": "EFBIG",
@@ -2237,7 +2237,7 @@
       "code": "EFBIG",
       "syscall": "realpath",
       "path": "",
-      "message": "EFBIG: file too large, realpath"
+      "message": "EFBIG: file too large, realpath ''"
     },
     {
       "code": "EFBIG",
@@ -2254,7 +2254,7 @@
       "code": "EFTYPE",
       "syscall": "stat",
       "path": "",
-      "message": "EFTYPE: inappropriate file type or format, stat"
+      "message": "EFTYPE: inappropriate file type or format, stat ''"
     },
     {
       "code": "EFTYPE",
@@ -2271,7 +2271,7 @@
       "code": "EFTYPE",
       "syscall": "open",
       "path": "",
-      "message": "EFTYPE: inappropriate file type or format, open"
+      "message": "EFTYPE: inappropriate file type or format, open ''"
     },
     {
       "code": "EFTYPE",
@@ -2288,7 +2288,7 @@
       "code": "EFTYPE",
       "syscall": "read",
       "path": "",
-      "message": "EFTYPE: inappropriate file type or format, read"
+      "message": "EFTYPE: inappropriate file type or format, read ''"
     },
     {
       "code": "EFTYPE",
@@ -2305,7 +2305,7 @@
       "code": "EFTYPE",
       "syscall": "fstat",
       "path": "",
-      "message": "EFTYPE: inappropriate file type or format, fstat"
+      "message": "EFTYPE: inappropriate file type or format, fstat ''"
     },
     {
       "code": "EFTYPE",
@@ -2322,7 +2322,7 @@
       "code": "EFTYPE",
       "syscall": "scandir",
       "path": "",
-      "message": "EFTYPE: inappropriate file type or format, scandir"
+      "message": "EFTYPE: inappropriate file type or format, scandir ''"
     },
     {
       "code": "EFTYPE",
@@ -2339,7 +2339,7 @@
       "code": "EFTYPE",
       "syscall": "realpath",
       "path": "",
-      "message": "EFTYPE: inappropriate file type or format, realpath"
+      "message": "EFTYPE: inappropriate file type or format, realpath ''"
     },
     {
       "code": "EFTYPE",
@@ -2356,7 +2356,7 @@
       "code": "EHOSTDOWN",
       "syscall": "stat",
       "path": "",
-      "message": "EHOSTDOWN: host is down, stat"
+      "message": "EHOSTDOWN: host is down, stat ''"
     },
     {
       "code": "EHOSTDOWN",
@@ -2373,7 +2373,7 @@
       "code": "EHOSTDOWN",
       "syscall": "open",
       "path": "",
-      "message": "EHOSTDOWN: host is down, open"
+      "message": "EHOSTDOWN: host is down, open ''"
     },
     {
       "code": "EHOSTDOWN",
@@ -2390,7 +2390,7 @@
       "code": "EHOSTDOWN",
       "syscall": "read",
       "path": "",
-      "message": "EHOSTDOWN: host is down, read"
+      "message": "EHOSTDOWN: host is down, read ''"
     },
     {
       "code": "EHOSTDOWN",
@@ -2407,7 +2407,7 @@
       "code": "EHOSTDOWN",
       "syscall": "fstat",
       "path": "",
-      "message": "EHOSTDOWN: host is down, fstat"
+      "message": "EHOSTDOWN: host is down, fstat ''"
     },
     {
       "code": "EHOSTDOWN",
@@ -2424,7 +2424,7 @@
       "code": "EHOSTDOWN",
       "syscall": "scandir",
       "path": "",
-      "message": "EHOSTDOWN: host is down, scandir"
+      "message": "EHOSTDOWN: host is down, scandir ''"
     },
     {
       "code": "EHOSTDOWN",
@@ -2441,7 +2441,7 @@
       "code": "EHOSTDOWN",
       "syscall": "realpath",
       "path": "",
-      "message": "EHOSTDOWN: host is down, realpath"
+      "message": "EHOSTDOWN: host is down, realpath ''"
     },
     {
       "code": "EHOSTDOWN",
@@ -2458,7 +2458,7 @@
       "code": "EHOSTUNREACH",
       "syscall": "stat",
       "path": "",
-      "message": "EHOSTUNREACH: host is unreachable, stat"
+      "message": "EHOSTUNREACH: host is unreachable, stat ''"
     },
     {
       "code": "EHOSTUNREACH",
@@ -2475,7 +2475,7 @@
       "code": "EHOSTUNREACH",
       "syscall": "open",
       "path": "",
-      "message": "EHOSTUNREACH: host is unreachable, open"
+      "message": "EHOSTUNREACH: host is unreachable, open ''"
     },
     {
       "code": "EHOSTUNREACH",
@@ -2492,7 +2492,7 @@
       "code": "EHOSTUNREACH",
       "syscall": "read",
       "path": "",
-      "message": "EHOSTUNREACH: host is unreachable, read"
+      "message": "EHOSTUNREACH: host is unreachable, read ''"
     },
     {
       "code": "EHOSTUNREACH",
@@ -2509,7 +2509,7 @@
       "code": "EHOSTUNREACH",
       "syscall": "fstat",
       "path": "",
-      "message": "EHOSTUNREACH: host is unreachable, fstat"
+      "message": "EHOSTUNREACH: host is unreachable, fstat ''"
     },
     {
       "code": "EHOSTUNREACH",
@@ -2526,7 +2526,7 @@
       "code": "EHOSTUNREACH",
       "syscall": "scandir",
       "path": "",
-      "message": "EHOSTUNREACH: host is unreachable, scandir"
+      "message": "EHOSTUNREACH: host is unreachable, scandir ''"
     },
     {
       "code": "EHOSTUNREACH",
@@ -2543,7 +2543,7 @@
       "code": "EHOSTUNREACH",
       "syscall": "realpath",
       "path": "",
-      "message": "EHOSTUNREACH: host is unreachable, realpath"
+      "message": "EHOSTUNREACH: host is unreachable, realpath ''"
     },
     {
       "code": "EHOSTUNREACH",
@@ -2560,7 +2560,7 @@
       "code": "EILSEQ",
       "syscall": "stat",
       "path": "",
-      "message": "EILSEQ: illegal byte sequence, stat"
+      "message": "EILSEQ: illegal byte sequence, stat ''"
     },
     {
       "code": "EILSEQ",
@@ -2577,7 +2577,7 @@
       "code": "EILSEQ",
       "syscall": "open",
       "path": "",
-      "message": "EILSEQ: illegal byte sequence, open"
+      "message": "EILSEQ: illegal byte sequence, open ''"
     },
     {
       "code": "EILSEQ",
@@ -2594,7 +2594,7 @@
       "code": "EILSEQ",
       "syscall": "read",
       "path": "",
-      "message": "EILSEQ: illegal byte sequence, read"
+      "message": "EILSEQ: illegal byte sequence, read ''"
     },
     {
       "code": "EILSEQ",
@@ -2611,7 +2611,7 @@
       "code": "EILSEQ",
       "syscall": "fstat",
       "path": "",
-      "message": "EILSEQ: illegal byte sequence, fstat"
+      "message": "EILSEQ: illegal byte sequence, fstat ''"
     },
     {
       "code": "EILSEQ",
@@ -2628,7 +2628,7 @@
       "code": "EILSEQ",
       "syscall": "scandir",
       "path": "",
-      "message": "EILSEQ: illegal byte sequence, scandir"
+      "message": "EILSEQ: illegal byte sequence, scandir ''"
     },
     {
       "code": "EILSEQ",
@@ -2645,7 +2645,7 @@
       "code": "EILSEQ",
       "syscall": "realpath",
       "path": "",
-      "message": "EILSEQ: illegal byte sequence, realpath"
+      "message": "EILSEQ: illegal byte sequence, realpath ''"
     },
     {
       "code": "EILSEQ",
@@ -2662,7 +2662,7 @@
       "code": "EINTR",
       "syscall": "stat",
       "path": "",
-      "message": "EINTR: interrupted system call, stat"
+      "message": "EINTR: interrupted system call, stat ''"
     },
     {
       "code": "EINTR",
@@ -2679,7 +2679,7 @@
       "code": "EINTR",
       "syscall": "open",
       "path": "",
-      "message": "EINTR: interrupted system call, open"
+      "message": "EINTR: interrupted system call, open ''"
     },
     {
       "code": "EINTR",
@@ -2696,7 +2696,7 @@
       "code": "EINTR",
       "syscall": "read",
       "path": "",
-      "message": "EINTR: interrupted system call, read"
+      "message": "EINTR: interrupted system call, read ''"
     },
     {
       "code": "EINTR",
@@ -2713,7 +2713,7 @@
       "code": "EINTR",
       "syscall": "fstat",
       "path": "",
-      "message": "EINTR: interrupted system call, fstat"
+      "message": "EINTR: interrupted system call, fstat ''"
     },
     {
       "code": "EINTR",
@@ -2730,7 +2730,7 @@
       "code": "EINTR",
       "syscall": "scandir",
       "path": "",
-      "message": "EINTR: interrupted system call, scandir"
+      "message": "EINTR: interrupted system call, scandir ''"
     },
     {
       "code": "EINTR",
@@ -2747,7 +2747,7 @@
       "code": "EINTR",
       "syscall": "realpath",
       "path": "",
-      "message": "EINTR: interrupted system call, realpath"
+      "message": "EINTR: interrupted system call, realpath ''"
     },
     {
       "code": "EINTR",
@@ -2764,7 +2764,7 @@
       "code": "EINVAL",
       "syscall": "stat",
       "path": "",
-      "message": "EINVAL: invalid argument, stat"
+      "message": "EINVAL: invalid argument, stat ''"
     },
     {
       "code": "EINVAL",
@@ -2781,7 +2781,7 @@
       "code": "EINVAL",
       "syscall": "open",
       "path": "",
-      "message": "EINVAL: invalid argument, open"
+      "message": "EINVAL: invalid argument, open ''"
     },
     {
       "code": "EINVAL",
@@ -2798,7 +2798,7 @@
       "code": "EINVAL",
       "syscall": "read",
       "path": "",
-      "message": "EINVAL: invalid argument, read"
+      "message": "EINVAL: invalid argument, read ''"
     },
     {
       "code": "EINVAL",
@@ -2815,7 +2815,7 @@
       "code": "EINVAL",
       "syscall": "fstat",
       "path": "",
-      "message": "EINVAL: invalid argument, fstat"
+      "message": "EINVAL: invalid argument, fstat ''"
     },
     {
       "code": "EINVAL",
@@ -2832,7 +2832,7 @@
       "code": "EINVAL",
       "syscall": "scandir",
       "path": "",
-      "message": "EINVAL: invalid argument, scandir"
+      "message": "EINVAL: invalid argument, scandir ''"
     },
     {
       "code": "EINVAL",
@@ -2849,7 +2849,7 @@
       "code": "EINVAL",
       "syscall": "realpath",
       "path": "",
-      "message": "EINVAL: invalid argument, realpath"
+      "message": "EINVAL: invalid argument, realpath ''"
     },
     {
       "code": "EINVAL",
@@ -2866,7 +2866,7 @@
       "code": "EIO",
       "syscall": "stat",
       "path": "",
-      "message": "EIO: i/o error, stat"
+      "message": "EIO: i/o error, stat ''"
     },
     {
       "code": "EIO",
@@ -2883,7 +2883,7 @@
       "code": "EIO",
       "syscall": "open",
       "path": "",
-      "message": "EIO: i/o error, open"
+      "message": "EIO: i/o error, open ''"
     },
     {
       "code": "EIO",
@@ -2900,7 +2900,7 @@
       "code": "EIO",
       "syscall": "read",
       "path": "",
-      "message": "EIO: i/o error, read"
+      "message": "EIO: i/o error, read ''"
     },
     {
       "code": "EIO",
@@ -2917,7 +2917,7 @@
       "code": "EIO",
       "syscall": "fstat",
       "path": "",
-      "message": "EIO: i/o error, fstat"
+      "message": "EIO: i/o error, fstat ''"
     },
     {
       "code": "EIO",
@@ -2934,7 +2934,7 @@
       "code": "EIO",
       "syscall": "scandir",
       "path": "",
-      "message": "EIO: i/o error, scandir"
+      "message": "EIO: i/o error, scandir ''"
     },
     {
       "code": "EIO",
@@ -2951,7 +2951,7 @@
       "code": "EIO",
       "syscall": "realpath",
       "path": "",
-      "message": "EIO: i/o error, realpath"
+      "message": "EIO: i/o error, realpath ''"
     },
     {
       "code": "EIO",
@@ -2968,7 +2968,7 @@
       "code": "EISCONN",
       "syscall": "stat",
       "path": "",
-      "message": "EISCONN: socket is already connected, stat"
+      "message": "EISCONN: socket is already connected, stat ''"
     },
     {
       "code": "EISCONN",
@@ -2985,7 +2985,7 @@
       "code": "EISCONN",
       "syscall": "open",
       "path": "",
-      "message": "EISCONN: socket is already connected, open"
+      "message": "EISCONN: socket is already connected, open ''"
     },
     {
       "code": "EISCONN",
@@ -3002,7 +3002,7 @@
       "code": "EISCONN",
       "syscall": "read",
       "path": "",
-      "message": "EISCONN: socket is already connected, read"
+      "message": "EISCONN: socket is already connected, read ''"
     },
     {
       "code": "EISCONN",
@@ -3019,7 +3019,7 @@
       "code": "EISCONN",
       "syscall": "fstat",
       "path": "",
-      "message": "EISCONN: socket is already connected, fstat"
+      "message": "EISCONN: socket is already connected, fstat ''"
     },
     {
       "code": "EISCONN",
@@ -3036,7 +3036,7 @@
       "code": "EISCONN",
       "syscall": "scandir",
       "path": "",
-      "message": "EISCONN: socket is already connected, scandir"
+      "message": "EISCONN: socket is already connected, scandir ''"
     },
     {
       "code": "EISCONN",
@@ -3053,7 +3053,7 @@
       "code": "EISCONN",
       "syscall": "realpath",
       "path": "",
-      "message": "EISCONN: socket is already connected, realpath"
+      "message": "EISCONN: socket is already connected, realpath ''"
     },
     {
       "code": "EISCONN",
@@ -3070,7 +3070,7 @@
       "code": "EISDIR",
       "syscall": "stat",
       "path": "",
-      "message": "EISDIR: illegal operation on a directory, stat"
+      "message": "EISDIR: illegal operation on a directory, stat ''"
     },
     {
       "code": "EISDIR",
@@ -3087,7 +3087,7 @@
       "code": "EISDIR",
       "syscall": "open",
       "path": "",
-      "message": "EISDIR: illegal operation on a directory, open"
+      "message": "EISDIR: illegal operation on a directory, open ''"
     },
     {
       "code": "EISDIR",
@@ -3104,7 +3104,7 @@
       "code": "EISDIR",
       "syscall": "read",
       "path": "",
-      "message": "EISDIR: illegal operation on a directory, read"
+      "message": "EISDIR: illegal operation on a directory, read ''"
     },
     {
       "code": "EISDIR",
@@ -3121,7 +3121,7 @@
       "code": "EISDIR",
       "syscall": "fstat",
       "path": "",
-      "message": "EISDIR: illegal operation on a directory, fstat"
+      "message": "EISDIR: illegal operation on a directory, fstat ''"
     },
     {
       "code": "EISDIR",
@@ -3138,7 +3138,7 @@
       "code": "EISDIR",
       "syscall": "scandir",
       "path": "",
-      "message": "EISDIR: illegal operation on a directory, scandir"
+      "message": "EISDIR: illegal operation on a directory, scandir ''"
     },
     {
       "code": "EISDIR",
@@ -3155,7 +3155,7 @@
       "code": "EISDIR",
       "syscall": "realpath",
       "path": "",
-      "message": "EISDIR: illegal operation on a directory, realpath"
+      "message": "EISDIR: illegal operation on a directory, realpath ''"
     },
     {
       "code": "EISDIR",
@@ -3172,7 +3172,7 @@
       "code": "ELOOP",
       "syscall": "stat",
       "path": "",
-      "message": "ELOOP: too many symbolic links encountered, stat"
+      "message": "ELOOP: too many symbolic links encountered, stat ''"
     },
     {
       "code": "ELOOP",
@@ -3189,7 +3189,7 @@
       "code": "ELOOP",
       "syscall": "open",
       "path": "",
-      "message": "ELOOP: too many symbolic links encountered, open"
+      "message": "ELOOP: too many symbolic links encountered, open ''"
     },
     {
       "code": "ELOOP",
@@ -3206,7 +3206,7 @@
       "code": "ELOOP",
       "syscall": "read",
       "path": "",
-      "message": "ELOOP: too many symbolic links encountered, read"
+      "message": "ELOOP: too many symbolic links encountered, read ''"
     },
     {
       "code": "ELOOP",
@@ -3223,7 +3223,7 @@
       "code": "ELOOP",
       "syscall": "fstat",
       "path": "",
-      "message": "ELOOP: too many symbolic links encountered, fstat"
+      "message": "ELOOP: too many symbolic links encountered, fstat ''"
     },
     {
       "code": "ELOOP",
@@ -3240,7 +3240,7 @@
       "code": "ELOOP",
       "syscall": "scandir",
       "path": "",
-      "message": "ELOOP: too many symbolic links encountered, scandir"
+      "message": "ELOOP: too many symbolic links encountered, scandir ''"
     },
     {
       "code": "ELOOP",
@@ -3257,7 +3257,7 @@
       "code": "ELOOP",
       "syscall": "realpath",
       "path": "",
-      "message": "ELOOP: too many symbolic links encountered, realpath"
+      "message": "ELOOP: too many symbolic links encountered, realpath ''"
     },
     {
       "code": "ELOOP",
@@ -3274,7 +3274,7 @@
       "code": "EMFILE",
       "syscall": "stat",
       "path": "",
-      "message": "EMFILE: too many open files, stat"
+      "message": "EMFILE: too many open files, stat ''"
     },
     {
       "code": "EMFILE",
@@ -3291,7 +3291,7 @@
       "code": "EMFILE",
       "syscall": "open",
       "path": "",
-      "message": "EMFILE: too many open files, open"
+      "message": "EMFILE: too many open files, open ''"
     },
     {
       "code": "EMFILE",
@@ -3308,7 +3308,7 @@
       "code": "EMFILE",
       "syscall": "read",
       "path": "",
-      "message": "EMFILE: too many open files, read"
+      "message": "EMFILE: too many open files, read ''"
     },
     {
       "code": "EMFILE",
@@ -3325,7 +3325,7 @@
       "code": "EMFILE",
       "syscall": "fstat",
       "path": "",
-      "message": "EMFILE: too many open files, fstat"
+      "message": "EMFILE: too many open files, fstat ''"
     },
     {
       "code": "EMFILE",
@@ -3342,7 +3342,7 @@
       "code": "EMFILE",
       "syscall": "scandir",
       "path": "",
-      "message": "EMFILE: too many open files, scandir"
+      "message": "EMFILE: too many open files, scandir ''"
     },
     {
       "code": "EMFILE",
@@ -3359,7 +3359,7 @@
       "code": "EMFILE",
       "syscall": "realpath",
       "path": "",
-      "message": "EMFILE: too many open files, realpath"
+      "message": "EMFILE: too many open files, realpath ''"
     },
     {
       "code": "EMFILE",
@@ -3376,7 +3376,7 @@
       "code": "EMLINK",
       "syscall": "stat",
       "path": "",
-      "message": "EMLINK: too many links, stat"
+      "message": "EMLINK: too many links, stat ''"
     },
     {
       "code": "EMLINK",
@@ -3393,7 +3393,7 @@
       "code": "EMLINK",
       "syscall": "open",
       "path": "",
-      "message": "EMLINK: too many links, open"
+      "message": "EMLINK: too many links, open ''"
     },
     {
       "code": "EMLINK",
@@ -3410,7 +3410,7 @@
       "code": "EMLINK",
       "syscall": "read",
       "path": "",
-      "message": "EMLINK: too many links, read"
+      "message": "EMLINK: too many links, read ''"
     },
     {
       "code": "EMLINK",
@@ -3427,7 +3427,7 @@
       "code": "EMLINK",
       "syscall": "fstat",
       "path": "",
-      "message": "EMLINK: too many links, fstat"
+      "message": "EMLINK: too many links, fstat ''"
     },
     {
       "code": "EMLINK",
@@ -3444,7 +3444,7 @@
       "code": "EMLINK",
       "syscall": "scandir",
       "path": "",
-      "message": "EMLINK: too many links, scandir"
+      "message": "EMLINK: too many links, scandir ''"
     },
     {
       "code": "EMLINK",
@@ -3461,7 +3461,7 @@
       "code": "EMLINK",
       "syscall": "realpath",
       "path": "",
-      "message": "EMLINK: too many links, realpath"
+      "message": "EMLINK: too many links, realpath ''"
     },
     {
       "code": "EMLINK",
@@ -3478,7 +3478,7 @@
       "code": "EMSGSIZE",
       "syscall": "stat",
       "path": "",
-      "message": "EMSGSIZE: message too long, stat"
+      "message": "EMSGSIZE: message too long, stat ''"
     },
     {
       "code": "EMSGSIZE",
@@ -3495,7 +3495,7 @@
       "code": "EMSGSIZE",
       "syscall": "open",
       "path": "",
-      "message": "EMSGSIZE: message too long, open"
+      "message": "EMSGSIZE: message too long, open ''"
     },
     {
       "code": "EMSGSIZE",
@@ -3512,7 +3512,7 @@
       "code": "EMSGSIZE",
       "syscall": "read",
       "path": "",
-      "message": "EMSGSIZE: message too long, read"
+      "message": "EMSGSIZE: message too long, read ''"
     },
     {
       "code": "EMSGSIZE",
@@ -3529,7 +3529,7 @@
       "code": "EMSGSIZE",
       "syscall": "fstat",
       "path": "",
-      "message": "EMSGSIZE: message too long, fstat"
+      "message": "EMSGSIZE: message too long, fstat ''"
     },
     {
       "code": "EMSGSIZE",
@@ -3546,7 +3546,7 @@
       "code": "EMSGSIZE",
       "syscall": "scandir",
       "path": "",
-      "message": "EMSGSIZE: message too long, scandir"
+      "message": "EMSGSIZE: message too long, scandir ''"
     },
     {
       "code": "EMSGSIZE",
@@ -3563,7 +3563,7 @@
       "code": "EMSGSIZE",
       "syscall": "realpath",
       "path": "",
-      "message": "EMSGSIZE: message too long, realpath"
+      "message": "EMSGSIZE: message too long, realpath ''"
     },
     {
       "code": "EMSGSIZE",
@@ -3580,7 +3580,7 @@
       "code": "ENAMETOOLONG",
       "syscall": "stat",
       "path": "",
-      "message": "ENAMETOOLONG: name too long, stat"
+      "message": "ENAMETOOLONG: name too long, stat ''"
     },
     {
       "code": "ENAMETOOLONG",
@@ -3597,7 +3597,7 @@
       "code": "ENAMETOOLONG",
       "syscall": "open",
       "path": "",
-      "message": "ENAMETOOLONG: name too long, open"
+      "message": "ENAMETOOLONG: name too long, open ''"
     },
     {
       "code": "ENAMETOOLONG",
@@ -3614,7 +3614,7 @@
       "code": "ENAMETOOLONG",
       "syscall": "read",
       "path": "",
-      "message": "ENAMETOOLONG: name too long, read"
+      "message": "ENAMETOOLONG: name too long, read ''"
     },
     {
       "code": "ENAMETOOLONG",
@@ -3631,7 +3631,7 @@
       "code": "ENAMETOOLONG",
       "syscall": "fstat",
       "path": "",
-      "message": "ENAMETOOLONG: name too long, fstat"
+      "message": "ENAMETOOLONG: name too long, fstat ''"
     },
     {
       "code": "ENAMETOOLONG",
@@ -3648,7 +3648,7 @@
       "code": "ENAMETOOLONG",
       "syscall": "scandir",
       "path": "",
-      "message": "ENAMETOOLONG: name too long, scandir"
+      "message": "ENAMETOOLONG: name too long, scandir ''"
     },
     {
       "code": "ENAMETOOLONG",
@@ -3665,7 +3665,7 @@
       "code": "ENAMETOOLONG",
       "syscall": "realpath",
       "path": "",
-      "message": "ENAMETOOLONG: name too long, realpath"
+      "message": "ENAMETOOLONG: name too long, realpath ''"
     },
     {
       "code": "ENAMETOOLONG",
@@ -3682,7 +3682,7 @@
       "code": "ENETDOWN",
       "syscall": "stat",
       "path": "",
-      "message": "ENETDOWN: network is down, stat"
+      "message": "ENETDOWN: network is down, stat ''"
     },
     {
       "code": "ENETDOWN",
@@ -3699,7 +3699,7 @@
       "code": "ENETDOWN",
       "syscall": "open",
       "path": "",
-      "message": "ENETDOWN: network is down, open"
+      "message": "ENETDOWN: network is down, open ''"
     },
     {
       "code": "ENETDOWN",
@@ -3716,7 +3716,7 @@
       "code": "ENETDOWN",
       "syscall": "read",
       "path": "",
-      "message": "ENETDOWN: network is down, read"
+      "message": "ENETDOWN: network is down, read ''"
     },
     {
       "code": "ENETDOWN",
@@ -3733,7 +3733,7 @@
       "code": "ENETDOWN",
       "syscall": "fstat",
       "path": "",
-      "message": "ENETDOWN: network is down, fstat"
+      "message": "ENETDOWN: network is down, fstat ''"
     },
     {
       "code": "ENETDOWN",
@@ -3750,7 +3750,7 @@
       "code": "ENETDOWN",
       "syscall": "scandir",
       "path": "",
-      "message": "ENETDOWN: network is down, scandir"
+      "message": "ENETDOWN: network is down, scandir ''"
     },
     {
       "code": "ENETDOWN",
@@ -3767,7 +3767,7 @@
       "code": "ENETDOWN",
       "syscall": "realpath",
       "path": "",
-      "message": "ENETDOWN: network is down, realpath"
+      "message": "ENETDOWN: network is down, realpath ''"
     },
     {
       "code": "ENETDOWN",
@@ -3784,7 +3784,7 @@
       "code": "ENETUNREACH",
       "syscall": "stat",
       "path": "",
-      "message": "ENETUNREACH: network is unreachable, stat"
+      "message": "ENETUNREACH: network is unreachable, stat ''"
     },
     {
       "code": "ENETUNREACH",
@@ -3801,7 +3801,7 @@
       "code": "ENETUNREACH",
       "syscall": "open",
       "path": "",
-      "message": "ENETUNREACH: network is unreachable, open"
+      "message": "ENETUNREACH: network is unreachable, open ''"
     },
     {
       "code": "ENETUNREACH",
@@ -3818,7 +3818,7 @@
       "code": "ENETUNREACH",
       "syscall": "read",
       "path": "",
-      "message": "ENETUNREACH: network is unreachable, read"
+      "message": "ENETUNREACH: network is unreachable, read ''"
     },
     {
       "code": "ENETUNREACH",
@@ -3835,7 +3835,7 @@
       "code": "ENETUNREACH",
       "syscall": "fstat",
       "path": "",
-      "message": "ENETUNREACH: network is unreachable, fstat"
+      "message": "ENETUNREACH: network is unreachable, fstat ''"
     },
     {
       "code": "ENETUNREACH",
@@ -3852,7 +3852,7 @@
       "code": "ENETUNREACH",
       "syscall": "scandir",
       "path": "",
-      "message": "ENETUNREACH: network is unreachable, scandir"
+      "message": "ENETUNREACH: network is unreachable, scandir ''"
     },
     {
       "code": "ENETUNREACH",
@@ -3869,7 +3869,7 @@
       "code": "ENETUNREACH",
       "syscall": "realpath",
       "path": "",
-      "message": "ENETUNREACH: network is unreachable, realpath"
+      "message": "ENETUNREACH: network is unreachable, realpath ''"
     },
     {
       "code": "ENETUNREACH",
@@ -3886,7 +3886,7 @@
       "code": "ENFILE",
       "syscall": "stat",
       "path": "",
-      "message": "ENFILE: file table overflow, stat"
+      "message": "ENFILE: file table overflow, stat ''"
     },
     {
       "code": "ENFILE",
@@ -3903,7 +3903,7 @@
       "code": "ENFILE",
       "syscall": "open",
       "path": "",
-      "message": "ENFILE: file table overflow, open"
+      "message": "ENFILE: file table overflow, open ''"
     },
     {
       "code": "ENFILE",
@@ -3920,7 +3920,7 @@
       "code": "ENFILE",
       "syscall": "read",
       "path": "",
-      "message": "ENFILE: file table overflow, read"
+      "message": "ENFILE: file table overflow, read ''"
     },
     {
       "code": "ENFILE",
@@ -3937,7 +3937,7 @@
       "code": "ENFILE",
       "syscall": "fstat",
       "path": "",
-      "message": "ENFILE: file table overflow, fstat"
+      "message": "ENFILE: file table overflow, fstat ''"
     },
     {
       "code": "ENFILE",
@@ -3954,7 +3954,7 @@
       "code": "ENFILE",
       "syscall": "scandir",
       "path": "",
-      "message": "ENFILE: file table overflow, scandir"
+      "message": "ENFILE: file table overflow, scandir ''"
     },
     {
       "code": "ENFILE",
@@ -3971,7 +3971,7 @@
       "code": "ENFILE",
       "syscall": "realpath",
       "path": "",
-      "message": "ENFILE: file table overflow, realpath"
+      "message": "ENFILE: file table overflow, realpath ''"
     },
     {
       "code": "ENFILE",
@@ -3988,7 +3988,7 @@
       "code": "ENOBUFS",
       "syscall": "stat",
       "path": "",
-      "message": "ENOBUFS: no buffer space available, stat"
+      "message": "ENOBUFS: no buffer space available, stat ''"
     },
     {
       "code": "ENOBUFS",
@@ -4005,7 +4005,7 @@
       "code": "ENOBUFS",
       "syscall": "open",
       "path": "",
-      "message": "ENOBUFS: no buffer space available, open"
+      "message": "ENOBUFS: no buffer space available, open ''"
     },
     {
       "code": "ENOBUFS",
@@ -4022,7 +4022,7 @@
       "code": "ENOBUFS",
       "syscall": "read",
       "path": "",
-      "message": "ENOBUFS: no buffer space available, read"
+      "message": "ENOBUFS: no buffer space available, read ''"
     },
     {
       "code": "ENOBUFS",
@@ -4039,7 +4039,7 @@
       "code": "ENOBUFS",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOBUFS: no buffer space available, fstat"
+      "message": "ENOBUFS: no buffer space available, fstat ''"
     },
     {
       "code": "ENOBUFS",
@@ -4056,7 +4056,7 @@
       "code": "ENOBUFS",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOBUFS: no buffer space available, scandir"
+      "message": "ENOBUFS: no buffer space available, scandir ''"
     },
     {
       "code": "ENOBUFS",
@@ -4073,7 +4073,7 @@
       "code": "ENOBUFS",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOBUFS: no buffer space available, realpath"
+      "message": "ENOBUFS: no buffer space available, realpath ''"
     },
     {
       "code": "ENOBUFS",
@@ -4090,7 +4090,7 @@
       "code": "ENODATA",
       "syscall": "stat",
       "path": "",
-      "message": "ENODATA: no data available, stat"
+      "message": "ENODATA: no data available, stat ''"
     },
     {
       "code": "ENODATA",
@@ -4107,7 +4107,7 @@
       "code": "ENODATA",
       "syscall": "open",
       "path": "",
-      "message": "ENODATA: no data available, open"
+      "message": "ENODATA: no data available, open ''"
     },
     {
       "code": "ENODATA",
@@ -4124,7 +4124,7 @@
       "code": "ENODATA",
       "syscall": "read",
       "path": "",
-      "message": "ENODATA: no data available, read"
+      "message": "ENODATA: no data available, read ''"
     },
     {
       "code": "ENODATA",
@@ -4141,7 +4141,7 @@
       "code": "ENODATA",
       "syscall": "fstat",
       "path": "",
-      "message": "ENODATA: no data available, fstat"
+      "message": "ENODATA: no data available, fstat ''"
     },
     {
       "code": "ENODATA",
@@ -4158,7 +4158,7 @@
       "code": "ENODATA",
       "syscall": "scandir",
       "path": "",
-      "message": "ENODATA: no data available, scandir"
+      "message": "ENODATA: no data available, scandir ''"
     },
     {
       "code": "ENODATA",
@@ -4175,7 +4175,7 @@
       "code": "ENODATA",
       "syscall": "realpath",
       "path": "",
-      "message": "ENODATA: no data available, realpath"
+      "message": "ENODATA: no data available, realpath ''"
     },
     {
       "code": "ENODATA",
@@ -4192,7 +4192,7 @@
       "code": "ENODEV",
       "syscall": "stat",
       "path": "",
-      "message": "ENODEV: no such device, stat"
+      "message": "ENODEV: no such device, stat ''"
     },
     {
       "code": "ENODEV",
@@ -4209,7 +4209,7 @@
       "code": "ENODEV",
       "syscall": "open",
       "path": "",
-      "message": "ENODEV: no such device, open"
+      "message": "ENODEV: no such device, open ''"
     },
     {
       "code": "ENODEV",
@@ -4226,7 +4226,7 @@
       "code": "ENODEV",
       "syscall": "read",
       "path": "",
-      "message": "ENODEV: no such device, read"
+      "message": "ENODEV: no such device, read ''"
     },
     {
       "code": "ENODEV",
@@ -4243,7 +4243,7 @@
       "code": "ENODEV",
       "syscall": "fstat",
       "path": "",
-      "message": "ENODEV: no such device, fstat"
+      "message": "ENODEV: no such device, fstat ''"
     },
     {
       "code": "ENODEV",
@@ -4260,7 +4260,7 @@
       "code": "ENODEV",
       "syscall": "scandir",
       "path": "",
-      "message": "ENODEV: no such device, scandir"
+      "message": "ENODEV: no such device, scandir ''"
     },
     {
       "code": "ENODEV",
@@ -4277,7 +4277,7 @@
       "code": "ENODEV",
       "syscall": "realpath",
       "path": "",
-      "message": "ENODEV: no such device, realpath"
+      "message": "ENODEV: no such device, realpath ''"
     },
     {
       "code": "ENODEV",
@@ -4294,7 +4294,7 @@
       "code": "ENOENT",
       "syscall": "stat",
       "path": "",
-      "message": "ENOENT: no such file or directory, stat"
+      "message": "ENOENT: no such file or directory, stat ''"
     },
     {
       "code": "ENOENT",
@@ -4311,7 +4311,7 @@
       "code": "ENOENT",
       "syscall": "open",
       "path": "",
-      "message": "ENOENT: no such file or directory, open"
+      "message": "ENOENT: no such file or directory, open ''"
     },
     {
       "code": "ENOENT",
@@ -4328,7 +4328,7 @@
       "code": "ENOENT",
       "syscall": "read",
       "path": "",
-      "message": "ENOENT: no such file or directory, read"
+      "message": "ENOENT: no such file or directory, read ''"
     },
     {
       "code": "ENOENT",
@@ -4345,7 +4345,7 @@
       "code": "ENOENT",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOENT: no such file or directory, fstat"
+      "message": "ENOENT: no such file or directory, fstat ''"
     },
     {
       "code": "ENOENT",
@@ -4362,7 +4362,7 @@
       "code": "ENOENT",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOENT: no such file or directory, scandir"
+      "message": "ENOENT: no such file or directory, scandir ''"
     },
     {
       "code": "ENOENT",
@@ -4379,7 +4379,7 @@
       "code": "ENOENT",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOENT: no such file or directory, realpath"
+      "message": "ENOENT: no such file or directory, realpath ''"
     },
     {
       "code": "ENOENT",
@@ -4396,7 +4396,7 @@
       "code": "ENOEXEC",
       "syscall": "stat",
       "path": "",
-      "message": "ENOEXEC: exec format error, stat"
+      "message": "ENOEXEC: exec format error, stat ''"
     },
     {
       "code": "ENOEXEC",
@@ -4413,7 +4413,7 @@
       "code": "ENOEXEC",
       "syscall": "open",
       "path": "",
-      "message": "ENOEXEC: exec format error, open"
+      "message": "ENOEXEC: exec format error, open ''"
     },
     {
       "code": "ENOEXEC",
@@ -4430,7 +4430,7 @@
       "code": "ENOEXEC",
       "syscall": "read",
       "path": "",
-      "message": "ENOEXEC: exec format error, read"
+      "message": "ENOEXEC: exec format error, read ''"
     },
     {
       "code": "ENOEXEC",
@@ -4447,7 +4447,7 @@
       "code": "ENOEXEC",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOEXEC: exec format error, fstat"
+      "message": "ENOEXEC: exec format error, fstat ''"
     },
     {
       "code": "ENOEXEC",
@@ -4464,7 +4464,7 @@
       "code": "ENOEXEC",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOEXEC: exec format error, scandir"
+      "message": "ENOEXEC: exec format error, scandir ''"
     },
     {
       "code": "ENOEXEC",
@@ -4481,7 +4481,7 @@
       "code": "ENOEXEC",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOEXEC: exec format error, realpath"
+      "message": "ENOEXEC: exec format error, realpath ''"
     },
     {
       "code": "ENOEXEC",
@@ -4498,7 +4498,7 @@
       "code": "ENOMEM",
       "syscall": "stat",
       "path": "",
-      "message": "ENOMEM: not enough memory, stat"
+      "message": "ENOMEM: not enough memory, stat ''"
     },
     {
       "code": "ENOMEM",
@@ -4515,7 +4515,7 @@
       "code": "ENOMEM",
       "syscall": "open",
       "path": "",
-      "message": "ENOMEM: not enough memory, open"
+      "message": "ENOMEM: not enough memory, open ''"
     },
     {
       "code": "ENOMEM",
@@ -4532,7 +4532,7 @@
       "code": "ENOMEM",
       "syscall": "read",
       "path": "",
-      "message": "ENOMEM: not enough memory, read"
+      "message": "ENOMEM: not enough memory, read ''"
     },
     {
       "code": "ENOMEM",
@@ -4549,7 +4549,7 @@
       "code": "ENOMEM",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOMEM: not enough memory, fstat"
+      "message": "ENOMEM: not enough memory, fstat ''"
     },
     {
       "code": "ENOMEM",
@@ -4566,7 +4566,7 @@
       "code": "ENOMEM",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOMEM: not enough memory, scandir"
+      "message": "ENOMEM: not enough memory, scandir ''"
     },
     {
       "code": "ENOMEM",
@@ -4583,7 +4583,7 @@
       "code": "ENOMEM",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOMEM: not enough memory, realpath"
+      "message": "ENOMEM: not enough memory, realpath ''"
     },
     {
       "code": "ENOMEM",
@@ -4600,7 +4600,7 @@
       "code": "ENONET",
       "syscall": "stat",
       "path": "",
-      "message": "ENONET: machine is not on the network, stat"
+      "message": "ENONET: machine is not on the network, stat ''"
     },
     {
       "code": "ENONET",
@@ -4617,7 +4617,7 @@
       "code": "ENONET",
       "syscall": "open",
       "path": "",
-      "message": "ENONET: machine is not on the network, open"
+      "message": "ENONET: machine is not on the network, open ''"
     },
     {
       "code": "ENONET",
@@ -4634,7 +4634,7 @@
       "code": "ENONET",
       "syscall": "read",
       "path": "",
-      "message": "ENONET: machine is not on the network, read"
+      "message": "ENONET: machine is not on the network, read ''"
     },
     {
       "code": "ENONET",
@@ -4651,7 +4651,7 @@
       "code": "ENONET",
       "syscall": "fstat",
       "path": "",
-      "message": "ENONET: machine is not on the network, fstat"
+      "message": "ENONET: machine is not on the network, fstat ''"
     },
     {
       "code": "ENONET",
@@ -4668,7 +4668,7 @@
       "code": "ENONET",
       "syscall": "scandir",
       "path": "",
-      "message": "ENONET: machine is not on the network, scandir"
+      "message": "ENONET: machine is not on the network, scandir ''"
     },
     {
       "code": "ENONET",
@@ -4685,7 +4685,7 @@
       "code": "ENONET",
       "syscall": "realpath",
       "path": "",
-      "message": "ENONET: machine is not on the network, realpath"
+      "message": "ENONET: machine is not on the network, realpath ''"
     },
     {
       "code": "ENONET",
@@ -4702,7 +4702,7 @@
       "code": "ENOPROTOOPT",
       "syscall": "stat",
       "path": "",
-      "message": "ENOPROTOOPT: protocol not available, stat"
+      "message": "ENOPROTOOPT: protocol not available, stat ''"
     },
     {
       "code": "ENOPROTOOPT",
@@ -4719,7 +4719,7 @@
       "code": "ENOPROTOOPT",
       "syscall": "open",
       "path": "",
-      "message": "ENOPROTOOPT: protocol not available, open"
+      "message": "ENOPROTOOPT: protocol not available, open ''"
     },
     {
       "code": "ENOPROTOOPT",
@@ -4736,7 +4736,7 @@
       "code": "ENOPROTOOPT",
       "syscall": "read",
       "path": "",
-      "message": "ENOPROTOOPT: protocol not available, read"
+      "message": "ENOPROTOOPT: protocol not available, read ''"
     },
     {
       "code": "ENOPROTOOPT",
@@ -4753,7 +4753,7 @@
       "code": "ENOPROTOOPT",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOPROTOOPT: protocol not available, fstat"
+      "message": "ENOPROTOOPT: protocol not available, fstat ''"
     },
     {
       "code": "ENOPROTOOPT",
@@ -4770,7 +4770,7 @@
       "code": "ENOPROTOOPT",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOPROTOOPT: protocol not available, scandir"
+      "message": "ENOPROTOOPT: protocol not available, scandir ''"
     },
     {
       "code": "ENOPROTOOPT",
@@ -4787,7 +4787,7 @@
       "code": "ENOPROTOOPT",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOPROTOOPT: protocol not available, realpath"
+      "message": "ENOPROTOOPT: protocol not available, realpath ''"
     },
     {
       "code": "ENOPROTOOPT",
@@ -4804,7 +4804,7 @@
       "code": "ENOSPC",
       "syscall": "stat",
       "path": "",
-      "message": "ENOSPC: no space left on device, stat"
+      "message": "ENOSPC: no space left on device, stat ''"
     },
     {
       "code": "ENOSPC",
@@ -4821,7 +4821,7 @@
       "code": "ENOSPC",
       "syscall": "open",
       "path": "",
-      "message": "ENOSPC: no space left on device, open"
+      "message": "ENOSPC: no space left on device, open ''"
     },
     {
       "code": "ENOSPC",
@@ -4838,7 +4838,7 @@
       "code": "ENOSPC",
       "syscall": "read",
       "path": "",
-      "message": "ENOSPC: no space left on device, read"
+      "message": "ENOSPC: no space left on device, read ''"
     },
     {
       "code": "ENOSPC",
@@ -4855,7 +4855,7 @@
       "code": "ENOSPC",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOSPC: no space left on device, fstat"
+      "message": "ENOSPC: no space left on device, fstat ''"
     },
     {
       "code": "ENOSPC",
@@ -4872,7 +4872,7 @@
       "code": "ENOSPC",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOSPC: no space left on device, scandir"
+      "message": "ENOSPC: no space left on device, scandir ''"
     },
     {
       "code": "ENOSPC",
@@ -4889,7 +4889,7 @@
       "code": "ENOSPC",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOSPC: no space left on device, realpath"
+      "message": "ENOSPC: no space left on device, realpath ''"
     },
     {
       "code": "ENOSPC",
@@ -4906,7 +4906,7 @@
       "code": "ENOSYS",
       "syscall": "stat",
       "path": "",
-      "message": "ENOSYS: function not implemented, stat"
+      "message": "ENOSYS: function not implemented, stat ''"
     },
     {
       "code": "ENOSYS",
@@ -4923,7 +4923,7 @@
       "code": "ENOSYS",
       "syscall": "open",
       "path": "",
-      "message": "ENOSYS: function not implemented, open"
+      "message": "ENOSYS: function not implemented, open ''"
     },
     {
       "code": "ENOSYS",
@@ -4940,7 +4940,7 @@
       "code": "ENOSYS",
       "syscall": "read",
       "path": "",
-      "message": "ENOSYS: function not implemented, read"
+      "message": "ENOSYS: function not implemented, read ''"
     },
     {
       "code": "ENOSYS",
@@ -4957,7 +4957,7 @@
       "code": "ENOSYS",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOSYS: function not implemented, fstat"
+      "message": "ENOSYS: function not implemented, fstat ''"
     },
     {
       "code": "ENOSYS",
@@ -4974,7 +4974,7 @@
       "code": "ENOSYS",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOSYS: function not implemented, scandir"
+      "message": "ENOSYS: function not implemented, scandir ''"
     },
     {
       "code": "ENOSYS",
@@ -4991,7 +4991,7 @@
       "code": "ENOSYS",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOSYS: function not implemented, realpath"
+      "message": "ENOSYS: function not implemented, realpath ''"
     },
     {
       "code": "ENOSYS",
@@ -5008,7 +5008,7 @@
       "code": "ENOTCONN",
       "syscall": "stat",
       "path": "",
-      "message": "ENOTCONN: socket is not connected, stat"
+      "message": "ENOTCONN: socket is not connected, stat ''"
     },
     {
       "code": "ENOTCONN",
@@ -5025,7 +5025,7 @@
       "code": "ENOTCONN",
       "syscall": "open",
       "path": "",
-      "message": "ENOTCONN: socket is not connected, open"
+      "message": "ENOTCONN: socket is not connected, open ''"
     },
     {
       "code": "ENOTCONN",
@@ -5042,7 +5042,7 @@
       "code": "ENOTCONN",
       "syscall": "read",
       "path": "",
-      "message": "ENOTCONN: socket is not connected, read"
+      "message": "ENOTCONN: socket is not connected, read ''"
     },
     {
       "code": "ENOTCONN",
@@ -5059,7 +5059,7 @@
       "code": "ENOTCONN",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOTCONN: socket is not connected, fstat"
+      "message": "ENOTCONN: socket is not connected, fstat ''"
     },
     {
       "code": "ENOTCONN",
@@ -5076,7 +5076,7 @@
       "code": "ENOTCONN",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOTCONN: socket is not connected, scandir"
+      "message": "ENOTCONN: socket is not connected, scandir ''"
     },
     {
       "code": "ENOTCONN",
@@ -5093,7 +5093,7 @@
       "code": "ENOTCONN",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOTCONN: socket is not connected, realpath"
+      "message": "ENOTCONN: socket is not connected, realpath ''"
     },
     {
       "code": "ENOTCONN",
@@ -5110,7 +5110,7 @@
       "code": "ENOTDIR",
       "syscall": "stat",
       "path": "",
-      "message": "ENOTDIR: not a directory, stat"
+      "message": "ENOTDIR: not a directory, stat ''"
     },
     {
       "code": "ENOTDIR",
@@ -5127,7 +5127,7 @@
       "code": "ENOTDIR",
       "syscall": "open",
       "path": "",
-      "message": "ENOTDIR: not a directory, open"
+      "message": "ENOTDIR: not a directory, open ''"
     },
     {
       "code": "ENOTDIR",
@@ -5144,7 +5144,7 @@
       "code": "ENOTDIR",
       "syscall": "read",
       "path": "",
-      "message": "ENOTDIR: not a directory, read"
+      "message": "ENOTDIR: not a directory, read ''"
     },
     {
       "code": "ENOTDIR",
@@ -5161,7 +5161,7 @@
       "code": "ENOTDIR",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOTDIR: not a directory, fstat"
+      "message": "ENOTDIR: not a directory, fstat ''"
     },
     {
       "code": "ENOTDIR",
@@ -5178,7 +5178,7 @@
       "code": "ENOTDIR",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOTDIR: not a directory, scandir"
+      "message": "ENOTDIR: not a directory, scandir ''"
     },
     {
       "code": "ENOTDIR",
@@ -5195,7 +5195,7 @@
       "code": "ENOTDIR",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOTDIR: not a directory, realpath"
+      "message": "ENOTDIR: not a directory, realpath ''"
     },
     {
       "code": "ENOTDIR",
@@ -5212,7 +5212,7 @@
       "code": "ENOTEMPTY",
       "syscall": "stat",
       "path": "",
-      "message": "ENOTEMPTY: directory not empty, stat"
+      "message": "ENOTEMPTY: directory not empty, stat ''"
     },
     {
       "code": "ENOTEMPTY",
@@ -5229,7 +5229,7 @@
       "code": "ENOTEMPTY",
       "syscall": "open",
       "path": "",
-      "message": "ENOTEMPTY: directory not empty, open"
+      "message": "ENOTEMPTY: directory not empty, open ''"
     },
     {
       "code": "ENOTEMPTY",
@@ -5246,7 +5246,7 @@
       "code": "ENOTEMPTY",
       "syscall": "read",
       "path": "",
-      "message": "ENOTEMPTY: directory not empty, read"
+      "message": "ENOTEMPTY: directory not empty, read ''"
     },
     {
       "code": "ENOTEMPTY",
@@ -5263,7 +5263,7 @@
       "code": "ENOTEMPTY",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOTEMPTY: directory not empty, fstat"
+      "message": "ENOTEMPTY: directory not empty, fstat ''"
     },
     {
       "code": "ENOTEMPTY",
@@ -5280,7 +5280,7 @@
       "code": "ENOTEMPTY",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOTEMPTY: directory not empty, scandir"
+      "message": "ENOTEMPTY: directory not empty, scandir ''"
     },
     {
       "code": "ENOTEMPTY",
@@ -5297,7 +5297,7 @@
       "code": "ENOTEMPTY",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOTEMPTY: directory not empty, realpath"
+      "message": "ENOTEMPTY: directory not empty, realpath ''"
     },
     {
       "code": "ENOTEMPTY",
@@ -5314,7 +5314,7 @@
       "code": "ENOTSOCK",
       "syscall": "stat",
       "path": "",
-      "message": "ENOTSOCK: socket operation on non-socket, stat"
+      "message": "ENOTSOCK: socket operation on non-socket, stat ''"
     },
     {
       "code": "ENOTSOCK",
@@ -5331,7 +5331,7 @@
       "code": "ENOTSOCK",
       "syscall": "open",
       "path": "",
-      "message": "ENOTSOCK: socket operation on non-socket, open"
+      "message": "ENOTSOCK: socket operation on non-socket, open ''"
     },
     {
       "code": "ENOTSOCK",
@@ -5348,7 +5348,7 @@
       "code": "ENOTSOCK",
       "syscall": "read",
       "path": "",
-      "message": "ENOTSOCK: socket operation on non-socket, read"
+      "message": "ENOTSOCK: socket operation on non-socket, read ''"
     },
     {
       "code": "ENOTSOCK",
@@ -5365,7 +5365,7 @@
       "code": "ENOTSOCK",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOTSOCK: socket operation on non-socket, fstat"
+      "message": "ENOTSOCK: socket operation on non-socket, fstat ''"
     },
     {
       "code": "ENOTSOCK",
@@ -5382,7 +5382,7 @@
       "code": "ENOTSOCK",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOTSOCK: socket operation on non-socket, scandir"
+      "message": "ENOTSOCK: socket operation on non-socket, scandir ''"
     },
     {
       "code": "ENOTSOCK",
@@ -5399,7 +5399,7 @@
       "code": "ENOTSOCK",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOTSOCK: socket operation on non-socket, realpath"
+      "message": "ENOTSOCK: socket operation on non-socket, realpath ''"
     },
     {
       "code": "ENOTSOCK",
@@ -5416,7 +5416,7 @@
       "code": "ENOTSUP",
       "syscall": "stat",
       "path": "",
-      "message": "ENOTSUP: operation not supported on socket, stat"
+      "message": "ENOTSUP: operation not supported on socket, stat ''"
     },
     {
       "code": "ENOTSUP",
@@ -5433,7 +5433,7 @@
       "code": "ENOTSUP",
       "syscall": "open",
       "path": "",
-      "message": "ENOTSUP: operation not supported on socket, open"
+      "message": "ENOTSUP: operation not supported on socket, open ''"
     },
     {
       "code": "ENOTSUP",
@@ -5450,7 +5450,7 @@
       "code": "ENOTSUP",
       "syscall": "read",
       "path": "",
-      "message": "ENOTSUP: operation not supported on socket, read"
+      "message": "ENOTSUP: operation not supported on socket, read ''"
     },
     {
       "code": "ENOTSUP",
@@ -5467,7 +5467,7 @@
       "code": "ENOTSUP",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOTSUP: operation not supported on socket, fstat"
+      "message": "ENOTSUP: operation not supported on socket, fstat ''"
     },
     {
       "code": "ENOTSUP",
@@ -5484,7 +5484,7 @@
       "code": "ENOTSUP",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOTSUP: operation not supported on socket, scandir"
+      "message": "ENOTSUP: operation not supported on socket, scandir ''"
     },
     {
       "code": "ENOTSUP",
@@ -5501,7 +5501,7 @@
       "code": "ENOTSUP",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOTSUP: operation not supported on socket, realpath"
+      "message": "ENOTSUP: operation not supported on socket, realpath ''"
     },
     {
       "code": "ENOTSUP",
@@ -5518,7 +5518,7 @@
       "code": "ENOTTY",
       "syscall": "stat",
       "path": "",
-      "message": "ENOTTY: inappropriate ioctl for device, stat"
+      "message": "ENOTTY: inappropriate ioctl for device, stat ''"
     },
     {
       "code": "ENOTTY",
@@ -5535,7 +5535,7 @@
       "code": "ENOTTY",
       "syscall": "open",
       "path": "",
-      "message": "ENOTTY: inappropriate ioctl for device, open"
+      "message": "ENOTTY: inappropriate ioctl for device, open ''"
     },
     {
       "code": "ENOTTY",
@@ -5552,7 +5552,7 @@
       "code": "ENOTTY",
       "syscall": "read",
       "path": "",
-      "message": "ENOTTY: inappropriate ioctl for device, read"
+      "message": "ENOTTY: inappropriate ioctl for device, read ''"
     },
     {
       "code": "ENOTTY",
@@ -5569,7 +5569,7 @@
       "code": "ENOTTY",
       "syscall": "fstat",
       "path": "",
-      "message": "ENOTTY: inappropriate ioctl for device, fstat"
+      "message": "ENOTTY: inappropriate ioctl for device, fstat ''"
     },
     {
       "code": "ENOTTY",
@@ -5586,7 +5586,7 @@
       "code": "ENOTTY",
       "syscall": "scandir",
       "path": "",
-      "message": "ENOTTY: inappropriate ioctl for device, scandir"
+      "message": "ENOTTY: inappropriate ioctl for device, scandir ''"
     },
     {
       "code": "ENOTTY",
@@ -5603,7 +5603,7 @@
       "code": "ENOTTY",
       "syscall": "realpath",
       "path": "",
-      "message": "ENOTTY: inappropriate ioctl for device, realpath"
+      "message": "ENOTTY: inappropriate ioctl for device, realpath ''"
     },
     {
       "code": "ENOTTY",
@@ -5620,7 +5620,7 @@
       "code": "ENXIO",
       "syscall": "stat",
       "path": "",
-      "message": "ENXIO: no such device or address, stat"
+      "message": "ENXIO: no such device or address, stat ''"
     },
     {
       "code": "ENXIO",
@@ -5637,7 +5637,7 @@
       "code": "ENXIO",
       "syscall": "open",
       "path": "",
-      "message": "ENXIO: no such device or address, open"
+      "message": "ENXIO: no such device or address, open ''"
     },
     {
       "code": "ENXIO",
@@ -5654,7 +5654,7 @@
       "code": "ENXIO",
       "syscall": "read",
       "path": "",
-      "message": "ENXIO: no such device or address, read"
+      "message": "ENXIO: no such device or address, read ''"
     },
     {
       "code": "ENXIO",
@@ -5671,7 +5671,7 @@
       "code": "ENXIO",
       "syscall": "fstat",
       "path": "",
-      "message": "ENXIO: no such device or address, fstat"
+      "message": "ENXIO: no such device or address, fstat ''"
     },
     {
       "code": "ENXIO",
@@ -5688,7 +5688,7 @@
       "code": "ENXIO",
       "syscall": "scandir",
       "path": "",
-      "message": "ENXIO: no such device or address, scandir"
+      "message": "ENXIO: no such device or address, scandir ''"
     },
     {
       "code": "ENXIO",
@@ -5705,7 +5705,7 @@
       "code": "ENXIO",
       "syscall": "realpath",
       "path": "",
-      "message": "ENXIO: no such device or address, realpath"
+      "message": "ENXIO: no such device or address, realpath ''"
     },
     {
       "code": "ENXIO",
@@ -5722,7 +5722,7 @@
       "code": "EOVERFLOW",
       "syscall": "stat",
       "path": "",
-      "message": "EOVERFLOW: value too large for defined data type, stat"
+      "message": "EOVERFLOW: value too large for defined data type, stat ''"
     },
     {
       "code": "EOVERFLOW",
@@ -5739,7 +5739,7 @@
       "code": "EOVERFLOW",
       "syscall": "open",
       "path": "",
-      "message": "EOVERFLOW: value too large for defined data type, open"
+      "message": "EOVERFLOW: value too large for defined data type, open ''"
     },
     {
       "code": "EOVERFLOW",
@@ -5756,7 +5756,7 @@
       "code": "EOVERFLOW",
       "syscall": "read",
       "path": "",
-      "message": "EOVERFLOW: value too large for defined data type, read"
+      "message": "EOVERFLOW: value too large for defined data type, read ''"
     },
     {
       "code": "EOVERFLOW",
@@ -5773,7 +5773,7 @@
       "code": "EOVERFLOW",
       "syscall": "fstat",
       "path": "",
-      "message": "EOVERFLOW: value too large for defined data type, fstat"
+      "message": "EOVERFLOW: value too large for defined data type, fstat ''"
     },
     {
       "code": "EOVERFLOW",
@@ -5790,7 +5790,7 @@
       "code": "EOVERFLOW",
       "syscall": "scandir",
       "path": "",
-      "message": "EOVERFLOW: value too large for defined data type, scandir"
+      "message": "EOVERFLOW: value too large for defined data type, scandir ''"
     },
     {
       "code": "EOVERFLOW",
@@ -5807,7 +5807,7 @@
       "code": "EOVERFLOW",
       "syscall": "realpath",
       "path": "",
-      "message": "EOVERFLOW: value too large for defined data type, realpath"
+      "message": "EOVERFLOW: value too large for defined data type, realpath ''"
     },
     {
       "code": "EOVERFLOW",
@@ -5824,7 +5824,7 @@
       "code": "EPERM",
       "syscall": "stat",
       "path": "",
-      "message": "EPERM: operation not permitted, stat"
+      "message": "EPERM: operation not permitted, stat ''"
     },
     {
       "code": "EPERM",
@@ -5841,7 +5841,7 @@
       "code": "EPERM",
       "syscall": "open",
       "path": "",
-      "message": "EPERM: operation not permitted, open"
+      "message": "EPERM: operation not permitted, open ''"
     },
     {
       "code": "EPERM",
@@ -5858,7 +5858,7 @@
       "code": "EPERM",
       "syscall": "read",
       "path": "",
-      "message": "EPERM: operation not permitted, read"
+      "message": "EPERM: operation not permitted, read ''"
     },
     {
       "code": "EPERM",
@@ -5875,7 +5875,7 @@
       "code": "EPERM",
       "syscall": "fstat",
       "path": "",
-      "message": "EPERM: operation not permitted, fstat"
+      "message": "EPERM: operation not permitted, fstat ''"
     },
     {
       "code": "EPERM",
@@ -5892,7 +5892,7 @@
       "code": "EPERM",
       "syscall": "scandir",
       "path": "",
-      "message": "EPERM: operation not permitted, scandir"
+      "message": "EPERM: operation not permitted, scandir ''"
     },
     {
       "code": "EPERM",
@@ -5909,7 +5909,7 @@
       "code": "EPERM",
       "syscall": "realpath",
       "path": "",
-      "message": "EPERM: operation not permitted, realpath"
+      "message": "EPERM: operation not permitted, realpath ''"
     },
     {
       "code": "EPERM",
@@ -5926,7 +5926,7 @@
       "code": "EPIPE",
       "syscall": "stat",
       "path": "",
-      "message": "EPIPE: broken pipe, stat"
+      "message": "EPIPE: broken pipe, stat ''"
     },
     {
       "code": "EPIPE",
@@ -5943,7 +5943,7 @@
       "code": "EPIPE",
       "syscall": "open",
       "path": "",
-      "message": "EPIPE: broken pipe, open"
+      "message": "EPIPE: broken pipe, open ''"
     },
     {
       "code": "EPIPE",
@@ -5960,7 +5960,7 @@
       "code": "EPIPE",
       "syscall": "read",
       "path": "",
-      "message": "EPIPE: broken pipe, read"
+      "message": "EPIPE: broken pipe, read ''"
     },
     {
       "code": "EPIPE",
@@ -5977,7 +5977,7 @@
       "code": "EPIPE",
       "syscall": "fstat",
       "path": "",
-      "message": "EPIPE: broken pipe, fstat"
+      "message": "EPIPE: broken pipe, fstat ''"
     },
     {
       "code": "EPIPE",
@@ -5994,7 +5994,7 @@
       "code": "EPIPE",
       "syscall": "scandir",
       "path": "",
-      "message": "EPIPE: broken pipe, scandir"
+      "message": "EPIPE: broken pipe, scandir ''"
     },
     {
       "code": "EPIPE",
@@ -6011,7 +6011,7 @@
       "code": "EPIPE",
       "syscall": "realpath",
       "path": "",
-      "message": "EPIPE: broken pipe, realpath"
+      "message": "EPIPE: broken pipe, realpath ''"
     },
     {
       "code": "EPIPE",
@@ -6028,7 +6028,7 @@
       "code": "EPROTO",
       "syscall": "stat",
       "path": "",
-      "message": "EPROTO: protocol error, stat"
+      "message": "EPROTO: protocol error, stat ''"
     },
     {
       "code": "EPROTO",
@@ -6045,7 +6045,7 @@
       "code": "EPROTO",
       "syscall": "open",
       "path": "",
-      "message": "EPROTO: protocol error, open"
+      "message": "EPROTO: protocol error, open ''"
     },
     {
       "code": "EPROTO",
@@ -6062,7 +6062,7 @@
       "code": "EPROTO",
       "syscall": "read",
       "path": "",
-      "message": "EPROTO: protocol error, read"
+      "message": "EPROTO: protocol error, read ''"
     },
     {
       "code": "EPROTO",
@@ -6079,7 +6079,7 @@
       "code": "EPROTO",
       "syscall": "fstat",
       "path": "",
-      "message": "EPROTO: protocol error, fstat"
+      "message": "EPROTO: protocol error, fstat ''"
     },
     {
       "code": "EPROTO",
@@ -6096,7 +6096,7 @@
       "code": "EPROTO",
       "syscall": "scandir",
       "path": "",
-      "message": "EPROTO: protocol error, scandir"
+      "message": "EPROTO: protocol error, scandir ''"
     },
     {
       "code": "EPROTO",
@@ -6113,7 +6113,7 @@
       "code": "EPROTO",
       "syscall": "realpath",
       "path": "",
-      "message": "EPROTO: protocol error, realpath"
+      "message": "EPROTO: protocol error, realpath ''"
     },
     {
       "code": "EPROTO",
@@ -6130,7 +6130,7 @@
       "code": "EPROTONOSUPPORT",
       "syscall": "stat",
       "path": "",
-      "message": "EPROTONOSUPPORT: protocol not supported, stat"
+      "message": "EPROTONOSUPPORT: protocol not supported, stat ''"
     },
     {
       "code": "EPROTONOSUPPORT",
@@ -6147,7 +6147,7 @@
       "code": "EPROTONOSUPPORT",
       "syscall": "open",
       "path": "",
-      "message": "EPROTONOSUPPORT: protocol not supported, open"
+      "message": "EPROTONOSUPPORT: protocol not supported, open ''"
     },
     {
       "code": "EPROTONOSUPPORT",
@@ -6164,7 +6164,7 @@
       "code": "EPROTONOSUPPORT",
       "syscall": "read",
       "path": "",
-      "message": "EPROTONOSUPPORT: protocol not supported, read"
+      "message": "EPROTONOSUPPORT: protocol not supported, read ''"
     },
     {
       "code": "EPROTONOSUPPORT",
@@ -6181,7 +6181,7 @@
       "code": "EPROTONOSUPPORT",
       "syscall": "fstat",
       "path": "",
-      "message": "EPROTONOSUPPORT: protocol not supported, fstat"
+      "message": "EPROTONOSUPPORT: protocol not supported, fstat ''"
     },
     {
       "code": "EPROTONOSUPPORT",
@@ -6198,7 +6198,7 @@
       "code": "EPROTONOSUPPORT",
       "syscall": "scandir",
       "path": "",
-      "message": "EPROTONOSUPPORT: protocol not supported, scandir"
+      "message": "EPROTONOSUPPORT: protocol not supported, scandir ''"
     },
     {
       "code": "EPROTONOSUPPORT",
@@ -6215,7 +6215,7 @@
       "code": "EPROTONOSUPPORT",
       "syscall": "realpath",
       "path": "",
-      "message": "EPROTONOSUPPORT: protocol not supported, realpath"
+      "message": "EPROTONOSUPPORT: protocol not supported, realpath ''"
     },
     {
       "code": "EPROTONOSUPPORT",
@@ -6232,7 +6232,7 @@
       "code": "EPROTOTYPE",
       "syscall": "stat",
       "path": "",
-      "message": "EPROTOTYPE: protocol wrong type for socket, stat"
+      "message": "EPROTOTYPE: protocol wrong type for socket, stat ''"
     },
     {
       "code": "EPROTOTYPE",
@@ -6249,7 +6249,7 @@
       "code": "EPROTOTYPE",
       "syscall": "open",
       "path": "",
-      "message": "EPROTOTYPE: protocol wrong type for socket, open"
+      "message": "EPROTOTYPE: protocol wrong type for socket, open ''"
     },
     {
       "code": "EPROTOTYPE",
@@ -6266,7 +6266,7 @@
       "code": "EPROTOTYPE",
       "syscall": "read",
       "path": "",
-      "message": "EPROTOTYPE: protocol wrong type for socket, read"
+      "message": "EPROTOTYPE: protocol wrong type for socket, read ''"
     },
     {
       "code": "EPROTOTYPE",
@@ -6283,7 +6283,7 @@
       "code": "EPROTOTYPE",
       "syscall": "fstat",
       "path": "",
-      "message": "EPROTOTYPE: protocol wrong type for socket, fstat"
+      "message": "EPROTOTYPE: protocol wrong type for socket, fstat ''"
     },
     {
       "code": "EPROTOTYPE",
@@ -6300,7 +6300,7 @@
       "code": "EPROTOTYPE",
       "syscall": "scandir",
       "path": "",
-      "message": "EPROTOTYPE: protocol wrong type for socket, scandir"
+      "message": "EPROTOTYPE: protocol wrong type for socket, scandir ''"
     },
     {
       "code": "EPROTOTYPE",
@@ -6317,7 +6317,7 @@
       "code": "EPROTOTYPE",
       "syscall": "realpath",
       "path": "",
-      "message": "EPROTOTYPE: protocol wrong type for socket, realpath"
+      "message": "EPROTOTYPE: protocol wrong type for socket, realpath ''"
     },
     {
       "code": "EPROTOTYPE",
@@ -6334,7 +6334,7 @@
       "code": "ERANGE",
       "syscall": "stat",
       "path": "",
-      "message": "ERANGE: result too large, stat"
+      "message": "ERANGE: result too large, stat ''"
     },
     {
       "code": "ERANGE",
@@ -6351,7 +6351,7 @@
       "code": "ERANGE",
       "syscall": "open",
       "path": "",
-      "message": "ERANGE: result too large, open"
+      "message": "ERANGE: result too large, open ''"
     },
     {
       "code": "ERANGE",
@@ -6368,7 +6368,7 @@
       "code": "ERANGE",
       "syscall": "read",
       "path": "",
-      "message": "ERANGE: result too large, read"
+      "message": "ERANGE: result too large, read ''"
     },
     {
       "code": "ERANGE",
@@ -6385,7 +6385,7 @@
       "code": "ERANGE",
       "syscall": "fstat",
       "path": "",
-      "message": "ERANGE: result too large, fstat"
+      "message": "ERANGE: result too large, fstat ''"
     },
     {
       "code": "ERANGE",
@@ -6402,7 +6402,7 @@
       "code": "ERANGE",
       "syscall": "scandir",
       "path": "",
-      "message": "ERANGE: result too large, scandir"
+      "message": "ERANGE: result too large, scandir ''"
     },
     {
       "code": "ERANGE",
@@ -6419,7 +6419,7 @@
       "code": "ERANGE",
       "syscall": "realpath",
       "path": "",
-      "message": "ERANGE: result too large, realpath"
+      "message": "ERANGE: result too large, realpath ''"
     },
     {
       "code": "ERANGE",
@@ -6436,7 +6436,7 @@
       "code": "EREMOTEIO",
       "syscall": "stat",
       "path": "",
-      "message": "EREMOTEIO: remote I/O error, stat"
+      "message": "EREMOTEIO: remote I/O error, stat ''"
     },
     {
       "code": "EREMOTEIO",
@@ -6453,7 +6453,7 @@
       "code": "EREMOTEIO",
       "syscall": "open",
       "path": "",
-      "message": "EREMOTEIO: remote I/O error, open"
+      "message": "EREMOTEIO: remote I/O error, open ''"
     },
     {
       "code": "EREMOTEIO",
@@ -6470,7 +6470,7 @@
       "code": "EREMOTEIO",
       "syscall": "read",
       "path": "",
-      "message": "EREMOTEIO: remote I/O error, read"
+      "message": "EREMOTEIO: remote I/O error, read ''"
     },
     {
       "code": "EREMOTEIO",
@@ -6487,7 +6487,7 @@
       "code": "EREMOTEIO",
       "syscall": "fstat",
       "path": "",
-      "message": "EREMOTEIO: remote I/O error, fstat"
+      "message": "EREMOTEIO: remote I/O error, fstat ''"
     },
     {
       "code": "EREMOTEIO",
@@ -6504,7 +6504,7 @@
       "code": "EREMOTEIO",
       "syscall": "scandir",
       "path": "",
-      "message": "EREMOTEIO: remote I/O error, scandir"
+      "message": "EREMOTEIO: remote I/O error, scandir ''"
     },
     {
       "code": "EREMOTEIO",
@@ -6521,7 +6521,7 @@
       "code": "EREMOTEIO",
       "syscall": "realpath",
       "path": "",
-      "message": "EREMOTEIO: remote I/O error, realpath"
+      "message": "EREMOTEIO: remote I/O error, realpath ''"
     },
     {
       "code": "EREMOTEIO",
@@ -6538,7 +6538,7 @@
       "code": "EROFS",
       "syscall": "stat",
       "path": "",
-      "message": "EROFS: read-only file system, stat"
+      "message": "EROFS: read-only file system, stat ''"
     },
     {
       "code": "EROFS",
@@ -6555,7 +6555,7 @@
       "code": "EROFS",
       "syscall": "open",
       "path": "",
-      "message": "EROFS: read-only file system, open"
+      "message": "EROFS: read-only file system, open ''"
     },
     {
       "code": "EROFS",
@@ -6572,7 +6572,7 @@
       "code": "EROFS",
       "syscall": "read",
       "path": "",
-      "message": "EROFS: read-only file system, read"
+      "message": "EROFS: read-only file system, read ''"
     },
     {
       "code": "EROFS",
@@ -6589,7 +6589,7 @@
       "code": "EROFS",
       "syscall": "fstat",
       "path": "",
-      "message": "EROFS: read-only file system, fstat"
+      "message": "EROFS: read-only file system, fstat ''"
     },
     {
       "code": "EROFS",
@@ -6606,7 +6606,7 @@
       "code": "EROFS",
       "syscall": "scandir",
       "path": "",
-      "message": "EROFS: read-only file system, scandir"
+      "message": "EROFS: read-only file system, scandir ''"
     },
     {
       "code": "EROFS",
@@ -6623,7 +6623,7 @@
       "code": "EROFS",
       "syscall": "realpath",
       "path": "",
-      "message": "EROFS: read-only file system, realpath"
+      "message": "EROFS: read-only file system, realpath ''"
     },
     {
       "code": "EROFS",
@@ -6640,7 +6640,7 @@
       "code": "ESHUTDOWN",
       "syscall": "stat",
       "path": "",
-      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, stat"
+      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, stat ''"
     },
     {
       "code": "ESHUTDOWN",
@@ -6657,7 +6657,7 @@
       "code": "ESHUTDOWN",
       "syscall": "open",
       "path": "",
-      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, open"
+      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, open ''"
     },
     {
       "code": "ESHUTDOWN",
@@ -6674,7 +6674,7 @@
       "code": "ESHUTDOWN",
       "syscall": "read",
       "path": "",
-      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, read"
+      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, read ''"
     },
     {
       "code": "ESHUTDOWN",
@@ -6691,7 +6691,7 @@
       "code": "ESHUTDOWN",
       "syscall": "fstat",
       "path": "",
-      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, fstat"
+      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, fstat ''"
     },
     {
       "code": "ESHUTDOWN",
@@ -6708,7 +6708,7 @@
       "code": "ESHUTDOWN",
       "syscall": "scandir",
       "path": "",
-      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, scandir"
+      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, scandir ''"
     },
     {
       "code": "ESHUTDOWN",
@@ -6725,7 +6725,7 @@
       "code": "ESHUTDOWN",
       "syscall": "realpath",
       "path": "",
-      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, realpath"
+      "message": "ESHUTDOWN: cannot send after transport endpoint shutdown, realpath ''"
     },
     {
       "code": "ESHUTDOWN",
@@ -6742,7 +6742,7 @@
       "code": "ESOCKTNOSUPPORT",
       "syscall": "stat",
       "path": "",
-      "message": "ESOCKTNOSUPPORT: socket type not supported, stat"
+      "message": "ESOCKTNOSUPPORT: socket type not supported, stat ''"
     },
     {
       "code": "ESOCKTNOSUPPORT",
@@ -6759,7 +6759,7 @@
       "code": "ESOCKTNOSUPPORT",
       "syscall": "open",
       "path": "",
-      "message": "ESOCKTNOSUPPORT: socket type not supported, open"
+      "message": "ESOCKTNOSUPPORT: socket type not supported, open ''"
     },
     {
       "code": "ESOCKTNOSUPPORT",
@@ -6776,7 +6776,7 @@
       "code": "ESOCKTNOSUPPORT",
       "syscall": "read",
       "path": "",
-      "message": "ESOCKTNOSUPPORT: socket type not supported, read"
+      "message": "ESOCKTNOSUPPORT: socket type not supported, read ''"
     },
     {
       "code": "ESOCKTNOSUPPORT",
@@ -6793,7 +6793,7 @@
       "code": "ESOCKTNOSUPPORT",
       "syscall": "fstat",
       "path": "",
-      "message": "ESOCKTNOSUPPORT: socket type not supported, fstat"
+      "message": "ESOCKTNOSUPPORT: socket type not supported, fstat ''"
     },
     {
       "code": "ESOCKTNOSUPPORT",
@@ -6810,7 +6810,7 @@
       "code": "ESOCKTNOSUPPORT",
       "syscall": "scandir",
       "path": "",
-      "message": "ESOCKTNOSUPPORT: socket type not supported, scandir"
+      "message": "ESOCKTNOSUPPORT: socket type not supported, scandir ''"
     },
     {
       "code": "ESOCKTNOSUPPORT",
@@ -6827,7 +6827,7 @@
       "code": "ESOCKTNOSUPPORT",
       "syscall": "realpath",
       "path": "",
-      "message": "ESOCKTNOSUPPORT: socket type not supported, realpath"
+      "message": "ESOCKTNOSUPPORT: socket type not supported, realpath ''"
     },
     {
       "code": "ESOCKTNOSUPPORT",
@@ -6844,7 +6844,7 @@
       "code": "ESPIPE",
       "syscall": "stat",
       "path": "",
-      "message": "ESPIPE: invalid seek, stat"
+      "message": "ESPIPE: invalid seek, stat ''"
     },
     {
       "code": "ESPIPE",
@@ -6861,7 +6861,7 @@
       "code": "ESPIPE",
       "syscall": "open",
       "path": "",
-      "message": "ESPIPE: invalid seek, open"
+      "message": "ESPIPE: invalid seek, open ''"
     },
     {
       "code": "ESPIPE",
@@ -6878,7 +6878,7 @@
       "code": "ESPIPE",
       "syscall": "read",
       "path": "",
-      "message": "ESPIPE: invalid seek, read"
+      "message": "ESPIPE: invalid seek, read ''"
     },
     {
       "code": "ESPIPE",
@@ -6895,7 +6895,7 @@
       "code": "ESPIPE",
       "syscall": "fstat",
       "path": "",
-      "message": "ESPIPE: invalid seek, fstat"
+      "message": "ESPIPE: invalid seek, fstat ''"
     },
     {
       "code": "ESPIPE",
@@ -6912,7 +6912,7 @@
       "code": "ESPIPE",
       "syscall": "scandir",
       "path": "",
-      "message": "ESPIPE: invalid seek, scandir"
+      "message": "ESPIPE: invalid seek, scandir ''"
     },
     {
       "code": "ESPIPE",
@@ -6929,7 +6929,7 @@
       "code": "ESPIPE",
       "syscall": "realpath",
       "path": "",
-      "message": "ESPIPE: invalid seek, realpath"
+      "message": "ESPIPE: invalid seek, realpath ''"
     },
     {
       "code": "ESPIPE",
@@ -6946,7 +6946,7 @@
       "code": "ESRCH",
       "syscall": "stat",
       "path": "",
-      "message": "ESRCH: no such process, stat"
+      "message": "ESRCH: no such process, stat ''"
     },
     {
       "code": "ESRCH",
@@ -6963,7 +6963,7 @@
       "code": "ESRCH",
       "syscall": "open",
       "path": "",
-      "message": "ESRCH: no such process, open"
+      "message": "ESRCH: no such process, open ''"
     },
     {
       "code": "ESRCH",
@@ -6980,7 +6980,7 @@
       "code": "ESRCH",
       "syscall": "read",
       "path": "",
-      "message": "ESRCH: no such process, read"
+      "message": "ESRCH: no such process, read ''"
     },
     {
       "code": "ESRCH",
@@ -6997,7 +6997,7 @@
       "code": "ESRCH",
       "syscall": "fstat",
       "path": "",
-      "message": "ESRCH: no such process, fstat"
+      "message": "ESRCH: no such process, fstat ''"
     },
     {
       "code": "ESRCH",
@@ -7014,7 +7014,7 @@
       "code": "ESRCH",
       "syscall": "scandir",
       "path": "",
-      "message": "ESRCH: no such process, scandir"
+      "message": "ESRCH: no such process, scandir ''"
     },
     {
       "code": "ESRCH",
@@ -7031,7 +7031,7 @@
       "code": "ESRCH",
       "syscall": "realpath",
       "path": "",
-      "message": "ESRCH: no such process, realpath"
+      "message": "ESRCH: no such process, realpath ''"
     },
     {
       "code": "ESRCH",
@@ -7048,7 +7048,7 @@
       "code": "ETIMEDOUT",
       "syscall": "stat",
       "path": "",
-      "message": "ETIMEDOUT: connection timed out, stat"
+      "message": "ETIMEDOUT: connection timed out, stat ''"
     },
     {
       "code": "ETIMEDOUT",
@@ -7065,7 +7065,7 @@
       "code": "ETIMEDOUT",
       "syscall": "open",
       "path": "",
-      "message": "ETIMEDOUT: connection timed out, open"
+      "message": "ETIMEDOUT: connection timed out, open ''"
     },
     {
       "code": "ETIMEDOUT",
@@ -7082,7 +7082,7 @@
       "code": "ETIMEDOUT",
       "syscall": "read",
       "path": "",
-      "message": "ETIMEDOUT: connection timed out, read"
+      "message": "ETIMEDOUT: connection timed out, read ''"
     },
     {
       "code": "ETIMEDOUT",
@@ -7099,7 +7099,7 @@
       "code": "ETIMEDOUT",
       "syscall": "fstat",
       "path": "",
-      "message": "ETIMEDOUT: connection timed out, fstat"
+      "message": "ETIMEDOUT: connection timed out, fstat ''"
     },
     {
       "code": "ETIMEDOUT",
@@ -7116,7 +7116,7 @@
       "code": "ETIMEDOUT",
       "syscall": "scandir",
       "path": "",
-      "message": "ETIMEDOUT: connection timed out, scandir"
+      "message": "ETIMEDOUT: connection timed out, scandir ''"
     },
     {
       "code": "ETIMEDOUT",
@@ -7133,7 +7133,7 @@
       "code": "ETIMEDOUT",
       "syscall": "realpath",
       "path": "",
-      "message": "ETIMEDOUT: connection timed out, realpath"
+      "message": "ETIMEDOUT: connection timed out, realpath ''"
     },
     {
       "code": "ETIMEDOUT",
@@ -7150,7 +7150,7 @@
       "code": "ETXTBSY",
       "syscall": "stat",
       "path": "",
-      "message": "ETXTBSY: text file is busy, stat"
+      "message": "ETXTBSY: text file is busy, stat ''"
     },
     {
       "code": "ETXTBSY",
@@ -7167,7 +7167,7 @@
       "code": "ETXTBSY",
       "syscall": "open",
       "path": "",
-      "message": "ETXTBSY: text file is busy, open"
+      "message": "ETXTBSY: text file is busy, open ''"
     },
     {
       "code": "ETXTBSY",
@@ -7184,7 +7184,7 @@
       "code": "ETXTBSY",
       "syscall": "read",
       "path": "",
-      "message": "ETXTBSY: text file is busy, read"
+      "message": "ETXTBSY: text file is busy, read ''"
     },
     {
       "code": "ETXTBSY",
@@ -7201,7 +7201,7 @@
       "code": "ETXTBSY",
       "syscall": "fstat",
       "path": "",
-      "message": "ETXTBSY: text file is busy, fstat"
+      "message": "ETXTBSY: text file is busy, fstat ''"
     },
     {
       "code": "ETXTBSY",
@@ -7218,7 +7218,7 @@
       "code": "ETXTBSY",
       "syscall": "scandir",
       "path": "",
-      "message": "ETXTBSY: text file is busy, scandir"
+      "message": "ETXTBSY: text file is busy, scandir ''"
     },
     {
       "code": "ETXTBSY",
@@ -7235,7 +7235,7 @@
       "code": "ETXTBSY",
       "syscall": "realpath",
       "path": "",
-      "message": "ETXTBSY: text file is busy, realpath"
+      "message": "ETXTBSY: text file is busy, realpath ''"
     },
     {
       "code": "ETXTBSY",
@@ -7252,7 +7252,7 @@
       "code": "EUNATCH",
       "syscall": "stat",
       "path": "",
-      "message": "EUNATCH: protocol driver not attached, stat"
+      "message": "EUNATCH: protocol driver not attached, stat ''"
     },
     {
       "code": "EUNATCH",
@@ -7269,7 +7269,7 @@
       "code": "EUNATCH",
       "syscall": "open",
       "path": "",
-      "message": "EUNATCH: protocol driver not attached, open"
+      "message": "EUNATCH: protocol driver not attached, open ''"
     },
     {
       "code": "EUNATCH",
@@ -7286,7 +7286,7 @@
       "code": "EUNATCH",
       "syscall": "read",
       "path": "",
-      "message": "EUNATCH: protocol driver not attached, read"
+      "message": "EUNATCH: protocol driver not attached, read ''"
     },
     {
       "code": "EUNATCH",
@@ -7303,7 +7303,7 @@
       "code": "EUNATCH",
       "syscall": "fstat",
       "path": "",
-      "message": "EUNATCH: protocol driver not attached, fstat"
+      "message": "EUNATCH: protocol driver not attached, fstat ''"
     },
     {
       "code": "EUNATCH",
@@ -7320,7 +7320,7 @@
       "code": "EUNATCH",
       "syscall": "scandir",
       "path": "",
-      "message": "EUNATCH: protocol driver not attached, scandir"
+      "message": "EUNATCH: protocol driver not attached, scandir ''"
     },
     {
       "code": "EUNATCH",
@@ -7337,7 +7337,7 @@
       "code": "EUNATCH",
       "syscall": "realpath",
       "path": "",
-      "message": "EUNATCH: protocol driver not attached, realpath"
+      "message": "EUNATCH: protocol driver not attached, realpath ''"
     },
     {
       "code": "EUNATCH",
@@ -7354,7 +7354,7 @@
       "code": "EXDEV",
       "syscall": "stat",
       "path": "",
-      "message": "EXDEV: cross-device link not permitted, stat"
+      "message": "EXDEV: cross-device link not permitted, stat ''"
     },
     {
       "code": "EXDEV",
@@ -7371,7 +7371,7 @@
       "code": "EXDEV",
       "syscall": "open",
       "path": "",
-      "message": "EXDEV: cross-device link not permitted, open"
+      "message": "EXDEV: cross-device link not permitted, open ''"
     },
     {
       "code": "EXDEV",
@@ -7388,7 +7388,7 @@
       "code": "EXDEV",
       "syscall": "read",
       "path": "",
-      "message": "EXDEV: cross-device link not permitted, read"
+      "message": "EXDEV: cross-device link not permitted, read ''"
     },
     {
       "code": "EXDEV",
@@ -7405,7 +7405,7 @@
       "code": "EXDEV",
       "syscall": "fstat",
       "path": "",
-      "message": "EXDEV: cross-device link not permitted, fstat"
+      "message": "EXDEV: cross-device link not permitted, fstat ''"
     },
     {
       "code": "EXDEV",
@@ -7422,7 +7422,7 @@
       "code": "EXDEV",
       "syscall": "scandir",
       "path": "",
-      "message": "EXDEV: cross-device link not permitted, scandir"
+      "message": "EXDEV: cross-device link not permitted, scandir ''"
     },
     {
       "code": "EXDEV",
@@ -7439,7 +7439,7 @@
       "code": "EXDEV",
       "syscall": "realpath",
       "path": "",
-      "message": "EXDEV: cross-device link not permitted, realpath"
+      "message": "EXDEV: cross-device link not permitted, realpath ''"
     },
     {
       "code": "EXDEV",

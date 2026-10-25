@@ -13,7 +13,13 @@ The same generator calls Node's actual `internal/errors.UVException` constructor
 for every POSIX name, six syscalls (stat/open/read/fstat/scandir/realpath), and
 three path cases (absent/empty/quote + newline). The 1,224 messages are independent
 Node formatting goldens; Rust compares all rows supported on its target byte
-for byte. The raw libuv map and local `os.constants.errno` are retained as evidence.
+for byte. The JS constructor truthiness-drops an empty path (`if (ctx.path)`),
+but the C++ binding formatter real fs errors report through appends a provided
+path verbatim, empty included (node v22.22.0: `fs.openSync('')` →
+`ENOENT: no such file or directory, open ''`, likewise `statSync`/`readdirSync`);
+the generator measures that rule through real fs calls before recording the
+empty rows, so they carry ` ''`. The raw libuv map and local `os.constants.errno`
+are retained as evidence.
 
 From the repository root, using the installed Node and rustfmt:
 

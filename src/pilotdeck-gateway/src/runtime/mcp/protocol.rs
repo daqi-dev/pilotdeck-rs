@@ -1329,7 +1329,13 @@ fn read_mcp_config(
 /// read stages apart (a directory read is `read` without a path, as in
 /// `readFileSync`); an errno outside the shared table keeps Node's synthetic
 /// `UNKNOWN: unknown error` text (libuv's `UV_UNKNOWN`) under the same stage
-/// rule, so a descriptor read/write error still carries no path.
+/// rule, so a descriptor read/write error still carries no path — the
+/// formatter only prints a path the call site provided, and Node's read/
+/// write call sites provide none whatever the errno (node v22.22.0:
+/// `_tmp/20261025-issue-656/node-probe/write-stages.out` has no `path` at all
+/// on the EFBIG write error, and the constructor probe in
+/// `_tmp/20261025-issue-656/fix-r2/empty-path-probe.out` shows a provided
+/// path is kept for read/write too).
 pub(crate) fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> String {
     crate::node_fs_message_or_unknown(error, syscall, Some(&path.to_string_lossy()))
 }
@@ -1471,6 +1477,26 @@ mod tests {
                 Path::new("/c/mcp.json")
             ),
             "UNKNOWN: unknown error, write"
+        );
+        // An empty path stays quoted — the C++ binding formatter real fs
+        // errors report through appends a known path verbatim, empty
+        // included (node v22.22.0 `fs.openSync('')` → `… open ''`,
+        // `_tmp/20261025-issue-656/fix-r2/empty-path-probe.out`).
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(libc::ENOENT),
+                "open",
+                Path::new("")
+            ),
+            "ENOENT: no such file or directory, open ''"
+        );
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(123456),
+                "open",
+                Path::new("")
+            ),
+            "UNKNOWN: unknown error, open ''"
         );
     }
 
