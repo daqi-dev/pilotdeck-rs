@@ -780,6 +780,7 @@ fn assert_no_interaction_resources(context: &StageContext) {
         Resource::Interaction,
         Resource::InteractionEvents,
         Resource::InteractionPermission,
+        Resource::InteractionHooks,
     ] {
         assert!(
             context.resource(resource).is_none(),
