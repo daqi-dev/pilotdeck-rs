@@ -547,7 +547,9 @@ if start is not None:
     # Announce "module loaded" so the parent can release every worker at once
     # (a fast worker must not finish its hold before a slow one is ready).
     (start.parent / f"{start.name}.ready-{os.getpid()}").write_text("", encoding="utf-8")
-    deadline = time.time() + 10
+    # Longer than the parent's ready wait (release_when_ready, 30 s): the parent
+    # always writes start before any ready worker gives up on the barrier.
+    deadline = time.time() + 45
     while not start.exists():
         if time.time() > deadline:
             print("LOCK_RESULT " + json.dumps(
@@ -583,7 +585,7 @@ def lock_worker_command(evidence: Path, mode: str = "try",
     ]
 
 
-def release_when_ready(start: Path, workers: int, timeout: float = 15.0) -> None:
+def release_when_ready(start: Path, workers: int, timeout: float = 30.0) -> None:
     """Write the start barrier only after every worker has loaded its module."""
     deadline = time.time() + timeout
     while len(list(start.parent.glob(f"{start.name}.ready-*"))) < workers:
