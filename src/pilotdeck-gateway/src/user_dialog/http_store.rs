@@ -73,6 +73,17 @@ const DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER: Duration = Duration::from_secs(1);
 /// Node `http.maxHeaderSize` default (v22.22.0: 16384 bytes). hyper's
 /// `max_buf_size` is also its read-buffer cap and replays Node's 431.
 const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
+/// Node v22.22.0 `_http_server.js` `requestTimeoutResponse`: exactly these
+/// bytes, with no `content-length` / `date` (probed against a real
+/// `node:http` server; fixture
+/// `tests/fixtures/user-dialog-http-store/header-lifecycle/node-408.bin`).
+const NODE_408_RESPONSE: &[u8] = b"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n";
+/// Node v22.22.0 `requestHeaderFieldsTooLargeResponse`, same shape as
+/// [`NODE_408_RESPONSE`] (fixture `node-431.bin`).
+const NODE_431_RESPONSE: &[u8] =
+    b"HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n";
+/// Largest raw socket chunk the header guard inspects in one `poll_read`.
+const HEADER_GUARD_BUFFER_BYTES: usize = 8 * 1024;
 /// The TS server has no body cap (`serveNodeRequest` collects every chunk), so
 /// this is a deliberate resource bound rather than a parity value; it is
 /// registered as an unapproved difference. 2 MiB clears the real TS fixture's
@@ -1767,6 +1778,10 @@ struct TimeoutState {
     phase: TimeoutPhase,
     header_deadline: Option<tokio::time::Instant>,
     idle_deadline: Option<tokio::time::Instant>,
+    /// `server.close()` started. Node clears its connections checker and never
+    /// writes a 408 during shutdown, so an expiring header deadline becomes a
+    /// silent EOF instead.
+    shutting_down: bool,
 }
 impl TimeoutState {
     fn nearest_deadline(&self) -> Option<tokio::time::Instant> {
@@ -1775,6 +1790,17 @@ impl TimeoutState {
             (left, right) => left.or(right),
         }
     }
+}
+
+/// Which Node timer owns an expired connection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExpiredTimer {
+    /// Neither timer is due (or a request body owns the connection).
+    None,
+    /// `keepAliveTimeout + buffer`: Node's `socket.destroy()` writes no bytes.
+    Idle,
+    /// `headersTimeout`: Node's connection checker writes the 51-byte 408.
+    Headers,
 }
 
 /// Node v22.22.0 connection timers, reproduced on top of hyper:
@@ -1787,8 +1813,9 @@ impl TimeoutState {
 /// * a parsed request head clears the connection timers; the body is bounded by
 ///   `requestTimeout` in [`serve`].
 ///
-/// The timeout closes the connection silently (`poll_read` returns EOF), like
-/// Node's `socket.destroy()` after an idle/header timeout.
+/// The idle timeout closes the connection silently (`poll_read` returns EOF),
+/// like Node's `socket.destroy()`; a `headersTimeout` writes Node's 51-byte
+/// `408 Request Timeout` first (see [`TimeoutStream`]).
 #[derive(Debug)]
 struct KeepAliveTimer {
     headers_timeout: Duration,
@@ -1808,6 +1835,7 @@ impl KeepAliveTimer {
                 phase: TimeoutPhase::InitialHeaders,
                 header_deadline: Some(now + headers_timeout),
                 idle_deadline: None,
+                shutting_down: false,
             }),
             waker: Mutex::new(None),
         }
@@ -1815,6 +1843,63 @@ impl KeepAliveTimer {
 
     fn store_waker(&self, cx: &Context<'_>) {
         *self.waker.lock().unwrap() = Some(cx.waker().clone());
+    }
+
+    fn phase(&self) -> TimeoutPhase {
+        self.state.lock().unwrap().phase
+    }
+
+    /// `server.close()` started for this connection.
+    fn begin_shutdown(&self) {
+        self.state.lock().unwrap().shutting_down = true;
+        self.wake();
+    }
+
+    /// Classifies an expired deadline at `now`. Node distinguishes the two:
+    /// `headersTimeout` goes through `onRequestTimeout` and writes 408, while
+    /// `keepAliveTimeout` (`socket.setTimeout`) destroys the socket with no
+    /// bytes. `headersTimeout` owns a partial follow-up head; once a byte
+    /// arrived, the idle timer also runs and usually expires first (6 s vs
+    /// 60 s), matching Node's silent keep-alive close.
+    fn expired(&self, now: tokio::time::Instant) -> ExpiredTimer {
+        let state = self.state.lock().unwrap();
+        let due =
+            |deadline: Option<tokio::time::Instant>| deadline.is_some_and(|value| now >= value);
+        // Node clears the connections checker in `server.close()` and never
+        // writes a 408 while shutting down; keep this branch silent.
+        let header = || {
+            if state.shutting_down {
+                ExpiredTimer::Idle
+            } else {
+                ExpiredTimer::Headers
+            }
+        };
+        match state.phase {
+            TimeoutPhase::Request => ExpiredTimer::None,
+            TimeoutPhase::InitialHeaders => {
+                if due(state.header_deadline) {
+                    header()
+                } else {
+                    ExpiredTimer::None
+                }
+            }
+            TimeoutPhase::Idle => {
+                if due(state.idle_deadline) {
+                    ExpiredTimer::Idle
+                } else {
+                    ExpiredTimer::None
+                }
+            }
+            TimeoutPhase::NextHeaders => {
+                if due(state.idle_deadline) {
+                    ExpiredTimer::Idle
+                } else if due(state.header_deadline) {
+                    header()
+                } else {
+                    ExpiredTimer::None
+                }
+            }
+        }
     }
 
     fn wake(&self) {
@@ -1889,17 +1974,123 @@ impl KeepAliveTimer {
     }
 }
 
-/// Transport wrapper that turns the shared deadline into a silent EOF. Keeping
-/// the timer in `poll_read` means hyper is always the task that observes it, so
-/// no background task can race the connection state.
+/// Replays Node's `maxHeaderSize` on the raw request bytes before hyper's
+/// parser can answer with its own 431. hyper's canned 431 carries
+/// `content-length: 0` and `date` and lower-cases the header name; Node's
+/// `_http_server.js` constant does not. Node counts the header field lines
+/// only (the request line is excluded): the raw `name: value\r\n` bytes of
+/// every field, including any folding continuation.
+///
+/// The guard only scans while the connection is waiting for a request head
+/// (`InitialHeaders` / `Idle` / `NextHeaders`). Body bytes and a pipelined head
+/// that hyper already buffered are not visible here; those keep the existing
+/// [`serve`] `header_bytes` backstop.
+#[derive(Debug)]
+struct HeaderGuard {
+    max_header_bytes: usize,
+    active: bool,
+    in_request_line: bool,
+    line_bytes: usize,
+    previous_byte: Option<u8>,
+    header_bytes: usize,
+    completed: bool,
+}
+impl HeaderGuard {
+    fn new(max_header_bytes: usize) -> Self {
+        Self {
+            max_header_bytes,
+            active: true,
+            in_request_line: true,
+            line_bytes: 0,
+            previous_byte: None,
+            header_bytes: 0,
+            completed: false,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.active = true;
+        self.in_request_line = true;
+        self.line_bytes = 0;
+        self.previous_byte = None;
+        self.header_bytes = 0;
+        self.completed = false;
+    }
+
+    /// Reset for a follow-up request only once the previous head completed and
+    /// the connection is back between requests.
+    fn begin(&mut self, phase: TimeoutPhase) {
+        match phase {
+            TimeoutPhase::Request => self.active = false,
+            TimeoutPhase::Idle | TimeoutPhase::NextHeaders => {
+                if self.completed || !self.active {
+                    self.reset();
+                }
+                self.active = true;
+            }
+            TimeoutPhase::InitialHeaders => {}
+        }
+    }
+
+    /// Returns `true` when this chunk pushes the current request head over
+    /// Node's limit. The head cannot be complete at that point, so the caller
+    /// must write the 431 and close without handing the bytes to hyper.
+    fn push(&mut self, bytes: &[u8]) -> bool {
+        if !self.active {
+            return false;
+        }
+        for &byte in bytes {
+            let previous = self.previous_byte;
+            self.previous_byte = Some(byte);
+            self.line_bytes += 1;
+            if byte != b'\n' {
+                continue;
+            }
+            let line_bytes = std::mem::take(&mut self.line_bytes);
+            if self.in_request_line {
+                // Node's maxHeaderSize excludes the request line.
+                self.in_request_line = false;
+            } else if line_bytes == 1 || (line_bytes == 2 && previous == Some(b'\r')) {
+                self.completed = true;
+                self.active = false;
+                return false;
+            } else {
+                self.header_bytes = self.header_bytes.saturating_add(line_bytes);
+                if self.header_bytes > self.max_header_bytes {
+                    self.active = false;
+                    return true;
+                }
+            }
+        }
+        // A field line already longer than the whole budget can never fit,
+        // even before its terminator arrives; bound hyper's read buffer.
+        if !self.in_request_line && self.line_bytes > self.max_header_bytes {
+            self.active = false;
+            return true;
+        }
+        false
+    }
+}
+
+/// Transport wrapper that turns the shared deadline into Node's bytes: a
+/// `headersTimeout` writes the 51-byte 408, a keep-alive idle timeout and a
+/// peer close stay a silent EOF. Keeping the timer in `poll_read` means hyper
+/// is always the task that observes it, so no background task can race the
+/// connection state (or the response-head flush path tracked by #702).
 struct TimeoutStream<S> {
     inner: S,
     timer: Arc<KeepAliveTimer>,
     sleep: Pin<Box<tokio::time::Sleep>>,
     armed_deadline: Option<tokio::time::Instant>,
+    header_guard: HeaderGuard,
+    read_buffer: Box<[u8]>,
+    /// Node error response bytes that still have to be written before the EOF.
+    raw_response: Option<&'static [u8]>,
+    raw_written: usize,
+    closed: bool,
 }
 impl<S> TimeoutStream<S> {
-    fn new(inner: S, timer: Arc<KeepAliveTimer>) -> Self {
+    fn new(inner: S, timer: Arc<KeepAliveTimer>, max_header_bytes: usize) -> Self {
         let armed_deadline = timer.nearest_deadline();
         let sleep = Box::pin(tokio::time::sleep_until(armed_deadline.unwrap_or_else(
             || tokio::time::Instant::now() + Duration::from_secs(86_400),
@@ -1909,6 +2100,11 @@ impl<S> TimeoutStream<S> {
             timer,
             sleep,
             armed_deadline,
+            header_guard: HeaderGuard::new(max_header_bytes),
+            read_buffer: vec![0u8; HEADER_GUARD_BUFFER_BYTES].into_boxed_slice(),
+            raw_response: None,
+            raw_written: 0,
+            closed: false,
         }
     }
 
@@ -1923,34 +2119,114 @@ impl<S> TimeoutStream<S> {
         deadline
     }
 }
-impl<S: AsyncRead + Unpin> AsyncRead for TimeoutStream<S> {
+impl<S: AsyncRead + AsyncWrite + Unpin> TimeoutStream<S> {
+    /// Turn the expired timer into Node's bytes (408) or a silent EOF (idle
+    /// keep-alive timeout / peer close).
+    fn expire(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.timer.expired(tokio::time::Instant::now()) {
+            ExpiredTimer::Headers => {
+                self.raw_response = Some(NODE_408_RESPONSE);
+                self.raw_written = 0;
+                self.poll_raw_response(cx)
+            }
+            ExpiredTimer::Idle => {
+                self.closed = true;
+                Poll::Ready(Ok(()))
+            }
+            // The state changed between `nearest_deadline` and `expired`; let
+            // the next poll refresh the sleep instead of spinning on a stale
+            // deadline.
+            ExpiredTimer::None => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+    }
+
+    /// Write the canned Node error response on the same task that owns the
+    /// socket, then report EOF. The bytes stay in the kernel buffer, exactly
+    /// like Node's `socket.write(response)` followed by `destroy()`.
+    fn poll_raw_response(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if let Some(raw) = self.raw_response {
+            loop {
+                match Pin::new(&mut self.inner).poll_write(cx, &raw[self.raw_written..]) {
+                    Poll::Ready(Ok(0)) => break,
+                    Poll::Ready(Ok(written)) => {
+                        self.raw_written += written;
+                        if self.raw_written == raw.len() {
+                            break;
+                        }
+                    }
+                    Poll::Ready(Err(_)) => break,
+                    // The write half is not ready; retry this poll_read once it
+                    // is. `poll_write` registered the write waker.
+                    Poll::Pending => {
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
+                }
+            }
+            self.raw_response = None;
+        }
+        self.closed = true;
+        Poll::Ready(Ok(()))
+    }
+}
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
-        let deadline = this.refresh_deadline();
-        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+        if this.closed {
             return Poll::Ready(Ok(()));
         }
-        match Pin::new(&mut this.inner).poll_read(cx, buffer) {
-            Poll::Ready(Ok(())) => {
-                if !buffer.filled().is_empty() {
-                    this.timer.read_activity();
-                }
-                Poll::Ready(Ok(()))
-            }
-            Poll::Pending => {
-                this.timer.store_waker(cx);
-                if deadline.is_some() && this.sleep.as_mut().poll(cx).is_ready() {
-                    Poll::Ready(Ok(()))
-                } else {
-                    Poll::Pending
-                }
-            }
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+        if this.raw_response.is_some() {
+            return this.poll_raw_response(cx);
         }
+        let deadline = this.refresh_deadline();
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            return this.expire(cx);
+        }
+        this.header_guard.begin(this.timer.phase());
+        if buffer.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let limit = buffer.remaining().min(this.read_buffer.len());
+        let mut response: Option<&'static [u8]> = None;
+        {
+            let mut scratch = ReadBuf::new(&mut this.read_buffer[..limit]);
+            match Pin::new(&mut this.inner).poll_read(cx, &mut scratch) {
+                Poll::Ready(Ok(())) => {
+                    let filled = scratch.filled();
+                    if filled.is_empty() {
+                        this.closed = true;
+                        return Poll::Ready(Ok(()));
+                    }
+                    this.timer.read_activity();
+                    if this.header_guard.push(filled) {
+                        response = Some(NODE_431_RESPONSE);
+                    } else {
+                        buffer.put_slice(filled);
+                    }
+                }
+                Poll::Pending => {
+                    this.timer.store_waker(cx);
+                    if deadline.is_some() && this.sleep.as_mut().poll(cx).is_ready() {
+                        return this.expire(cx);
+                    }
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+            }
+        }
+        if let Some(raw) = response {
+            this.raw_response = Some(raw);
+            this.raw_written = 0;
+            return this.poll_raw_response(cx);
+        }
+        Poll::Ready(Ok(()))
     }
 }
 impl<S: AsyncWrite + Unpin> AsyncWrite for TimeoutStream<S> {
@@ -1960,6 +2236,14 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for TimeoutStream<S> {
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
+        if this.closed || this.raw_response.is_some() {
+            // The connection already has its terminal bytes (or EOF); never
+            // append a hyper response after Node's canned 408/431.
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "connection closed",
+            )));
+        }
         match Pin::new(&mut this.inner).poll_write(cx, buffer) {
             Poll::Ready(Ok(written)) => {
                 if written > 0 {
@@ -2073,8 +2357,13 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
         .map_err(DialogError::Io)?;
     let address = listener.local_addr().map_err(DialogError::Io)?;
     let handler = Arc::new(handler);
-    // hyper asserts `max_buf_size >= 8192`; keep that h1 minimum.
+    // hyper asserts `max_buf_size >= 8192`; keep that h1 minimum. The parser's
+    // own cap sits above Node's limit so the `HeaderGuard` (not hyper's canned
+    // 431 with `content-length`/`date`) is the one that answers an oversized
+    // head. `HeaderGuard::push` bounds the field bytes at `max_header_bytes`,
+    // so hyper never has to buffer more than the request line plus that.
     let max_header_bytes = limits.max_header_bytes.max(8 * 1024);
+    let hyper_buffer_bytes = max_header_bytes.saturating_mul(2);
     // Node arms `socket.setTimeout(keepAliveTimeout + keepAliveTimeoutBuffer)`.
     let keep_alive_timeout = limits.keep_alive_timeout + limits.keep_alive_timeout_buffer;
     let connections = Arc::new(Semaphore::new(limits.max_connections));
@@ -2107,6 +2396,7 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                             limits.headers_timeout,
                             keep_alive_timeout,
                         ));
+                        let shutdown_timer = timer.clone();
                         let service_timer = timer.clone();
                         let service_shutdown = connection_shutdown.clone();
                         let service = service_fn(move |request: Request<Incoming>| {
@@ -2170,9 +2460,13 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                             // applied), so this is only a backstop above what
                             // the 16 KiB buffer can hold.
                             .max_headers(4096)
-                            .max_buf_size(max_header_bytes);
+                            .max_buf_size(hyper_buffer_bytes);
                         let connection = builder.serve_connection(
-                            TokioIo::new(TimeoutStream::new(stream, timer)),
+                            TokioIo::new(TimeoutStream::new(
+                                stream,
+                                timer,
+                                max_header_bytes,
+                            )),
                             service,
                         );
                         tokio::pin!(connection);
@@ -2181,7 +2475,10 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                 // Node `server.close()` closes idle
                                 // connections and lets an in-flight request
                                 // finish; hyper's graceful shutdown has the
-                                // same shape.
+                                // same shape. Suppress the 408 a header
+                                // deadline would otherwise write while the
+                                // close is waiting.
+                                shutdown_timer.begin_shutdown();
                                 connection.as_mut().graceful_shutdown();
                                 let _ = connection.await;
                             }
@@ -2300,11 +2597,13 @@ async fn serve(
         .unwrap_or_else(|| "localhost".into());
     // Node's `maxHeaderSize` counts header field name + value bytes (probed on
     // v22.22.0: 2,500 fields of `aaaaa: x` pass, 2,800 fail; a 16,350-byte
-    // value passes, 16,380 fails). This raw-byte sum also counts separators and
-    // the request line, so it can reject a many-small-header request earlier
-    // than Node; that stricter direction is registered as an unapproved
-    // difference (see the A7.4-HTTPSTORE candidate note). hyper's
-    // `max_buf_size` already rejects anything past its 16 KiB read buffer.
+    // value passes, 16,380 fails). This is the backstop for heads that hyper
+    // already buffered before [`HeaderGuard`] could scan them (a pipelined
+    // request read during a body); the guard owns the normal path and writes
+    // Node's exact 431 bytes. This sum assumes a `name: value` separator and
+    // can disagree with Node for a separator-less field; that stricter
+    // direction stays registered as an unapproved difference (see the
+    // A7.4-HTTPSTORE candidate note).
     let header_bytes: usize = request
         .headers()
         .iter()

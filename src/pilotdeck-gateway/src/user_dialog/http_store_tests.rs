@@ -19,6 +19,15 @@ use tokio::net::TcpStream;
 
 const ORACLE: &str = include_str!("../../tests/fixtures/user-dialog-http-store/oracle.json");
 
+/// Node v22.22.0 `_http_server.js` constants, captured from a real `node:http`
+/// server over a raw socket (`_tmp/20261025-issue-699/node/probe-header-lifecycle.mjs`).
+/// 51 bytes: status line + `Connection: close`, no `content-length` / `date`.
+const NODE_408: &[u8] =
+    include_bytes!("../../tests/fixtures/user-dialog-http-store/header-lifecycle/node-408.bin");
+/// 67 bytes, same shape as [`NODE_408`].
+const NODE_431: &[u8] =
+    include_bytes!("../../tests/fixtures/user-dialog-http-store/header-lifecycle/node-431.bin");
+
 fn oracle() -> Value {
     serde_json::from_str(ORACLE).expect("fixture oracle.json is valid JSON")
 }
@@ -460,6 +469,35 @@ fn http_head() -> Vec<u8> {
     format!("HEAD {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").into_bytes()
 }
 
+/// Asserts the exact terminal bytes Node writes for a connection-level error,
+/// then that the server closes without appending anything. A silent EOF (the
+/// pre-#699 Rust behaviour) fails on the `read_exact`, and hyper's own
+/// 431/408 shape (extra `content-length` / `date`, lower-case names) fails on
+/// the byte comparison.
+async fn expect_terminal_bytes(stream: &mut TcpStream, expected: &[u8], note: &str) {
+    let mut actual = vec![0u8; expected.len()];
+    tokio::time::timeout(Duration::from_secs(3), stream.read_exact(&mut actual))
+        .await
+        .unwrap_or_else(|_| panic!("{note}: no {}-byte response within 3 s", expected.len()))
+        .unwrap_or_else(|error| panic!("{note}: short response: {error}"));
+    assert_eq!(
+        actual,
+        expected,
+        "{note}: Rust bytes differ from Node\n rust={:?}\n node={:?}",
+        String::from_utf8_lossy(&actual),
+        String::from_utf8_lossy(expected)
+    );
+    let mut extra = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut extra))
+        .await
+        .unwrap_or_else(|_| panic!("{note}: connection stayed open after the terminal response"));
+    assert_eq!(
+        read.expect("extra read"),
+        0,
+        "{note}: unexpected byte after the terminal response"
+    );
+}
+
 /// Equal-length tokens must still be compared byte by byte. Last-byte and
 /// middle-byte substitutions both have the same length as the real token.
 #[test]
@@ -507,23 +545,46 @@ fn auth_rejects_equal_length_wrong_tokens() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
-/// Node's `maxHeaderSize` default is 16 KiB; hyper's read buffer replays 431.
+/// Node's `maxHeaderSize` default is 16 KiB and its parser writes exactly the
+/// 67-byte `_http_server.js` constant. hyper's canned parser 431 (which adds
+/// `content-length: 0` / `date` and lower-cases the header name) is not this.
 #[tokio::test]
-async fn oversized_headers_are_rejected_like_node() {
+async fn oversized_headers_receive_node_431_bytes() {
     let (store, directory) = file_store("headers");
     let (server, port) = start_limited(store, ServeLimits::default()).await;
     let padding = "a".repeat(DEFAULT_MAX_HEADER_BYTES);
     let request = format!(
         "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Pad: {padding}\r\nConnection: close\r\n\r\n"
     );
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    expect_terminal_bytes(&mut stream, NODE_431, "431 oversized header").await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Negative control for the header guard: 15,000 bytes stays under Node's
+/// 16 KiB field budget, so the request must reach the handler (405 for GET)
+/// instead of being rejected by an over-eager pre-reader. This is the same
+/// control the Node probe records as `initial-under-limit-control`.
+#[tokio::test]
+async fn under_limit_headers_are_not_431() {
+    let (store, directory) = file_store("headers-under-limit");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let padding = "a".repeat(15_000);
+    let request = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Pad: {padding}\r\nConnection: close\r\n\r\n"
+    );
     let response = exchange(port, request.as_bytes()).await.unwrap();
-    assert_eq!(status(&response), 431, "oversized header must be 431");
-    let text = String::from_utf8_lossy(&response);
-    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
-    assert!(body.is_empty(), "Node sends no body with 431");
+    assert_eq!(
+        status(&response),
+        405,
+        "an under-limit header must reach the handler: {}",
+        String::from_utf8_lossy(&response)
+    );
     assert!(
-        head.to_ascii_lowercase().contains("connection: close"),
-        "Node closes the connection after 431"
+        !response.starts_with(NODE_431),
+        "under-limit header was answered with Node's 431 bytes"
     );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
@@ -692,8 +753,9 @@ async fn partial_next_request_resets_keep_alive_inactivity_timer() {
 }
 
 /// Node starts a fresh `headersTimeout` at the first byte of a follow-up
-/// request; the idle timer alone would allow 2 s here. The partial head must be
-/// closed by the 300 ms header deadline, proving the start-on-first-byte branch.
+/// request and answers with the 51-byte 408; the idle timer alone would close
+/// silently at 2 s here. The exact bytes prove the header branch, not the
+/// keep-alive `socket.destroy()` branch.
 #[tokio::test]
 async fn next_request_headers_timeout_starts_at_first_byte() {
     let (store, directory) = file_store("next-headers-timeout");
@@ -715,11 +777,7 @@ async fn next_request_headers_timeout_starts_at_first_byte() {
         .await
         .unwrap();
     let started = Instant::now();
-    let mut byte = [0u8; 1];
-    let read = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut byte))
-        .await
-        .expect("a partial follow-up head waited for the idle timer, not headersTimeout");
-    assert_eq!(read.unwrap(), 0, "expected EOF at headersTimeout");
+    expect_terminal_bytes(&mut stream, NODE_408, "408 partial follow-up head").await;
     assert!(
         started.elapsed() < Duration::from_secs(1),
         "the header timer did not fire promptly: {:?}",
@@ -1210,7 +1268,14 @@ async fn empty_response_body_arms_idle_timer_without_a_body_poll() {
     let connection = http1::Builder::new()
         .timer(TokioTimer::new())
         .header_read_timeout(None::<Duration>)
-        .serve_connection(TokioIo::new(TimeoutStream::new(server_io, timer)), service);
+        .serve_connection(
+            TokioIo::new(TimeoutStream::new(
+                server_io,
+                timer,
+                DEFAULT_MAX_HEADER_BYTES,
+            )),
+            service,
+        );
     let permits = Arc::new(Semaphore::new(1));
     let permit = permits.clone().try_acquire_owned().unwrap();
     let task = tokio::spawn(async move {
@@ -1351,6 +1416,66 @@ fn default_connection_timeouts_match_node_v22() {
         limits.keep_alive_timeout + limits.keep_alive_timeout_buffer,
         Duration::from_secs(6)
     );
+    assert_eq!(NODE_408.len(), 51, "Node requestTimeoutResponse");
+    assert_eq!(
+        NODE_431.len(),
+        67,
+        "Node requestHeaderFieldsTooLargeResponse"
+    );
+}
+
+/// A header deadline that expires after `server.close()` started must become
+/// Node's silent `socket.destroy()` EOF, not a fabricated 408 (Node clears its
+/// connections checker on close and never writes 408 during shutdown).
+#[tokio::test]
+async fn shutdown_folds_header_deadline_into_silent_eof() {
+    let timer = Arc::new(KeepAliveTimer::new(
+        Duration::from_millis(20),
+        Duration::from_secs(1),
+    ));
+    let past = tokio::time::Instant::now() + Duration::from_millis(50);
+    assert_eq!(timer.expired(past), ExpiredTimer::Headers);
+    timer.begin_shutdown();
+    assert_eq!(timer.expired(past), ExpiredTimer::Idle);
+}
+
+/// Replays Node's `maxHeaderSize` accounting on raw bytes: the request line is
+/// excluded, every `name: value\r\n` field line counts, and an incomplete head
+/// is only rejected once a line cannot fit. Both directions matter: a guard
+/// that counts the request line rejects requests Node accepts, and one that
+/// waits for `header_bytes > max` only after the head completes lets hyper's
+/// parser answer first.
+#[test]
+fn header_guard_replays_node_field_budget() {
+    let mut guard = HeaderGuard::new(16);
+    assert!(
+        !guard.push(b"GET / HTTP/1.1\r\n"),
+        "request line is excluded"
+    );
+    assert!(!guard.push(b"A: b\r\n"), "6 field bytes fit");
+    assert!(!guard.push(b"B: c\r\n"), "12 field bytes fit");
+    assert!(!guard.push(b"\r\n"), "head completes under the limit");
+    assert!(
+        !guard.push(&[b'x'; 100]),
+        "bytes after the head are body/next request, not this head"
+    );
+
+    // A follow-up head resets the budget at the next Idle phase.
+    guard.begin(TimeoutPhase::Idle);
+    assert!(!guard.push(b"GET / HTTP/1.1\r\n"));
+    assert!(
+        guard.push(b"X: 012345678901\r\n"),
+        "17 field bytes exceed the 16-byte budget"
+    );
+
+    // A single field line that cannot fit is rejected before its terminator,
+    // so hyper's read buffer cannot grow past the guard.
+    let mut guard = HeaderGuard::new(16);
+    assert!(!guard.push(b"GET / HTTP/1.1\r\n"));
+    assert!(
+        guard.push(&[b'a'; 17]),
+        "a field line already longer than the budget cannot fit"
+    );
 }
 
 /// A mutation that changes the default host to `0.0.0.0` must be caught: every
@@ -1408,8 +1533,10 @@ async fn anonymous_oversized_body_is_rejected_before_reading() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// S2×E1T1: a partial first request head must receive Node's exact 51-byte
+/// 408 (`requestTimeoutResponse`), not the pre-#699 zero-byte EOF.
 #[tokio::test]
-async fn partial_headers_are_closed_after_headers_timeout() {
+async fn partial_headers_receive_node_408_bytes() {
     let (store, directory) = file_store("headers-timeout");
     let limits = ServeLimits {
         headers_timeout: Duration::from_millis(200),
@@ -1422,23 +1549,229 @@ async fn partial_headers_are_closed_after_headers_timeout() {
         .await
         .unwrap();
     let started = Instant::now();
-    let mut byte = [0u8; 1];
-    let read = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut byte)).await;
-    assert!(
-        read.is_ok(),
-        "half a header stayed open past headersTimeout (slowloris)"
-    );
-    assert_eq!(
-        read.unwrap().unwrap(),
-        0,
-        "expected EOF after headersTimeout"
-    );
+    expect_terminal_bytes(&mut stream, NODE_408, "408 partial first head").await;
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "headersTimeout did not fire promptly: {:?}",
         started.elapsed()
     );
     server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// S1×E1T1: Node arms `headersTimeout` on an accepted connection even before
+/// the first byte (probe `initial-zero-bytes`); the Rust timer must do the same
+/// and answer with the same 408 bytes.
+#[tokio::test]
+async fn idle_connection_receives_node_408_bytes() {
+    let (store, directory) = file_store("zero-byte-headers-timeout");
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_millis(200),
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    expect_terminal_bytes(&mut stream, NODE_408, "408 zero-byte connection").await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Negative control for the 408 branch: a complete request inside
+/// `headersTimeout` is answered normally, so the bytes above are not emitted
+/// for every connection.
+#[tokio::test]
+async fn complete_request_within_headers_timeout_is_not_408() {
+    let (store, directory) = file_store("headers-timeout-control");
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_millis(300),
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let response = exchange_within(port, &http_get(true), Duration::from_secs(1))
+        .await
+        .expect("a complete request waited for headersTimeout");
+    assert_eq!(status(&response), 405, "{response:?}");
+    assert!(
+        !response.starts_with(NODE_408),
+        "a complete request must not receive the 408 bytes"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// S2×E2T2: the header guard resets after a keep-alive response, so an
+/// oversized follow-up head also gets Node's exact 67-byte 431.
+#[tokio::test]
+async fn next_request_oversized_headers_receive_node_431_bytes() {
+    let (store, directory) = file_store("next-oversized-headers");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(&http_get(false)).await.unwrap();
+    let response = read_response(&mut stream).await;
+    assert!(response.starts_with(b"HTTP/1.1 405"), "{response:?}");
+
+    let request = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Pad: {}\r\nConnection: close\r\n\r\n",
+        "a".repeat(DEFAULT_MAX_HEADER_BYTES)
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    expect_terminal_bytes(&mut stream, NODE_431, "431 oversized follow-up head").await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// S2×E3: a peer that closes mid-head is not a headersTimeout. The server must
+/// not fabricate a 408 (there is no socket left to write it to) and must keep
+/// serving new connections.
+#[tokio::test]
+async fn client_close_mid_headers_sends_no_408_and_server_recovers() {
+    let (store, directory) = file_store("client-close-headers");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut partial = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    partial
+        .write_all(b"POST /v1/gateway-user-dialog-store/list HTTP/1.1\r\nHost: h\r\nX-Partial: ")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(partial);
+
+    let response = exchange_within(port, &http_get(true), Duration::from_secs(1))
+        .await
+        .expect("the server stopped answering after a client close");
+    assert_eq!(status(&response), 405, "{response:?}");
+    assert!(
+        !response.starts_with(NODE_408),
+        "a client close must not be reported as a timeout"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// S2×E4: Node's `server.close()` clears the connections-checking interval and
+/// does not destroy a connection whose parser already consumed a partial head
+/// (probe `short-shutdown-initial-partial`, still open after 6 s), so it never
+/// fabricates a 408 on shutdown. hyper's graceful shutdown has the same shape
+/// here; the test pins "no bytes, no 408" and lets the peer close to finish.
+#[tokio::test]
+async fn shutdown_does_not_turn_a_partial_head_into_408() {
+    let (store, directory) = file_store("shutdown-partial-headers");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream
+        .write_all(b"POST /v1/gateway-user-dialog-store/list HTTP/1.1\r\nHost: h\r\nX-Partial: ")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let closing = tokio::spawn(async move { server.close().await });
+    let mut byte = [0u8; 1];
+    match tokio::time::timeout(Duration::from_millis(250), stream.read(&mut byte)).await {
+        Ok(Ok(0)) => {}
+        Ok(Ok(read)) => panic!("shutdown wrote {read} unexpected byte(s): {byte:?}"),
+        Ok(Err(error)) => panic!("shutdown read failed instead of hanging/closing: {error}"),
+        Err(_) => {}
+    }
+    drop(stream);
+    tokio::time::timeout(Duration::from_secs(2), closing)
+        .await
+        .expect("close() did not finish after the peer closed a partial head")
+        .unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// S1×E4: a zero-byte connection at shutdown never receives a 408. Node's own
+/// `close()` races the parser (RST before registration, otherwise the cleared
+/// checker leaves it open); both are byte-free, so this accepts EOF, a reset,
+/// or "still open until the peer closes".
+#[tokio::test]
+async fn shutdown_zero_byte_connection_sends_no_408() {
+    let (store, directory) = file_store("shutdown-zero-byte");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let closing = tokio::spawn(async move { server.close().await });
+    let mut byte = [0u8; 1];
+    match tokio::time::timeout(Duration::from_millis(250), stream.read(&mut byte)).await {
+        Ok(Ok(0)) | Ok(Err(_)) => {}
+        Ok(Ok(read)) => panic!("shutdown wrote {read} unexpected byte(s): {byte:?}"),
+        Err(_) => {}
+    }
+    drop(stream);
+    tokio::time::timeout(Duration::from_secs(2), closing)
+        .await
+        .expect("close() did not finish after the peer closed a zero-byte connection")
+        .unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// S3×E3: a peer that closes mid-body is not a headersTimeout. No 408 may be
+/// fabricated and the server must still serve new connections.
+#[tokio::test]
+async fn client_close_mid_body_sends_no_408_and_server_recovers() {
+    let (store, directory) = file_store("client-close-body");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut partial = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let head = format!(
+        "POST {STORE_PATH_PREFIX}put HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: 100\r\n\r\nhello"
+    );
+    partial.write_all(head.as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(partial);
+
+    let response = exchange_within(port, &http_get(true), Duration::from_secs(1))
+        .await
+        .expect("the server stopped answering after a mid-body client close");
+    assert_eq!(status(&response), 405, "{response:?}");
+    assert!(
+        !response.starts_with(NODE_408),
+        "a client close must not be reported as a timeout"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// S3×E4: `close()` waits for the in-flight request; Rust's `requestTimeout`
+/// still bounds an incomplete body and writes a 408 before closing. Node's
+/// `close()` clears its checker and hangs instead (registered difference: the
+/// body 408 shape/termination is outside #699's header scope).
+#[tokio::test]
+async fn shutdown_with_partial_body_finishes_at_request_timeout() {
+    let (store, directory) = file_store("shutdown-partial-body");
+    let limits = ServeLimits {
+        request_timeout: Duration::from_millis(200),
+        headers_timeout: Duration::from_secs(5),
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let head = format!(
+        "POST {STORE_PATH_PREFIX}put HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: 100\r\n\r\nhello"
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let closing = tokio::spawn(async move { server.close().await });
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut response))
+        .await
+        .expect("requestTimeout did not fire during shutdown")
+        .unwrap();
+    assert_eq!(status(&response), 408, "{response:?}");
+    assert!(
+        String::from_utf8_lossy(&response)
+            .to_ascii_lowercase()
+            .contains("connection: close"),
+        "the body-timeout response must close the connection"
+    );
+    tokio::time::timeout(Duration::from_secs(2), closing)
+        .await
+        .expect("close() did not finish after the body timeout")
+        .unwrap();
     let _ = std::fs::remove_dir_all(directory);
 }
 
