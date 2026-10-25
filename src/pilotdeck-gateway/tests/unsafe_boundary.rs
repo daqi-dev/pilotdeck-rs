@@ -3,12 +3,19 @@
 //! （含 dev/build/target 与未启用的可选依赖）、仓内 Cargo 配置与 toolchain 文件、
 //! workspace manifest 树内的测试 cwd 到根的 Cargo 配置、CARGO_HOME（未设时 ~/.cargo）的
 //! config*，以及测试进程可见的编译相关环境变量。
+//! vendored 包（`vendor/tiktoken-rs`、`data/icu_collator_data`）不在 workspace
+//! lint 继承内，因此其声明/源码包含边与成员同受检查：path 依赖（含 dev/build/
+//! target 与未启用的可选依赖）、build script、proc-macro 及其它非 lib target、
+//! `[lib] path`，以及源码里的 `#[path = ...]` / `include!("...")` 目标都必须
+//! 留在该 vendored 包目录内。vendored 包内部的 unsafe 本身仍不属于本守卫范围。
+//! vendored 源码内容不做哈希 pin：内容本身是否可信属于冻结件/人工评审边界；
+//! 本守卫只锁“声明边与源码包含边不能引出该目录”。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
 //! CARGO 包装器）由人工评审负责，不靠扫描脚本文本覆盖；依据：
 //! state/decisions-20261021.md「卡 · #386 守卫的构建配置检查改为「一律不许存在」，并划清守卫边界（AI 代批，待人复核）」。
 //! source 只接受 null（已审计本地包）与 registry+；git 等其它 kind 一律拒绝。
-//! vendor 与 registry 依赖内部的 unsafe 不属于本守卫的审计范围；registry
-//! 依赖由 Cargo.lock pin 评审，既有 vendor pin 的变更仍须按冻结件规则评审。
+//! registry 依赖内部 unsafe 不属于本守卫的审计范围；registry 依赖由 Cargo.lock
+//! pin 评审；vendored 内容的变更仍须按冻结件规则评审。
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -91,6 +98,299 @@ fn is_local_source(source: &Value, description: &str) -> bool {
     }
 }
 
+// Package declarations include optional and target-specific edges even when
+// they are absent from the active resolve graph. Cargo normalizes
+// inline/table/workspace-inherited dependency syntax, so filtering the
+// metadata `dependencies` array is the declaration-level check for both
+// workspace members and vendored packages.
+fn declared_local_dependency_boundary(
+    package: &Value,
+    description: &str,
+    allowed: &BTreeSet<PathBuf>,
+) {
+    for dependency in package["dependencies"].as_array().unwrap() {
+        let name = dependency["name"].as_str().unwrap();
+        if is_local_source(
+            dependency
+                .get("source")
+                .expect("declared dependency source"),
+            &format!("{description} dependency {name}"),
+        ) {
+            let directory = Path::new(
+                dependency
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .expect("local dependency path"),
+            )
+            .canonicalize()
+            .expect("existing dependency directory");
+            assert!(
+                allowed.contains(&directory),
+                "unknown declared path dependency of {description}: {name} ({})",
+                directory.display()
+            );
+        }
+    }
+}
+
+// Tokens that keep string literals, unlike `rust_tokens` (which drops them so
+// the child-source pin stays comment/string insensitive). Vendored source
+// edges are exactly the string-valued `#[path]` and `include!` sites, so the
+// values must be visible here.
+#[derive(Debug, PartialEq)]
+enum SourceToken {
+    Ident(String),
+    Str { value: String, escaped: bool },
+    Punct(char),
+}
+
+fn source_tokens(source: &str) -> Vec<SourceToken> {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    let mut tokens = Vec::new();
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"//") {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+        } else if bytes[i..].starts_with(b"/*") {
+            i += 2;
+            let mut depth = 1;
+            while depth != 0 {
+                assert!(i < bytes.len(), "unclosed comment");
+                if bytes[i..].starts_with(b"/*") {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i..].starts_with(b"*/") {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+        } else if bytes[i] == b'r'
+            && bytes[i + 1..].iter().copied().find(|&b| b != b'#') == Some(b'"')
+        {
+            let hashes = bytes[i + 1..].iter().take_while(|&&b| b == b'#').count();
+            i += hashes + 2;
+            let start = i;
+            loop {
+                assert!(i < bytes.len(), "unclosed raw string");
+                if bytes[i] == b'"'
+                    && bytes
+                        .get(i + 1..i + 1 + hashes)
+                        .is_some_and(|suffix| suffix.iter().all(|&b| b == b'#'))
+                {
+                    let value = String::from_utf8_lossy(&bytes[start..i]).into_owned();
+                    i += hashes + 1;
+                    tokens.push(SourceToken::Str {
+                        value,
+                        escaped: false,
+                    });
+                    break;
+                }
+                i += 1;
+            }
+        } else if bytes[i] == b'"' {
+            i += 1;
+            let mut value = Vec::new();
+            let mut escaped = false;
+            loop {
+                assert!(i < bytes.len(), "unclosed string");
+                match bytes[i] {
+                    b'\\' => {
+                        escaped = true;
+                        i += 2;
+                    }
+                    b'"' => {
+                        i += 1;
+                        break;
+                    }
+                    byte => {
+                        value.push(byte);
+                        i += 1;
+                    }
+                }
+            }
+            tokens.push(SourceToken::Str {
+                value: String::from_utf8_lossy(&value).into_owned(),
+                escaped,
+            });
+        } else if bytes[i] == b'\''
+            && (bytes.get(i + 2) == Some(&b'\'')
+                || (bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'')))
+        {
+            i += if bytes[i + 1] == b'\\' { 4 } else { 3 };
+        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            tokens.push(SourceToken::Ident(source[start..i].to_owned()));
+        } else {
+            if !bytes[i].is_ascii_whitespace() {
+                tokens.push(SourceToken::Punct(char::from(bytes[i])));
+            }
+            i += 1;
+        }
+    }
+    tokens
+}
+
+fn assert_vendored_source_target(
+    package: &str,
+    directory: &Path,
+    source: &Path,
+    kind: &str,
+    value: &str,
+) {
+    let target = source.parent().unwrap().join(value);
+    let target = target.canonicalize().unwrap_or_else(|error| {
+        panic!(
+            "vendored package {package} {kind} target cannot be resolved: {} ({error})",
+            target.display()
+        )
+    });
+    assert!(
+        target.starts_with(directory),
+        "vendored package {package} {kind} target escapes its package directory: {} -> {}",
+        source.display(),
+        target.display()
+    );
+    assert!(
+        target.is_file(),
+        "vendored package {package} {kind} target is not a file: {}",
+        target.display()
+    );
+}
+
+// Fail closed on escaped strings and macro-generated (non-literal) paths:
+// parsing arbitrary macro expansion is out of scope, so a new literal shape
+// must extend this scanner instead of silently skipping an edge.
+fn vendored_source_edges(package: &str, directory: &Path, files: &[PathBuf]) {
+    for file in files {
+        let source = fs::read_to_string(file).unwrap();
+        let tokens = source_tokens(&source);
+        for (index, token) in tokens.iter().enumerate() {
+            let SourceToken::Ident(word) = token else {
+                continue;
+            };
+            // `#[path = "..."]` and the `cfg_attr(..., path = "...")` shape.
+            // A preceding `[` or `,` distinguishes an attribute from an
+            // ordinary `let path = "..."` binding.
+            if word == "path"
+                && matches!(
+                    tokens.get(index.wrapping_sub(1)),
+                    Some(SourceToken::Punct('[')) | Some(SourceToken::Punct(','))
+                )
+                && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
+            {
+                match tokens.get(index + 2) {
+                    Some(SourceToken::Str { value, escaped }) => {
+                        assert!(
+                            !escaped,
+                            "vendored package {package} #[path] must be a plain string literal: {}",
+                            file.display()
+                        );
+                        assert_vendored_source_target(package, directory, file, "#[path]", value);
+                    }
+                    _ => panic!(
+                        "vendored package {package} #[path] must be a plain string literal: {}",
+                        file.display()
+                    ),
+                }
+            }
+            // `include!("...")`, including `include ! ( "..." )` spacing.
+            if word == "include"
+                && tokens.get(index + 1) == Some(&SourceToken::Punct('!'))
+                && matches!(
+                    tokens.get(index + 2),
+                    Some(SourceToken::Punct('('))
+                        | Some(SourceToken::Punct('['))
+                        | Some(SourceToken::Punct('{'))
+                )
+            {
+                match tokens.get(index + 3) {
+                    Some(SourceToken::Str { value, escaped }) => {
+                        assert!(
+                            !escaped,
+                            "vendored package {package} include! must be a plain string literal: {}",
+                            file.display()
+                        );
+                        assert_vendored_source_target(package, directory, file, "include!", value);
+                    }
+                    _ => panic!(
+                        "vendored package {package} include! must be a plain string literal: {}",
+                        file.display()
+                    ),
+                }
+            }
+        }
+    }
+}
+
+fn collect_vendored_rust_sources(package: &str, directory: &Path, files: &mut Vec<PathBuf>) {
+    for name in entries(directory) {
+        let path = directory.join(&name);
+        let kind = fs::symlink_metadata(&path).unwrap().file_type();
+        assert!(
+            !kind.is_symlink(),
+            "vendored package {package} source tree contains a symlink: {}",
+            path.display()
+        );
+        if kind.is_dir() {
+            collect_vendored_rust_sources(package, &path, files);
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+}
+
+// A vendored package sits outside `[workspace.lints]`, so any build script,
+// proc-macro, non-lib target, or source include that leaves the vendored
+// directory would be compiled/executed without the workspace `forbid`. Keep
+// the reviewed surface exactly the vendored lib source tree.
+fn vendored_package_boundary(
+    package: &str,
+    metadata: &Value,
+    directory: &Path,
+    allowed: &BTreeSet<PathBuf>,
+) {
+    declared_local_dependency_boundary(metadata, &format!("vendored package {package}"), allowed);
+    let targets = metadata["targets"]
+        .as_array()
+        .expect("vendored package targets");
+    for target in targets {
+        let kinds: Vec<_> = target["kind"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|kind| kind.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            kinds,
+            ["lib"],
+            "vendored package {package} must expose only a lib target; build scripts, proc-macros, bins, examples, tests and benches are forbidden"
+        );
+        let source = Path::new(target["src_path"].as_str().unwrap())
+            .canonicalize()
+            .expect("vendored lib source");
+        assert!(
+            source.starts_with(directory),
+            "vendored package {package} lib source escapes its package directory: {}",
+            source.display()
+        );
+        assert!(
+            source.is_file(),
+            "vendored package {package} lib source is not a file: {}",
+            source.display()
+        );
+    }
+    let mut files = Vec::new();
+    collect_vendored_rust_sources(package, directory, &mut files);
+    vendored_source_edges(package, directory, &files);
+}
+
 fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
     let output = Command::new(std::env::var_os("CARGO").expect("Cargo executable from CARGO"))
         .args(["metadata", "--format-version", "1"])
@@ -136,10 +436,57 @@ fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
         "Cargo workspace members must match the lint-checked manifest members"
     );
 
+    let workspace_root = workspace.canonicalize().unwrap();
     let vendored: BTreeSet<_> = VENDORED_PACKAGES
         .iter()
-        .map(|relative| workspace.join(relative).canonicalize().unwrap())
+        .map(|relative| {
+            let path = workspace.join(relative);
+            let kind = fs::symlink_metadata(&path)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "vendored package path is missing: {} ({error})",
+                        path.display()
+                    )
+                })
+                .file_type();
+            assert!(
+                kind.is_dir(),
+                "vendored package must be a real directory, not a symlink or file: {}",
+                path.display()
+            );
+            let directory = path.canonicalize().unwrap();
+            assert!(
+                directory.starts_with(&workspace_root),
+                "vendored package escapes the workspace: {} -> {}",
+                path.display(),
+                directory.display()
+            );
+            directory
+        })
         .collect();
+    let mut declared_allowed = checked_members.clone();
+    declared_allowed.extend(vendored.iter().cloned());
+    // `cargo metadata` only lists packages reachable from the workspace. Both
+    // vendored packages are in the graph today (tiktoken via the tokenizer,
+    // icu data via `[patch.crates-io]`), but fail closed if either disappears:
+    // an unaudited vendored manifest must not silently drop out of the guard.
+    for directory in &vendored {
+        let metadata = packages
+            .values()
+            .find(|package| package_directory(package) == *directory)
+            .unwrap_or_else(|| {
+                panic!(
+                    "vendored package is absent from cargo metadata; the guard cannot audit its declaration edges: {}",
+                    directory.display()
+                )
+            });
+        let id = metadata["id"].as_str().unwrap();
+        assert!(
+            !member_ids.contains(id),
+            "vendored package must not also be a workspace member: {id}"
+        );
+        vendored_package_boundary(id, metadata, directory, &declared_allowed);
+    }
     let nodes: HashMap<_, _> = metadata["resolve"]["nodes"]
         .as_array()
         .expect("resolved dependency graph")
@@ -163,33 +510,11 @@ fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
             );
         }
         if member_ids.contains(id) {
-            // Package declarations include optional and target-specific edges
-            // even when they are absent from the active resolve graph. Cargo
-            // normalizes inline/table/workspace-inherited dependency syntax.
-            for dependency in package["dependencies"].as_array().unwrap() {
-                let name = dependency["name"].as_str().unwrap();
-                if is_local_source(
-                    dependency
-                        .get("source")
-                        .expect("declared dependency source"),
-                    &format!("{id} dependency {name}"),
-                ) {
-                    let directory = Path::new(
-                        dependency
-                            .get("path")
-                            .and_then(Value::as_str)
-                            .expect("local dependency path"),
-                    )
-                    .canonicalize()
-                    .expect("existing dependency directory");
-                    assert!(
-                        checked_members.contains(&directory) || vendored.contains(&directory),
-                        "unknown declared path dependency of workspace member {id}: {} ({})",
-                        dependency["name"].as_str().unwrap(),
-                        directory.display()
-                    );
-                }
-            }
+            declared_local_dependency_boundary(
+                package,
+                &format!("workspace member {id}"),
+                &declared_allowed,
+            );
         }
         // Cargo's dependencies list includes every resolved edge, without
         // filtering dep_kinds: normal, build and dev dependencies all count.
