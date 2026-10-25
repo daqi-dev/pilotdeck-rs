@@ -11,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, run_owned
 
 ROOT = Path(__file__).resolve().parents[5]
 PRODUCT = ROOT / 'src/pilotdeck-gateway/src/runtime/replacement.rs'
@@ -100,12 +100,14 @@ def main():
             assert FAILURE_TEXT[name], name
         summary = []
         for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
+            slot_deadline = time.monotonic() + 1800
             while True:
-                slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
+                slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=10)
                 if slots.returncode == 0:
                     break
                 if slots.returncode != 1:
                     raise RuntimeError(slots.stdout + slots.stderr)
+                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(5)
             assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
             mutated = original[path].replace(before.encode(), after.encode())
@@ -121,9 +123,14 @@ def main():
                     command.append('--ignored')
                 with log.open('w') as output:
                     output.write(slots.stdout + slots.stderr)
-                    output.flush()
-                    proc = subprocess.run(command, cwd=ROOT / 'src', stdout=output,
-                                          stderr=subprocess.STDOUT, timeout=300)
+                try:
+                    proc = run_owned(command, cwd=ROOT / 'src', timeout=300)
+                except subprocess.TimeoutExpired as error:
+                    with log.open('a') as output:
+                        output.write((error.output or '') + (error.stderr or ''))
+                    raise
+                with log.open('a') as output:
+                    output.write(proc.stdout + proc.stderr)
                 output = log.read_text(errors='replace')
                 reason = invalid_reason(name, tests, proc.returncode, output)
                 record['exit'] = proc.returncode

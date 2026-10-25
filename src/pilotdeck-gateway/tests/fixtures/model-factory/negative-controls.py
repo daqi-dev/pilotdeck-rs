@@ -8,7 +8,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, run_owned
 
 root = Path(__file__).resolve().parents[5]
 output = Path(sys.argv[1]).resolve()
@@ -157,17 +157,23 @@ with mutating_sources(root, [registry, family]) as snapshots:
             original = sources[path].decode()
             if original.count(before) != 1:
                 raise RuntimeError(f'{name}: mutation anchor count {original.count(before)}')
+            slot_deadline = time.monotonic() + 1800
             while True:
                 slot = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, timeout=10)
                 if slot.returncode == 0:
                     break
                 if slot.returncode != 1:
                     raise RuntimeError('cargo slot preflight failed')
+                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(5)
             path.write_text(original.replace(before, after))
             try:
-                with (output / f'{name}.log').open('wb') as log:
-                    result = subprocess.run(['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'), '--offline', '-p', 'pilotdeck-gateway', *target, test, '--', '--exact', '--test-threads=1'], cwd=root, stdout=log, stderr=subprocess.STDOUT, timeout=100)
+                try:
+                    result = run_owned(['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'), '--offline', '-p', 'pilotdeck-gateway', *target, test, '--', '--exact', '--test-threads=1'], cwd=root, timeout=100)
+                except subprocess.TimeoutExpired as error:
+                    (output / f'{name}.log').write_text((error.output or '') + (error.stderr or ''))
+                    raise
+                (output / f'{name}.log').write_text(result.stdout + result.stderr)
                 contents = (output / f'{name}.log').read_text()
                 if result.returncode == 0 or f'test {test} ... FAILED' not in contents or 'could not compile' in contents:
                     raise RuntimeError(f'{name}: not a test assertion failure (exit {result.returncode})')

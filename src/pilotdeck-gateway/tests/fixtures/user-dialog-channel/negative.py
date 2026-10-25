@@ -12,6 +12,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import run_owned, wait_for_slot
+
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 fixture = Path(__file__).resolve().parent
@@ -288,21 +291,10 @@ def write_sources(scratch: Path, name: str | None = None) -> None:
 def run(scratch: Path, command: list[str]) -> subprocess.CompletedProcess:
     env = dict(os.environ, CARGO_NET_OFFLINE="true", CARGO_TARGET_DIR=str(scratch / "target"))
     assert env.get("CARGO_HOME") and env.get("PDRS_BASELINE")
-    return subprocess.run(command, env=env, capture_output=True, text=True, timeout=1800)
+    return run_owned(command, env=env, timeout=1800)
 
 
-gate = subprocess.run(
-    [
-        "bash",
-        "-c",
-        'until bash "$1"; do sleep 30; done',
-        "cargo-slots",
-        str(fixture.parents[4] / "scripts/cargo-slots.sh"),
-    ],
-    capture_output=True,
-    text=True,
-    check=True,
-)
+gate = wait_for_slot(fixture.parents[4] / "scripts/cargo-slots.sh")
 
 summary = []
 with tempfile.TemporaryDirectory(prefix="pdrs-udc-negative-", dir="/tmp") as temp:

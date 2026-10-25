@@ -28,7 +28,7 @@ def stop(signum, _frame):
 
 
 def run(root, name, test, *, red=False):
-    subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], check=True)
+    subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], check=True, timeout=10)
     command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                '--locked', '--offline', '-p', 'pilotdeck-gateway', '--lib',
                f'skills::import::tests::{test}', '--', '--exact', '--nocapture',

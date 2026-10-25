@@ -24,7 +24,7 @@ with mutating_sources(REPO, [BUDGET, FILES]) as snapshots:
 
 
     def run(name, args):
-        subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], check=True)
+        subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], check=True, timeout=10)
         command = ['cargo', 'test', '--manifest-path', str(REPO / 'src/Cargo.toml'),
                    '--locked', '--offline', '-p', 'pilotdeck-gateway', *args,
                    '--', '--test-threads=4']

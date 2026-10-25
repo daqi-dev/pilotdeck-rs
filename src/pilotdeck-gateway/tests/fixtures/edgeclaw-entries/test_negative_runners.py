@@ -130,7 +130,7 @@ with tree_lock(sys.argv[3]):
             root.mkdir()
             holder = subprocess.Popen(
                 [sys.executable, '-c', child, str(FIXTURES.parent), str(marker), str(root)],
-                stdout=subprocess.PIPE, text=True)
+                stdout=subprocess.PIPE, text=True, start_new_session=True)
             try:
                 self.assertEqual(holder.stdout.readline().strip(), 'mutated')
                 start = time.monotonic()

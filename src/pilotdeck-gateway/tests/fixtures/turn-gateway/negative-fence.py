@@ -112,12 +112,12 @@ with mutating_sources(repo, [gateway, submit, tests, session]) as snapshots:
     try:
         for control in selected:
             assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
-            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
+            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=10)
             slot_deadline = time.monotonic() + 1800
             while slots.returncode == 1:
                 assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(20)
-                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
+                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=10)
             assert slots.returncode == 0
             modified = dict(original)
             if 'path' in control:
