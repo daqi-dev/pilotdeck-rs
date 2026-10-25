@@ -13,7 +13,9 @@ use crate::runtime::memory::{
     MemoryBundleError, MemoryProviderError, NativeMemoryService, NativeProjectMemoryProvider,
     ProjectMemoryProvider,
 };
-use crate::runtime::project::context_storage::{ContextStorageResources, SessionContextStorage};
+use crate::runtime::project::context_storage::{
+    ContextStorageResources, SessionContextOptions, SessionContextStorage,
+};
 use crate::runtime::project::memory_bundle::MemoryBundleFamilySource;
 use std::sync::atomic::AtomicBool;
 use std::task::Poll;
@@ -31,6 +33,7 @@ struct RecordingMemory {
     dropped: Arc<AtomicBool>,
     completed: Arc<AtomicBool>,
     closes: AtomicUsize,
+    close_gate: Option<Arc<CloseGate>>,
 }
 impl RecordingMemory {
     fn new(behavior: Behavior) -> Arc<Self> {
@@ -40,6 +43,7 @@ impl RecordingMemory {
             dropped: Arc::new(AtomicBool::new(false)),
             completed: Arc::new(AtomicBool::new(false)),
             closes: AtomicUsize::new(0),
+            close_gate: None,
         })
     }
     fn source(self: &Arc<Self>, native: bool) -> MemoryBundleFamilySource {
@@ -121,6 +125,36 @@ impl NativeMemoryService for RecordingMemory {
     }
     fn close(&self) {
         self.closes.fetch_add(1, Ordering::SeqCst);
+        if let Some(gate) = &self.close_gate {
+            gate.entered.notify_one();
+            let (released, timeout) = gate
+                .wake
+                .wait_timeout_while(
+                    gate.released.lock().unwrap(),
+                    Duration::from_secs(10),
+                    |released| !*released,
+                )
+                .unwrap();
+            drop(released);
+            gate.exited.store(true, Ordering::SeqCst);
+            assert!(!timeout.timed_out(), "close gate was never released");
+        }
+    }
+}
+
+#[derive(Default)]
+struct CloseGate {
+    entered: tokio::sync::Notify,
+    released: Mutex<bool>,
+    wake: std::sync::Condvar,
+    exited: AtomicBool,
+}
+// Unblock cleanup on both normal completion and failed test assertions.
+struct ReleaseClose(Arc<CloseGate>);
+impl Drop for ReleaseClose {
+    fn drop(&mut self) {
+        *self.0.released.lock().unwrap() = true;
+        self.0.wake.notify_one();
     }
 }
 
@@ -241,6 +275,134 @@ async fn context_memory_project_root_and_success_before_default_or_override_dead
         registry.dispose().await.unwrap();
         assert_eq!(memory.closes.load(Ordering::SeqCst), usize::from(native));
     }
+}
+
+#[tokio::test]
+async fn context_memory_scoped_opt_out_skips_resolver_while_default_inherits() {
+    for native in [false, true] {
+        let scratch = Scratch::new();
+        let memory = RecordingMemory::new(Behavior::Success(0));
+        let (registry, lease, main) = build(&scratch, Some(""), memory.source(native));
+        let resource = storage(&lease);
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        for memory_disabled in [true, false] {
+            let scoped = storage
+                .create_session_with_options(
+                    scratch.0.join("scoped-spill"),
+                    SessionContextOptions {
+                        memory_disabled,
+                        ..SessionContextOptions::default()
+                    },
+                )
+                .unwrap();
+            let before = memory.inputs.lock().unwrap().len();
+            let result = scoped
+                .context_runtime
+                .prepare_for_model(input(&scratch))
+                .await
+                .unwrap();
+            assert_eq!(
+                memory.inputs.lock().unwrap().len() - before,
+                usize::from(!memory_disabled)
+            );
+            assert_eq!(
+                text_field(&result, "systemPrompt").contains("real provider context"),
+                !memory_disabled
+            );
+            assert!(memory_diagnostics(&result).is_empty());
+        }
+        // Opting out one scoped context never disables the shared provider.
+        let result = main
+            .context_runtime
+            .prepare_for_model(input(&scratch))
+            .await
+            .unwrap();
+        assert!(text_field(&result, "systemPrompt").contains("real provider context"));
+        assert_eq!(memory.inputs.lock().unwrap().len(), 2);
+        drop(main);
+        drop(lease);
+        registry.dispose().await.unwrap();
+        assert_eq!(memory.closes.load(Ordering::SeqCst), usize::from(native));
+    }
+}
+
+#[tokio::test]
+async fn context_memory_host_workspace_root_drives_retrieval_and_instructions() {
+    let scratch = Scratch::new();
+    let memory = RecordingMemory::new(Behavior::Success(0));
+    let (registry, lease, main) = build(&scratch, Some(""), memory.source(false));
+    let generation_root = scratch.0.join("project");
+    let host_root = scratch.0.join("host-workspace");
+    std::fs::create_dir_all(&host_root).unwrap();
+    std::fs::create_dir_all(scratch.0.join("pilot-home")).unwrap();
+    std::fs::write(
+        generation_root.join("PILOTDECK.md"),
+        "GENERATION-INSTRUCTION",
+    )
+    .unwrap();
+    std::fs::write(host_root.join("PILOTDECK.md"), "HOST-INSTRUCTION").unwrap();
+    std::fs::write(
+        scratch.0.join("pilot-home/PILOTDECK.md"),
+        "USER-INSTRUCTION",
+    )
+    .unwrap();
+    let resource = storage(&lease);
+    let storage = resource
+        .as_any()
+        .downcast_ref::<ContextStorageResources>()
+        .unwrap();
+    for host_workspace_root in [Some(host_root.clone()), None] {
+        let expected_root = host_workspace_root.as_ref().unwrap_or(&generation_root);
+        let (expected_instruction, excluded_instruction) = if host_workspace_root.is_some() {
+            ("HOST-INSTRUCTION", "GENERATION-INSTRUCTION")
+        } else {
+            ("GENERATION-INSTRUCTION", "HOST-INSTRUCTION")
+        };
+        let composed = storage
+            .create_session_with_options(
+                scratch.0.join("execution-spill"),
+                SessionContextOptions {
+                    host_workspace_root: host_workspace_root.clone(),
+                    ..SessionContextOptions::default()
+                },
+            )
+            .unwrap();
+        let result = composed
+            .context_runtime
+            .prepare_for_model(input(&scratch))
+            .await
+            .unwrap();
+        {
+            let calls = memory.inputs.lock().unwrap();
+            assert_eq!(
+                calls.last().unwrap().project_root,
+                expected_root.to_str().unwrap()
+            );
+            assert_ne!(
+                calls.last().unwrap().project_root,
+                scratch.0.join("different-cwd").to_str().unwrap()
+            );
+        }
+        let prompt = text_field(&result, "systemPrompt");
+        assert!(prompt.contains(expected_instruction), "{prompt}");
+        assert!(!prompt.contains(excluded_instruction), "{prompt}");
+        assert!(prompt.contains("USER-INSTRUCTION"), "{prompt}");
+        assert_eq!(
+            composed
+                .tool_result_budget
+                .tool_results_dir()
+                .to_utf8()
+                .unwrap(),
+            scratch.0.join("execution-spill").to_str().unwrap()
+        );
+    }
+    assert_eq!(memory.inputs.lock().unwrap().len(), 2);
+    drop(main);
+    drop(lease);
+    registry.dispose().await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -492,6 +654,75 @@ async fn context_memory_weak_lookup_does_not_keep_generation_alive() {
         .unwrap();
     assert!(text_field(&result, "systemPrompt").contains("real provider context"));
     assert_eq!(memory.inputs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn context_memory_create_session_during_native_close_fails_closed() {
+    let scratch = Scratch::new();
+    let gate = Arc::new(CloseGate::default());
+    let release = ReleaseClose(gate.clone());
+    let mut memory = RecordingMemory::new(Behavior::Success(0));
+    Arc::get_mut(&mut memory).unwrap().close_gate = Some(gate.clone());
+    let (registry, lease, composed) = build(&scratch, Some(""), memory.source(true));
+    let retained_storage = storage(&lease);
+    let storage = retained_storage
+        .as_any()
+        .downcast_ref::<ContextStorageResources>()
+        .unwrap();
+    let weak_slots = Arc::downgrade(
+        &lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .unwrap()
+            .slots,
+    );
+    registry.invalidate(Some(&scratch.0.join("project")));
+    // Retirement alone must not prevent a still-leased session lookup.
+    let leased = storage
+        .create_session(scratch.0.join("leased-spill"))
+        .unwrap();
+    let result = leased
+        .context_runtime
+        .prepare_for_model(input(&scratch))
+        .await
+        .unwrap();
+    assert!(text_field(&result, "systemPrompt").contains("real provider context"));
+    assert_eq!(memory.closes.load(Ordering::SeqCst), 0);
+    drop(leased);
+    drop(composed);
+    drop(lease);
+    bounded(gate.entered.notified()).await;
+    assert!(
+        weak_slots.upgrade().is_some(),
+        "cleanup still owns the generation"
+    );
+    assert_eq!(memory.closes.load(Ordering::SeqCst), 1);
+    assert!(
+        !gate.exited.load(Ordering::SeqCst),
+        "native close must still be in flight"
+    );
+    for memory_disabled in [false, true] {
+        let error = storage
+            .create_session_with_options(
+                scratch.0.join("late-spill"),
+                SessionContextOptions {
+                    memory_disabled,
+                    ..SessionContextOptions::default()
+                },
+            )
+            .err()
+            .expect("closing generation must reject new session composition");
+        assert_eq!(
+            error.message,
+            "Context storage's project generation is no longer available."
+        );
+    }
+    assert_eq!(memory.inputs.lock().unwrap().len(), 1);
+    drop(release);
+    bounded(registry.dispose()).await.unwrap();
+    assert!(gate.exited.load(Ordering::SeqCst));
+    assert_eq!(memory.closes.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
