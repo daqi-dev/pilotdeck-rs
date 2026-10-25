@@ -246,6 +246,7 @@ fn registry(scratch: &Scratch, families: Families) -> ProjectRuntimeRegistry {
             homedir: Some(scratch.0.clone()),
             builtin_skills_root: None,
             now: Arc::new(|| SystemTime::UNIX_EPOCH),
+            telemetry: None,
             config_version: None,
             runtime_profile_overrides: Default::default(),
             families,

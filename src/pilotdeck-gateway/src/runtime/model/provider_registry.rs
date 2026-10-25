@@ -324,6 +324,7 @@ impl ModelInvocationProviderRegistry {
             _ => Err(RuntimeError {
                 message: "Failed to dispose model invocation providers.".into(),
                 causes: failures,
+                js_error: None,
             }),
         }
     }

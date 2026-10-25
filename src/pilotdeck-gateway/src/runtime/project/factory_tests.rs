@@ -109,6 +109,7 @@ fn registry_for_yaml(scratch: &Scratch, yaml: &str, families: Families) -> Proje
         homedir: Some(scratch.0.join("pilot-home")),
         builtin_skills_root: None,
         now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        telemetry: None,
         config_version: None,
         runtime_profile_overrides: RuntimeProfileOverrides::default(),
         families,
@@ -546,6 +547,7 @@ fn make_registry(scratch: &Path, probe: &Arc<Probe>) -> Arc<ProjectRuntimeRegist
         homedir: Some(scratch.join("home")),
         builtin_skills_root: None,
         now,
+        telemetry: None,
         config_version: None,
         runtime_profile_overrides: RuntimeProfileOverrides::default(),
         families: families(probe),
@@ -726,6 +728,7 @@ async fn unwired_families_report_explicit_errors() {
         homedir: Some(scratch.0.join("home")),
         builtin_skills_root: None,
         now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        telemetry: None,
         config_version: None,
         runtime_profile_overrides: RuntimeProfileOverrides::default(),
         families: Families::unwired(),
@@ -1469,6 +1472,7 @@ async fn config_loaded_at_uses_wall_clock_not_resource_clock() {
         homedir: Some(scratch.0.join("home")),
         builtin_skills_root: None,
         now,
+        telemetry: None,
         config_version: None,
         runtime_profile_overrides: RuntimeProfileOverrides::default(),
         families: Families {
@@ -1594,6 +1598,7 @@ async fn unwired_families_report_each_family() {
             homedir: Some(scratch.0.join("home")),
             builtin_skills_root: None,
             now: Arc::new(|| SystemTime::UNIX_EPOCH),
+            telemetry: None,
             config_version: None,
             runtime_profile_overrides: RuntimeProfileOverrides::default(),
             families,
@@ -1669,6 +1674,7 @@ fn plugin_test_registry(scratch: &Scratch) -> (ProjectRuntimeRegistry, PathBuf) 
         homedir: Some(pilot_home),
         builtin_skills_root: None,
         now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        telemetry: None,
         config_version: None,
         runtime_profile_overrides: RuntimeProfileOverrides::default(),
         families,
@@ -1802,6 +1808,7 @@ fn interaction_native_registry(
         homedir: Some(pilot_home),
         builtin_skills_root: None,
         now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        telemetry: None,
         config_version: None,
         runtime_profile_overrides: RuntimeProfileOverrides::default(),
         families,
@@ -1892,6 +1899,7 @@ fn interaction_fake_registry(scratch: &Scratch, probe: &Arc<Probe>) -> ProjectRu
         homedir: Some(scratch.0.join("home")),
         builtin_skills_root: None,
         now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        telemetry: None,
         config_version: None,
         runtime_profile_overrides: RuntimeProfileOverrides::default(),
         families: families(probe).with_interaction(),
@@ -2666,17 +2674,17 @@ mod memory_bundle_tests {
         MemoryRetrieveResult,
     };
     use crate::runtime::memory::{
-        MemoryBundleError, MemoryConfig, MemoryDisposeFn, MemoryFuture as MaintenanceMemoryFuture,
-        MemoryMaintenanceService, MemoryManagementService, MemoryProviderError,
-        MemoryProviderFactoryFn, NativeMemoryProviderOptions, NativeMemoryService,
-        NativeProjectMemoryProvider, NativeProviderFactoryFn, ProjectMemoryBundleOptions,
-        ProjectMemoryProvider,
+        MemoryBundleError, MemoryCaptureStrategy, MemoryConfig, MemoryDisposeFn,
+        MemoryFuture as MaintenanceMemoryFuture, MemoryMaintenanceService, MemoryManagementService,
+        MemoryProviderError, MemoryProviderFactoryFn, MemoryScheduleConfig,
+        NativeMemoryProviderOptions, NativeMemoryService, NativeProjectMemoryProvider,
+        NativeProviderFactoryFn, ProjectMemoryBundleOptions, ProjectMemoryProvider,
     };
-    use crate::runtime::project::RuntimeResources;
     use crate::runtime::project::memory_bundle::{
         MemoryBundleFamilySource, MemoryBundleResource, MemoryMaintenanceResource,
         MemoryManagementResource, MemoryResolverResource,
     };
+    use crate::runtime::project::{RuntimeResources, TelemetryClient};
     use pilotdeck_protocol::JsString;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
 
@@ -2685,25 +2693,84 @@ mod memory_bundle_tests {
     fn memory_snapshot() -> Value {
         json!({"config": {
             "agent": {"model": {"id": "test/mock", "provider": "test", "model": "mock"}},
-            "memory": {"enabled": true, "provider": "edgeclaw", "rootDir": "/normalized/root"}
+            "model": {"providers": {"test": {
+                "id": "test",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "test-only-key",
+                "headers": {},
+                "models": {"mock": {}}
+            }}},
+            "memory": {
+                "enabled": true,
+                "provider": "edgeclaw",
+                "rootDir": "/normalized/root",
+                "captureStrategy": "full_session",
+                "includeAssistant": false,
+                "maxMessageChars": 321,
+                "retrievalTimeoutMs": 42,
+                "model": "test/mem",
+                "apiType": "openai-completions",
+                "schedule": {
+                    "reasoningMode": "accuracy_first",
+                    "autoIndexIntervalMinutes": 5,
+                    "autoDreamIntervalMinutes": 9
+                },
+                "heartbeatBatchSize": 7
+            }
         }})
     }
 
+    fn expected_memory_config() -> MemoryConfig {
+        MemoryConfig {
+            enabled: true,
+            provider: "edgeclaw".into(),
+            root_dir: "/normalized/root".into(),
+            capture_strategy: MemoryCaptureStrategy::FullSession,
+            include_assistant: false,
+            max_message_chars: Some(321.0),
+            retrieval_timeout_ms: Some(42.0),
+            model: Some("test/mem".into()),
+            api_type: Some("openai-completions".into()),
+            schedule: Some(MemoryScheduleConfig {
+                reasoning_mode: Some("accuracy_first".into()),
+                auto_index_interval_minutes: Some(5.0),
+                auto_dream_interval_minutes: Some(9.0),
+            }),
+            heartbeat_batch_size: Some(7.0),
+        }
+    }
+
     fn memory_group(root: &Path, snapshot: Value) -> ProjectResources {
+        memory_group_with(root, snapshot, Arc::new(|| UNIX_EPOCH), None)
+    }
+
+    fn memory_group_with(
+        root: &Path,
+        snapshot: Value,
+        now: Now,
+        telemetry: Option<TelemetryClient>,
+    ) -> ProjectResources {
         ProjectResources::new(
             root.to_path_buf(),
             root.join("home"),
             None,
             crate::config::Env::new(),
-            Arc::new(|| UNIX_EPOCH),
+            now,
             Arc::new(pilotdeck_protocol::parse_json(&snapshot.to_string()).unwrap()),
             RuntimeProfile::resolve(&JsValue::Undefined, &RuntimeProfileOverrides::default()),
         )
+        .with_telemetry(telemetry)
     }
 
     fn stage_memory(source: &MemoryBundleFamilySource, group: &ProjectResources) -> RuntimeResult {
         source.stage(&group.context(), &mut group.sink())
     }
+
+    /// Opaque telemetry sentinel: proves the exact host object crosses the
+    /// stage boundary even though no native consumer calls it yet.
+    #[derive(Debug)]
+    struct ProbeTelemetry(&'static str);
 
     /// One provider implementing all three published surfaces; the counters
     /// prove the real handles reach their configured implementations.
@@ -2806,7 +2873,13 @@ mod memory_bundle_tests {
     #[tokio::test]
     async fn memory_factory_injects_provider_and_publishes_three_handles() {
         let scratch = Scratch::new();
-        let group = memory_group(&scratch.0.join("project"), memory_snapshot());
+        let telemetry: TelemetryClient = Arc::new(ProbeTelemetry("telemetry-sentinel"));
+        let group = memory_group_with(
+            &scratch.0.join("project"),
+            memory_snapshot(),
+            Arc::new(|| UNIX_EPOCH + Duration::from_secs(42)),
+            Some(Arc::clone(&telemetry)),
+        );
         let provider = Arc::new(FakeMemory::default());
         let captured: Arc<Mutex<Option<ProjectMemoryBundleOptions>>> = Arc::new(Mutex::new(None));
         let captured_in_factory = Arc::clone(&captured);
@@ -2827,13 +2900,42 @@ mod memory_bundle_tests {
         assert_eq!(options.project_root, scratch.0.join("project"));
         assert_eq!(
             options.config,
-            Some(MemoryConfig {
-                enabled: true,
-                provider: "edgeclaw".into(),
-            }),
+            Some(expected_memory_config()),
             "the normalized memory config must reach the provider factory"
         );
         assert_eq!(options.agent_model.as_deref(), Some("test/mock"));
+        let model_config = options
+            .model_config
+            .as_ref()
+            .expect("the normalized model config must reach the provider factory");
+        let provider_entry = model_config
+            .providers
+            .get("test")
+            .expect("the configured provider entry must survive");
+        assert_eq!(provider_entry.protocol.as_deref(), Some("openai"));
+        assert_eq!(
+            provider_entry.url.as_deref(),
+            Some("http://127.0.0.1:28794/v1")
+        );
+        assert_eq!(provider_entry.api_key.as_deref(), Some("test-only-key"));
+        assert_eq!(
+            options
+                .now
+                .as_ref()
+                .expect("the project clock must be passed")(),
+            UNIX_EPOCH + Duration::from_secs(42),
+            "the exact project clock must reach the provider factory"
+        );
+        assert_eq!(
+            options
+                .telemetry
+                .as_ref()
+                .expect("the telemetry client must be passed")
+                .downcast_ref::<ProbeTelemetry>()
+                .map(|telemetry| telemetry.0),
+            Some("telemetry-sentinel"),
+            "the exact telemetry object must cross the stage boundary"
+        );
         assert!(options.provider_factory.is_some());
         assert!(options.create_provider.is_none());
 
@@ -2933,24 +3035,47 @@ mod memory_bundle_tests {
     }
 
     #[tokio::test]
-    async fn memory_factory_error_keeps_message_and_registered_owner() {
+    async fn memory_factory_error_keeps_js_shape_and_registered_owner() {
         let scratch = Scratch::new();
         let group = memory_group(&scratch.0.join("project"), memory_snapshot());
-        let factory: MemoryProviderFactoryFn = Arc::new(|_| {
+        let message = JsString::from_utf16(
+            "provider exploded "
+                .encode_utf16()
+                .chain([0xD800])
+                .collect::<Vec<_>>(),
+        );
+        let thrown = message.clone();
+        let factory: MemoryProviderFactoryFn = Arc::new(move |_| {
             Err(MemoryBundleError::Factory(MemoryProviderError {
                 name: "Boom".into(),
                 code: Some("E_BOOM".into()),
-                message: JsString::from("provider exploded"),
-                requires_host: false,
+                message: thrown.clone(),
+                requires_host: true,
             }))
         });
         let source = MemoryBundleFamilySource::default().with_provider_factory(factory);
 
         let error = stage_memory(&source, &group).expect_err("a throwing factory must fail");
         assert_eq!(
-            error.message, "provider exploded",
-            "the RuntimeError keeps the original message without a staging prefix"
+            error.message,
+            String::from_utf16_lossy(message.units()),
+            "the RuntimeError display message keeps the original text without a staging prefix"
         );
+        let js = error
+            .js_error()
+            .expect("the stage boundary must retain the original JS error");
+        assert_eq!(js.name, "Boom");
+        assert_eq!(js.code.as_deref(), Some("E_BOOM"));
+        assert_eq!(js.message.units(), message.units());
+        assert!(!js.message.units().contains(&0xFFFD));
+        assert!(js.requires_host);
+
+        let projected = crate::runtime::memory::MemoryProjectionError::from(error);
+        assert_eq!(projected.name(), "Boom");
+        assert_eq!(projected.code(), Some("E_BOOM"));
+        assert_eq!(projected.message().units(), message.units());
+        assert!(projected.requires_host());
+
         let context = group.context();
         assert!(
             context.owner(Family::MemoryBundle).is_some(),
@@ -3016,13 +3141,13 @@ mod memory_bundle_tests {
             .clone()
             .expect("createProvider receives the stripped native options");
         assert_eq!(input.project_root, scratch.0.join("project"));
+        assert_eq!(input.config, Some(expected_memory_config()));
+        assert!(input.model_config.is_some());
         assert_eq!(
-            input.config,
-            Some(MemoryConfig {
-                enabled: true,
-                provider: "edgeclaw".into(),
-            })
+            input.now.as_ref().expect("the clock must be passed")(),
+            UNIX_EPOCH
         );
+        assert!(input.telemetry.is_none());
         assert_eq!(input.agent_model.as_deref(), Some("test/mock"));
 
         let management = group
@@ -3124,9 +3249,17 @@ mod memory_bundle_tests {
         let factory: MemoryProviderFactoryFn = Arc::new(move |_| {
             factory_calls.fetch_add(1, Ordering::SeqCst);
             if fail.load(Ordering::SeqCst) {
-                Err(MemoryBundleError::Factory(MemoryProviderError::new(
-                    "memory factory exploded",
-                )))
+                Err(MemoryBundleError::Factory(MemoryProviderError {
+                    name: "DialogGatewayError".into(),
+                    code: Some("MEMORY_FACTORY_FAILED".into()),
+                    message: JsString::from_utf16(
+                        "memory factory exploded "
+                            .encode_utf16()
+                            .chain([0xD800])
+                            .collect::<Vec<_>>(),
+                    ),
+                    requires_host: true,
+                }))
             } else {
                 Ok(Some(injected_provider(&provider)))
             }
@@ -3135,6 +3268,24 @@ mod memory_bundle_tests {
             .with_context_memory()
             .with_memory(source.with_provider_factory(factory));
         registry_for_yaml(scratch, MEMORY_YAML, families)
+    }
+
+    fn assert_memory_factory_error(error: &RuntimeError) {
+        let js = error
+            .js_error()
+            .expect("registry.resolve must retain the factory's JS error");
+        assert_eq!(js.name, "DialogGatewayError");
+        assert_eq!(js.code.as_deref(), Some("MEMORY_FACTORY_FAILED"));
+        assert_eq!(
+            js.message.units(),
+            "memory factory exploded "
+                .encode_utf16()
+                .chain([0xD800])
+                .collect::<Vec<_>>()
+                .as_slice()
+        );
+        assert!(!js.message.units().contains(&0xFFFD));
+        assert!(js.requires_host);
     }
 
     /// Memory is the last staged family in
@@ -3165,12 +3316,32 @@ mod memory_bundle_tests {
             Err(error) => error,
             Ok(_) => panic!("a failing memory factory must fail the generation"),
         };
-        assert_eq!(error.message, "memory factory exploded");
+        assert_eq!(
+            error.message,
+            String::from_utf16_lossy(
+                "memory factory exploded "
+                    .encode_utf16()
+                    .chain([0xD800])
+                    .collect::<Vec<_>>()
+                    .as_slice()
+            )
+        );
+        assert_memory_factory_error(&error);
         let error = match registry.resolve(Some(&root)) {
             Err(error) => error,
             Ok(_) => panic!("a failed generation is never published or cached"),
         };
-        assert_eq!(error.message, "memory factory exploded");
+        assert_eq!(
+            error.message,
+            String::from_utf16_lossy(
+                "memory factory exploded "
+                    .encode_utf16()
+                    .chain([0xD800])
+                    .collect::<Vec<_>>()
+                    .as_slice()
+            )
+        );
+        assert_memory_factory_error(&error);
         assert_eq!(
             factory_calls.load(Ordering::SeqCst),
             2,

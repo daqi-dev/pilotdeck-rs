@@ -286,6 +286,7 @@ pub(super) fn aggregate(message: &str, failures: Vec<RuntimeError>) -> RuntimeRe
         Err(RuntimeError {
             message: message.into(),
             causes: failures,
+            js_error: None,
         })
     }
 }

@@ -132,10 +132,10 @@ fn options_from_fixture(case: &Value) -> ProjectMemoryBundleOptions {
     let project_root = options["projectRoot"].as_str().unwrap();
     let mut bundle = ProjectMemoryBundleOptions::new(project_root);
     if let Some(config) = options.get("config").filter(|value| !value.is_null()) {
-        bundle.config = Some(MemoryConfig {
-            enabled: config["enabled"].as_bool().unwrap(),
-            provider: config["provider"].as_str().unwrap().to_owned(),
-        });
+        bundle.config = Some(MemoryConfig::new(
+            config["enabled"].as_bool().unwrap(),
+            config["provider"].as_str().unwrap(),
+        ));
     }
     bundle.agent_model = options["agentModel"].as_str().map(str::to_owned);
     bundle
@@ -706,10 +706,7 @@ async fn memory_bundle_is_a_project_runtime_resource_group() {
         let events = Arc::clone(&events);
         move |project_root: &Path, resources: &mut ResourceBundle| {
             let mut options = ProjectMemoryBundleOptions::new(project_root.to_owned());
-            options.config = Some(MemoryConfig {
-                enabled: true,
-                provider: "edgeclaw".into(),
-            });
+            options.config = Some(MemoryConfig::new(true, "edgeclaw"));
             options.provider_factory = Some(Arc::new({
                 let events = Arc::clone(&events);
                 move |_: ProjectMemoryBundleOptions| {
@@ -741,10 +738,7 @@ async fn missing_factory_matches_native_selection() {
     missing.dispose().await.unwrap();
 
     let mut enabled = ProjectMemoryBundleOptions::new(PROJECT);
-    enabled.config = Some(MemoryConfig {
-        enabled: true,
-        provider: "edgeclaw".into(),
-    });
+    enabled.config = Some(MemoryConfig::new(true, "edgeclaw"));
     let bundle = ProjectMemoryBundle::new(enabled);
     assert_eq!(
         bundle.stage().unwrap_err(),
@@ -915,6 +909,74 @@ fn panicking_factory_still_releases_a_waiting_dispose() {
             .expect("dispose must not wait forever for a panicked stage")
             .unwrap();
     });
+}
+
+/// Production `MemoryProjection` over a real `ProjectRuntimeRegistry`, with
+/// only the project-key resolver stubbed. A factory-stage rejection must reach
+/// the final consumer with the original JS shape.
+struct StagedRuntimeRegistry {
+    registry: Arc<ProjectRuntimeRegistry>,
+}
+impl ProjectMemoryRegistry for StagedRuntimeRegistry {
+    fn resolve_project_key(&self, key: &JsString) -> Result<JsString, MemoryProviderError> {
+        Ok(key.clone())
+    }
+    fn memory_management(
+        &self,
+        _project_key: &JsString,
+    ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
+        self.registry
+            .resolve(Some(Path::new(PROJECT)))
+            .map_err(MemoryProviderError::from)?;
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn runtime_stage_error_reaches_memory_projection() {
+    let message = JsString::from_utf16(
+        "factory boom "
+            .encode_utf16()
+            .chain([0xD800])
+            .collect::<Vec<_>>(),
+    );
+    let thrown = message.clone();
+    let factory = Arc::new(move |root: &Path, _: &mut ResourceBundle| {
+        let thrown = thrown.clone();
+        let mut options = ProjectMemoryBundleOptions::new(root);
+        options.provider_factory = Some(Arc::new(move |_| {
+            Err(MemoryBundleError::Factory(MemoryProviderError {
+                name: "DialogGatewayError".into(),
+                code: Some("FACTORY_FAILED".into()),
+                message: thrown.clone(),
+                requires_host: true,
+            }))
+        }));
+        ProjectMemoryBundle::new(options)
+            .stage()
+            .map_err(RuntimeError::from)?;
+        Ok(())
+    });
+    let registry = Arc::new(ProjectRuntimeRegistry::new(PROJECT, factory));
+    let projection = MemoryProjection::new(
+        Arc::new(StagedRuntimeRegistry {
+            registry: Arc::clone(&registry),
+        }),
+        PROJECT,
+    );
+
+    let error = projection
+        .list(&MemoryListInput {
+            project_key: Some(JsString::from(PROJECT)),
+            session_key: None,
+        })
+        .expect_err("the factory rejection must stop memory_list");
+    assert_eq!(error.name(), "DialogGatewayError");
+    assert_eq!(error.code(), Some("FACTORY_FAILED"));
+    assert_eq!(error.message().units(), message.units());
+    assert!(!error.message().units().contains(&0xFFFD));
+    assert!(error.requires_host());
+    registry.dispose().await.unwrap();
 }
 
 #[test]

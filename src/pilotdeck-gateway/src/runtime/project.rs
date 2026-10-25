@@ -4,6 +4,7 @@
 //! boundary; factories must not reenter this registry. No resource disposal or
 //! lease drain is awaited under that mutex. Cleanup tasks outlive their callers,
 //! so cancelling reload/dispose/release cannot strand a retired generation.
+use pilotdeck_protocol::JsString;
 use std::{
     any::Any,
     fmt,
@@ -17,17 +18,55 @@ use tokio::{runtime::Handle, sync::watch};
 pub type RuntimeResult = Result<(), RuntimeError>;
 pub type DisposeFuture<'a> = Pin<Box<dyn Future<Output = RuntimeResult> + Send + 'a>>;
 
+/// Opaque pass-through for the TS `TelemetryClient`.
+///
+/// The native runtime has no telemetry port yet, so no method is called and no
+/// event shape is invented. The exact host object is retained (and can be
+/// downcast by the future provider port) instead of being dropped at the
+/// staging boundary.
+pub type TelemetryClient = Arc<dyn Any + Send + Sync>;
+
+/// The exact JS error shape when a failure crossed a JS boundary.
+///
+/// `message` stays as raw UTF-16 units because a provider rejection may embed a
+/// lone surrogate; decoding to `String` would replacement-decode it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeJsError {
+    pub name: String,
+    pub code: Option<String>,
+    pub message: JsString,
+    /// R19 host boundary: the native port cannot represent the input/state, so
+    /// the A8 entry must forward the whole request instead of surfacing this as
+    /// an ordinary projection error.
+    pub requires_host: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeError {
     pub message: String,
     pub causes: Vec<RuntimeError>,
+    /// Present when this failure originated as a JS error at a staging
+    /// boundary. `message` remains the lossy display form; this keeps the
+    /// original `{name, code, message, requires_host}` intact for consumers.
+    /// Boxed so `RuntimeError` stays small enough for the many existing
+    /// `Result<_, RuntimeError>` signatures (clippy `result_large_err`).
+    pub js_error: Option<Box<RuntimeJsError>>,
 }
 impl RuntimeError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             causes: Vec::new(),
+            js_error: None,
         }
+    }
+    /// Retain the original JS error alongside the display message.
+    pub fn with_js_error(mut self, js_error: RuntimeJsError) -> Self {
+        self.js_error = Some(Box::new(js_error));
+        self
+    }
+    pub fn js_error(&self) -> Option<&RuntimeJsError> {
+        self.js_error.as_deref()
     }
     fn aggregate(message: &str, mut failures: Vec<Self>) -> RuntimeResult {
         match failures.len() {
@@ -36,6 +75,7 @@ impl RuntimeError {
             _ => Err(Self {
                 message: message.into(),
                 causes: failures,
+                js_error: None,
             }),
         }
     }
@@ -118,7 +158,7 @@ pub mod plugins;
 pub mod tools_mcp;
 pub use factory::{
     ConfigSource, Families, Family, FamilyResource, InteractionProfile, InteractionProfileName,
-    NativeConfigSource, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,
+    NativeConfigSource, Now, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,
     Resource, ResourceFamilySource, RuntimeContextSurface, RuntimeProfile, RuntimeProfileOverrides,
     SandboxMode, StageContext, StageSink, UnsupportedFamily,
 };

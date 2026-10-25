@@ -4,11 +4,14 @@
 //! ownership) and `createLocalGateway.ts:1238-1259` (`memory_list` /
 //! `memory_wipe`). The EdgeClaw sqlite store is introduced by A6.6-pr10a in
 //! [`edgeclaw`]; provider composition itself still takes an injected factory.
-use crate::runtime::project::{DisposeFuture, RuntimeError, RuntimeResources};
+use crate::runtime::project::{
+    DisposeFuture, Now, RuntimeError, RuntimeJsError, RuntimeResources, TelemetryClient,
+};
 
 pub mod edgeclaw;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
+    collections::BTreeMap,
     fmt,
     future::Future,
     path::PathBuf,
@@ -119,19 +122,102 @@ impl MemoryProviderError {
     }
 }
 
-/// The minimum memory configuration that selects the native provider. Parsing
-/// stays in the config package; this bundle only sees the parsed values.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// TS `PilotMemoryConfig.captureStrategy` (`last_turn` | `full_session`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MemoryCaptureStrategy {
+    #[default]
+    LastTurn,
+    FullSession,
+}
+impl MemoryCaptureStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LastTurn => "last_turn",
+            Self::FullSession => "full_session",
+        }
+    }
+}
+
+/// TS `PilotMemoryConfig.schedule` subset, carried without interpretation.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MemoryScheduleConfig {
+    pub reasoning_mode: Option<String>,
+    pub auto_index_interval_minutes: Option<f64>,
+    pub auto_dream_interval_minutes: Option<f64>,
+}
+
+/// TS `PilotMemoryConfig` (`src/pilot/config/types.ts:119-132`) as normalized
+/// by the config snapshot. This type is a carrier: no memory behavior is
+/// invented here, and the native EdgeClaw provider port consumes it later.
+#[derive(Clone, Debug, PartialEq)]
 pub struct MemoryConfig {
     pub enabled: bool,
     pub provider: String,
+    pub root_dir: String,
+    pub capture_strategy: MemoryCaptureStrategy,
+    pub include_assistant: bool,
+    pub max_message_chars: Option<f64>,
+    pub retrieval_timeout_ms: Option<f64>,
+    /// `"provider/model"` reference.
+    pub model: Option<String>,
+    pub api_type: Option<String>,
+    pub schedule: Option<MemoryScheduleConfig>,
+    pub heartbeat_batch_size: Option<f64>,
+}
+impl MemoryConfig {
+    /// A selection-only config with the same defaults normalization gives the
+    /// absent optional fields. Callers that stage a real snapshot get the
+    /// normalized values instead.
+    pub fn new(enabled: bool, provider: impl Into<String>) -> Self {
+        Self {
+            enabled,
+            provider: provider.into(),
+            root_dir: String::new(),
+            capture_strategy: MemoryCaptureStrategy::LastTurn,
+            include_assistant: true,
+            max_message_chars: None,
+            retrieval_timeout_ms: None,
+            model: None,
+            api_type: None,
+            schedule: None,
+            heartbeat_batch_size: None,
+        }
+    }
+}
+
+/// The `ProviderConfig` fields the real TS memory provider reads
+/// (`createEdgeClawMemoryProviderFromConfig.ts:91-98`). The remaining TS
+/// fields (`id`, `headers`, `models`, …) are not consumed by the memory
+/// factory and are intentionally not duplicated here.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MemoryModelProvider {
+    pub protocol: Option<String>,
+    pub url: Option<String>,
+    pub api_key: Option<String>,
+}
+
+/// TS `ModelConfig` (`src/model/protocol/canonical.ts:377-379`) reduced to the
+/// providers the memory factory actually reads.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MemoryModelConfig {
+    pub providers: BTreeMap<String, MemoryModelProvider>,
 }
 
 #[derive(Clone)]
 pub struct ProjectMemoryBundleOptions {
     pub project_root: PathBuf,
     pub config: Option<MemoryConfig>,
+    /// Normalized `snapshot.config.model` subset. Retained and forwarded even
+    /// though the native provider port has no consumer yet.
+    pub model_config: Option<MemoryModelConfig>,
     pub agent_model: Option<String>,
+    /// TS `options.now` (`() => Date`); Rust carries the clock itself so a
+    /// deterministic test clock reaches the provider factory.
+    pub now: Option<Now>,
+    /// TS `options.telemetry` (`TelemetryClient`). The native runtime has no
+    /// telemetry port, so this is an opaque pass-through: no method is called
+    /// and no event shape is invented.
+    pub telemetry: Option<TelemetryClient>,
     /// Application-selected provider factory (`providerFactory`).
     pub provider_factory: Option<MemoryProviderFactoryFn>,
     /// Deprecated native injection point (`createProvider`).
@@ -142,7 +228,10 @@ impl ProjectMemoryBundleOptions {
         Self {
             project_root: project_root.into(),
             config: None,
+            model_config: None,
             agent_model: None,
+            now: None,
+            telemetry: None,
             provider_factory: None,
             create_provider: None,
         }
@@ -150,12 +239,17 @@ impl ProjectMemoryBundleOptions {
 }
 
 /// Input passed to the deprecated `createProvider` hook after stripping
-/// `providerFactory` / `createProvider`, matching TS line 57.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// `providerFactory` / `createProvider`, matching TS line 57. It mirrors
+/// `ProjectMemoryBundleOptions` (without the two factories), including the
+/// clock and telemetry pass-through.
+#[derive(Clone)]
 pub struct NativeMemoryProviderOptions {
     pub project_root: PathBuf,
     pub config: Option<MemoryConfig>,
+    pub model_config: Option<MemoryModelConfig>,
     pub agent_model: Option<String>,
+    pub now: Option<Now>,
+    pub telemetry: Option<TelemetryClient>,
 }
 
 /// Application-selected provider and its exact lifecycle owner.
@@ -239,8 +333,41 @@ impl fmt::Display for MemoryBundleError {
 }
 impl std::error::Error for MemoryBundleError {}
 impl From<MemoryBundleError> for RuntimeError {
+    /// Preserve the factory's original JS error (`name`, `code`, raw UTF-16
+    /// `message`, `requires_host`) at the staging boundary. `RuntimeError`'s
+    /// `message` stays the lossy display form for logs and diagnostics.
     fn from(error: MemoryBundleError) -> Self {
-        RuntimeError::new(error.to_string())
+        match error {
+            MemoryBundleError::Factory(provider) => {
+                let message = String::from_utf16_lossy(provider.message.units());
+                RuntimeError::new(message).with_js_error(RuntimeJsError {
+                    name: provider.name,
+                    code: provider.code,
+                    message: provider.message,
+                    requires_host: provider.requires_host,
+                })
+            }
+            other => RuntimeError::new(other.to_string()),
+        }
+    }
+}
+impl From<RuntimeError> for MemoryProviderError {
+    /// Read a staging failure back into the `{name, code, message,
+    /// requires_host}` shape a JS consumer sees. A non-JS runtime error keeps
+    /// its display message and the ordinary `Error` shape.
+    fn from(error: RuntimeError) -> Self {
+        let RuntimeError {
+            message, js_error, ..
+        } = error;
+        match js_error {
+            Some(error) => Self {
+                name: error.name,
+                code: error.code,
+                message: error.message,
+                requires_host: error.requires_host,
+            },
+            None => Self::new(message),
+        }
     }
 }
 
@@ -352,7 +479,10 @@ impl ProjectMemoryBundle {
             let input = NativeMemoryProviderOptions {
                 project_root: self.options.project_root.clone(),
                 config: self.options.config.clone(),
+                model_config: self.options.model_config.clone(),
                 agent_model: self.options.agent_model.clone(),
+                now: self.options.now.clone(),
+                telemetry: self.options.telemetry.clone(),
             };
             factory(&input).map(|created| created.map(wrap_native))
         } else if self
@@ -639,6 +769,14 @@ impl From<MemoryProviderError> for MemoryProjectionError {
         }
     }
 }
+impl From<RuntimeError> for MemoryProjectionError {
+    /// The staging boundary's final projection: a `RuntimeError` that retains
+    /// its original JS shape reaches `memory_list` / `memory_wipe` consumers
+    /// unchanged.
+    fn from(error: RuntimeError) -> Self {
+        MemoryProviderError::from(error).into()
+    }
+}
 impl From<MemoryBundleError> for MemoryProjectionError {
     /// A throwing provider factory propagates the original JS error
     /// (`ProjectMemoryBundle.ts:57-73`), so it projects through the same
@@ -822,6 +960,43 @@ mod tests {
                 .as_slice()
         );
         assert!(!error.message.units().contains(&0xFFFD));
+    }
+
+    #[test]
+    fn runtime_error_keeps_factory_error_shape() {
+        let message = JsString::from_utf16(
+            "runtime boom "
+                .encode_utf16()
+                .chain([0xD800])
+                .collect::<Vec<_>>(),
+        );
+        let runtime = RuntimeError::from(MemoryBundleError::Factory(MemoryProviderError {
+            name: "DialogGatewayError".into(),
+            code: Some("FACTORY_FAILED".into()),
+            message: message.clone(),
+            requires_host: true,
+        }));
+        assert_eq!(runtime.message, String::from_utf16_lossy(message.units()));
+        let js = runtime.js_error().expect("the JS error shape must survive");
+        assert_eq!(js.name, "DialogGatewayError");
+        assert_eq!(js.code.as_deref(), Some("FACTORY_FAILED"));
+        assert_eq!(js.message.units(), message.units());
+        assert!(js.requires_host);
+
+        let projected = MemoryProjectionError::from(runtime);
+        assert_eq!(projected.name(), "DialogGatewayError");
+        assert_eq!(projected.code(), Some("FACTORY_FAILED"));
+        assert_eq!(projected.message().units(), message.units());
+        assert!(projected.requires_host());
+    }
+
+    #[test]
+    fn plain_runtime_error_maps_to_ordinary_js_error() {
+        let provider = MemoryProviderError::from(RuntimeError::new("plain failure"));
+        assert_eq!(provider.name, "Error");
+        assert_eq!(provider.code, None);
+        assert_eq!(provider.message, JsString::from("plain failure"));
+        assert!(!provider.requires_host);
     }
 
     #[test]

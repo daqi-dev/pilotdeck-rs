@@ -25,11 +25,12 @@
 //! `createSessionTools`/`createSessionExecution` closures, the session-execution
 //! storage-root validation (lines 276-332), and the registry options that only
 //! reach single families (`extraTools`, `subagentIdFactory`, `builtinPlugins`,
-//! telemetry, router event bus / session state / provider health, organization
-//! model policy).
+//! router event bus / session state / provider health, organization model
+//! policy). The telemetry client is carried opaquely so the memory bundle can
+//! forward the exact host object (#636); no family calls it yet.
 use super::{
     DisposeFuture, ProjectRuntimeFactory, ResourceBundle, RuntimeError, RuntimeResources,
-    RuntimeResult,
+    RuntimeResult, TelemetryClient,
 };
 use crate::{
     config::{self, Env},
@@ -618,6 +619,7 @@ struct Slots {
     builtin_skills_root: Option<PathBuf>,
     env: Env,
     now: Now,
+    telemetry: Option<TelemetryClient>,
     snapshot: Arc<JsValue>,
     profile: RuntimeProfile,
     // Dispose owners, keyed by the baseline field that owns cleanup.
@@ -685,6 +687,10 @@ impl StageContext {
     }
     pub fn now(&self) -> SystemTime {
         (lock(&self.slots).now)()
+    }
+    /// Opaque TS `TelemetryClient` pass-through; see [`TelemetryClient`].
+    pub fn telemetry(&self) -> Option<TelemetryClient> {
+        lock(&self.slots).telemetry.clone()
     }
     /// A family's dispose owner, once its source has registered it.
     pub fn owner(&self, family: Family) -> Option<Arc<dyn FamilyResource>> {
@@ -806,6 +812,7 @@ impl ProjectResources {
                 builtin_skills_root,
                 env,
                 now,
+                telemetry: None,
                 snapshot,
                 profile,
                 mcp_provider: None,
@@ -837,6 +844,12 @@ impl ProjectResources {
                 memory_management: None,
             })),
         }
+    }
+    /// Attach the opaque telemetry client carried by
+    /// [`ProjectResourcesOptions`]. `ProjectResources::new` starts with `None`.
+    fn with_telemetry(self, telemetry: Option<TelemetryClient>) -> Self {
+        self.slots.lock().unwrap().telemetry = telemetry;
+        self
     }
     /// Read view of this generation, before or after publication.
     pub fn context(&self) -> StageContext {
@@ -958,6 +971,9 @@ pub struct ProjectResourcesOptions {
     /// config snapshot's `loadedAt` is the config read's own wall clock, as
     /// in the baseline.
     pub now: Now,
+    /// `options.telemetry`; passed opaquely to the memory bundle and never
+    /// called by this port. `None` when the host has no telemetry client.
+    pub telemetry: Option<TelemetryClient>,
     /// `loadPilotConfig`'s `options.version ?? 1`.
     pub config_version: Option<f64>,
     pub runtime_profile_overrides: RuntimeProfileOverrides,
@@ -1021,7 +1037,8 @@ impl ProjectRuntimeFactory for ProjectResourcesFactory {
             Arc::clone(&self.options.now),
             snapshot,
             profile,
-        );
+        )
+        .with_telemetry(self.options.telemetry.clone());
         resources.add(group.clone());
         let context = group.context();
         let mut sink = group.sink();

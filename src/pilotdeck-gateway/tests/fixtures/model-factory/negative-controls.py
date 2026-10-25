@@ -71,7 +71,7 @@ controls = [
      'mixed_registry_router_staging_and_judge_dispatch_match_ts'),
     ('native-registry-rejected-at-staging', registry,
      '        // RouterModelInvocationPort.ts:40-48 always exposes complete, even\n        // for an empty registry. Dispatch (and any unsupported implementation)\n        // is resolved against the requested provider when complete is called.\n        true',
-     '        self.state.lock().unwrap().entries.values().all(|entry| entry.provider.supports_complete())',
+     '        false',
      'native_registry_enabled_router_staging_matches_ts'),
     ('empty-registry-rejected-at-staging', registry,
      '        // RouterModelInvocationPort.ts:40-48 always exposes complete, even\n        // for an empty registry. Dispatch (and any unsupported implementation)\n        // is resolved against the requested provider when complete is called.\n        true',
