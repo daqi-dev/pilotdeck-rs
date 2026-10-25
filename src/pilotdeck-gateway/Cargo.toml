@@ -59,3 +59,7 @@ rusqlite = { version = "=0.39.0", default-features = false, features = ["bundled
 [dev-dependencies]
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 tokio = { version = "=1.48.0", features = ["test-util"] }
+# #449: the vendored edge guard lexes Rust with proc-macro2 instead of a
+# hand-written tokenizer. Already locked at 1.0.107 as a transitive dependency,
+# so this adds no new download or version.
+proc-macro2 = "=1.0.107"
