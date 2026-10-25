@@ -1169,7 +1169,7 @@ mod errno_tests {
         );
         assert_eq!(
             raw(libc::ENOSPC, "write"),
-            "ENOSPC: no space left on device, write '/tmp/errno'"
+            "ENOSPC: no space left on device, write"
         );
     }
 
