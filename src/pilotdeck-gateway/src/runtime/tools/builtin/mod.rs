@@ -333,16 +333,24 @@ pub(super) fn failed(
     operation: &str,
     path: &JsString,
 ) -> crate::runtime::tools::ToolError {
-    let kind = match error.raw_os_error() {
-        Some(libc::ENOTDIR) => "ENOTDIR: not a directory",
-        Some(libc::ELOOP) => "ELOOP: too many symbolic links encountered",
-        _ => match error.kind() {
-            std::io::ErrorKind::NotFound => "ENOENT: no such file or directory",
-            std::io::ErrorKind::PermissionDenied => "EACCES: permission denied",
-            std::io::ErrorKind::AlreadyExists => "EEXIST: file already exists",
-            std::io::ErrorKind::InvalidInput => "EINVAL: invalid argument",
-            _ => return crate::runtime::tools::ToolError::failed(error.to_string()),
-        },
+    // Node's fs errors carry the libuv code/description pair. An `ErrorKind`
+    // alone conflates EACCES with EPERM and cannot name errnos such as EISDIR
+    // or ENOSPC, so prefer the generated table whenever the OS supplied errno.
+    let node_errno = if error.raw_os_error().is_some() {
+        crate::node_io::lookup(&error)
+    } else {
+        None
+    };
+    if let Some((code, description)) = node_errno {
+        let message = format!("{code}: {description}, {operation} '{}'", text(path));
+        return crate::runtime::tools::ToolError::failed(message);
+    }
+    let kind = match error.kind() {
+        std::io::ErrorKind::NotFound => "ENOENT: no such file or directory",
+        std::io::ErrorKind::PermissionDenied => "EACCES: permission denied",
+        std::io::ErrorKind::AlreadyExists => "EEXIST: file already exists",
+        std::io::ErrorKind::InvalidInput => "EINVAL: invalid argument",
+        _ => return crate::runtime::tools::ToolError::failed(error.to_string()),
     };
     let message = format!("{kind}, {operation} '{}'", text(path));
     crate::runtime::tools::ToolError::failed(message)
@@ -1093,5 +1101,105 @@ mod containment_tests {
             assert_eq!(resolved, dir.join("final.txt"), "{hops} hops");
         }
         let _ = fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod errno_tests {
+    use super::failed;
+    use pilotdeck_protocol::JsString;
+
+    fn message(error: std::io::Error, operation: &str) -> String {
+        let error = failed(error, operation, &JsString::from("/tmp/errno"));
+        String::from_utf16_lossy(error.message.units())
+    }
+
+    fn raw(errno: i32, operation: &str) -> String {
+        message(std::io::Error::from_raw_os_error(errno), operation)
+    }
+
+    /// Node v22.22.0 / libuv 1.52.1 formatting for every errno the old
+    /// hand-written mapping covered; these strings must not change.
+    #[test]
+    fn legacy_errno_messages_are_unchanged() {
+        assert_eq!(
+            raw(libc::ENOENT, "stat"),
+            "ENOENT: no such file or directory, stat '/tmp/errno'"
+        );
+        assert_eq!(
+            raw(libc::EACCES, "open"),
+            "EACCES: permission denied, open '/tmp/errno'"
+        );
+        assert_eq!(
+            raw(libc::EEXIST, "mkdir"),
+            "EEXIST: file already exists, mkdir '/tmp/errno'"
+        );
+        assert_eq!(
+            raw(libc::EINVAL, "stat"),
+            "EINVAL: invalid argument, stat '/tmp/errno'"
+        );
+        assert_eq!(
+            raw(libc::ENOTDIR, "stat"),
+            "ENOTDIR: not a directory, stat '/tmp/errno'"
+        );
+        assert_eq!(
+            raw(libc::ELOOP, "stat"),
+            "ELOOP: too many symbolic links encountered, stat '/tmp/errno'"
+        );
+    }
+
+    /// `ErrorKind` alone conflates EACCES with EPERM and hides errnos that the
+    /// libuv table knows (EISDIR, ENOSPC, ...). Raw errnos must use the table.
+    #[test]
+    fn raw_errnos_use_the_libuv_table() {
+        assert_eq!(
+            raw(libc::EPERM, "open"),
+            "EPERM: operation not permitted, open '/tmp/errno'"
+        );
+        assert_eq!(
+            raw(libc::EISDIR, "read"),
+            "EISDIR: illegal operation on a directory, read '/tmp/errno'"
+        );
+        assert_eq!(
+            raw(libc::ENOSPC, "write"),
+            "ENOSPC: no space left on device, write '/tmp/errno'"
+        );
+    }
+
+    /// Non-OS errors keep the kind-based fallback (and its Rust Display tail).
+    #[test]
+    fn synthetic_errors_keep_the_kind_fallback() {
+        assert_eq!(
+            message(std::io::Error::from(std::io::ErrorKind::NotFound), "stat"),
+            "ENOENT: no such file or directory, stat '/tmp/errno'"
+        );
+        assert_eq!(
+            message(
+                std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                "stat"
+            ),
+            "EACCES: permission denied, stat '/tmp/errno'"
+        );
+        assert_eq!(
+            message(std::io::Error::other("synthetic"), "stat"),
+            "synthetic"
+        );
+    }
+
+    /// Node inserts the path verbatim: quotes and newlines are not escaped.
+    /// Expected bytes are the EPERM row of
+    /// `tests/fixtures/node-io/errors.json` (Node v22.22.0 / libuv 1.52.1).
+    #[test]
+    fn path_is_inserted_verbatim_like_node() {
+        let path = JsString::from("/fixture/quote' and\nline");
+        let error = failed(
+            std::io::Error::from_raw_os_error(libc::EPERM),
+            "stat",
+            &path,
+        );
+        assert_eq!(
+            String::from_utf16_lossy(error.message.units()),
+            "EPERM: operation not permitted, stat '/fixture/quote' and\nline'"
+        );
     }
 }

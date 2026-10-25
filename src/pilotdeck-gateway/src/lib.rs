@@ -44,6 +44,13 @@ pub type ProxyError = Box<dyn Error + Send + Sync>;
 pub type Body = BoxBody<Bytes, ProxyError>;
 pub type HttpClient = Client<HttpConnector, Incoming>;
 
+/// The Node/libuv code and description for an OS error, when the generated
+/// table knows the errno. The CLI shares this table instead of maintaining a
+/// second copy of the libuv message strings.
+pub fn node_fs_errno(error: &std::io::Error) -> Option<(&'static str, &'static str)> {
+    node_io::lookup(error)
+}
+
 /// Read the original session bytes without transcript validation or sorting.
 /// Callers retain physical line numbers and apply their own projection.
 pub fn read_session_bytes(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
