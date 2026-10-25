@@ -618,6 +618,7 @@ fn unsupported(family: Family, detail: &'static str) -> Arc<dyn ResourceFamilySo
 /// families registered. Shared by the [`StageContext`] read view, the
 /// [`StageSink`] write view, and the published [`ProjectResources`] group.
 struct Slots {
+    dispose_started: bool,
     project_root: PathBuf,
     pilot_home: PathBuf,
     builtin_skills_root: Option<PathBuf>,
@@ -678,10 +679,15 @@ pub(super) struct DeferredResource {
 }
 impl DeferredResource {
     pub(super) fn resolve(&self) -> Result<Option<Arc<dyn FamilyResource>>, RuntimeError> {
-        let slots = self.slots.upgrade().ok_or_else(|| {
-            RuntimeError::new("Context storage's project generation is no longer available.")
-        })?;
-        Ok(StageContext { slots }.resource(self.resource))
+        let unavailable =
+            || RuntimeError::new("Context storage's project generation is no longer available.");
+        let slots = self.slots.upgrade().ok_or_else(unavailable)?;
+        let slots = lock(&slots);
+        if slots.dispose_started {
+            return Err(unavailable());
+        }
+        // Check and clone under the same lock as the disposal transition.
+        Ok(slots.resource(self.resource))
     }
 }
 impl StageContext {
@@ -740,7 +746,13 @@ impl StageContext {
     }
     /// A published resource, once a family has staged it.
     pub fn resource(&self, resource: Resource) -> Option<Arc<dyn FamilyResource>> {
-        let slots = lock(&self.slots);
+        lock(&self.slots).resource(resource)
+    }
+}
+
+impl Slots {
+    fn resource(&self, resource: Resource) -> Option<Arc<dyn FamilyResource>> {
+        let slots = self;
         match resource {
             Resource::Model => slots.model.clone(),
             Resource::ModelProviders => slots.model_providers.clone(),
@@ -839,6 +851,7 @@ impl ProjectResources {
     ) -> Self {
         Self {
             slots: Arc::new(Mutex::new(Slots {
+                dispose_started: false,
                 project_root,
                 pilot_home,
                 builtin_skills_root,
@@ -908,7 +921,10 @@ impl RuntimeResources for ProjectResources {
     /// and the prompt-cache coordinator are never disposed, as in the
     /// baseline.
     fn dispose(&self) -> DisposeFuture<'_> {
-        let slots = lock(&self.slots);
+        let mut slots = lock(&self.slots);
+        // Cleanup retains the slots until every owner finishes disposing.
+        // Reject late session lookups before any owner can close a provider.
+        slots.dispose_started = true;
         let mcp_provider = slots.mcp_provider.clone();
         let parallel = (
             slots.plugin_runtime.clone(),

@@ -2540,8 +2540,9 @@ mod context_storage_tests {
         );
     }
 
-    // project_root and the default/overridden retrieval timeout are exercised
-    // through normalized config and the real memory resource/session chain in
+    // Generation/host workspace roots, scoped memory opt-out and the
+    // default/overridden retrieval timeout are exercised through normalized
+    // config and the real memory resource/session chain in
     // factory_memory_tests.rs (#639).
 
     fn prepare_input(cwd: &Path) -> ContextInput {

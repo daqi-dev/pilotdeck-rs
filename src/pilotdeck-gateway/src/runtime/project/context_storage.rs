@@ -59,7 +59,22 @@ pub struct ContextStorageResources {
     now: Arc<dyn Fn() -> f64 + Send + Sync>,
 }
 
-/// Owned by one session/context composition, including scoped agent contexts.
+/// Options for composing a main or scoped context. The caller still owns
+/// subagent definition routing; this factory does not implement `createContext`.
+#[derive(Default)]
+pub struct SessionContextOptions {
+    /// Set for a scoped agent whose definition has `memory: "disabled"`.
+    /// The default inherits this generation's resolver.
+    pub memory_disabled: bool,
+    /// `sessionExecution.handle.hostWorkspaceRoot`, when provided. Both memory
+    /// retrieval and instruction discovery use it; otherwise the generation's
+    /// project root is used (`ProjectSessionRuntimeBundle.ts:518,572`).
+    pub host_workspace_root: Option<PathBuf>,
+}
+
+/// Owned by one session/context composition. Scoped callers use
+/// [`ContextStorageResources::create_session_with_options`] for memory opt-out
+/// and execution-world roots; automatic subagent context routing is not wired.
 pub struct SessionContextStorage {
     pub context_runtime: DefaultContextRuntime,
     pub tool_result_budget: Arc<ToolResultBudget>,
@@ -70,6 +85,9 @@ impl ContextStorageResources {
     /// Keep the corresponding `RuntimeLease` alive while creating and using
     /// the session: the resolver is owned by that generation's memory bundle.
     /// A retained storage handle alone does not prevent provider disposal.
+    /// This default entry inherits memory and uses the generation's project
+    /// root. Scoped/execution-world callers select overrides through
+    /// [`Self::create_session_with_options`].
     ///
     /// The caller supplies the session storage's directory (normally
     /// `.pilotdeck/tool-results/<safeId>`) or execution-world spill root, as in
@@ -124,10 +142,25 @@ impl ContextStorageResources {
         &self,
         tool_results_dir: impl Into<PathBuf>,
     ) -> Result<SessionContextStorage, RuntimeError> {
+        self.create_session_with_options(tool_results_dir, SessionContextOptions::default())
+    }
+
+    /// Compose with scoped memory and execution-world options. The lease and
+    /// spill-directory contracts of [`Self::create_session`] apply here too.
+    /// For a scoped agent, translate `definition.memory === "disabled"` to
+    /// `memory_disabled`; the caller decides whether a separate context is
+    /// needed (`ProjectSessionRuntimeBundle.ts:568-595`).
+    pub fn create_session_with_options(
+        &self,
+        tool_results_dir: impl Into<PathBuf>,
+        options: SessionContextOptions,
+    ) -> Result<SessionContextStorage, RuntimeError> {
         let max_context_tokens = self.max_context_tokens()?;
+        // Even an opted-out context must respect the generation's lifetime.
         let memory_resolver = self
             .memory
             .resolve()?
+            .filter(|_| !options.memory_disabled)
             .map(|resource| {
                 resource
                     .as_any()
@@ -138,6 +171,9 @@ impl ContextStorageResources {
                     })
             })
             .transpose()?;
+        let project_root = options
+            .host_workspace_root
+            .unwrap_or_else(|| self.project_root.clone());
         let tool_result_budget = Arc::new(ToolResultBudget::new(ToolResultBudgetOptions::new(
             tool_results_dir,
         )));
@@ -152,12 +188,12 @@ impl ContextStorageResources {
             max_context_tokens,
             runtime_context_surface: self.runtime_context_surface,
             instruction_discovery: Some(InstructionDiscovery::from_environment(
-                self.project_root.clone(),
-                self.project_root.clone(),
+                project_root.clone(),
+                project_root.clone(),
                 self.pilot_home.clone(),
             )),
             tool_result_budget: Some(tool_result_budget.clone()),
-            project_root: Some(self.project_root.to_string_lossy().into_owned()),
+            project_root: Some(project_root.to_string_lossy().into_owned()),
             memory_resolver,
             memory_retrieval_timeout_ms,
             now: Some(self.now.clone()),
