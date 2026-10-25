@@ -8,6 +8,7 @@ import subprocess
 import sys
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import SCRIPT, digest, save
 from session_domain import (CELLS, EvidenceError, audit_native, calibration_coverage,
@@ -284,7 +285,7 @@ def run_all(output, source=None):
     results = []
     not_run = [] if source else list(CALIBRATION_CASES)
     for name in ('healthy', *(case for case in CASES if case not in not_run)):
-        command = [sys.executable, str(SCRIPT / 'controls/session_domain.py'),
+        command = [sys.executable, '-I', str(SCRIPT / 'controls/session_domain.py'),
                    '--case', name, '--output', str(output / name)]
         if source:
             command += ['--source', str(source)]

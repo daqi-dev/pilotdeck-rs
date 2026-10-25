@@ -65,7 +65,7 @@ class Ledger(unittest.TestCase):
         return path
 
     def check(self, *args, ok=True, reason=None):
-        result = subprocess.run([sys.executable, str(self.root / CHECKER), *args],
+        result = subprocess.run([sys.executable, '-I', str(self.root / CHECKER), *args],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
         self.assertEqual(result.returncode, 0 if ok else 1,
                          result.stdout.decode(errors='replace') + result.stderr.decode())
@@ -234,6 +234,8 @@ class Ledger(unittest.TestCase):
         manifest.write_bytes('# 冻结登记\n'.encode('utf-8') + manifest.read_bytes())
         env = {**os.environ, 'LC_ALL': 'C', 'PYTHONUTF8': '0', 'PYTHONCOERCECLOCALE': '0',
                'PYTHONIOENCODING': 'utf-8'}
+        # Deliberately not -I: this case proves explicit UTF-8 handling still
+        # works under hostile PYTHON* env, which isolated mode would ignore.
         result = subprocess.run([sys.executable, str(self.root / CHECKER), '--base', self.base],
                                 capture_output=True, timeout=30, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

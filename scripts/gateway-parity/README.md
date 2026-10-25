@@ -1,16 +1,19 @@
 # Gateway parity ruler（A2 / Issue #23）
 
-在仓根运行。Python 只用标准库；Node 22 + 基线自带 tsx。基线目录按「`--baseline` > `PDRS_BASELINE` > 本 checkout 的 `resources/PilotDeck`」解析（worktree 里通常没有，需显式指定），缺失时 BLOCKED；必须已构建且只读。Rust bin 来自本 workspace 的 `src/target/debug/pilotdeck-gateway`。
+在仓根运行。Python 只用标准库；Node 22 + 基线自带 tsx。所有 Python 入口一律 `python3 -I`（隔离模式；装置目录由各入口显式加入 `sys.path`，其余 `PYTHONPATH`/用户站点/cwd 均不参与导入）。基线目录按「`--baseline` > `PDRS_BASELINE` > 本 checkout 的 `resources/PilotDeck`」解析（worktree 里通常没有，需显式指定），缺失时 BLOCKED；必须已构建且只读。Rust bin 来自本 workspace 的 `src/target/debug/pilotdeck-gateway`。
 
 ```sh
 CARGO_HOME="$PWD/_build/cargo-home" cargo build --manifest-path src/Cargo.toml -p pilotdeck-gateway --locked
-python3 scripts/gateway-parity/check_ruler.py
+# 或用装置包装（拒绝未跟踪/祖先 .cargo/config[.toml] 与持久 $CARGO_HOME config）：
+python3 -I scripts/gateway-parity/build_proxy.py --check
+python3 -I scripts/gateway-parity/build_proxy.py --target-dir _build/target
+python3 -I scripts/gateway-parity/check_ruler.py
 # 机器项全过时 exit 2：independent_review=null，待协调者审查。
-python3 scripts/gateway-parity/check_frozen.py
+python3 -I scripts/gateway-parity/check_frozen.py
 # 无 FROZEN.md 时 exit 2：草稿没有冒充已冻结。
-python3 scripts/gateway-parity/test_safety.py
+python3 -I scripts/gateway-parity/test_safety.py
 # A4 前置离线对照：需本目录 npm ci（schema库）及只读基线，不监听/不请求服务。
-python3 scripts/gateway-parity/controls/run_all.py --offline --output _tmp/20261014-a4-controls
+python3 -I scripts/gateway-parity/controls/run_all.py --offline --output _tmp/20261014-a4-controls
 ```
 
 Gateway 差异账本阅读正本为 `specs/gateway-parity/accepted-diffs.md` 加
@@ -21,7 +24,9 @@ Gateway 差异账本阅读正本为 `specs/gateway-parity/accepted-diffs.md` 加
 
 运行 `check_ruler.py` 前须先在本目录执行 `npm ci --ignore-scripts --no-fund`，并提供已构建的只读 TS 基线；在线校准末尾也强制跑 A3 prerequisites，缺库/缺基线会 FAIL。
 
-默认产物 `_tmp/20261014-exp006/`。重新采集请选择新的 `--output _tmp/YYYYMMDD-名字`；脚本不覆盖既有 cur 或 label。每轮 run.json 与最终 ruler.json 记录 `common.py:A2_SCRIPTS` 白名单内 A2 装置脚本 sha256（含 controls、运行器和检查器；不绑定 A3 schema 脚本及 node_modules）。本目录下 .py/.mjs/.mts（除任意层级 node_modules）必须属于 A2 白名单或 A3 三件 check_schema.py/export_schema.mjs/validate_fixtures.mjs，新增未登记脚本即 FAIL。`check_ruler` 只复用脚本哈希完全匹配的六轮原件；无哈希的旧档案或版本不匹配均拒绝，要求新 output。复用时重新比 10 对 TS、代理，重新生成 controls 目录；原件损坏就 FAIL，不自动重跑盖掉失败。运行期间脚本改变也拒绝生成成功账本。每轮约 20 秒，整轮有 180 秒超时；独立 driver 上限 45 秒。等待共享锁默认 600 秒超时，可用 `--lock-timeout` 调整。全量 k=5 + 代理轮整体持有 `/tmp/pdrs-parity.lock`（owner.json、guard、陈旧接管、owner token 校验释放）。
+默认产物 `_tmp/20261014-exp006/`。重新采集请选择新的 `--output _tmp/YYYYMMDD-名字`；脚本不覆盖既有 cur 或 label。每轮 run.json 与最终 ruler.json 记录 `common.py:A2_SCRIPTS` 白名单内 A2 装置脚本 sha256（含 controls、运行器和检查器；不绑定 A3 schema 脚本）；本目录 `node_modules/` 存在时另记整树字节摘要。另记基线 `node_modules/tsx`、`node_modules/ws` 及二者声明的传递依赖的**实际文件字节**摘要（`baselineDepsSha256`；不用 package-lock integrity：integrity 不约束 Node 实际解析到的磁盘字节），归档复用与运行结尾都要求一致，E1 calibrate 的 `report.json` 同记该字段。本目录下 `.py/.pyw/.sh/.bash/.zsh/.js/.mjs/.cjs/.jsx/.ts/.mts/.cts/.tsx`（除任意层级 node_modules）必须属于 A2 白名单或 A3 三件 check_schema.py/export_schema.mjs/validate_fixtures.mjs；`__pycache__` 之外的 `.pyc/.pyo` 同视为未登记；新增未登记文件即 FAIL（`check_frozen.py` 使用同一扫描，遇未登记文件报错而非跳过）。`check_ruler` 只复用脚本哈希与基线依赖哈希都完全匹配的六轮原件；无哈希的旧档案或版本不匹配均拒绝，要求新 output。复用时重新比 10 对 TS、代理，重新生成 controls 目录；原件损坏就 FAIL，不自动重跑盖掉失败。运行期间脚本或基线依赖改变也拒绝生成成功账本。每轮约 20 秒，整轮有 180 秒超时；独立 driver 上限 45 秒。等待共享锁默认 600 秒超时，可用 `--lock-timeout` 调整。全量 k=5 + 代理轮整体持有 `/tmp/pdrs-parity.lock`（owner.json、guard、陈旧接管、owner token 校验释放）。
+
+cargo 构建输入：`run_round --side rust`、`check_ruler` 与 `build_proxy.py` 在构建/开跑前检查本树未跟踪的 `.cargo/config[.toml]`、祖先目录的同类 config、以及 `$CARGO_HOME/config[.toml]`，命中即 `BLOCKED` 并列出路径。边界：不校验 `$CARGO_HOME/registry/src` 或 `.crate` 缓存字节，也不校验 `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS` 等环境；`build_proxy.py` 以 `--locked` 钉住 lockfile。威胁模型同 `specs/ui-server-parity/acceptance.md`：防意外漂移与仓库内改动，不防本机恶意者。
 
 A4 前置另有离线 prerequisites：拒绝空/畸形 fixtures、逐18别名移除 pass/fail 覆盖（断言具体缺例消息）与开放 schema、本地 `$ref` 仅允许 `#` 或 `#/definitions/<名>`、时钟组合、独立输入哈希变动、导出器成功/不一致/配置写入失败三路临时目录清理。A3 输入单独记在 prerequisite 结果 `inputSha256`，不纳入 A2 apparatus；审计文档起终使用与 check_ruler 相同的原始字节 digest；check_ruler 的 `prerequisite_controls` 和最终输入哈希检查都必须通过。
 
@@ -30,10 +35,10 @@ r2 对照要求第一条失败规则等于 expectedRule；每项 comparison.json
 手动两轮也必须在**同一个 output**下运行，cur 路径保持一致：
 
 ```sh
-python3 scripts/gateway-parity/run_round.py --side ts --label direct --output _tmp/20261014-gateway-manual
-python3 scripts/gateway-parity/run_round.py --side rust --label proxy --output _tmp/20261014-gateway-manual
-python3 scripts/gateway-parity/compare.py _tmp/20261014-gateway-manual/direct _tmp/20261014-gateway-manual/proxy --out _tmp/20261014-gateway-manual/comparison.json
-python3 scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gateway-manual/direct --output _tmp/20261014-gateway-manual/controls --proxy-source _tmp/20261014-gateway-manual/proxy
+python3 -I scripts/gateway-parity/run_round.py --side ts --label direct --output _tmp/20261014-gateway-manual
+python3 -I scripts/gateway-parity/run_round.py --side rust --label proxy --output _tmp/20261014-gateway-manual
+python3 -I scripts/gateway-parity/compare.py _tmp/20261014-gateway-manual/direct _tmp/20261014-gateway-manual/proxy --out _tmp/20261014-gateway-manual/comparison.json
+python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gateway-manual/direct --output _tmp/20261014-gateway-manual/controls --proxy-source _tmp/20261014-gateway-manual/proxy
 ```
 
 端口可用 `run_round --ports TS PROXY OBSERVER MOCK` 参数化，四个必须互异且都是 28xxx；缺省 28791/28792/28793/28794，全部只监听 127.0.0.1。预检占用立即拒绝，不按端口查杀。各进程 start_new_session，清理只向本次 Popen 的组发信号，父进程早退也清理其剩余后代；processes.json/audit 保存 PID、argv、实际监听地址和结束状态。
@@ -55,7 +60,7 @@ python3 scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gatewa
 采集器接入和产品比较仍需 A7。`audit_native` 提供缺证据即拒绝的审计契约；
 合成拓扑夹具仅证明规则能拒绝变异，不能证明原生宿主已运行。旧 A2 代理驱动不改称原生驱动。
 
-`python3 scripts/gateway-parity/controls/session_domain.py --case all --output <新目录>`
+`python3 -I scripts/gateway-parity/controls/session_domain.py --case all --output <新目录>`
 执行 10 类必需负控及 7 项补充回归。加 `--source <校准输出>/six-cells` 可变异真实 TS
 观察；不加时使用明确标记的合成观察。每条负控须 exit 1 且首因正确，批次仅在健康前例与
 所有预期拒绝均满足时 exit 0。逐条命令和输出落在 `controls/results.json` 及各子目录。

@@ -7,6 +7,11 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+import sys
+
+# python3 -I removes the script directory from sys.path; the apparatus directory
+# is the only trusted import root.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import DEFAULT_OUT, READ_METHODS, SCENARIOS, save
 

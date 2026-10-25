@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -32,10 +33,76 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# Executable script suffixes: anything the apparatus could import or execute.
+# Python launches .py/.pyw; POSIX shells may launch .sh/.bash/.zsh; Node/tsx
+# loads .js/.mjs/.cjs/.jsx/.ts/.mts/.cts/.tsx directly or via its loader. A new
+# file with one of these suffixes must be registered before it can affect a run.
+SCRIPT_SUFFIXES = ('.py', '.pyw', '.sh', '.bash', '.zsh', '.js', '.mjs', '.cjs',
+                   '.jsx', '.ts', '.mts', '.cts', '.tsx')
+BYTECODE_SUFFIXES = ('.pyc', '.pyo')
+
+
+def tree_digest(folder):
+    """Hash actual on-disk bytes of a dependency tree, including link targets.
+
+    The root is resolved (pnpm/npm package directories may be symlinks); nested
+    directory symlinks are recorded but not followed, matching Node's own
+    package resolution boundaries.
+    """
+    folder = Path(folder).resolve()
+    entries = {}
+    for current, dirs, files in os.walk(folder, followlinks=False):
+        current = Path(current)
+        dirs.sort()
+        for name in sorted(dirs):
+            path = current / name
+            if path.is_symlink():
+                entries[path.relative_to(folder).as_posix()] = 'link:' + os.readlink(path)
+        for name in sorted(files):
+            path = current / name
+            rel = path.relative_to(folder).as_posix()
+            if path.is_symlink():
+                entries[rel] = 'link:' + os.readlink(path)
+            elif path.is_file():
+                entries[rel] = digest(path)
+    return hashlib.sha256(json.dumps(entries, sort_keys=True,
+                                     separators=(',', ':')).encode()).hexdigest()
+
+
+def node_modules_entry(script=None):
+    """Digest the installed in-tree dependencies, or omit them when absent."""
+    folder = (Path(script) if script is not None else SCRIPT) / 'node_modules'
+    if not folder.is_dir():
+        return None
+    return tree_digest(folder)
+
+
+def unknown_apparatus_files(script=None):
+    """Executable/runtime files that are neither A2 apparatus nor A3 tools.
+
+    __pycache__ bytecode is tolerated because CPython only consumes it next to a
+    matching source file; a legacy ``.pyc``/``.pyo`` beside the sources could be
+    imported on its own, so it is rejected like an unregistered script.
+    """
+    script = Path(script) if script is not None else SCRIPT
+    found = []
+    for folder, dirs, files in os.walk(script):
+        dirs[:] = [name for name in dirs if name != 'node_modules']
+        for name in files:
+            path = Path(folder) / name
+            rel = path.relative_to(script)
+            if path.suffix in SCRIPT_SUFFIXES:
+                if rel.as_posix() not in A2_SCRIPTS and rel.as_posix() not in A3_SCRIPTS:
+                    found.append(rel.as_posix())
+            elif path.suffix in BYTECODE_SUFFIXES and '__pycache__' not in rel.parts:
+                found.append(rel.as_posix())
+    return sorted(found)
+
+
 # A5.3 registers E1 adapters here so A2 continues to reject unknown scripts.
 # The new hashes require coordinator review/registration before merge (plan 005).
 A2_SCRIPTS = (
-    'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
+    'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
     'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',
     'observer.py', 'run_round.py', 'test_safety.py', 'watcher.mjs',
     'session_domain.py', 'session_observations.mjs', 'controls/session_domain.py',
@@ -44,19 +111,93 @@ A3_SCRIPTS = ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs')
 
 
 def apparatus_hashes():
-    """Reject unregistered scripts, then hash A2; missing members also fail."""
-    scripts = set()
-    for folder, dirs, files in os.walk(SCRIPT):
-        dirs[:] = [name for name in dirs if name != 'node_modules']
-        for name in files:
-            path = Path(folder) / name
-            if path.suffix in ('.py', '.mjs', '.mts'):
-                scripts.add(path.relative_to(SCRIPT).as_posix())
-    unknown = scripts - set(A2_SCRIPTS) - set(A3_SCRIPTS)
+    """Reject unregistered executable files, then hash A2 and installed deps."""
+    unknown = unknown_apparatus_files()
     if unknown:
-        raise ValueError(f'unregistered gateway-parity scripts: {sorted(unknown)}')
-    return {(SCRIPT / name).relative_to(ROOT).as_posix(): digest(SCRIPT / name)
-            for name in sorted(A2_SCRIPTS)}
+        raise ValueError(f'unregistered gateway-parity scripts: {unknown}')
+    hashes = {(SCRIPT / name).relative_to(ROOT).as_posix(): digest(SCRIPT / name)
+              for name in sorted(A2_SCRIPTS)}
+    installed = node_modules_entry()
+    if installed is not None:
+        # A3 dependencies (ajv / typescript / ts-json-schema-generator) are not
+        # loaded by a TS round, but they are part of the frozen apparatus's
+        # executable surface; bind the bytes actually installed.
+        hashes[(SCRIPT / 'node_modules').relative_to(ROOT).as_posix()] = installed
+    return hashes
+
+
+def baseline_dependency_hashes(baseline, roots=('tsx', 'ws')):
+    """Hash the baseline packages the A2 round actually loads.
+
+    Actual file bytes are used rather than package-lock/pnpm integrity: the
+    threat here is on-disk drift or a repository-local override, and integrity
+    metadata does not constrain the installed files Node resolves. Dependency
+    names are followed from package.json so pnpm symlink layouts are covered.
+    """
+    baseline = Path(baseline)
+    hashes = {}
+    queue = [(name, True, baseline / 'node_modules') for name in roots]
+    while queue:
+        name, required, base = queue.pop(0)
+        key = 'node_modules/' + name
+        if key in hashes:
+            continue
+        link = base / name
+        if not (link.exists() or link.is_symlink()):
+            if required:
+                raise ValueError(f'baseline {baseline} lacks {key}; A2 cannot bind its runtime')
+            continue
+        real = link.resolve()
+        if not real.is_dir():
+            if required:
+                raise ValueError(f'baseline {baseline} {key} is not a directory')
+            continue
+        hashes[key] = tree_digest(real)
+        try:
+            package = json.loads((real / 'package.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        dependencies = dict(package.get('dependencies') or {})
+        dependencies.update(package.get('optionalDependencies') or {})
+        # pnpm stores a package's dependencies as siblings in the same virtual
+        # node_modules directory; fall back to the baseline's top level.
+        queue.extend((dep, False, real.parent) for dep in sorted(dependencies))
+    return hashes
+
+
+def cargo_config_problems(root=None, environ=None):
+    """Return cargo build inputs outside the frozen, reviewable repository.
+
+    Cargo reads config from $CARGO_HOME and from .cargo/config[.toml] in the
+    worktree and every ancestor directory. An untracked worktree config is a
+    repository-local change that review cannot see; a persistent CARGO_HOME
+    config (or an ancestor outside the worktree) is likewise not pinned here.
+    """
+    root = (Path(root) if root is not None else ROOT).resolve()
+    environ = os.environ if environ is None else environ
+    problems = {}
+    configs = ('.cargo/config.toml', '.cargo/config')
+    for name in configs:
+        path = root / name
+        if path.exists() or path.is_symlink():
+            tracked = subprocess.run(
+                ['git', '-C', str(root), 'ls-files', '--error-unmatch', '--', name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+            if tracked.returncode:
+                problems[path] = 'untracked worktree config (cargo would read it)'
+    anchors = ('.cargo/config.toml', '.cargo/config')
+    for parent in root.parents:
+        for name in anchors:
+            path = parent / name
+            if path.exists() or path.is_symlink():
+                problems[path] = 'cargo config outside the worktree (ancestor lookup)'
+    cargo_home = Path(environ.get('CARGO_HOME') or Path.home() / '.cargo')
+    for name in ('config.toml', 'config'):
+        path = cargo_home / name
+        if path.exists() or path.is_symlink():
+            problems[path] = 'persistent CARGO_HOME config'
+    return [f'{path}: {reason}' for path, reason in sorted(problems.items())]
+
 
 
 def owner(lock):

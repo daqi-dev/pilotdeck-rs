@@ -137,14 +137,22 @@ def run_prerequisites(output, code_root=ROOT):
             path.write_text('A2')
         hashes = common.apparatus_hashes()
         for name in ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs',
-                     'node_modules/dependency/index.mjs', 'nested/node_modules/dependency/tool.py',
-                     'notes.txt'):
+                     'nested/node_modules/dependency/tool.py', 'notes.txt'):
             path = common.SCRIPT / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('A3 or installed dependency')
+            path.write_text('A3 or nested installed dependency')
             record('apparatus-excludes-' + name, common.apparatus_hashes() == hashes,
-                   'unrelated script cannot invalidate A2 evidence')
-        for name in ('extra.py', 'extra.mjs', 'extra.mts', 'nested/extra.py',
+                   'unrelated or nested script cannot invalidate A2 evidence')
+        # #85: the installed top-level node_modules bytes must be bound to A2
+        # evidence; skipping them let a swapped loader/tool run unobserved.
+        path = common.SCRIPT / 'node_modules/dependency/index.mjs'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('installed dependency')
+        record('apparatus-binds-node_modules', common.apparatus_hashes() != hashes,
+               'installed dependency bytes change the evidence hash')
+
+        for name in ('extra.py', 'extra.mjs', 'extra.mts', 'extra.js', 'extra.cjs',
+                     'extra.ts', 'extra.cts', 'extra.sh', 'nested/extra.py',
                      'nested/check_schema.py'):
             path = common.SCRIPT / name
             path.parent.mkdir(parents=True, exist_ok=True)
