@@ -92,6 +92,7 @@ pub struct WebFetchHttpError {
 pub enum FetchError {
     Http(WebFetchHttpError),
     /// Any other `Error`; the message only.
+    // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-ERROR-CLASS-001.md
     Other(JsString),
 }
 
@@ -359,6 +360,7 @@ impl UrlFetcher {
                     .unwrap_or_default();
                 return Err(other(&text));
             }
+            // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-POST-HEADERS-PARENT-001.md
             let body = match response.read_body(MAX_HTTP_CONTENT_LENGTH, parent).await {
                 Ok(body) => body,
                 Err(BodyError::Terminated) => return Err(other("terminated")),

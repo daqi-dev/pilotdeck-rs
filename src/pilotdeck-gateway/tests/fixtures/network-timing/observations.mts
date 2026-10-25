@@ -19,6 +19,19 @@ export function matrix() {
   return rows.map(row => ({...row, id: `${row.path}/${row.phase}/${row.event}/${row.order}`}));
 }
 
+// The requested duration is validated independently of raw timers. Provenance
+// distinguishes intercepted product timers from the custom dispatcher's watchdog.
+export function expectedTiming(row: any) {
+  const retry = row.phase.startsWith('retry-');
+  const idle = row.event === 'idle';
+  const realWatchdog = idle && row.path === 'web_fetch' && !['body', 'text-body'].includes(row.phase);
+  return {target: retry ? 'retry' : idle ? 'watchdog' : 'completion',
+    requested: retry ? 500 : realWatchdog ? 60000 : idle ? 600000 : 20,
+    effective: idle ? 40 : 20,
+    source: retry ? 'baseline retry timer' : realWatchdog ? 'baseline hop timeout'
+      : idle ? 'fixture-injected watchdog' : 'fixture-injected completion'};
+}
+
 // Recheck raw timing evidence independently of the collector's acceptance test.
 export function validate(observations: any[], hashes: any, dependency: any) {
   const provenance = observations.filter(row => Object.hasOwn(row, 'source'));
@@ -36,6 +49,11 @@ export function validate(observations: any[], hashes: any, dependency: any) {
   assert.equal(observations.length, sources.length + 1 + rawCases.length, 'unexpected probe output');
   for (const [i, row] of rawCases.entries()) {
     for (const key of ['id', 'path', 'phase', 'event', 'order']) assert.equal(row[key], expected[i][key], `matrix ${key}`);
+    const timing = expectedTiming(row);
+    assert.equal(row.timing.target, timing.target, 'expected target');
+    assert.equal(row.timing.requested, timing.requested, 'expected requested');
+    assert.equal(row.timing.effective, timing.effective, 'expected effective');
+    assert.equal(row.timing.source, timing.source, 'expected timing source');
     const target = row.timers.filter((timer: any) => timer.kind === row.timing.target);
     const parents = row.timers.filter((timer: any) => timer.kind === 'parent');
     assert.equal(target.length, 1, 'exactly one target timer');
@@ -45,7 +63,9 @@ export function validate(observations: any[], hashes: any, dependency: any) {
     const gap = row.order === 'continuation-first' ? 5 : row.order === 'parent-first' ? -5 : 0;
     assert.equal(p.start + p.delay - t.start - t.delay, gap, 'actual Node deadline gap');
     assert.equal(row.timers.indexOf(p) < row.timers.indexOf(t), row.order !== 'tie-parent-last', 'actual registration order');
-    assert.deepEqual(row.timing, {target: t.kind, requested: t.requested, effective: t.delay, parentGap: gap, parentRegisteredFirst: row.order !== 'tie-parent-last'}, 'timing projection');
+    assert.equal(p.requested, timing.effective + gap, 'parent requested');
+    assert.equal(p.delay, timing.effective + gap, 'parent effective');
+    assert.deepEqual(row.timing, {target: t.kind, requested: t.requested, effective: t.delay, parentGap: gap, parentRegisteredFirst: row.order !== 'tie-parent-last', source: timing.source}, 'timing projection');
     const pi = row.timeline.indexOf('parent'), ti = row.timeline.indexOf(t.kind);
     const parentWins = row.order === 'parent-first' || row.order === 'tie-parent-first';
     assert.ok(parentWins ? pi >= 0 : ti >= 0, 'winning callback executed');

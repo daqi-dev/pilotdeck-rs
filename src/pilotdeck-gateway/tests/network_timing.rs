@@ -26,7 +26,7 @@ use pilotdeck_gateway::{
             builtin::web::{
                 UrlFetcher,
                 cache::UrlCache,
-                fetcher::{FetchError, FetchResult},
+                fetcher::{FETCH_TIMEOUT_MS, FetchError, FetchResult},
                 network::{FetchOptions, HttpRequest, WEB_RETRY, network_fetch},
             },
         },
@@ -366,10 +366,75 @@ async fn replay(row: &Value, overdue: bool) -> Value {
     let event = row["event"].as_str().unwrap();
     let path = row["path"].as_str().unwrap();
     let order = row["order"].as_str().unwrap();
+    let timing = &row["timing"];
+    let operation_ms = timing["requested"]
+        .as_u64()
+        .expect("requested milliseconds");
+    let effective_ms = timing["effective"]
+        .as_u64()
+        .expect("effective milliseconds");
+    let gap = timing["parentGap"].as_i64().expect("parent gap");
+    let parent_first = timing["parentRegisteredFirst"]
+        .as_bool()
+        .expect("registration order");
+    assert!(operation_ms > 0 && effective_ms > 0 && effective_ms <= operation_ms);
+    assert_eq!(effective_ms, if event == "idle" { 40 } else { 20 });
+    // Drive time from the oracle, but reject drift against the tested contract.
+    let expected_requested_ms = if phase.starts_with("retry-") {
+        WEB_RETRY.base_delay_ms as u64
+    } else if event == "idle" && path == "web_fetch" && phase != "body" {
+        FETCH_TIMEOUT_MS as u64
+    } else if event == "idle" {
+        network_source::UNDICI_BODY_TIMEOUT.as_millis() as u64
+    } else {
+        effective_ms
+    };
+    assert_eq!(
+        operation_ms, expected_requested_ms,
+        "requested duration contract"
+    );
+    assert_eq!(
+        timing["source"],
+        if phase.starts_with("retry-") {
+            "baseline retry timer"
+        } else if event == "idle" && path == "web_fetch" && phase != "body" {
+            "baseline hop timeout"
+        } else if event == "idle" {
+            "fixture-injected watchdog"
+        } else {
+            "fixture-injected completion"
+        }
+    );
+    assert_eq!(
+        gap,
+        match order {
+            "continuation-first" => 5,
+            "parent-first" => -5,
+            "tie-parent-first" | "tie-parent-last" => 0,
+            _ => panic!("unknown order"),
+        }
+    );
+    assert_eq!(parent_first, order != "tie-parent-last");
+    assert_eq!(
+        timing["target"],
+        if phase.starts_with("retry-") {
+            "retry"
+        } else if event == "idle" {
+            "watchdog"
+        } else {
+            "completion"
+        }
+    );
+    let parent_ms = operation_ms
+        .checked_add_signed(gap)
+        .expect("logical parent deadline");
+    effective_ms
+        .checked_add_signed(gap)
+        .expect("captured parent deadline");
     let requests = Arc::new(Mutex::new(Vec::new()));
     let transport = MatrixTransport {
         path: path.into(),
-        parent_first: order != "tie-parent-last",
+        parent_first,
         phase: phase.into(),
         event: event.into(),
         requests: requests.clone(),
@@ -387,24 +452,8 @@ async fn replay(row: &Value, overdue: bool) -> Value {
     let mut pending = Box::pin(pending);
     let start = tokio::time::Instant::now();
     let early = poll_once(pending.as_mut()).await;
-    let operation_ms = if phase.starts_with("retry-") {
-        500
-    } else if event == "idle" {
-        if path == "web_fetch" && !matches!(phase, "body" | "text-body") {
-            60000
-        } else {
-            600000
-        }
-    } else {
-        20
-    };
-    let parent_ms = match order {
-        "continuation-first" => operation_ms + 5,
-        "parent-first" => operation_ms - 5,
-        _ => operation_ms,
-    };
     let mut result = early;
-    if result.is_none() && !overdue && matches!(order, "continuation-first" | "tie-parent-last") {
+    if result.is_none() && !overdue && (gap > 0 || (gap == 0 && !parent_first)) {
         tokio::time::advance(Duration::from_millis(operation_ms)).await;
         result = poll_once(pending.as_mut()).await;
         if result.is_none() {
@@ -449,6 +498,100 @@ async fn check_mode(id: &str, overdue: bool) {
     let actual = replay(row, overdue).await;
     println!("{}", json!({"id":id,"ts":row["observable"],"rust":actual}));
     assert_eq!(actual, row["observable"], "network timing cell: {id}");
+}
+
+// The table is the only maintained Rust observation registry. Source attributes
+// must match it exactly; a difference resolving (or changing) makes this red.
+#[tokio::test(start_paused = true)]
+async fn known_differences_remain_exact_and_ignored() {
+    use std::collections::{BTreeMap, BTreeSet};
+    baseline::oracle(RAW);
+    let oracle: Value = serde_json::from_str(RAW).unwrap();
+    let table: Value = serde_json::from_str(include_str!(
+        "fixtures/network-timing/known_differences.json"
+    ))
+    .unwrap();
+    let mut rows = BTreeMap::new();
+    for row in oracle["cases"].as_array().unwrap() {
+        assert!(
+            rows.insert(row["id"].as_str().unwrap(), row).is_none(),
+            "duplicate oracle id"
+        );
+    }
+    let source = include_str!("network_timing.rs");
+    let mut ignored = BTreeMap::new();
+    let mut reason = None;
+    for line in source.lines().map(str::trim) {
+        if line.starts_with("#[ignore") {
+            assert!(reason.is_none(), "duplicate ignore attribute");
+            reason = Some(
+                line.strip_prefix("#[ignore = \"")
+                    .and_then(|s| s.strip_suffix("\"]"))
+                    .expect("literal ignore reason"),
+            );
+        }
+        if (line.starts_with("fn ") || line.starts_with("async fn "))
+            && let Some(reason) = reason.take()
+        {
+            let name = line
+                .trim_start_matches("async ")
+                .strip_prefix("fn ")
+                .unwrap()
+                .split('(')
+                .next()
+                .unwrap();
+            if name == "network_timing_regenerates_identically" {
+                assert_eq!(reason, "requires fixed TS baseline and Node v22.22.0");
+            } else {
+                assert!(
+                    ignored.insert(name, reason).is_none(),
+                    "duplicate ignored test"
+                );
+            }
+        }
+    }
+    assert!(reason.is_none(), "unbound ignore attribute");
+    let mut registered = BTreeMap::new();
+    let mut ids = BTreeSet::new();
+    for entry in table["cells"].as_array().unwrap() {
+        let id = entry["id"].as_str().unwrap();
+        let name = entry["test"].as_str().unwrap();
+        assert!(ids.insert(id), "duplicate difference id");
+        assert_eq!(name, id.replace(['/', '-'], "_"), "test/id binding");
+        let body = source
+            .split(&format!("async fn {name}() {{"))
+            .nth(1)
+            .expect("registered test exists")
+            .split("\n}")
+            .next()
+            .unwrap();
+        assert_eq!(
+            body.trim(),
+            format!("check(\"{id}\").await;"),
+            "ignored cell must assert TS oracle"
+        );
+        let category = &table["categories"][entry["category"].as_str().unwrap()];
+        let reason = category["ignoreReason"].as_str().expect("known category");
+        assert!(
+            registered.insert(name, reason).is_none(),
+            "duplicate difference test"
+        );
+        let row = rows[id];
+        assert_eq!(
+            entry["ts"], row["observable"],
+            "recorded TS observation: {id}"
+        );
+        assert_ne!(
+            entry["ts"], entry["rust"],
+            "resolved difference must be unignored: {id}"
+        );
+        let actual = replay(row, false).await;
+        assert_eq!(actual, entry["rust"], "known difference changed: {id}");
+    }
+    assert_eq!(
+        ignored, registered,
+        "ignored cells and difference table must match exactly"
+    );
 }
 
 #[test]

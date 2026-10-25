@@ -42,7 +42,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -67,7 +68,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -92,7 +94,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -117,7 +120,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -142,7 +146,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -167,7 +172,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -192,7 +198,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -217,7 +224,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -242,7 +250,8 @@
         "requested": 60000,
         "effective": 40,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline hop timeout"
       }
     },
     {
@@ -267,7 +276,8 @@
         "requested": 60000,
         "effective": 40,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline hop timeout"
       }
     },
     {
@@ -292,7 +302,8 @@
         "requested": 60000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline hop timeout"
       }
     },
     {
@@ -317,7 +328,8 @@
         "requested": 60000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "baseline hop timeout"
       }
     },
     {
@@ -342,7 +354,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -367,7 +380,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -392,7 +406,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -417,7 +432,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -442,7 +458,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -467,7 +484,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -492,7 +510,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -517,7 +536,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -542,7 +562,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -567,7 +588,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -592,7 +614,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -617,7 +640,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -643,7 +667,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -669,7 +694,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -695,7 +721,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -721,7 +748,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -747,7 +775,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -773,7 +802,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -799,7 +829,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -825,7 +856,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -851,7 +883,8 @@
         "requested": 60000,
         "effective": 40,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline hop timeout"
       }
     },
     {
@@ -877,7 +910,8 @@
         "requested": 60000,
         "effective": 40,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline hop timeout"
       }
     },
     {
@@ -903,7 +937,8 @@
         "requested": 60000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline hop timeout"
       }
     },
     {
@@ -929,7 +964,8 @@
         "requested": 60000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "baseline hop timeout"
       }
     },
     {
@@ -955,7 +991,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -980,7 +1017,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -1005,7 +1043,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -1031,7 +1070,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -1057,7 +1097,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -1082,7 +1123,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -1107,7 +1149,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -1133,7 +1176,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -1158,7 +1202,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1183,7 +1228,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1208,7 +1254,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1233,7 +1280,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1258,7 +1306,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1283,7 +1332,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1308,7 +1358,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1333,7 +1384,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1358,7 +1410,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -1383,7 +1436,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -1408,7 +1462,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -1433,7 +1488,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -1458,7 +1514,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1483,7 +1540,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1508,7 +1566,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1533,7 +1592,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1558,7 +1618,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1583,7 +1644,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1608,7 +1670,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1633,7 +1696,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1658,7 +1722,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -1683,7 +1748,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -1708,7 +1774,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -1733,7 +1800,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -1758,7 +1826,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1783,7 +1852,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1808,7 +1878,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1833,7 +1904,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1858,7 +1930,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1883,7 +1956,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1908,7 +1982,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1933,7 +2008,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -1958,7 +2034,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -1983,7 +2060,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -2008,7 +2086,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -2033,7 +2112,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -2059,7 +2139,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -2085,7 +2166,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -2111,7 +2193,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -2137,7 +2220,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -2163,7 +2247,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -2189,7 +2274,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -2215,7 +2301,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -2241,7 +2328,8 @@
         "requested": 20,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
       }
     },
     {
@@ -2267,7 +2355,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -2293,7 +2382,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -2319,7 +2409,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -2345,7 +2436,8 @@
         "requested": 600000,
         "effective": 40,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
       }
     },
     {
@@ -2372,7 +2464,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -2397,7 +2490,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -2422,7 +2516,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -2449,7 +2544,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -2476,7 +2572,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -2501,7 +2598,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": -5,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -2526,7 +2624,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": true
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
       }
     },
     {
@@ -2553,7 +2652,8 @@
         "requested": 500,
         "effective": 20,
         "parentGap": 0,
-        "parentRegisteredFirst": false
+        "parentRegisteredFirst": false,
+        "source": "baseline retry timer"
       }
     }
   ]

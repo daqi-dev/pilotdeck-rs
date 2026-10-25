@@ -16,6 +16,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 
 
 CASES = [
+    ("network-timing", ["--test", "network_timing"], "fetch_redirect_headers_fulfilled_continuation_first"),
     ("session-domain", ["--lib"], "storage::session_domain::tests::real_ts_domain_logs_and_events_match_bytes"),
     ("transcript-adapter", ["--lib"], "storage::transcript_adapter_tests::real_ts_scenarios_match_outcomes_calls_and_bytes"),
     ("run-registry", ["--lib"], "storage::run_registry_tests::real_ts_scenarios_match_outcomes_and_snapshot_bytes"),

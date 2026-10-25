@@ -1,7 +1,7 @@
 # Network cancellation timing fixture (#456 pr1)
 
 100 格来自固定 TS cc7c4e6 + Node v22.22.0 的实际执行；`oracle.json`
-保留 name、message、delivery、content、calls、retries 与请求路径。生产源码未改。
+保留 name、message、delivery、content、calls、retries 与请求路径。产品源码仅增加账本注释，不改变行为。
 
 | 路径 | 阶段 | 完成源 | 时机 | 格数 |
 |---|---|---|---|---|
@@ -37,7 +37,20 @@
 
 Node 原生 timer（不是假 timer 队列）。目标完成20ms；idle target40ms；父为目标±5ms或同刻。
 为了有界运行，web idle headers 的60000ms timer压到40ms，其他60000ms watchdog压到1000ms；
-retry500ms压到20ms，body/裸headers的600000ms独立timeout压到40ms。
+retry500ms压到20ms；body/裸headers的600000ms是 **fixture-injected watchdog**，压到40ms。
+`timing.source` 逐格区分真实 retry/hop timer 与注入的 watchdog/completion。
+裸 `fetch_redirect` 非 retry 的16个 idle 格全部使用注入 watchdog，其中14格对齐、
+body/text-body 的两个 tie-parent-first 格为已知差异。这里的14格“对齐”只证明两侧
+在同造超时下行为一致，不证明真实裸 fetch 的超时语义。
+
+固定基线实测 `createLongTimeoutOptions()` 返回 headersTimeout/bodyTimeout=600000：
+`src/cli/proxy.ts:149-157`，常量来自 `src/model/streaming/streamModel.ts:56`，
+Agent 安装点在 `src/cli/proxy.ts:111,134-137`。但本 probe 替换 global dispatcher，
+web body 也未经过这个真实 Client timer，因此同样标为注入 watchdog。
+去掉注入后，headers/body/text-body/redirect-hop 四路径在80ms观察窗都保持 pending，
+没有注册600000 timer，父取消后均为 AbortError；原始实测在本轮交付的
+`fix-r1/watchdog-source.log`。这是有界观测，不把80ms外推为所有生产 transport 永久等待。
+无夹具超时的真实无限等待/父取消语义，以及真实 Agent 长超时，均留 pr2（#752）。
 原始 requested/effective 值都保留，Rust 暂停时钟使用原逻辑60000/600000/500ms。
 这些注入验证顺序与归一化，不验证实际网络超时时长或 libuv socket 相位。
 
@@ -69,10 +82,16 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 web `FetchError::Other` 没有name，观察为null，绝不根据message补造类型。
 额外六个overdue测试验证“父事件已送达，但先注册续体仍先行”的晚poll分支。
 
-本次62格对齐、38格严格差异：差异用独立 `#[ignore = "#456 差异：..."]`
-保留TS期望（34格web，4格redirect）。主要为web丢错误类型、headers后仍取消body、
-父先注册的同刻判定以及retry delay同刻仍推进。完整逐格TS/Rust原值、原始日志和
-源码行号由交付证据目录 `RESULT.md` 提供；这些ignore不是已批准差异，不表示本阶段通过。
+本次62格对齐、38格严格差异（34格web、4格redirect）。
+`known_differences.json` 是 TS 原值/Rust 当前实际值/所属类别的单一维护表；
+四类按当前逐格原值分为错误类型23、headers后取消5、同刻完成/超时6、重试同刻4，
+不是早期评审摘要的24/10/2/2。四份 `specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-*-001.md`
+由这张表生成逐格清单，状态均为「已知未对齐（未批准，待人批）」；修复归 #752。
+各格独立 ignore 仍严格断言 TS 值。非跳过守卫 `known_differences_remain_exact_and_ignored`
+核对 ignore 集合/理由、函数与格id绑定、TS与oracle相同、Rust实际与表相同、TS≠Rust；
+差异被修复或红的原因改变都要求同步清表/解除ignore，不能静默遗留跳过。
+默认结果为62对齐+6overdue+1守卫=69通过，38差异+1重生成守卫=39忽略。
+这些ignore不是已批准差异，不表示本阶段通过。
 
 ```sh
 CARGO_TARGET_DIR="$PWD/_build/cargo-target" cargo test --offline --manifest-path src/Cargo.toml \
@@ -91,5 +110,10 @@ oracle assertion失败（编译失败不算），恢复后同一用例再绿。�
 status/error retry tie、message、retry次数、body内容、body取消的name/delivery。
 另有四组全矩阵变异补齐逐格覆盖：已对齐的43个父先/同刻关键格都有实际oracle失败与恢复证据；覆盖索引在交付目录negative-coverage.json。已知差异格原实现即红，按任务第4条保持ignore，不将其包装成正控通过。
 
-`negative_observations.mts <raw.ndjson>` 则对原始采集记录内存变异，21组守卫逐条
+`negative_observations.mts <raw.ndjson>` 则对原始采集记录内存变异，25组守卫逐条
 拒绝并复验原始100格；它不写TS源码、金样或原始证据。
+
+补充负控 `retry-outer-parent-message` 精确变异 web/network.rs 的
+`Timeout { .. }` / `outer.parent` 文案，复用 `web_tools::web_fetch_hop_timeout_during_retry_uses_retry_abort_message`；
+默认矩阵通过数由测试源声明数减 ignore 数计算。共享 `negative_oracle_guard.py` 已登记 network-timing。
+差异表 Rust 值的变异必须使非跳过守卫转红，恢复后转绿（交付 `fix-r1/table-negative/`）。

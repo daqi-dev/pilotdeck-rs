@@ -1183,6 +1183,8 @@ async fn cancel_after_headers(h: &Harness, signal: &ToolCancellation) {
 /// The body read races the parent signal: a server that sent headers and then
 /// stalls must not hold the tool call after the user cancels.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// #456 已知差异：headers 后 Rust 仍取消 body；TS 已解绑父取消。
+// Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-POST-HEADERS-PARENT-001.md
 async fn web_fetch_body_read_observes_parent_cancellation() {
     let h = Harness::new();
     h.begin(&hold_spec(), None);
@@ -1250,6 +1252,8 @@ async fn negative_control_body_stall_without_cancellation() {
 /// `web_search` reads its body through the same helper; cancelling mid-body
 /// must settle the provider call too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// #456 已知差异：headers 后 Rust 仍取消 body；TS 已解绑父取消。
+// Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-POST-HEADERS-PARENT-001.md
 async fn web_search_body_read_observes_parent_cancellation() {
     let h = Harness::new();
     h.begin(&hold_spec(), None);
