@@ -1,5 +1,9 @@
 //! A6.9-pr3c2: interaction capability marker for the project factory.
 //!
+//! This module also publishes a separate native event-buffer resource; its
+//! checked per-turn binding is in `interaction_events`. The marker itself
+//! retains its original contract.
+//!
 //! This module publishes one stateless [`Resource::Interaction`] marker under
 //! the execution-world family. It deliberately carries no ports and no
 //! per-turn state.
@@ -13,7 +17,9 @@
 //!   even when this marker is published, and consumers must gate permission,
 //!   prompt and port decisions on the profile, never on the marker. The
 //!   permission, hooks/lifecycle, event and steer ports are composed per turn
-//!   by the session/turn layer in A7.2-pr6 (#589). Until that lands, consumers
+//!   by the session/turn layer in A7.2-pr6 (#589). The separate InteractionEvents
+//!   resource now supplies the native event bind_turn API; it still needs
+//!   consumption by that layer. Until that lands, consumers
 //!   keep their existing disabled / fail-closed handling and must not enable
 //!   interaction paths from this marker alone.
 //! - **Disposal boundary**: the marker owns no OS or runtime resources, so its
@@ -88,6 +94,10 @@ impl ResourceFamilySource for InteractionFamilySource {
         self.execution_world.stage(context, sink)?;
         // Publish the distinct, port-free marker; never fabricate ports here.
         sink.register_resource(Resource::Interaction, Arc::new(InteractionResource));
+        sink.register_resource(
+            Resource::InteractionEvents,
+            Arc::new(super::interaction_events::InteractionEvents::default()),
+        );
         Ok(())
     }
 }

@@ -5,6 +5,7 @@
 //! rollback, and registry generations are the production paths.
 use super::*;
 use crate::runtime::project::{ProjectRuntime, ProjectRuntimeRegistry, RuntimeLease};
+use pilotdeck_protocol::{JsObject, JsString};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -3287,4 +3288,279 @@ mod memory_bundle_tests {
             bounded(registry.dispose()).await.unwrap();
         }
     }
+}
+
+fn event_resource(context: &StageContext) -> super::super::interaction_events::InteractionEvents {
+    context
+        .resource(Resource::InteractionEvents)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<super::super::interaction_events::InteractionEvents>()
+        .unwrap()
+        .clone()
+}
+fn host_event(session: &str, turn: Option<&str>, kind: &str) -> JsObject {
+    let mut event = pilotdeck_protocol::JsObject::new();
+    event.insert("type".into(), kind.into());
+    event.insert("sessionId".into(), session.into());
+    if let Some(turn) = turn {
+        event.insert("turnId".into(), turn.into());
+    }
+    event
+}
+fn event_call(event: JsObject) -> JsValue {
+    let mut payload = JsObject::new();
+    payload.insert("operation".into(), "emit".into());
+    payload.insert("event".into(), JsValue::Object(event));
+    let mut call = JsObject::new();
+    call.insert("payload".into(), JsValue::Object(payload));
+    JsValue::Object(call)
+}
+
+#[tokio::test]
+async fn interaction_event_factory_binds_real_buffer_in_both_builder_orders() {
+    use crate::host::modules::{ModuleRouter, event::TurnIdentity};
+    for families in [
+        Families::unwired().with_interaction().with_tools_mcp(),
+        Families::unwired().with_tools_mcp().with_interaction(),
+    ] {
+        let group = interaction_test_group();
+        let context = group.context();
+        families
+            .execution_world
+            .stage(&context, &mut group.sink())
+            .unwrap();
+        let events = event_resource(&context);
+        let mut router = ModuleRouter::default();
+        let port = events
+            .bind_turn(
+                TurnIdentity::new("session", "turn"),
+                "run".into(),
+                &mut router,
+            )
+            .unwrap();
+        assert!(router.event.is_installed());
+        assert!(!router.permission.is_installed());
+        assert!(!router.lifecycle.is_installed());
+        let mut first = host_event("session", Some("turn"), "text_delta");
+        first.insert("text".into(), "中文".into());
+        let second = host_event("session", None, "");
+        router.event.call(event_call(first.clone())).await.unwrap();
+        router.event.call(event_call(second.clone())).await.unwrap();
+        assert_eq!(port.run_id(), JsString::from("run"));
+        assert_eq!(router.event.drain_checked().unwrap(), vec![first, second]);
+        assert!(port.drain().unwrap().is_empty());
+        // Re-execute the exact baseline trace and compare against actual TS output.
+        let golden: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/interaction-events/oracle.json"
+        ))
+        .unwrap();
+        let rows = golden.as_array().unwrap();
+        let first_batch = rows[0].as_array().unwrap();
+        for event in first_batch {
+            let event = pilotdeck_protocol::parse_json(&event.to_string())
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone();
+            router.event.call(event_call(event)).await.unwrap();
+        }
+        let expected: Vec<_> = first_batch
+            .iter()
+            .map(|v| {
+                pilotdeck_protocol::parse_json(&v.to_string())
+                    .unwrap()
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            })
+            .collect();
+        assert_eq!(port.drain().unwrap(), expected);
+        assert!(rows[1].as_array().unwrap().is_empty());
+        assert!(port.drain().unwrap().is_empty());
+        group.dispose().await.unwrap();
+        group.dispose().await.unwrap();
+        assert!(events.is_closed());
+        assert_eq!(events.release_count(), 1);
+        assert!(
+            router
+                .event
+                .call(event_call(host_event("session", None, "late")))
+                .await
+                .is_err()
+        );
+        assert!(router.event.drain_checked().is_err());
+        assert!(port.drain().is_err());
+        assert!(
+            events
+                .bind_turn(
+                    TurnIdentity::new("session", "next"),
+                    "next".into(),
+                    &mut router
+                )
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn interaction_event_runs_revoke_exact_handles_and_reject_bad_identity() {
+    use crate::host::modules::{ModuleRouter, event::TurnIdentity};
+    let group = interaction_test_group();
+    let context = group.context();
+    Families::unwired()
+        .with_tools_mcp()
+        .with_interaction()
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .unwrap();
+    let events = event_resource(&context);
+    let mut first = ModuleRouter::default();
+    let old = events
+        .bind_turn(
+            TurnIdentity::new("session", "turn"),
+            "same-run".into(),
+            &mut first,
+        )
+        .unwrap();
+    let mut other = ModuleRouter::default();
+    let independent = events
+        .bind_turn(
+            TurnIdentity::new("other", "turn"),
+            "same-run".into(),
+            &mut other,
+        )
+        .unwrap();
+    first
+        .event
+        .call(event_call(host_event("session", None, "buffered")))
+        .await
+        .unwrap();
+    // Retain a handler clone across replacement; it must not reach the new run.
+    let before = first.event.clone();
+    let mut next = ModuleRouter::default();
+    let current = events
+        .bind_turn(
+            TurnIdentity::new("session", "turn"),
+            "same-run".into(),
+            &mut next,
+        )
+        .unwrap();
+    assert!(
+        before
+            .call(event_call(host_event("session", None, "late")))
+            .await
+            .is_err()
+    );
+    assert!(old.drain().is_err());
+    old.close(); // cannot revoke the replacement token
+    next.event
+        .call(event_call(host_event("session", Some("turn"), "ok")))
+        .await
+        .unwrap();
+    assert!(
+        next.event
+            .call(event_call(host_event(
+                "other",
+                Some("turn"),
+                "wrong-session"
+            )))
+            .await
+            .is_err()
+    );
+    assert!(
+        next.event
+            .call(event_call(host_event(
+                "session",
+                Some("old-turn"),
+                "wrong-turn"
+            )))
+            .await
+            .is_err()
+    );
+    assert_eq!(current.drain().unwrap().len(), 1);
+    other
+        .event
+        .call(event_call(host_event("other", None, "ok")))
+        .await
+        .unwrap();
+    assert_eq!(independent.drain().unwrap().len(), 1);
+    current.close();
+    assert!(
+        next.event
+            .call(event_call(host_event("session", None, "closed")))
+            .await
+            .is_err()
+    );
+    group.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn interaction_event_registry_keeps_old_generation_until_lease_drain() {
+    use crate::host::modules::{ModuleRouter, event::TurnIdentity};
+    let scratch = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let registry = interaction_fake_registry(&scratch, &probe);
+    let root = scratch.0.join("a");
+    let runtime = registry.resolve(Some(&root)).unwrap();
+    let mut lease = runtime.acquire().unwrap();
+    let old = event_resource(
+        &lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .unwrap()
+            .context(),
+    );
+    let mut old_router = ModuleRouter::default();
+    old.bind_turn(
+        TurnIdentity::new("session", "turn"),
+        "run".into(),
+        &mut old_router,
+    )
+    .unwrap();
+    bounded(registry.reload()).await.unwrap();
+    let current = registry.resolve(Some(&root)).unwrap();
+    let current_lease = current.acquire().unwrap();
+    let new = event_resource(
+        &current_lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .unwrap()
+            .context(),
+    );
+    let mut new_router = ModuleRouter::default();
+    new.bind_turn(
+        TurnIdentity::new("session", "turn"),
+        "run".into(),
+        &mut new_router,
+    )
+    .unwrap();
+    old_router
+        .event
+        .call(event_call(host_event("session", None, "old-live")))
+        .await
+        .unwrap();
+    assert!(new_router.event.drain_checked().unwrap().is_empty());
+    lease.release().await.unwrap();
+    assert!(old.is_closed());
+    assert_eq!(old.release_count(), 1);
+    assert!(
+        old_router
+            .event
+            .call(event_call(host_event("session", None, "old-closed")))
+            .await
+            .is_err()
+    );
+    assert!(old_router.event.drain_checked().is_err());
+    new_router
+        .event
+        .call(event_call(host_event("session", None, "new-live")))
+        .await
+        .unwrap();
+    assert_eq!(new_router.event.drain_checked().unwrap().len(), 1);
+    drop(current_lease);
+    bounded(registry.dispose()).await.unwrap();
+    assert_eq!(new.release_count(), 1);
 }

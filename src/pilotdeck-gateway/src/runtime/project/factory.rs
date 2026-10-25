@@ -293,6 +293,8 @@ pub enum Resource {
     /// ports are bound by A7.2-pr6 (#589); this marker alone must not be read
     /// as those ports being ready and must not enable them.
     Interaction,
+    /// Concrete native event buffers, independent of the port-free marker.
+    InteractionEvents,
     InstructionStorage,
     ToolResultSpill,
     PromptCacheCoordinator,
@@ -312,6 +314,7 @@ impl Resource {
             Self::Tools => "tools",
             Self::ExecutionWorld => "executionWorld",
             Self::Interaction => "interaction",
+            Self::InteractionEvents => "interactionEvents",
             Self::InstructionStorage => "instructionStorage",
             Self::ToolResultSpill => "toolResultSpill",
             Self::PromptCacheCoordinator => "promptCacheCoordinator",
@@ -636,6 +639,7 @@ struct Slots {
     tools: Option<Arc<dyn FamilyResource>>,
     execution_world: Option<Arc<dyn FamilyResource>>,
     interaction: Option<Arc<dyn FamilyResource>>,
+    interaction_events: Option<Arc<dyn FamilyResource>>,
     instruction_storage: Option<Arc<dyn FamilyResource>>,
     tool_result_spill: Option<Arc<dyn FamilyResource>>,
     prompt_cache_coordinator: Option<Arc<dyn FamilyResource>>,
@@ -710,6 +714,7 @@ impl StageContext {
             Resource::Tools => slots.tools.clone(),
             Resource::ExecutionWorld => slots.execution_world.clone(),
             Resource::Interaction => slots.interaction.clone(),
+            Resource::InteractionEvents => slots.interaction_events.clone(),
             Resource::InstructionStorage => slots.instruction_storage.clone(),
             Resource::ToolResultSpill => slots.tool_result_spill.clone(),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator.clone(),
@@ -760,6 +765,7 @@ impl StageSink<'_> {
             Resource::Tools => slots.tools = Some(handle),
             Resource::ExecutionWorld => slots.execution_world = Some(handle),
             Resource::Interaction => slots.interaction = Some(handle),
+            Resource::InteractionEvents => slots.interaction_events = Some(handle),
             Resource::InstructionStorage => slots.instruction_storage = Some(handle),
             Resource::ToolResultSpill => slots.tool_result_spill = Some(handle),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator = Some(handle),
@@ -816,6 +822,7 @@ impl ProjectResources {
                 tools: None,
                 execution_world: None,
                 interaction: None,
+                interaction_events: None,
                 instruction_storage: None,
                 tool_result_spill: None,
                 prompt_cache_coordinator: None,
@@ -861,6 +868,7 @@ impl RuntimeResources for ProjectResources {
             slots.model_runtime.clone(),
         );
         let memory_bundle = slots.memory_bundle.clone();
+        let interaction_events = slots.interaction_events.clone();
         drop(slots);
         // The single group of a generation: `ResourceBundle::aggregate`
         // returns this error unchanged, so the group's own single- or
@@ -877,6 +885,9 @@ impl RuntimeResources for ProjectResources {
                 model,
             ) = parallel;
             let mut failures = Vec::new();
+            if let Err(error) = super::interaction_events::close_resource(interaction_events) {
+                failures.push(error);
+            }
             if let Err(error) = dispose_one(mcp_provider).await {
                 failures.push(error);
             }
