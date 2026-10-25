@@ -91,6 +91,45 @@ elif mode == "live-interaction":
     send_event(2, dict(type="agent_status", sessionId=session, turnId=turn,
                       event="ports-tested", kind="status", text="all four", observed=drained))
     send(success_final(3))
+elif mode == "live-fresh-router":
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+    call_index = 0
+
+    def probe_call(module, payload, allow_error=False):
+        global call_index
+        call_index += 1
+        message_id = "fresh-call-" + str(call_index)
+        send(dict(kind="request", messageId=message_id, method="module_call",
+                  module=module, **identity, payload=payload))
+        while True:
+            reply = read()
+            if reply.get("inReplyTo") == message_id:
+                break
+            assert reply.get("method") == "ack", reply
+        if allow_error:
+            return reply
+        assert reply["ok"], reply
+        return reply["payload"]
+
+    request = dict(provider="provider", model="model", messages=[])
+    old = probe_call("model", dict(operation="materialize_prepared_request",
+                     preparationId="old-only", request=request), allow_error=True)
+    prepared = probe_call("model", dict(operation="prepare", preparationId="current",
+                          request=request))["prepared"]["request"]
+    streamed = probe_call("model", dict(operation="stream", preparationId="current"))["events"][0]
+    budget = probe_call("budget", dict(operation="evaluate_request_budget", request=request,
+                        options=dict(maxContextTokens=100)))["snapshot"]
+    context = probe_call("context", dict(operation="prepare_for_model", input={}))["result"]
+    capability = probe_call("capability", dict(operation="execute", name="probe", toolCallId="tool"))
+    plan = probe_call("capability", dict(operation="plan_todo"))
+    send_event(2, dict(type="agent_status", sessionId=session, turnId=turn,
+                      event="fresh-router", kind="status", text="observed actual callbacks",
+                      observed=dict(oldPreparationRejected=not old["ok"],
+                                    oldPreparationError=old.get("error", {}).get("message"), model=prepared,
+                                    stream=streamed, budget=budget, context=context,
+                                    capability=capability, plan=plan)))
+    send(success_final(3))
 elif mode == "live-normal":
     # Full legal lifecycle, including the sidecar's own turn_completed
     # (suppressed by the host; the module final is the authoritative terminal).
