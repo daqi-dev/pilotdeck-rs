@@ -11,13 +11,15 @@
 //! 文件同样扫描）；闭包中的每个目标都必须留在该 vendored 包目录内、是文件、
 //! 不是 symlink。扫描面是 rustc 的 fail-closed 超集：目录下所有 `.rs` 文件，以及
 //! 所有能被 Rust 词法解析、且 token 序列里出现 `#[path]` / `#[r#path]` /
-//! `cfg_attr(..., path|r#path = ...)` 或 `include!` 的常规文件，不论扩展名。
+//! `#![path]` / `#![r#path]` / `cfg_attr(..., path|r#path = ...)` 或 `include!`
+//! 的常规文件，不论扩展名。
 //! 词法统一用 `proc_macro2::TokenStream::from_str`：注释、raw string（含
 //! `br"..."` / `cr"..."` 前缀）与字面量边界由它判定，本文件不再手写扫描器。
 //! UTF-8 解码失败的二进制数据不会被 rustc 当源码编译，跳过；非 `.rs` 文件
-//! 词法失败时，只有原文（去空白）不含 `#[path` / `include!` / `cfg_attr(...path=...)`
-//! 这类真实边 marker 才视为普通文本，否则 fail-closed。`.rs` 文件和候选非 `.rs`
-//! 文件词法失败一律拒绝。
+//! 词法失败时，只有「去空白原文」与「朴素去注释后再去空白」两份文本都不含
+//! `#[path` / `#![path` / `include!` / `cfg_attr(...path=...)` 这类真实边 marker
+//! 才视为普通文本，否则 fail-closed（取并集：注释混淆靠第二份，`"http://..."`
+//! 截断靠第一份）。`.rs` 文件和候选非 `.rs` 文件词法失败一律拒绝。
 //! `#[path]` 只允许出现在文件顶层：直接按 `Group` 嵌套判断，任何非顶层
 //! `#[path]`（宏体、`mod $i { ... }`、inline module、函数体、宏调用实参）一律
 //! 拒绝，因为其基准目录取决于展开上下文，与本扫描器的「文件目录 + 字面量」
@@ -323,22 +325,11 @@ impl EdgeScanner<'_> {
         while index < tokens.len() {
             // `#[...]` and `#![...]` are attribute syntax, not ordinary
             // nesting. `cfg_attr(...)` argument groups stay part of the
-            // attribute and are walked by `attribute`.
-            if tokens[index] == SourceToken::Punct('#') {
-                let attribute = if tokens.get(index + 1) == Some(&SourceToken::Punct('!')) {
-                    index + 2
-                } else {
-                    index + 1
-                };
-                if let Some(SourceToken::Group {
-                    delimiter: Delimiter::Bracket,
-                    tokens: attribute_tokens,
-                }) = tokens.get(attribute)
-                {
-                    self.attribute(attribute_tokens, top_level);
-                    index = attribute + 1;
-                    continue;
-                }
+            // attribute and are walked by `attribute_paths`.
+            if let Some((attribute, attribute_tokens)) = attribute_bracket_group(tokens, index) {
+                self.attribute_paths(attribute_tokens, top_level);
+                index = attribute + 1;
+                continue;
             }
             if matches!(&tokens[index], SourceToken::Ident(word) if word == "include")
                 && tokens.get(index + 1) == Some(&SourceToken::Punct('!'))
@@ -383,44 +374,31 @@ impl EdgeScanner<'_> {
     // `#[path = "..."]`, `#[r#path = "..."]` and the nested
     // `cfg_attr(..., path|r#path = "...")` form. doc comments arrive as
     // `#[doc = "..."]`; their text is a literal, never an edge.
-    fn attribute(&mut self, tokens: &[SourceToken], top_level: bool) {
-        if let Some(SourceToken::Ident(name)) = tokens.first()
-            && name == "doc"
-        {
+    fn attribute_paths(&mut self, tokens: &[SourceToken], top_level: bool) {
+        if is_doc_attribute(tokens) {
             return;
         }
-        self.attribute_paths(tokens, top_level);
-    }
-
-    fn attribute_paths(&mut self, tokens: &[SourceToken], top_level: bool) {
-        for (index, token) in tokens.iter().enumerate() {
-            if matches!(token, SourceToken::Ident(word) if word == "path")
-                && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
-            {
-                assert!(
-                    top_level,
-                    "vendored package {} #[path] must appear at the file top level; a non-top-level #[path] (macro body, `mod $i {{ ... }}`, inline module, function body, or macro argument) has a base directory determined by the expansion context, so this scanner rejects it: {}",
-                    self.package,
-                    self.file.display()
-                );
-                let literal = match tokens.get(index + 2) {
-                    Some(SourceToken::Literal(literal)) => literal,
-                    _ => self.reject_literal("#[path]"),
-                };
-                let value =
-                    plain_string_value(literal).unwrap_or_else(|| self.reject_literal("#[path]"));
-                self.targets.push(assert_vendored_source_target(
-                    self.package,
-                    self.directory,
-                    self.file,
-                    "#[path]",
-                    &value,
-                ));
-            }
-            if let SourceToken::Group { tokens: inner, .. } = token {
-                self.attribute_paths(inner, top_level);
-            }
-        }
+        attribute_path_keys(tokens, &mut |tokens, index| {
+            assert!(
+                top_level,
+                "vendored package {} #[path] must appear at the file top level; a non-top-level #[path] (macro body, `mod $i {{ ... }}`, inline module, function body, or macro argument) has a base directory determined by the expansion context, so this scanner rejects it: {}",
+                self.package,
+                self.file.display()
+            );
+            let literal = match tokens.get(index + 2) {
+                Some(SourceToken::Literal(literal)) => literal,
+                _ => self.reject_literal("#[path]"),
+            };
+            let value =
+                plain_string_value(literal).unwrap_or_else(|| self.reject_literal("#[path]"));
+            self.targets.push(assert_vendored_source_target(
+                self.package,
+                self.directory,
+                self.file,
+                "#[path]",
+                &value,
+            ));
+        });
     }
 
     fn include(&mut self, arguments: &[SourceToken]) {
@@ -467,13 +445,15 @@ fn macro_body(tokens: &[SourceToken], index: usize) -> Option<usize> {
 // `include!` compile targets with any extension or none. A non-UTF-8 file is a
 // binary payload (e.g. the ICU collator blobs), which rustc cannot compile as
 // Rust source and which therefore cannot introduce an edge; skip it. A
-// non-`.rs` file that proc-macro2 cannot lex is ordinary text only when its
-// whitespace-stripped text contains no edge marker; otherwise fail closed.
+// non-`.rs` file that proc-macro2 cannot lex is ordinary text only when both
+// the whitespace-stripped raw text and the whitespace-stripped comment-free
+// text contain no edge marker; otherwise fail closed.
 // The marker test must stay syntax-shaped: bare `path` / `include` substrings
 // appear in ordinary files (the real vendored `Cargo.toml` `path = ...`,
 // `LICENSE` "include", `README.md`, `encoder.json`, `vocab.bpe`), and rejecting
 // those would make the real positive control fail. `include!` / `#[path` /
-// `cfg_attr(...path=...)` are the only spellings that can name an edge.
+// `#![path` / `cfg_attr(...path=...)` are the only spellings that can name an
+// edge.
 fn vendored_source_mentions_edge(package: &str, path: &Path) -> bool {
     let bytes = fs::read(path).unwrap_or_else(|error| {
         panic!(
@@ -487,10 +467,21 @@ fn vendored_source_mentions_edge(package: &str, path: &Path) -> bool {
     match lex_source(&text) {
         Ok(tokens) => lexemes_name_edge(&tokens),
         Err(_) => {
-            let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+            // Test two views of the same text in union. A marker obfuscated by
+            // comments (`include/*c*/!(`) only appears once comments are gone;
+            // a marker after a `//` that belongs to a string (`"http://..."`)
+            // is deleted by the naive comment strip and only appears in the
+            // whitespace-compacted raw text. Either view matching is enough:
+            // this fallback only decides whether the file must be a candidate,
+            // so over-approximating is the safe direction.
+            let raw: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+            let uncommented: String = strip_comments(&text)
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
             assert!(
-                !text_names_edge(&compact),
-                "vendored package {package} non-.rs file cannot be lexed as Rust but contains a `#[path]` / `include!` edge marker: {}",
+                !text_names_edge(&raw) && !text_names_edge(&uncommented),
+                "vendored package {package} non-.rs file cannot be lexed as Rust but contains an edge marker (`#[path]` / `#![path]` / `include!` / `cfg_attr(...path=...)`, comment-obfuscated or not): {}",
                 path.display()
             );
             false
@@ -498,18 +489,103 @@ fn vendored_source_mentions_edge(package: &str, path: &Path) -> bool {
     }
 }
 
-// The text fallback for an unlexable non-`.rs` file. Comments are irrelevant
-// here because `from_str` has already failed; a marker split by whitespace is
-// still caught after compaction. `cfg_attr` only counts together with a
-// `path =` / `r#path =` argument, so `Cargo.toml`-style `path = "..."` alone
-// does not reject a plain text file.
+// The text fallback for an unlexable non-`.rs` file. A marker split by
+// whitespace is still caught after compaction. `cfg_attr` only counts together
+// with a `path =` / `r#path =` argument, so `Cargo.toml`-style `path = "..."`
+// alone does not reject a plain text file. Both outer (`#[path]`) and inner
+// (`#![path]`) attributes count, matching the token-side `!` handling.
 fn text_names_edge(compact: &str) -> bool {
     compact.contains("#[path")
         || compact.contains("#[r#path")
+        || compact.contains("#![path")
+        || compact.contains("#![r#path")
         || compact.contains("include!")
         || compact.contains("r#include!")
         || (compact.contains("cfg_attr")
             && (compact.contains("path=") || compact.contains("r#path=")))
+}
+
+// Naive `/* ... */` / `//` stripping for text the lexer rejected. There is no
+// trustworthy string/char/raw-string context after a lexer failure, so a `//`
+// inside `"http://..."` truncates the rest of that line; the caller therefore
+// tests this view together with the raw text. Unterminated block comments drop
+// the tail, which is another over-approximation in the same safe direction.
+fn strip_comments(text: &str) -> String {
+    let mut stripped = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let block = rest.find("/*");
+        let line = rest.find("//");
+        if let Some(block) = block
+            && line.is_none_or(|line| block < line)
+        {
+            stripped.push_str(&rest[..block]);
+            match rest[block + 2..].find("*/") {
+                Some(end) => rest = &rest[block + 2 + end + 2..],
+                None => break,
+            }
+        } else if let Some(line) = line {
+            stripped.push_str(&rest[..line]);
+            rest = rest[line..]
+                .split_once('\n')
+                .map_or("", |(_comment, tail)| tail);
+        } else {
+            stripped.push_str(rest);
+            break;
+        }
+    }
+    stripped
+}
+
+// `#[...]` / `#![...]` at `index` -> the bracket group index and its tokens.
+// Shared by the edge scanner and the candidate-marker test so both agree on
+// which shapes are attributes; `#` not followed by a bracket group is ordinary
+// punctuation and is not an attribute.
+fn attribute_bracket_group(
+    tokens: &[SourceToken],
+    index: usize,
+) -> Option<(usize, &[SourceToken])> {
+    if tokens.get(index) != Some(&SourceToken::Punct('#')) {
+        return None;
+    }
+    let attribute = if tokens.get(index + 1) == Some(&SourceToken::Punct('!')) {
+        index + 2
+    } else {
+        index + 1
+    };
+    match tokens.get(attribute) {
+        Some(SourceToken::Group {
+            delimiter: Delimiter::Bracket,
+            tokens,
+        }) => Some((attribute, tokens)),
+        _ => None,
+    }
+}
+
+// `#[doc = "..."]` (from `///` / `//!`) carries a string literal, never an edge.
+fn is_doc_attribute(tokens: &[SourceToken]) -> bool {
+    matches!(tokens.first(), Some(SourceToken::Ident(name)) if name == "doc")
+}
+
+// Walk the attribute body, nested `cfg_attr(...)` groups included, and call
+// `visit` for every `path` / `r#path` key followed by `=`. Shared by the edge
+// scanner and the candidate-marker test so a new attribute shape is handled by
+// both at once; a one-sided change would collect a file without scanning it,
+// or scan a file that was never collected as a candidate.
+fn attribute_path_keys<'a>(
+    tokens: &'a [SourceToken],
+    visit: &mut impl FnMut(&'a [SourceToken], usize),
+) {
+    for (index, token) in tokens.iter().enumerate() {
+        if matches!(token, SourceToken::Ident(word) if word == "path")
+            && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
+        {
+            visit(tokens, index);
+        }
+        if let SourceToken::Group { tokens: inner, .. } = token {
+            attribute_path_keys(inner, visit);
+        }
+    }
 }
 
 // Candidate test over the same token tree: `#` followed by a bracket group
@@ -522,20 +598,10 @@ fn lexemes_name_edge(tokens: &[SourceToken]) -> bool {
         {
             return true;
         }
-        if tokens[index] == SourceToken::Punct('#') {
-            let attribute = if tokens.get(index + 1) == Some(&SourceToken::Punct('!')) {
-                index + 2
-            } else {
-                index + 1
-            };
-            if let Some(SourceToken::Group {
-                delimiter: Delimiter::Bracket,
-                tokens: attribute_tokens,
-            }) = tokens.get(attribute)
-                && attribute_names_path(attribute_tokens)
-            {
-                return true;
-            }
+        if let Some((_, attribute_tokens)) = attribute_bracket_group(tokens, index)
+            && attribute_names_path(attribute_tokens)
+        {
+            return true;
         }
         if let SourceToken::Group { tokens: inner, .. } = &tokens[index]
             && lexemes_name_edge(inner)
@@ -548,24 +614,12 @@ fn lexemes_name_edge(tokens: &[SourceToken]) -> bool {
 }
 
 fn attribute_names_path(tokens: &[SourceToken]) -> bool {
-    if let Some(SourceToken::Ident(name)) = tokens.first()
-        && name == "doc"
-    {
+    if is_doc_attribute(tokens) {
         return false;
     }
-    for (index, token) in tokens.iter().enumerate() {
-        if matches!(token, SourceToken::Ident(word) if word == "path")
-            && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
-        {
-            return true;
-        }
-        if let SourceToken::Group { tokens: inner, .. } = token
-            && attribute_names_path(inner)
-        {
-            return true;
-        }
-    }
-    false
+    let mut found = false;
+    attribute_path_keys(tokens, &mut |_, _| found = true);
+    found
 }
 
 fn collect_vendored_source_candidates(package: &str, directory: &Path, files: &mut Vec<PathBuf>) {
@@ -1723,6 +1777,76 @@ mod vendored_edge_negative_controls {
             scan(&fixture.package, &source);
         });
         assert!(message.contains("not lexable Rust"), "{message}");
+    }
+
+    // Every text-fallback marker branch is paired with a lexer failure: the
+    // unclosed `"` keeps proc-macro2 from ever producing a token tree, so only
+    // `text_names_edge` can reject the file. Each marker is asserted to reach
+    // that branch (`lex_source` errors) before the guard is asked to reject it.
+    #[test]
+    fn unlexable_non_rust_marker_branches_fail_closed() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        for marker in [
+            "#[path = \"../../outside.rs\"] mod m;",
+            "#[r#path = \"../../outside.rs\"] mod m;",
+            "#![path = \"../../outside.rs\"]",
+            "#![r#path = \"../../outside.rs\"]",
+            "include!(\"../../outside.rs\");",
+            "r#include!(\"../../outside.rs\");",
+            "#[cfg_attr(all(), path = \"../../outside.rs\")] mod m;",
+        ] {
+            let source = format!("{marker}\n\"unclosed\n");
+            assert!(
+                lex_source(&source).is_err(),
+                "{marker}: not a lexer failure"
+            );
+            fixture.source("data/broken.inc", &source);
+            let message = rejection(|| {
+                let mut files = Vec::new();
+                collect_vendored_source_candidates("fixture", &fixture.package, &mut files);
+            });
+            assert!(
+                message.contains("cannot be lexed as Rust"),
+                "{marker}: {message}"
+            );
+        }
+    }
+
+    // A marker split by a block comment never appears in the raw compact text;
+    // only the comment-free view catches it. This is the comment-obfuscated
+    // branch of the union, combined with a lexer failure so the token path is
+    // out of reach.
+    #[test]
+    fn unlexable_non_rust_comment_obfuscated_include_fails_closed() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        let source = "include/*c*/!(\"../../outside.rs\");\n\"unclosed\n";
+        assert!(lex_source(source).is_err(), "not a lexer failure");
+        fixture.source("data/obfuscated.inc", source);
+        let message = rejection(|| {
+            let mut files = Vec::new();
+            collect_vendored_source_candidates("fixture", &fixture.package, &mut files);
+        });
+        assert!(message.contains("cannot be lexed as Rust"), "{message}");
+    }
+
+    // A `//` inside a string truncates the comment-free view at the URL, so the
+    // marker that follows on the same line only survives in the raw compact
+    // text. This is the raw-text branch of the union.
+    #[test]
+    fn unlexable_non_rust_string_truncated_marker_fails_closed() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        let source =
+            "const U: &str = \"http://x\"; #[path = \"../../outside.rs\"] mod m;\n\"unclosed\n";
+        assert!(lex_source(source).is_err(), "not a lexer failure");
+        fixture.source("data/url.inc", source);
+        let message = rejection(|| {
+            let mut files = Vec::new();
+            collect_vendored_source_candidates("fixture", &fixture.package, &mut files);
+        });
+        assert!(message.contains("cannot be lexed as Rust"), "{message}");
     }
 
     #[test]
