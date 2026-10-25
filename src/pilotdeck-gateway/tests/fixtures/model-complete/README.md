@@ -131,7 +131,15 @@ EOF、EOF 残片计入），r7 的 cap 负控随之改锚到 `CappedText::push` 
 `response_text_counts_eof_replacement_toward_the_cap` 的 limit+1 断言必须失
 败）；`response_text` 循环在跨限帧上提前 `break`（目标
 `complete_response_text_overlong_body_reads_to_eof_then_throws_plain_error`
-的 70ms EOF 下限必须失败）。恢复、进程组回收与 cargo 槽位逻辑未改。共 21
+的 70ms EOF 下限必须失败）。r9（#647）把 `CappedText` 的计数从 UTF-16 码元
+改为收到的 UTF-8 字节（node v22.22 实测见
+`_tmp/20261025-issue-647-probe/RESULT.md`）：cap 负控锚点随 `push` 改写；
+「EOF 残片 U+FFFD 计数」控件按新语义删除（EOF 不再新增计数），换成
+「计回 UTF-16 码元」控件 `capped-text-cap-counts-utf16-units`（目标
+`response_text_cap_counts_received_bytes_not_utf16_units` 的多字节超限断言
+必须失败）；`response-text-returns-before-eof` 的判据从 70ms 墙钟下限改为
+目标测试断言的 EOF 标志（脚本化的 body 被 poll 到末尾），不再依赖帧间距。
+恢复、进程组回收与 cargo 槽位逻辑未改。共 21
 条，每个变异都先编译，只接受已编译测试的断言失败。
 
 恢复：变异前把原始字节与 SHA-256 写到 worktree 外的状态目录（默认

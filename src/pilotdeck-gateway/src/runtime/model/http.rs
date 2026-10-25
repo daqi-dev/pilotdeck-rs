@@ -371,6 +371,20 @@ where
 // Proxy credentials come from the URL userinfo and become
 // `Proxy-Authorization: Basic base64(decodeURIComponent(user):decodeURIComponent(password))`.
 
+/// The environment keys the gateway's proxy configuration reads, in lookup
+/// order: the five URL candidates first, then the `no_proxy` pair. Single
+/// source of this list — `tests/common/proxy_env.rs` re-exports it so the
+/// child-process env scrubbing cannot drift from what production reads.
+pub const PROXY_ENV_KEYS: [&str; 7] = [
+    "PILOTDECK_PROXY",
+    "https_proxy",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "HTTP_PROXY",
+    "no_proxy",
+    "NO_PROXY",
+];
+
 /// A rejected CONNECT, shaped like the undici cause chain the TS transport
 /// flattens (`fetch failed: <cause>` in the legacy SSE rejection).
 #[derive(Debug)]
@@ -496,15 +510,11 @@ impl ProxyConfig {
         settings: Option<&ProxySettings>,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Option<Self> {
-        let env_url = [
-            "PILOTDECK_PROXY",
-            "https_proxy",
-            "HTTPS_PROXY",
-            "http_proxy",
-            "HTTP_PROXY",
-        ]
-        .into_iter()
-        .find_map(|key| lookup(key).filter(|value| !value.is_empty()));
+        let env_url = PROXY_ENV_KEYS
+            .iter()
+            // The five URL candidates; the `no_proxy` pair is read below.
+            .take(5)
+            .find_map(|&key| lookup(key).filter(|value| !value.is_empty()));
         let (proxy_url, extra_no_proxy) = match settings {
             None => (env_url?, None),
             Some(settings) if settings.mode == ProxyInstallMode::Reload => {
@@ -525,9 +535,10 @@ impl ProxyConfig {
                 }
             },
         };
-        let user_no_proxy = lookup("no_proxy")
-            .filter(|value| !value.is_empty())
-            .or_else(|| lookup("NO_PROXY").filter(|value| !value.is_empty()))
+        let user_no_proxy = PROXY_ENV_KEYS
+            .iter()
+            .skip(5)
+            .find_map(|&key| lookup(key).filter(|value| !value.is_empty()))
             .unwrap_or_default();
         Self::new_with_extra(&proxy_url, &user_no_proxy, extra_no_proxy.as_deref())
     }
@@ -1860,7 +1871,7 @@ enum ShapeProbe {
     /// timeout fired; the caller must keep the prefix for a possible last
     /// candidate.
     ReadError { bytes: Bytes },
-    /// The decoded body passed V8's `MAX_STRING_LENGTH` (UTF-16 units). TS
+    /// The body's received bytes passed V8's `MAX_STRING_LENGTH`. TS
     /// `copy.json()` reads the whole clone to EOF, then the byte→string
     /// conversion throws a plain `Error`; the candidate is rejected. The
     /// original body is drained and discarded, so the last candidate replays
@@ -1893,14 +1904,14 @@ fn shape_fallback_abort(
 
 /// The byte→string conversion half shared by `read_shape_probe` and
 /// `response_text`: both convert the body under V8's `MAX_STRING_LENGTH`,
-/// which counts UTF-16 code units of the decoded text — including the U+FFFD
-/// that a trailing incomplete UTF-8 sequence becomes at EOF — and only
-/// throws after the body reached EOF, so an over-limit text keeps draining
-/// while its accumulated value is dropped.
+/// which counts the received UTF-8 bytes — not the decoded UTF-16 units
+/// (node v22.22 real-TS probe, `_tmp/20261025-issue-647-probe/RESULT.md`) —
+/// and only throws after the body reached EOF, so an over-limit text keeps
+/// draining while its accumulated value is dropped.
 struct CappedText {
     decoder: sse::Utf8Decoder,
     text: String,
-    units: usize,
+    bytes: usize,
     too_long: bool,
 }
 
@@ -1909,7 +1920,7 @@ impl CappedText {
         Self {
             decoder: sse::Utf8Decoder::default(),
             text: String::new(),
-            units: 0,
+            bytes: 0,
             too_long: false,
         }
     }
@@ -1922,26 +1933,26 @@ impl CappedText {
         if self.too_long {
             return false;
         }
-        let start = self.text.len();
-        self.decoder.decode(data, &mut self.text);
-        // V8's cap counts UTF-16 code units of the decoded text.
-        self.units += self.text[start..].encode_utf16().count();
-        if self.units > string_limit() {
+        // The cap counts the frame's raw bytes, including the bytes of a
+        // trailing incomplete UTF-8 sequence that only becomes U+FFFD at
+        // EOF; exactly the limit is still allowed.
+        self.bytes += data.len();
+        if self.bytes > string_limit() {
             self.too_long = true;
             self.text = String::new();
+            return false;
         }
-        !self.too_long
+        self.decoder.decode(data, &mut self.text);
+        true
     }
 
-    /// EOF: a trailing incomplete UTF-8 sequence becomes one U+FFFD, and the
-    /// real conversion counts that unit too, so it can push the text over
-    /// the cap even when the frames alone fit exactly. `Err` is the
+    /// EOF: every received byte was already counted frame by frame, so the
+    /// cap verdict cannot change here; `finish` only completes a trailing
+    /// incomplete UTF-8 sequence for the accepted text. `Err` is the
     /// over-limit outcome; each reader maps it to its own error shape.
     fn finish(mut self) -> Result<String, ()> {
-        let start = self.text.len();
         self.decoder.finish(&mut self.text);
-        self.units += self.text[start..].encode_utf16().count();
-        if self.too_long || self.units > string_limit() {
+        if self.too_long {
             return Err(());
         }
         Ok(self.text)
@@ -2205,10 +2216,12 @@ async fn send_provider_request(
 /// The byte→string conversion runs only after the body reached EOF, exactly
 /// like TS `Response.text()`: an over-`MAX_STRING_LENGTH` body is still read
 /// to the end (real TS probes, `_tmp/20261025-issue-641/RESULT.md`), so a
-/// mid-read body failure keeps priority over the string error, and at EOF a
-/// trailing incomplete UTF-8 sequence becomes one U+FFFD unit that counts
-/// toward the cap. The conversion throws V8's plain `Error`, never a
-/// `RangeError`.
+/// mid-read body failure keeps priority over the string error. The cap
+/// counts the received UTF-8 bytes, not the decoded UTF-16 units (node
+/// v22.22 real-TS probe, `_tmp/20261025-issue-647-probe/RESULT.md`); a
+/// trailing incomplete UTF-8 sequence becomes one U+FFFD in the returned
+/// text, and its bytes were already counted when received. The conversion
+/// throws V8's plain `Error`, never a `RangeError`.
 async fn response_text(
     body: &mut ModelBody,
     options: &StreamOptions,
@@ -2390,8 +2403,8 @@ async fn read_frame(
     }
 }
 
-/// V8's string length limit (`MAX_STRING_LENGTH` UTF-16 units), shared by
-/// every cross-event string accumulator of the stream path and the non-stream
+/// V8's string length limit (`MAX_STRING_LENGTH`), shared by every
+/// cross-event string accumulator of the stream path and the non-stream
 /// shape probe.
 ///
 /// There is one function and one default tail expression for both builds. A
