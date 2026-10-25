@@ -233,6 +233,9 @@ impl DefaultContextRuntime {
         if is_always_on_session(&session_id) {
             return Ok(());
         }
+        // TS filters inside the `try`: a non-array `messages` makes
+        // `input.messages.filter` throw a TypeError that `captureTurn` swallows,
+        // so the resolver is never reached and no error escapes.
         let Some(JsValue::Array(messages)) = fields.get("messages") else {
             return Ok(());
         };
@@ -244,10 +247,10 @@ impl DefaultContextRuntime {
                 .filter(|message| !super::memory::fork_carryover(message))
                 .cloned()
                 .collect(),
-            errored: fields
-                .get("errored")
-                .and_then(JsValue::as_bool)
-                .unwrap_or(false),
+            // TS forwards `input.errored` verbatim (the declared type is
+            // boolean, but the runtime does not coerce). Keep the raw value so
+            // `1` / `"yes"` / `null` / a missing key stay distinguishable.
+            errored: fields.get("errored").cloned().unwrap_or(JsValue::Undefined),
         };
         match resolver.capture_turn(input).await {
             Ok(()) => Ok(()),

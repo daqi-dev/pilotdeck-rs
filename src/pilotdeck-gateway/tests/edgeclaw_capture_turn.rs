@@ -97,7 +97,7 @@ impl MemoryResolver for Resolver {
                 "projectRoot".into(),
                 JsValue::String(input.project_root.into()),
             );
-            call.insert("errored".into(), JsValue::Bool(input.errored));
+            call.insert("errored".into(), input.errored.clone());
             call.insert(
                 "messages".into(),
                 JsValue::Array(messages.iter().map(ContextMemoryMessage::to_js).collect()),

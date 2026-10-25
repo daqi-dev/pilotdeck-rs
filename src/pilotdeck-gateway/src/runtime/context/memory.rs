@@ -34,7 +34,9 @@ pub struct MemoryCaptureTurnInput {
     pub session_id: String,
     pub project_root: String,
     pub messages: Vec<JsValue>,
-    pub errored: bool,
+    /// TS `MemoryCaptureTurnInput.errored` is declared boolean but the runtime
+    /// forwards it without coercion; keep the wire value.
+    pub errored: JsValue,
 }
 
 pub type MemoryCaptureFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'static>>;

@@ -6,16 +6,22 @@ refuses to mutate a product tree that differs from HEAD):
 
     python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-capture-turn/negative.py \
         _tmp/20261026-issue-759/negative-capture-turn
+
+Each mutant names the exact test that must fail and the failure shape that
+proves the test really executed: an `assertion` diagnostic, or a panic at this
+integration test file for `assert!` / `expect_err` paths. A compile error or a
+different test failing is INVALID evidence.
 """
 import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+
+TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_capture_turn.rs'
 
 
 def main():
@@ -31,33 +37,43 @@ def main():
         '--manifest-path', str(root / 'src/Cargo.toml'),
         '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_capture_turn',
     ]
-    # (name, file, before, after, test, marker)
+    # (name, file, before, after, test, failure, anchor)
+    # `failure` is how the named test must die:
+    #   'assertion' — a Rust assertion diagnostic carrying `anchor`
+    #   'panic'     — `assert!` / `expect_err` panic at this test file with `anchor`
+    mutate = lambda name, path, before, after, test, failure, anchor: dict(
+        name=name, path=path, before=before, after=after,
+        test=test, failure=failure, anchor=anchor,
+    )
     mutants = [
-        (
+        mutate(
             'fork-carryover-filter-removed',
             prepare,
             '.filter(|message| !super::memory::fork_carryover(message))',
             '.filter(|_message| true)',
             'ts_capture_turn_scenarios_match',
+            'assertion',
             'captureTurn scenarios',
         ),
-        (
+        mutate(
             'always-on-skip-removed',
             prepare,
             'if is_always_on_session(&session_id) {',
             'if false && is_always_on_session(&session_id) {',
             'always_on_sessions_are_skipped',
+            'panic',
             'must not reach the resolver',
         ),
-        (
+        mutate(
             'capture-errors-not-swallowed',
             prepare,
             'Err(_) => Ok(()),',
             'Err(error) => Err(ModuleError::new(error).into()),',
             'resolver_failures_are_swallowed',
+            'panic',
             'captureTurn must never reject',
         ),
-        (
+        mutate(
             'malformed-session-no-error',
             prepare,
             '''            Some(JsValue::Null) => {
@@ -69,23 +85,57 @@ def main():
 ''',
             '            Some(JsValue::Null) => String::new(),',
             'malformed_session_id_matches_ts_startswith_failure',
-            "reading 'startsWith'",
+            'panic',
+            'non-string sessionId must reject like isAlwaysOnSession: null',
         ),
-        (
+        mutate(
             'supports-capture-turn-removed',
             prepare,
             '                | Operation::CaptureTurn\n',
             '',
             'manifest_advertises_capture_turn',
+            'assertion',
             'capture_turn',
         ),
-        (
+        mutate(
             'manifest-capture-turn-removed',
             manifest,
             'if context.capture_turn {',
             'if false {',
             'manifest_advertises_capture_turn',
+            'assertion',
             'manifest context methods',
+        ),
+        mutate(
+            'messages-not-array-reaches-resolver',
+            prepare,
+            '''        let Some(JsValue::Array(messages)) = fields.get("messages") else {
+            return Ok(());
+        };
+''',
+            '''        let empty = Vec::new();
+        let messages = match fields.get("messages") {
+            Some(JsValue::Array(messages)) => messages,
+            _ => &empty,
+        };
+''',
+            'ts_capture_turn_scenarios_match',
+            'assertion',
+            'captureTurn scenarios',
+        ),
+        mutate(
+            'errored-non-boolean-folded-to-false',
+            prepare,
+            '            errored: fields.get("errored").cloned().unwrap_or(JsValue::Undefined),\n',
+            '''            errored: fields
+                .get("errored")
+                .and_then(JsValue::as_bool)
+                .map(JsValue::Bool)
+                .unwrap_or(JsValue::Bool(false)),
+''',
+            'ts_capture_turn_scenarios_match',
+            'assertion',
+            'captureTurn scenarios',
         ),
     ]
     results = []
@@ -94,10 +144,13 @@ def main():
     # NEGATIVE_BASELINE at a temporary `git commit-tree` object with the same
     # product bytes, without moving the branch.
     baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
-    with mutating_sources(root, [prepare, manifest], baseline=baseline) as snapshots:
-        originals = {path: snapshots[path].decode() for path in (prepare, manifest)}
-        for name, path, before, _after, _test, _marker in mutants:
-            assert originals[path].count(before) == 1, (name, 'mutation anchor must be unique')
+    files = [prepare, manifest]
+    with mutating_sources(root, files, baseline=baseline) as snapshots:
+        originals = {path: snapshots[path].decode() for path in files}
+        for mutant in mutants:
+            path = mutant['path']
+            assert originals[path].count(mutant['before']) == 1, (
+                mutant['name'], 'mutation anchor must be unique')
 
         def run(name, test, gate=None):
             with (output / f'{name}.log').open('w') as log:
@@ -113,45 +166,62 @@ def main():
                 log.write(result.stdout + result.stderr)
                 return result.returncode
 
+        def failure_shape(mutant, raw):
+            # A real test failure, not a compile error, and the named test ran.
+            if (
+                f"test {mutant['test']} ... FAILED" not in raw
+                or 'test result: FAILED' not in raw
+                or 'could not compile' in raw
+            ):
+                return False
+            # Every accepted failure must carry a panic location in this test
+            # file; the anchor then pins which branch/message did it.
+            if f'panicked at {TEST_FILE}:' not in raw or mutant['anchor'] not in raw:
+                return False
+            if mutant['failure'] == 'assertion':
+                return 'assertion' in raw
+            return True
+
         assert run('positive', '') == 0, 'positive tests must pass before mutating'
         try:
-            for name, path, before, after, test, marker in mutants:
+            for mutant in mutants:
+                name, path = mutant['name'], mutant['path']
                 original = originals[path]
                 assert path.read_text() == original, 'another writer changed the product source'
-                mutated = original.replace(before, after, 1)
+                mutated = original.replace(mutant['before'], mutant['after'], 1)
                 # Reserve the Cargo slot before exposing the mutation.
                 gate = wait_for_slot(root / 'scripts/cargo-slots.sh')
                 path.write_text(mutated)
                 try:
-                    code = run(name, test, gate)
+                    code = run(name, mutant['test'], gate)
                     raw = (output / f'{name}.log').read_text()
-                    killed = (
-                        code == 101
-                        and 'test result: FAILED' in raw
-                        and 'could not compile' not in raw
-                        and marker in raw
-                    )
-                    results.append(
-                        dict(name=name, file=str(path.relative_to(root)),
-                             test=test, exit=code, marker=marker, killed=killed)
-                    )
+                    killed = code == 101 and failure_shape(mutant, raw)
+                    results.append(dict(
+                        name=name,
+                        file=str(path.relative_to(root)),
+                        test=mutant['test'],
+                        failure=mutant['failure'],
+                        anchor=mutant['anchor'],
+                        exit=code,
+                        killed=killed,
+                    ))
                     print(f'{name}: killed={killed}, exit={code}', flush=True)
-                    assert killed, f'{name}: expected a compiled test assertion failure'
+                    assert killed, f'{name}: expected {mutant["test"]} to fail with {mutant["failure"]}'
                 finally:
                     assert path.read_text() == mutated, 'another writer changed the mutant'
                     path.write_text(original)
         finally:
             restored = {
                 path.name: path.read_text() == originals[path]
-                for path in (prepare, manifest)
+                for path in files
             }
             (output / 'summary.json').write_text(json.dumps(dict(
                 results=results,
                 restored=restored,
                 beforeSha256={path.name: hashlib.sha256(
-                    originals[path].encode()).hexdigest() for path in (prepare, manifest)},
+                    originals[path].encode()).hexdigest() for path in files},
                 afterSha256={path.name: hashlib.sha256(
-                    path.read_bytes()).hexdigest() for path in (prepare, manifest)},
+                    path.read_bytes()).hexdigest() for path in files},
             ), indent=2) + '\n')
             assert all(restored.values()), restored
         assert run('restored', '') == 0, 'restored product must pass'
