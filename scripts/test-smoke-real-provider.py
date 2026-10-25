@@ -1129,7 +1129,7 @@ def test_probe_rust_tests() -> None:
         check("probe Rust tests: cargo is on PATH", False, "cargo not found")
         return
     slots = rp.run_bounded(
-        ["sh", str(repo / "scripts" / "cargo-slots.sh")],
+        ["bash", str(repo / "scripts" / "cargo-slots.sh")],
         repo,
         os.environ.copy(),
         60,
