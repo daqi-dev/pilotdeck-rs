@@ -15,9 +15,10 @@ environment, redacted from every artifact, and never printed. The self-check
 reports hit/miss only. An empty key set fails the self-check instead of
 passing vacuously.
 
-Exit codes: 0 PASS, 1 any scenario FAIL, 2 secret self-check failed, 3 BLOCKED
-(no model-runtime scenario actually ran, or another run owns the evidence
-lock).
+Exit codes: 0 every model-runtime scenario PASS and the secret self-check
+verified, 1 any scenario FAIL, 2 secret self-check failed, 3 BLOCKED (no
+model-runtime scenario actually ran, a model-runtime scenario did not PASS,
+or another run owns the evidence lock).
 """
 
 import argparse
@@ -195,7 +196,7 @@ def read_env_file(path: Path, names: set[str]) -> dict[str, str]:
 
 
 def pid_alive(pid: object) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return False
     try:
         os.kill(pid, 0)
@@ -207,44 +208,43 @@ def pid_alive(pid: object) -> bool:
 
 
 class EvidenceLock:
-    """One writer per evidence directory, pdrs-parity style (mkdir + owner).
+    """One writer per evidence directory (atomic mkdir + verified owner).
 
-    The second run refuses instead of deleting the first run's `run/` tree.
-    A stale lock (owner pid gone) is reclaimed by an atomic rename, so two
-    reclaimers cannot delete each other's fresh lock.
+    Acquisition is one atomic `mkdir(.smoke.lock)`: the process that creates
+    the directory owns the lock. `owner.json` is written immediately after
+    through a temporary file plus `os.replace`; the directory existing is
+    therefore the exclusion primitive, not the owner file. A lock directory
+    without a readable `owner.json` is an acquisition in progress (or a crash
+    between mkdir and write), so it is treated as **held**, never as stale.
+    Only a lock whose owner names a dead pid is reclaimed. Reclaim renames the
+    directory aside and re-reads the moved owner; if the owner changed, it
+    puts the directory back and reports BLOCKED. `release()` removes the lock
+    only when `owner.json` still names this process.
+
+    Test hooks (`after_mkdir`, `after_reclaim_rename`) exist so the
+    concurrency windows are deterministic; they are None in production.
     """
 
     def __init__(self, evidence: Path):
         self.evidence = evidence
         self.path = evidence / ".smoke.lock"
         self.held = False
+        self.after_mkdir = None
+        self.after_reclaim_rename = None
 
-    def acquire(self) -> tuple[bool, str]:
+    @staticmethod
+    def _read_owner(directory: Path) -> dict | None:
         try:
-            self.path.mkdir()
-        except FileExistsError:
-            owner: dict = {}
-            try:
-                owner = json.loads((self.path / "owner.json").read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                pass
-            pid = owner.get("pid")
-            if pid_alive(pid):
-                return False, f"another run holds {self.path} (pid {pid})"
-            stale = self.evidence / f".smoke.lock.stale-{os.getpid()}-{int(time.time() * 1000)}"
-            try:
-                os.rename(self.path, stale)
-            except FileNotFoundError:
-                pass  # another process reclaimed it first; retry below
-            except OSError as exc:
-                return False, f"cannot reclaim stale lock {self.path}: {exc}"
-            else:
-                shutil.rmtree(stale, ignore_errors=True)
-            try:
-                self.path.mkdir()
-            except FileExistsError:
-                return False, f"another run holds {self.path}"
-        (self.path / "owner.json").write_text(
+            owner = json.loads(
+                (directory / "owner.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return None
+        return owner if isinstance(owner, dict) else None
+
+    def _write_owner(self) -> None:
+        temporary = self.path / f"owner.json.{os.getpid()}.tmp"
+        temporary.write_text(
             json.dumps(
                 {
                     "pid": os.getpid(),
@@ -256,13 +256,99 @@ class EvidenceLock:
             ),
             encoding="utf-8",
         )
+        os.replace(temporary, self.path / "owner.json")
+
+    def _commit_new_lock(self) -> tuple[bool, str]:
+        if self.after_mkdir is not None:
+            self.after_mkdir()
+        try:
+            self._write_owner()
+        except OSError as exc:
+            shutil.rmtree(self.path, ignore_errors=True)
+            return False, f"cannot write owner.json: {exc}"
         self.held = True
         return True, ""
 
+    def _reclaim_or_refuse(self) -> tuple[bool, str, bool]:
+        """Return (acquired, reason, retry)."""
+        owner = self._read_owner(self.path)
+        if owner is None:
+            return False, (
+                f"{self.path} exists without a readable owner.json; treating it "
+                "as held (a run may be between mkdir and the owner write)"
+            ), False
+        pid = owner.get("pid")
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            return False, (
+                f"{self.path} has no valid owner pid; treating it as held"
+            ), False
+        if pid_alive(pid):
+            return False, f"another run holds {self.path} (pid {pid})", False
+        stale = self.evidence / (
+            f".smoke.lock.stale-{os.getpid()}-{time.time_ns()}"
+        )
+        try:
+            os.rename(self.path, stale)
+        except FileNotFoundError:
+            return False, "", True  # another process moved/removed it first
+        except OSError as exc:
+            return False, f"cannot reclaim stale lock {self.path}: {exc}", False
+        if self.after_reclaim_rename is not None:
+            self.after_reclaim_rename(stale)
+        moved = self._read_owner(stale)
+        if (
+            moved is None
+            or moved.get("pid") != pid
+            or moved.get("startedAt") != owner.get("startedAt")
+        ):
+            try:
+                os.rename(stale, self.path)
+            except OSError:
+                pass
+            return False, (
+                "stale lock owner changed during reclaim; refusing to reclaim "
+                f"{stale}"
+            ), False
+        try:
+            self.path.mkdir()
+        except FileExistsError:
+            shutil.rmtree(stale, ignore_errors=True)
+            return False, f"another run holds {self.path}", False
+        except OSError as exc:
+            shutil.rmtree(stale, ignore_errors=True)
+            return False, f"cannot create {self.path} after reclaim: {exc}", False
+        acquired, reason = self._commit_new_lock()
+        shutil.rmtree(stale, ignore_errors=True)
+        return acquired, reason, False
+
+    def acquire(self) -> tuple[bool, str]:
+        for _ in range(3):
+            try:
+                self.path.mkdir()
+            except FileExistsError:
+                acquired, reason, retry = self._reclaim_or_refuse()
+                if retry:
+                    continue
+                return acquired, reason
+            except OSError as exc:
+                return False, f"cannot create {self.path}: {exc}"
+            return self._commit_new_lock()
+        return False, f"lock acquisition raced three times: {self.path}"
+
     def release(self) -> None:
-        if self.held:
-            shutil.rmtree(self.path, ignore_errors=True)
+        if not self.held:
+            return
+        owner = self._read_owner(self.path)
+        if owner is None or owner.get("pid") != os.getpid():
             self.held = False
+            print(
+                f"WARNING: not releasing {self.path}: owner.json is missing or "
+                "belongs to another process",
+                file=sys.stderr,
+            )
+            return
+        shutil.rmtree(self.path, ignore_errors=True)
+        self.held = False
 
 
 def make_run_dir(evidence: Path) -> Path:
@@ -283,14 +369,18 @@ def make_run_dir(evidence: Path) -> Path:
 def final_exit_code(report: dict, post_ok: bool, requests_sent: int) -> int:
     """Three-state outcome: PASS=0, FAIL=1, self-check=2, BLOCKED=3.
 
-    BLOCKED (nothing actually ran) must never look like a green run.
+    Exit 0 means *every* model-runtime scenario PASSed (README wording), not
+    merely "at least one PASS". A run with PASS + BLOCKED (for example the
+    request budget ran out before the tool scenario) is partial and exits 3.
     """
     if not post_ok:
         return EXIT_BLOCKED if requests_sent == 0 else EXIT_SELF_CHECK_FAILED
     model = [s["status"] for s in report["scenarios"] if s.get("layer") == "model-runtime"]
     if any(status == "FAIL" for status in model):
         return EXIT_FAIL
-    if requests_sent == 0 or not any(status in ("PASS", "FAIL") for status in model):
+    if requests_sent == 0 or not model:
+        return EXIT_BLOCKED
+    if any(status != "PASS" for status in model):
         return EXIT_BLOCKED
     return EXIT_OK
 
@@ -333,12 +423,15 @@ def port_state(port: int) -> str:
 def run_bounded(cmd: list[str], cwd: Path, env: dict[str, str],
                 timeout: float) -> dict:
     """Run one child in its own process group and kill the whole group on
-    timeout.
+    timeout or on any non-local exception (Ctrl-C / KeyboardInterrupt).
 
     `subprocess.run(timeout=...)` only kills the direct child. `cargo` spawns
     `rustc` children that keep writing the shared target directory after
     cargo dies, so the timeout must be a group kill (same rule as
-    scripts/cli-parity/README.md:16).
+    scripts/cli-parity/README.md:16). The child is started with
+    `start_new_session=True`, so it does not receive the terminal's SIGINT;
+    the harness has to forward the kill explicitly or the probe keeps sending
+    real requests after the user pressed Ctrl-C.
     """
     started = time.time()
     proc = subprocess.Popen(
@@ -350,11 +443,8 @@ def run_bounded(cmd: list[str], cwd: Path, env: dict[str, str],
         text=True,
         start_new_session=True,
     )
-    timed_out = False
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
+
+    def kill_group() -> None:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
@@ -362,7 +452,23 @@ def run_bounded(cmd: list[str], cwd: Path, env: dict[str, str],
                 proc.kill()
             except ProcessLookupError:
                 pass
+
+    timed_out = False
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        kill_group()
         stdout, stderr = proc.communicate()
+    except BaseException:
+        # KeyboardInterrupt/SystemExit must not leave the detached probe (or
+        # cargo/rustc) running with the key in its environment.
+        kill_group()
+        try:
+            proc.communicate()
+        except BaseException:
+            pass
+        raise
     return {
         "stdout": stdout or "",
         "stderr": stderr or "",
@@ -456,9 +562,17 @@ def build_probe(root: Path, evidence: Path, run_dir: Path, redact) -> dict:
 
 
 def classify_failure(payload: dict) -> str:
-    """Attribute a FAIL. The needle list follows the gateway's canonical
-    error codes (runtime/model/http/errors.rs), not the Node-era strings
-    (`econn`, `fetch failed`) that Rust hyper never emits."""
+    """Attribute a FAIL using the gateway's canonical error codes
+    (runtime/model/http/errors.rs), not the Node-era strings (`econn`,
+    `fetch failed`) that Rust hyper never emits.
+
+    `provider_error` is deliberately absent: errors.rs uses it as the
+    fallback bucket for statuses that match no rule (including a 400 caused by
+    a malformed request body), so treating it as an environment signal would
+    mislabel a product/protocol defect. Such a payload stays
+    `product-or-protocol`; an explicit status >= 500 is still an environment
+    signal even when the code fell back to `provider_error`.
+    """
     kind = str(payload.get("kind") or "")
     if kind == "timeout":
         return "environment-or-provider (timeout)"
@@ -473,8 +587,20 @@ def classify_failure(payload: dict) -> str:
         return "environment-or-provider (token budget/thinking)"
     error = payload.get("error")
     text = json.dumps(error, ensure_ascii=False).lower() if error is not None else ""
+    status = None
     if isinstance(error, dict):
-        text += " " + str(error.get("code") or "").lower()
+        code = str(error.get("code") or "").lower()
+        text += " " + code
+        raw_status = error.get("status")
+        if isinstance(raw_status, (int, float)) and not isinstance(raw_status, bool):
+            status = raw_status
+        # The canonical output-budget code is the same class as
+        # finishReason=length: the model hit the smoke budget, not a protocol
+        # defect. errors.rs:398, anthropic.rs:522, openai.rs:1170/1180.
+        if code == "max_output_reached":
+            return "environment-or-provider (token budget/thinking)"
+    if status is not None and status >= 500:
+        return "environment-or-provider"
     for needle in (
         "auth_error",
         "billing",
@@ -482,11 +608,12 @@ def classify_failure(payload: dict) -> str:
         "payload_too_large",
         "rate_limit",
         "server_error",
-        "provider_error",
         "timeout",
         "overloaded",
         "prompt_too_long",
+        "context_overflow",
         "request_too_large",
+        "image_too_large",
         "dns",
         "connection_reset",
         "connection_refused",
@@ -534,7 +661,6 @@ def run_probe(binary: Path, scenario: str, base_url: str, model: str, key: str,
         "PDRS_PROVIDER_KEY": key,
     }
     started = time.time()
-    launched = True
     try:
         result = run_bounded(
             [
@@ -552,7 +678,6 @@ def run_probe(binary: Path, scenario: str, base_url: str, model: str, key: str,
         stdout, stderr, code = result["stdout"], result["stderr"], result["exit"]
         timed_out = result["timedOut"]
     except OSError as exc:
-        launched = False
         stdout = ""
         stderr = f"{type(exc).__name__}: {exc}"
         code = -1
@@ -576,9 +701,19 @@ def run_probe(binary: Path, scenario: str, base_url: str, model: str, key: str,
                 f"probe exceeded {PROBE_TIMEOUT_SECONDS}s "
                 "(harness killed the process group)"
             )
+            # It may have sent one request before the hard cap; that is the
+            # conservative upper bound and is charged to the budget.
+            requests = 1
+            requests_unknown = False
         else:
             kind = "harness"
             error = "probe produced no PROBE_RESULT line"
+            # No result does not mean one request was sent: a probe that
+            # crashes on startup (bad argv, missing runtime, panic before the
+            # HTTP call) sends zero. Do not invent a request; record the
+            # count as unknown and charge it separately for the budget guard.
+            requests = 0
+            requests_unknown = True
         payload = {
             "scenario": scenario,
             "status": "FAIL",
@@ -586,12 +721,18 @@ def run_probe(binary: Path, scenario: str, base_url: str, model: str, key: str,
             "error": error,
             "exit": code,
             "timedOut": timed_out,
-            # A launched probe may already have sent one request even if it
-            # produced no result; count it as the conservative upper bound.
-            "requests": 1 if launched else 0,
+            "requests": requests,
+            "requestsUnknown": requests_unknown,
         }
     else:
-        payload.setdefault("requests", 1)
+        # Early probe failures (`PDRS_PROVIDER_KEY` missing, bad argv) emit a
+        # PROBE_RESULT before any request. A missing counter is 0/unknown, not
+        # the old default of 1.
+        if not isinstance(payload.get("requests"), (int, float)) or isinstance(
+            payload.get("requests"), bool
+        ):
+            payload["requests"] = 0
+            payload["requestsUnknown"] = True
     payload["elapsedSeconds"] = elapsed
     payload["timedOut"] = timed_out
     payload["raw"] = {
@@ -627,10 +768,14 @@ def write_markdown(report: dict, path: Path) -> None:
         f"{report['limits']['maxTotalOutputTokens']} total; "
         f"{report['limits']['probeScenarioTimeoutSeconds']} s per probe scenario, "
         f"{report['limits']['probeHardTimeoutSeconds']} s harness hard cap",
-        f"- requests sent: {report['limits']['requestsSent']}; "
-        f"output tokens reported by probe: {report['limits']['outputTokensReported']}",
+        f"- requests sent: {report['limits']['requestsSent']} known"
+        f" + {len(report['limits'].get('requestsUnknown', []))} unknown; "
+        f"output tokens reported by probe: "
+        f"{report['limits']['outputTokensReported']}",
+        f"- usage missing (unknown, not 0): "
+        f"{report['limits'].get('usageMissing', []) or 'none'}",
         f"- exit code: {report.get('exitCode', 'pending')}"
-        " (0 PASS, 1 FAIL, 2 self-check, 3 BLOCKED)",
+        " (0 all model-runtime PASS, 1 FAIL, 2 self-check, 3 BLOCKED/partial)",
         f"- ports checked: {report['ports']}",
         "",
         "## Scenarios",
@@ -653,8 +798,32 @@ def write_markdown(report: dict, path: Path) -> None:
         if isinstance(detail, dict):
             detail = json.dumps(detail, ensure_ascii=False)
         detail = str(detail).replace("|", "\\|").replace("\n", " ")
+        if item.get("usageStatus") == "missing":
+            detail = (detail + " usage=missing").strip()
         lines.append(
             f"| `{item['id']}` | {item['layer']} | **{item['status']}** | {detail[:300]} |"
+        )
+    usage_missing = report["limits"].get("usageMissing", [])
+    lines += [
+        "",
+        "## Usage / limit accounting",
+        "",
+        f"- requests: {report['limits']['requestsSent']} known"
+        f" + {len(report['limits'].get('requestsUnknown', []))} unknown"
+        " (each unknown is charged as one slot against the request budget)",
+    ]
+    if usage_missing:
+        lines.append(
+            "- output tokens: **unknown** for "
+            + ", ".join(f"`{item}`" for item in usage_missing)
+            + "; missing usage is recorded as unknown, never as 0, so the "
+            "per-request and total token caps are **UNVERIFIED** for those "
+            "scenarios."
+        )
+    else:
+        lines.append(
+            "- output tokens: reported for every model-runtime scenario; the "
+            "per-request and total token caps were checked."
         )
     lines += [
         "",
@@ -691,7 +860,8 @@ def write_markdown(report: dict, path: Path) -> None:
         lines.append(
             f"Scanned {check['files']} artifact files "
             f"(excluding cargo-target); generic-pattern hits: "
-            f"{check['genericHits']}."
+            f"{check['genericHits']}; vanished during scan (skipped): "
+            f"{check.get('filesSkipped', 0)}."
         )
     lines.append(f"finalPass: {report.get('finalPass', False)}")
     lines += [
@@ -751,33 +921,52 @@ def write_limits(run_dir: Path, limits: dict) -> None:
 
 def collect_artifacts(evidence: Path) -> list[Path]:
     files = []
-    for path in evidence.rglob("*"):
-        if not path.is_file():
-            continue
-        if "cargo-target" in path.parts:
-            continue
-        files.append(path)
+    try:
+        for path in evidence.rglob("*"):
+            if not path.is_file():
+                continue
+            if "cargo-target" in path.parts:
+                continue
+            files.append(path)
+    except FileNotFoundError:
+        # A concurrent run can remove a stale-lock directory or a file while
+        # rglob() is walking; the scan is advisory, so return what was listed.
+        pass
     return sorted(files)
 
 
 def self_check(files: list[Path], secrets: dict[str, str]) -> dict:
     keys = []
+    skipped = 0
     for alias, value in secrets.items():
         needle = value.encode()
         prefix = value[:8].encode()
         hit = False
         for path in files:
-            data = path.read_bytes()
+            try:
+                data = path.read_bytes()
+            except FileNotFoundError:
+                # Another run (or a stale-lock reclaimer) removed the file
+                # after collect_artifacts() listed it. A vanished file cannot
+                # contain a leak; skip it instead of raising a traceback that
+                # would look like a scenario FAIL.
+                skipped += 1
+                continue
             if needle in data or prefix in data:
                 hit = True
                 break
         keys.append({"alias": alias, "result": "命中" if hit else "未命中"})
     generic = 0
     for path in files:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            skipped += 1
+            continue
         generic += len(GENERIC_SECRET.findall(text))
     return {
         "files": len(files),
+        "filesSkipped": skipped,
         "keys": keys,
         "keysLoaded": len(secrets),
         "verifiable": bool(secrets),
@@ -795,13 +984,72 @@ def self_check_ok(check: dict) -> bool:
     )
 
 
-def output_tokens(payload: dict) -> int:
+def output_tokens(payload: dict) -> int | None:
+    """Reported output tokens, or None when the provider sent no usage.
+
+    None is deliberately distinct from 0: an absent usage event must not pass
+    the per-request/total token caps by looking like "0 tokens used".
+    """
     usage = payload.get("usage")
     if isinstance(usage, dict):
         value = usage.get("outputTokens")
-        if isinstance(value, (int, float)):
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= 0
+        ):
             return int(value)
-    return 0
+    return None
+
+
+def account_scenario(limits: dict, sid: str, payload: dict) -> list[str]:
+    """Account one probe result against the request/token budget.
+
+    Unknown request counts are charged as one slot for the guard but never
+    reported as a known request. Missing usage is recorded in
+    `limits.usageMissing` and is not counted as 0 tokens; the per-request and
+    total token checks are skipped for that scenario because there is no data
+    to compare (the report marks the caps UNVERIFIED).
+    """
+    reported_requests = payload.get("requests")
+    if payload.get("requestsUnknown") or not (
+        isinstance(reported_requests, (int, float))
+        and not isinstance(reported_requests, bool)
+        and reported_requests >= 0
+    ):
+        limits["requestsUnknown"].append(sid)
+    else:
+        limits["requestsSent"] += int(reported_requests)
+    tokens = output_tokens(payload)
+    if tokens is None:
+        payload["usageStatus"] = "missing"
+        limits["usageMissing"].append(sid)
+    else:
+        payload["usageStatus"] = "reported"
+        limits["outputTokensReported"] += tokens
+    violations = []
+    echoed = payload.get("maxOutputTokens")
+    if isinstance(echoed, (int, float)) and int(echoed) != (
+        MAX_OUTPUT_TOKENS_PER_REQUEST
+    ):
+        violations.append(
+            f"probe echoed maxOutputTokens={echoed}, "
+            f"expected {MAX_OUTPUT_TOKENS_PER_REQUEST}"
+        )
+    if tokens is not None and tokens > MAX_OUTPUT_TOKENS_PER_REQUEST:
+        violations.append(
+            f"scenario outputTokens={tokens} > "
+            f"{MAX_OUTPUT_TOKENS_PER_REQUEST}"
+        )
+    if (
+        tokens is not None
+        and limits["outputTokensReported"] > MAX_TOTAL_OUTPUT_TOKENS
+    ):
+        violations.append(
+            f"total outputTokens={limits['outputTokensReported']} > "
+            f"{MAX_TOTAL_OUTPUT_TOKENS}"
+        )
+    return violations
 
 
 def scenario_id(name: str) -> str:
@@ -865,6 +1113,7 @@ def main() -> int:
             f"keys loaded: {check['keysLoaded']}",
             f"verifiable: {check['verifiable']}",
             f"files: {check['files']}",
+            f"files skipped (vanished during scan): {check['filesSkipped']}",
             f"generic-pattern hits: {check['genericHits']}",
         ]
         for item in check["keys"]:
@@ -879,6 +1128,7 @@ def main() -> int:
         for item in post["keys"]:
             print(f"  {item['alias']}: {item['result']}")
         print(f"  generic-pattern hits: {post['genericHits']}")
+        print(f"  files skipped (vanished during scan): {post['filesSkipped']}")
         if not post["verifiable"]:
             print("  0 keys loaded, cannot verify key leakage")
         ok = self_check_ok(post)
@@ -909,7 +1159,9 @@ def main() -> int:
             "probeScenarioTimeoutSeconds": PROBE_SCENARIO_TIMEOUT_SECONDS,
             "probeHardTimeoutSeconds": PROBE_TIMEOUT_SECONDS,
             "requestsSent": 0,
+            "requestsUnknown": [],
             "outputTokensReported": 0,
+            "usageMissing": [],
             "violations": [],
         }
         write_limits(run_dir, limits)
@@ -959,7 +1211,10 @@ def main() -> int:
                 binary = Path(build["binary"])
                 for name in SCENARIOS:
                     sid = scenario_id(name)
-                    if limits["requestsSent"] >= MAX_REQUESTS:
+                    budget_used = limits["requestsSent"] + len(
+                        limits["requestsUnknown"]
+                    )
+                    if budget_used >= MAX_REQUESTS:
                         scenarios.append({
                             "id": sid,
                             "layer": "model-runtime",
@@ -973,32 +1228,7 @@ def main() -> int:
                     )
                     payload["id"] = sid
                     payload["layer"] = "model-runtime"
-                    reported_requests = payload.get("requests")
-                    if isinstance(reported_requests, (int, float)) and reported_requests >= 0:
-                        limits["requestsSent"] += int(reported_requests)
-                    else:
-                        limits["requestsSent"] += 1
-                    tokens = output_tokens(payload)
-                    limits["outputTokensReported"] += tokens
-                    violations = []
-                    echoed = payload.get("maxOutputTokens")
-                    if isinstance(echoed, (int, float)) and int(echoed) != (
-                        MAX_OUTPUT_TOKENS_PER_REQUEST
-                    ):
-                        violations.append(
-                            f"probe echoed maxOutputTokens={echoed}, "
-                            f"expected {MAX_OUTPUT_TOKENS_PER_REQUEST}"
-                        )
-                    if tokens > MAX_OUTPUT_TOKENS_PER_REQUEST:
-                        violations.append(
-                            f"scenario outputTokens={tokens} > "
-                            f"{MAX_OUTPUT_TOKENS_PER_REQUEST}"
-                        )
-                    if limits["outputTokensReported"] > MAX_TOTAL_OUTPUT_TOKENS:
-                        violations.append(
-                            f"total outputTokens={limits['outputTokensReported']} > "
-                            f"{MAX_TOTAL_OUTPUT_TOKENS}"
-                        )
+                    violations = account_scenario(limits, sid, payload)
                     if violations:
                         limits["violations"].extend(violations)
                         payload["status"] = "FAIL"
@@ -1032,15 +1262,20 @@ def main() -> int:
                 "Layer 1 gateway/permission/hooks/steer scenarios are NOT_YET, "
                 "not failures and not passes.",
                 "requestsSent/outputTokensReported come from the probe's echoed "
-                "counters; an attempted probe with no result counts one request.",
+                "counters. A probe with no result is recorded as 0/unknown, "
+                "not as one invented request; unknown request counts are "
+                "charged as one slot against the budget and listed in "
+                "limits.requestsUnknown. Missing usage is listed in "
+                "limits.usageMissing and is never counted as 0 tokens.",
             ],
         }
 
         # First pass: artifacts with a placeholder check, so the scan sees the
         # report itself too. Then write the final check result and rescan.
         report["secretSelfCheck"] = {
-            "files": 0, "keys": [], "keysLoaded": len(secrets),
-            "verifiable": bool(secrets), "genericHits": 0,
+            "files": 0, "filesSkipped": 0, "keys": [],
+            "keysLoaded": len(secrets), "verifiable": bool(secrets),
+            "genericHits": 0,
         }
         report["finalPass"] = False
         report["exitCode"] = EXIT_BLOCKED
@@ -1052,8 +1287,11 @@ def main() -> int:
         final["finalPass"] = self_check_ok(final)
         report["secretSelfCheck"] = final
         report["finalPass"] = final["finalPass"]
+        requests_accounted = limits["requestsSent"] + len(
+            limits["requestsUnknown"]
+        )
         report["exitCode"] = final_exit_code(
-            report, final["finalPass"], limits["requestsSent"]
+            report, final["finalPass"], requests_accounted
         )
         write_limits(run_dir, limits)
         write_reports(report, [run_dir, evidence])
@@ -1061,7 +1299,7 @@ def main() -> int:
         # Post-write scan: verify the exact bytes on disk once more.
         post = self_check(collect_artifacts(evidence), secrets)
         post_ok = self_check_ok(post)
-        code = final_exit_code(report, post_ok, limits["requestsSent"])
+        code = final_exit_code(report, post_ok, requests_accounted)
         if code != report["exitCode"] or post_ok != report["finalPass"]:
             report["secretSelfCheck"] = post
             report["finalPass"] = post_ok
@@ -1073,9 +1311,14 @@ def main() -> int:
         print(f"env file: {env_path or 'none found'} "
               f"(keys loaded: {post['keysLoaded']})")
         print(f"model: {args.model} via {args.base_url} (key={key_alias})")
-        print(f"requests sent: {limits['requestsSent']} / {MAX_REQUESTS}")
+        print(f"requests sent: {limits['requestsSent']} known / {MAX_REQUESTS}"
+              f" (+{len(limits['requestsUnknown'])} unknown, each charged as 1)")
         print(f"output tokens reported: {limits['outputTokensReported']} / "
               f"{MAX_TOTAL_OUTPUT_TOKENS}")
+        if limits["usageMissing"]:
+            print("usage missing (unknown, not 0): "
+                  + ", ".join(limits["usageMissing"]))
+            print("token caps UNVERIFIED for scenarios with missing usage")
         for violation in limits["violations"]:
             print(f"limit violation: {violation}")
         for item in report["scenarios"]:
@@ -1089,6 +1332,7 @@ def main() -> int:
         for item in post["keys"]:
             print(f"  {item['alias']}: {item['result']}")
         print(f"  generic-pattern hits: {post['genericHits']}")
+        print(f"  files skipped (vanished during scan): {post['filesSkipped']}")
         if not post["verifiable"]:
             print("  0 keys loaded, cannot verify key leakage")
         print(f"  finalPass: {post_ok}")

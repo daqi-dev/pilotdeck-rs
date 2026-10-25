@@ -241,23 +241,6 @@ fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
 }
 
-fn count_requests(events: &[JsValue]) -> f64 {
-    events
-        .iter()
-        .filter(|event| text(field(event, "type")) == "request_started")
-        .count() as f64
-}
-
-/// Last `usage` event of a stream, if the provider sent one.
-fn stream_usage(events: &[JsValue]) -> JsValue {
-    events
-        .iter()
-        .rev()
-        .find(|event| text(field(event, "type")) == "usage")
-        .map(|event| field(event, "usage").clone())
-        .unwrap_or(JsValue::Undefined)
-}
-
 fn push_defined(entries: &mut Vec<(&'static str, JsValue)>, key: &'static str, value: JsValue) {
     if !value.is_undefined() {
         entries.push((key, value));
@@ -350,22 +333,75 @@ struct AbortAudit {
     abort_error: bool,
 }
 
-/// Audit the events that arrived *after* the delta that triggered the abort.
-fn audit_post_abort(events: &[JsValue]) -> AbortAudit {
-    let mut audit = AbortAudit::default();
-    for event in events {
+impl AbortAudit {
+    fn observe(&mut self, event: &JsValue) {
         match text(field(event, "type")).as_str() {
-            "message_end" => audit.message_end = true,
+            "message_end" => self.message_end = true,
             "text_delta" | "thinking_delta" | "tool_call_start" | "tool_call_delta"
-            | "tool_call_end" => audit.content = true,
+            | "tool_call_end" => self.content = true,
             "error" => {
                 let body = json_text(field(event, "error")).to_lowercase();
                 if body.contains("abort") || body.contains("cancel") {
-                    audit.abort_error = true;
+                    self.abort_error = true;
                 }
             }
             _ => {}
         }
+    }
+}
+
+/// Counters derived from every event seen by the stream callback.
+///
+/// The `events` vector is capped at 200 entries for the report, but request
+/// counts, the last `usage`, and the post-abort audit are updated before the
+/// cap is applied. Otherwise a stream that sends its `usage` event after the
+/// 200th event would report "0 output tokens", and a cancelled stream whose
+/// post-abort content arrives after the cap would look clean. Both counters
+/// are therefore independent of the report truncation.
+#[derive(Debug, Default)]
+struct StreamTally {
+    requests: f64,
+    usage: Option<JsValue>,
+    aborted: bool,
+    first_delta_chars: usize,
+    first_delta_kind: String,
+    post_abort: AbortAudit,
+}
+
+impl StreamTally {
+    /// Feed one event; returns true when this event triggered the abort.
+    fn observe(&mut self, event: &JsValue, abort_on_delta: bool) -> bool {
+        let kind = text(field(event, "type"));
+        match kind.as_str() {
+            "request_started" => self.requests += 1.0,
+            "usage" => self.usage = Some(field(event, "usage").clone()),
+            _ => {}
+        }
+        if !self.aborted && abort_on_delta && (kind == "text_delta" || kind == "thinking_delta") {
+            self.first_delta_chars = text(field(event, "text")).chars().count();
+            self.first_delta_kind = kind;
+            self.aborted = true;
+            return true;
+        }
+        if self.aborted {
+            self.post_abort.observe(event);
+        }
+        false
+    }
+
+    fn usage(&self) -> JsValue {
+        self.usage.clone().unwrap_or(JsValue::Undefined)
+    }
+}
+
+/// Audit the events that arrived *after* the delta that triggered the abort.
+/// Test helper: production derives the audit in the stream callback so it is
+/// not truncated by the 200-event report cap.
+#[cfg(test)]
+fn audit_post_abort(events: &[JsValue]) -> AbortAudit {
+    let mut audit = AbortAudit::default();
+    for event in events {
+        audit.observe(event);
     }
     audit
 }
@@ -394,10 +430,10 @@ async fn run_stream_cancel(config: &JsValue, model: &str, limits: &Limits) -> Js
         ..Default::default()
     };
     let mut events = Vec::new();
-    let mut first_delta_chars = 0usize;
-    let mut first_delta_kind = String::new();
+    let mut tally = StreamTally::default();
     // Index of the event whose callback requested the abort. Everything after
-    // it is the post-abort window the verdict inspects.
+    // it is the post-abort window the report displays; the verdict uses
+    // `tally.post_abort`, which is not capped with `events`.
     let mut abort_index: Option<usize> = None;
     let outcome = tokio::time::timeout(
         limits.timeout,
@@ -405,38 +441,38 @@ async fn run_stream_cancel(config: &JsValue, model: &str, limits: &Limits) -> Js
             let StreamOutput::Event(event) = output else {
                 return;
             };
-            let kind = text(field(&event, "type"));
-            // Reasoning models may emit thinking_delta before any
-            // text_delta; both are consumer-visible stream content, so
-            // either one is a valid mid-stream cancellation point.
-            if (kind == "text_delta" || kind == "thinking_delta") && abort_index.is_none() {
-                first_delta_chars = text(field(&event, "text")).chars().count();
-                first_delta_kind = kind;
-                abort_index = Some(events.len());
-                abort.abort();
-            }
+            let event_index = events.len();
             if events.len() < 200 {
                 events.push(summarize_event(&event));
+            }
+            // Reasoning models may emit thinking_delta before any text_delta;
+            // both are consumer-visible stream content, so either one is a
+            // valid mid-stream cancellation point. `observe` updates request
+            // counts, usage, and the post-abort audit before the 200-event
+            // cap can hide them.
+            if tally.observe(&event, true) {
+                abort_index = Some(event_index);
+                abort.abort();
             }
         }),
     )
     .await;
-    let aborted = abort_index.is_some();
+    let aborted = tally.aborted;
     let post: &[JsValue] = match abort_index {
         Some(index) if index + 1 < events.len() => &events[index + 1..],
         _ => &[],
     };
-    let audit = audit_post_abort(post);
+    let audit = tally.post_abort;
     // Snapshot the derived values before `events` moves into the result.
-    let requests = count_requests(&events);
-    let usage = stream_usage(&events);
+    let requests = tally.requests;
+    let usage = tally.usage();
     let mut result = vec![
         ("scenario", string("stream-cancel")),
         ("kind", string("stream")),
         ("provider", string("anthropic")),
         ("model", string(model)),
-        ("firstDeltaChars", number(first_delta_chars as f64)),
-        ("firstDeltaKind", string(&first_delta_kind)),
+        ("firstDeltaChars", number(tally.first_delta_chars as f64)),
+        ("firstDeltaKind", string(&tally.first_delta_kind)),
         ("abortRequested", JsValue::Bool(aborted)),
         (
             "abortEventIndex",
@@ -517,6 +553,7 @@ async fn run_tool(config: &JsValue, model: &str, limits: &Limits) -> JsValue {
     let transport = HyperModelTransport::new();
     let mut events = Vec::new();
     let mut calls = Vec::new();
+    let mut tally = StreamTally::default();
     let outcome = tokio::time::timeout(
         limits.timeout,
         stream_model(
@@ -528,7 +565,11 @@ async fn run_tool(config: &JsValue, model: &str, limits: &Limits) -> JsValue {
                 let StreamOutput::Event(event) = output else {
                     return;
                 };
-                if text(field(&event, "type")) == "tool_call_end" {
+                let kind = text(field(&event, "type"));
+                // No abort in this scenario: keep counting requests and the
+                // last usage independently of the 200-event report cap.
+                tally.observe(&event, false);
+                if kind == "tool_call_end" {
                     calls.push(field(&event, "toolCall").clone());
                 }
                 if events.len() < 200 {
@@ -550,9 +591,9 @@ async fn run_tool(config: &JsValue, model: &str, limits: &Limits) -> JsValue {
         ("toolCalls", JsValue::Array(calls.clone())),
         ("events", JsValue::Array(events.clone())),
         ("elapsedMs", number(elapsed_ms(started))),
-        ("requests", number(count_requests(&events))),
+        ("requests", number(tally.requests)),
     ];
-    push_defined(&mut result, "usage", stream_usage(&events));
+    push_defined(&mut result, "usage", tally.usage());
     match outcome {
         Err(_) => {
             result.push(("status", string("FAIL")));
@@ -736,5 +777,51 @@ mod tests {
     fn request_uses_the_harness_budget() {
         let request = request("m", "p", false, 128.0);
         assert!(field(&request, "maxOutputTokens").as_number() == Some(128.0));
+    }
+
+    #[test]
+    fn request_count_and_usage_survive_the_event_cap() {
+        // The report stores at most 200 events, but these counters must keep
+        // updating on every event: a provider that sends usage after the cap
+        // would otherwise look like 0 output tokens.
+        let mut tally = StreamTally::default();
+        for _ in 0..250 {
+            tally.observe(&event(r#"{"type":"request_started"}"#), false);
+        }
+        for _ in 0..250 {
+            tally.observe(&event(r#"{"type":"text_delta","text":"x"}"#), false);
+        }
+        tally.observe(
+            &event(r#"{"type":"usage","usage":{"outputTokens":7,"totalTokens":9}}"#),
+            false,
+        );
+        assert_eq!(tally.requests, 250.0);
+        let usage = tally.usage();
+        assert_eq!(field(&usage, "outputTokens").as_number(), Some(7.0));
+        assert_eq!(field(&usage, "totalTokens").as_number(), Some(9.0));
+    }
+
+    #[test]
+    fn post_abort_audit_survives_the_event_cap() {
+        // The cancelled stream's audit is derived in the callback, not from
+        // the capped `events` vector, so late content cannot be truncated
+        // away.
+        let mut tally = StreamTally::default();
+        let trigger = event(r#"{"type":"text_delta","text":"first"}"#);
+        assert!(tally.observe(&trigger, true));
+        for _ in 0..250 {
+            tally.observe(&event(r#"{"type":"text_delta","text":"still"}"#), true);
+        }
+        assert!(tally.aborted);
+        assert!(tally.post_abort.content);
+        assert!(!cancel_ok(tally.aborted, false, &tally.post_abort));
+    }
+
+    #[test]
+    fn tool_mode_does_not_treat_the_first_delta_as_an_abort() {
+        let mut tally = StreamTally::default();
+        assert!(!tally.observe(&event(r#"{"type":"text_delta","text":"x"}"#), false));
+        assert!(!tally.aborted);
+        assert!(!tally.post_abort.content);
     }
 }
