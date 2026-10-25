@@ -446,7 +446,7 @@ impl EdgeClawFileStores {
         })
     }
 }
-fn now_iso() -> String {
+pub(crate) fn now_iso() -> String {
     let ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(d) => d.as_millis().min(i64::MAX as u128) as i64,
         Err(e) => -(e.duration().as_millis().min(i64::MAX as u128) as i64),

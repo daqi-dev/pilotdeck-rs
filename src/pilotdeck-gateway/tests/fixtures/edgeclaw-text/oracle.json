@@ -1,0 +1,1469 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts": "c64b368fa7fa329cbecb475b22972860bbc133444606017132c6edbf27ed3ad6",
+    "src/context/memory/edgeclaw-memory-core/src/core/general-projects.ts": "3a5512939027cc32efde9cd218e4bb400300a28fda6f9ac07391d75b56244e40",
+    "src/context/memory/edgeclaw-memory-core/src/core/index.ts": "d28d2bf10cf36e76b5abc0ba2e53c5c6fcbf00733cd01941da12749cfdd4f47b",
+    "src/context/memory/edgeclaw-memory-core/src/core/pipeline/heartbeat.ts": "c4f1247e983948bc47a83c1308cd2a158bce097335c41f4b42d9de6babd125fc",
+    "src/context/memory/edgeclaw-memory-core/src/core/retrieval/reasoning-loop.ts": "26d38e3c96b877e038a9cf4d15f9d9174f3b64ea23117ed5ca8d56db811ba6a7",
+    "src/context/memory/edgeclaw-memory-core/src/core/review/dream-review.ts": "ddc7d016152096f0dfb9ce63bc661b34f683a7cea3491d9cfd1c1365c8d3d1b7",
+    "src/context/memory/edgeclaw-memory-core/src/core/skills/llm-extraction.ts": "6cde29bc33b1d2fccfcfa5ee507941b2280c6960254da28794ac18845224372e",
+    "src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts": "92ee83f07aaefc070850a6ac366fbc75924b2efdaa45f9f9999ed0d3d25e5093",
+    "src/context/memory/edgeclaw-memory-core/src/core/trace-i18n.ts": "2d4a4e6d1d86539ff294b5d016e51ef3a131575e2d5be4da14aeca24b8dc4f0c",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/id.ts": "5d8f83f1a5d56b696829ffe8a26dff2505b6bb6317acd4e4ca9772219e0bd1f9",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/text.ts": "c582cc42b3acae4bc5b8502f2ad6abd6577e2eb03e7ae41b966e0cceba5f654e",
+    "src/context/memory/edgeclaw-memory-core/src/message-utils.ts": "690f6093a97d81c69676260c86c88dddc6ca7146d2425de2cf91578e8c782244",
+    "src/context/memory/edgeclaw-memory-core/src/service.ts": "a76c5a266d392faa92d19805e4df3f0a56d2324ba50e189fac1d436addb8698f"
+  },
+  "nodeVersion": "v22.22.0",
+  "clockMs": 1792627200000,
+  "cases": [
+    {
+      "fn": "truncate",
+      "args": [
+        "",
+        5
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abc",
+        0
+      ],
+      "expected": "abc"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abc",
+        -1
+      ],
+      "expected": "abc"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abc",
+        3
+      ],
+      "expected": "abc"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcd",
+        3
+      ],
+      "expected": "abc..."
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "产品🚀x",
+        2
+      ],
+      "expected": "产品..."
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "\ud800abc",
+        1
+      ],
+      "expected": "\ud800..."
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        100
+      ],
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..."
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "产品",
+        2.5
+      ],
+      "expected": "产品"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abc",
+        {
+          "$number": "NaN"
+        }
+      ],
+      "expected": "..."
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abc",
+        {
+          "$number": "Infinity"
+        }
+      ],
+      "expected": "abc"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abc",
+        {
+          "$number": "-Infinity"
+        }
+      ],
+      "expected": "abc"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "",
+        false
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "plain",
+        true
+      ],
+      "expected": "plain"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "\\u4e2d\\u6587",
+        false
+      ],
+      "expected": "中文"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "\\uD83D\\uDE80",
+        false
+      ],
+      "expected": "🚀"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "\\uD800",
+        false
+      ],
+      "expected": "\ud800"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "\\uD800x\\uDC00",
+        false
+      ],
+      "expected": "\ud800x\udc00"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "\\n\\r\\t\\\"\\\\",
+        true
+      ],
+      "expected": "\n\r\t\"\\"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "\\n",
+        false
+      ],
+      "expected": "\\n"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "\\\\n",
+        true
+      ],
+      "expected": "\\\n"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "\\\\u0041",
+        false
+      ],
+      "expected": "\\A"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "\\uZZZZ",
+        false
+      ],
+      "expected": "\\uZZZZ"
+    },
+    {
+      "fn": "decodeEscapedUnicodeText",
+      "args": [
+        "a\\u0000b",
+        false
+      ],
+      "expected": "a\u0000b"
+    },
+    {
+      "fn": "decodeEscapedUnicodeValue",
+      "args": [
+        {
+          "a": "\\u0041\\n",
+          "b": [
+            "\\u4e2d",
+            42,
+            null,
+            true
+          ],
+          "c": {
+            "d": "\\uD800"
+          }
+        },
+        false
+      ],
+      "expected": {
+        "a": "A\\n",
+        "b": [
+          "中",
+          42,
+          null,
+          true
+        ],
+        "c": {
+          "d": "\ud800"
+        }
+      }
+    },
+    {
+      "fn": "decodeEscapedUnicodeValue",
+      "args": [
+        {
+          "a": "\\u0041\\n",
+          "b": [
+            "\\u4e2d",
+            42,
+            null,
+            true
+          ],
+          "c": {
+            "d": "\\uD800"
+          }
+        },
+        true
+      ],
+      "expected": {
+        "a": "A\n",
+        "b": [
+          "中",
+          42,
+          null,
+          true
+        ],
+        "c": {
+          "d": "\ud800"
+        }
+      }
+    },
+    {
+      "fn": "decodeEscapedUnicodeValue",
+      "args": [
+        {
+          "$undefined": true
+        },
+        true
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "decodeEscapedUnicodeValue",
+      "args": [
+        null,
+        false
+      ],
+      "expected": null
+    },
+    {
+      "fn": "normalizeText",
+      "args": [
+        ""
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "normalizeText",
+      "args": [
+        "  a  b  "
+      ],
+      "expected": "a b"
+    },
+    {
+      "fn": "normalizeText",
+      "args": [
+        "a\n\t b"
+      ],
+      "expected": "a b"
+    },
+    {
+      "fn": "normalizeText",
+      "args": [
+        " 　﻿ x   y"
+      ],
+      "expected": "x y"
+    },
+    {
+      "fn": "normalizeText",
+      "args": [
+        "产品  🚀"
+      ],
+      "expected": "产品 🚀"
+    },
+    {
+      "fn": "normalizeText",
+      "args": [
+        "\ud800  x  \ud801"
+      ],
+      "expected": "\ud800 x \ud801"
+    },
+    {
+      "fn": "normalizeText",
+      "args": [
+        "\r\n"
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "normalizeText",
+      "args": [
+        "a\rb"
+      ],
+      "expected": "a b"
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "",
+        ""
+      ],
+      "expected": 0
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "abc",
+        "abc"
+      ],
+      "expected": 1
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "ABC",
+        "abc"
+      ],
+      "expected": 1
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "alpha",
+        "alphabet"
+      ],
+      "expected": 0.92
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "pha",
+        "alphabet"
+      ],
+      "expected": 0.82
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "alpha beta",
+        "alpha x beta"
+      ],
+      "expected": 0.7
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "alpha beta",
+        "nothing"
+      ],
+      "expected": 0
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "产品",
+        "产品 指南"
+      ],
+      "expected": 0.92
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "🚀",
+        "产品🚀x"
+      ],
+      "expected": 0.82
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "a b c",
+        "c b a"
+      ],
+      "expected": 0.7
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "İ",
+        "i̇stanbul"
+      ],
+      "expected": 0.92
+    },
+    {
+      "fn": "scoreMatch",
+      "args": [
+        "STRASSE",
+        "straße"
+      ],
+      "expected": 0.375
+    },
+    {
+      "fn": "safeJsonParse",
+      "args": [
+        "{\"a\":1,\"b\":[2]}",
+        {
+          "fallback": true
+        }
+      ],
+      "expected": {
+        "a": 1,
+        "b": [
+          2
+        ]
+      }
+    },
+    {
+      "fn": "safeJsonParse",
+      "args": [
+        "[1,2]",
+        {
+          "fallback": true
+        }
+      ],
+      "expected": [
+        1,
+        2
+      ]
+    },
+    {
+      "fn": "safeJsonParse",
+      "args": [
+        "null",
+        {
+          "fallback": true
+        }
+      ],
+      "expected": null
+    },
+    {
+      "fn": "safeJsonParse",
+      "args": [
+        "bad",
+        {
+          "fallback": true
+        }
+      ],
+      "expected": {
+        "fallback": true
+      }
+    },
+    {
+      "fn": "safeJsonParse",
+      "args": [
+        "\"\\ud800\"",
+        {
+          "fallback": true
+        }
+      ],
+      "expected": "\ud800"
+    },
+    {
+      "fn": "safeJsonParse",
+      "args": [
+        "",
+        {
+          "fallback": true
+        }
+      ],
+      "expected": {
+        "fallback": true
+      }
+    },
+    {
+      "fn": "safeJsonParse",
+      "args": [
+        "{\"a\":",
+        {
+          "fallback": true
+        }
+      ],
+      "expected": {
+        "fallback": true
+      }
+    },
+    {
+      "fn": "hashText",
+      "args": [
+        ""
+      ],
+      "expected": "da39a3ee5e"
+    },
+    {
+      "fn": "hashText",
+      "args": [
+        "abc"
+      ],
+      "expected": "a9993e3647"
+    },
+    {
+      "fn": "hashText",
+      "args": [
+        "产品🚀"
+      ],
+      "expected": "1d24c3d39d"
+    },
+    {
+      "fn": "hashText",
+      "args": [
+        "\ud800"
+      ],
+      "expected": "9bdb77276c"
+    },
+    {
+      "fn": "hashText",
+      "args": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "expected": "e61cfffe0d"
+    },
+    {
+      "fn": "nowIso",
+      "args": [],
+      "expected": "2026-10-22T00:00:00.000Z"
+    },
+    {
+      "fn": "buildL0IndexId",
+      "args": [
+        "s",
+        "2026-10-22T00:00:00.000Z",
+        "payload"
+      ],
+      "expected": "s_ba1ae80cf0_raw"
+    },
+    {
+      "fn": "buildL0IndexId",
+      "args": [
+        "",
+        "t",
+        "p"
+      ],
+      "expected": "session_0f6f87ad95_raw"
+    },
+    {
+      "fn": "buildL0IndexId",
+      "args": [
+        "会话🚀",
+        "t\ud800",
+        "p\ud801"
+      ],
+      "expected": "会话🚀_33c419719a_raw"
+    },
+    {
+      "fn": "buildL1IndexId",
+      "args": [
+        "t",
+        [
+          "b",
+          "a",
+          "B"
+        ]
+      ],
+      "expected": "l1_63488c311a"
+    },
+    {
+      "fn": "buildL1IndexId",
+      "args": [
+        "t",
+        []
+      ],
+      "expected": "l1_f1e344fb9d"
+    },
+    {
+      "fn": "buildL1IndexId",
+      "args": [
+        "t\ud800",
+        [
+          "\ud800",
+          "a"
+        ]
+      ],
+      "expected": "l1_461d4787f7"
+    },
+    {
+      "fn": "buildL2TimeIndexId",
+      "args": [
+        "2026-10-22"
+      ],
+      "expected": "time_cbf0e38453"
+    },
+    {
+      "fn": "buildL2ProjectIndexId",
+      "args": [
+        "ProjectKey"
+      ],
+      "expected": "project_c3e58e59b6"
+    },
+    {
+      "fn": "buildFactId",
+      "args": [
+        "ProjectKey"
+      ],
+      "expected": "fact_c3e58e59b6"
+    },
+    {
+      "fn": "buildL2ProjectIndexId",
+      "args": [
+        "ÜBER"
+      ],
+      "expected": "project_fcd10c8088"
+    },
+    {
+      "fn": "buildFactId",
+      "args": [
+        "ÜBER"
+      ],
+      "expected": "fact_fcd10c8088"
+    },
+    {
+      "fn": "buildL2ProjectIndexId",
+      "args": [
+        "产品"
+      ],
+      "expected": "project_6cc98552a9"
+    },
+    {
+      "fn": "buildFactId",
+      "args": [
+        "产品"
+      ],
+      "expected": "fact_6cc98552a9"
+    },
+    {
+      "fn": "buildLinkId",
+      "args": [
+        "l0",
+        "id1",
+        "l1",
+        "id2"
+      ],
+      "expected": "link_76f031d181"
+    },
+    {
+      "fn": "buildLinkId",
+      "args": [
+        "",
+        "\ud800",
+        "x",
+        ""
+      ],
+      "expected": "link_34e9f8b639"
+    },
+    {
+      "fn": "normalizeWorkspacePath",
+      "args": [
+        "/a/b/../c/./d//e/"
+      ],
+      "expected": "/a/c/d/e"
+    },
+    {
+      "fn": "normalizeWorkspacePath",
+      "args": [
+        "relative/x/../y"
+      ],
+      "expected": "$CWD/relative/y"
+    },
+    {
+      "fn": "normalizeWorkspacePath",
+      "args": [
+        ""
+      ],
+      "expected": "$CWD"
+    },
+    {
+      "fn": "normalizeWorkspacePath",
+      "args": [
+        "."
+      ],
+      "expected": "$CWD"
+    },
+    {
+      "fn": "normalizeWorkspacePath",
+      "args": [
+        "./x"
+      ],
+      "expected": "$CWD/x"
+    },
+    {
+      "fn": "normalizeWorkspacePath",
+      "args": [
+        "/.."
+      ],
+      "expected": "/"
+    },
+    {
+      "fn": "normalizeWorkspacePath",
+      "args": [
+        "//a///b"
+      ],
+      "expected": "/a/b"
+    },
+    {
+      "fn": "normalizeWorkspacePath",
+      "args": [
+        "x/../y/../z"
+      ],
+      "expected": "$CWD/z"
+    },
+    {
+      "fn": "generalWorkspaceDir",
+      "args": [],
+      "expected": "/fixture/home/.pilotdeck"
+    },
+    {
+      "fn": "isGeneralWorkspaceDir",
+      "args": [
+        "/fixture/home/.pilotdeck"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "getWorkspaceMemoryMode",
+      "args": [
+        "/fixture/home/.pilotdeck"
+      ],
+      "expected": "general"
+    },
+    {
+      "fn": "isGeneralWorkspaceDir",
+      "args": [
+        "/fixture/home/.pilotdeck/."
+      ],
+      "expected": true
+    },
+    {
+      "fn": "getWorkspaceMemoryMode",
+      "args": [
+        "/fixture/home/.pilotdeck/."
+      ],
+      "expected": "general"
+    },
+    {
+      "fn": "isGeneralWorkspaceDir",
+      "args": [
+        "/fixture/home/.pilotdeck/../.pilotdeck"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "getWorkspaceMemoryMode",
+      "args": [
+        "/fixture/home/.pilotdeck/../.pilotdeck"
+      ],
+      "expected": "general"
+    },
+    {
+      "fn": "isGeneralWorkspaceDir",
+      "args": [
+        "/fixture/home/other"
+      ],
+      "expected": false
+    },
+    {
+      "fn": "getWorkspaceMemoryMode",
+      "args": [
+        "/fixture/home/other"
+      ],
+      "expected": "single"
+    },
+    {
+      "fn": "isGeneralWorkspaceDir",
+      "args": [
+        "/fixture/home/.pilotdeck2"
+      ],
+      "expected": false
+    },
+    {
+      "fn": "getWorkspaceMemoryMode",
+      "args": [
+        "/fixture/home/.pilotdeck2"
+      ],
+      "expected": "single"
+    },
+    {
+      "fn": "buildExternalProjectLogicalId",
+      "args": [
+        "/fixture/ws",
+        "proj-1"
+      ],
+      "expected": "external-project:2a4ade9a86"
+    },
+    {
+      "fn": "buildExternalProjectLogicalId",
+      "args": [
+        "/fixture/ws/../ws",
+        "项目"
+      ],
+      "expected": "external-project:2ef0ecfbf4"
+    },
+    {
+      "fn": "buildExternalRecordId",
+      "args": [
+        "/fixture/ws",
+        "dir/file.md"
+      ],
+      "expected": "external:44a5ae7133:dir/file.md"
+    },
+    {
+      "fn": "buildExternalRecordId",
+      "args": [
+        "/fixture/ws",
+        "dir\\file.md"
+      ],
+      "expected": "external:44a5ae7133:dir/file.md"
+    },
+    {
+      "fn": "buildExternalRecordId",
+      "args": [
+        "/fixture/ws",
+        "../x y.md"
+      ],
+      "expected": "external:44a5ae7133:../x y.md"
+    },
+    {
+      "fn": "buildExternalRecordId",
+      "args": [
+        "/fixture/ws",
+        ""
+      ],
+      "expected": "external:44a5ae7133:"
+    },
+    {
+      "fn": "parseExternalRecordId",
+      "args": [
+        "external:abc:dir/file.md"
+      ],
+      "expected": {
+        "workspaceKey": "abc",
+        "relativePath": "dir/file.md"
+      }
+    },
+    {
+      "fn": "isExternalRecordId",
+      "args": [
+        "external:abc:dir/file.md"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "parseExternalRecordId",
+      "args": [
+        "external:abc:dir\\file.md"
+      ],
+      "expected": {
+        "workspaceKey": "abc",
+        "relativePath": "dir/file.md"
+      }
+    },
+    {
+      "fn": "isExternalRecordId",
+      "args": [
+        "external:abc:dir\\file.md"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "parseExternalRecordId",
+      "args": [
+        "external:  key  :  path  "
+      ],
+      "expected": {
+        "workspaceKey": "key",
+        "relativePath": "path"
+      }
+    },
+    {
+      "fn": "isExternalRecordId",
+      "args": [
+        "external:  key  :  path  "
+      ],
+      "expected": true
+    },
+    {
+      "fn": "parseExternalRecordId",
+      "args": [
+        "external::x"
+      ],
+      "expected": null
+    },
+    {
+      "fn": "isExternalRecordId",
+      "args": [
+        "external::x"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "parseExternalRecordId",
+      "args": [
+        "external:abc:"
+      ],
+      "expected": null
+    },
+    {
+      "fn": "isExternalRecordId",
+      "args": [
+        "external:abc:"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "parseExternalRecordId",
+      "args": [
+        "external:abc"
+      ],
+      "expected": null
+    },
+    {
+      "fn": "isExternalRecordId",
+      "args": [
+        "external:abc"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "parseExternalRecordId",
+      "args": [
+        "other:abc:x"
+      ],
+      "expected": null
+    },
+    {
+      "fn": "isExternalRecordId",
+      "args": [
+        "other:abc:x"
+      ],
+      "expected": false
+    },
+    {
+      "fn": "parseExternalRecordId",
+      "args": [
+        "external:abc: spaced \\ path "
+      ],
+      "expected": {
+        "workspaceKey": "abc",
+        "relativePath": "spaced / path"
+      }
+    },
+    {
+      "fn": "isExternalRecordId",
+      "args": [
+        "external:abc: spaced \\ path "
+      ],
+      "expected": true
+    },
+    {
+      "fn": "generalWorkspaceDirEmptyHome",
+      "args": [],
+      "expected": ".pilotdeck"
+    },
+    {
+      "fn": "isGeneralWorkspaceDirEmptyHome",
+      "args": [
+        ".pilotdeck"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "getWorkspaceMemoryModeEmptyHome",
+      "args": [
+        ".pilotdeck"
+      ],
+      "expected": "general"
+    },
+    {
+      "fn": "isGeneralWorkspaceDirEmptyHome",
+      "args": [
+        "./.pilotdeck/"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "getWorkspaceMemoryModeEmptyHome",
+      "args": [
+        "./.pilotdeck/"
+      ],
+      "expected": "general"
+    },
+    {
+      "fn": "isGeneralWorkspaceDirEmptyHome",
+      "args": [
+        "/fixture/home/.pilotdeck"
+      ],
+      "expected": false
+    },
+    {
+      "fn": "getWorkspaceMemoryModeEmptyHome",
+      "args": [
+        "/fixture/home/.pilotdeck"
+      ],
+      "expected": "single"
+    },
+    {
+      "fn": "traceI18n",
+      "args": [
+        "trace.key",
+        "fallback"
+      ],
+      "expected": {
+        "key": "trace.key",
+        "fallback": "fallback"
+      }
+    },
+    {
+      "fn": "traceI18n",
+      "args": [
+        "trace.key",
+        "fallback",
+        [
+          []
+        ]
+      ],
+      "expected": {
+        "key": "trace.key",
+        "args": [
+          ""
+        ],
+        "fallback": "fallback"
+      }
+    },
+    {
+      "fn": "traceI18n",
+      "args": [
+        "key",
+        "fb",
+        [
+          "x",
+          1,
+          1.5,
+          {
+            "$number": "-0"
+          },
+          {
+            "$number": "NaN"
+          },
+          {
+            "$number": "Infinity"
+          }
+        ]
+      ],
+      "expected": {
+        "key": "key",
+        "args": [
+          "x",
+          "1",
+          "1.5",
+          "0",
+          "NaN",
+          "Infinity"
+        ],
+        "fallback": "fb"
+      }
+    },
+    {
+      "fn": "parseRawRecallSections",
+      "args": [
+        ""
+      ],
+      "expected": {
+        "userProfile": [],
+        "projectMeta": [],
+        "projectMemory": [],
+        "feedbackMemory": []
+      }
+    },
+    {
+      "fn": "buildMemoryRecallSystemContext",
+      "args": [
+        ""
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "parseRawRecallSections",
+      "args": [
+        "### [user]\nAlice\n### [project_meta]\nMeta\n### [project]\nProject\n### [feedback]\nFeedback"
+      ],
+      "expected": {
+        "userProfile": [
+          "Alice"
+        ],
+        "projectMeta": [
+          "Meta"
+        ],
+        "projectMemory": [
+          "Project"
+        ],
+        "feedbackMemory": [
+          "Feedback"
+        ]
+      }
+    },
+    {
+      "fn": "buildMemoryRecallSystemContext",
+      "args": [
+        "### [user]\nAlice\n### [project_meta]\nMeta\n### [project]\nProject\n### [feedback]\nFeedback"
+      ],
+      "expected": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nAlice\n\n## Project Meta\n\nMeta\n\n## Project Memory\n\nProject\n\n## Feedback Memory\n\nFeedback"
+    },
+    {
+      "fn": "parseRawRecallSections",
+      "args": [
+        "## ClawXMemory Recall\nroute=auto\nTreat these file memories as the authoritative long-term memory for this turn when relevant.\n### [user]\n  indented  \n\nnext\n### [project]\n\n### [project]\nsecond"
+      ],
+      "expected": {
+        "userProfile": [
+          "indented  \n\nnext"
+        ],
+        "projectMeta": [],
+        "projectMemory": [
+          "second"
+        ],
+        "feedbackMemory": []
+      }
+    },
+    {
+      "fn": "buildMemoryRecallSystemContext",
+      "args": [
+        "## ClawXMemory Recall\nroute=auto\nTreat these file memories as the authoritative long-term memory for this turn when relevant.\n### [user]\n  indented  \n\nnext\n### [project]\n\n### [project]\nsecond"
+      ],
+      "expected": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nindented  \n\nnext\n\n## Project Memory\n\nsecond"
+    },
+    {
+      "fn": "parseRawRecallSections",
+      "args": [
+        "### [project_meta]\r\nA\r\nB\r\n### [user]\r\nC"
+      ],
+      "expected": {
+        "userProfile": [
+          "C"
+        ],
+        "projectMeta": [
+          "A\nB"
+        ],
+        "projectMemory": [],
+        "feedbackMemory": []
+      }
+    },
+    {
+      "fn": "buildMemoryRecallSystemContext",
+      "args": [
+        "### [project_meta]\r\nA\r\nB\r\n### [user]\r\nC"
+      ],
+      "expected": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nC\n\n## Project Meta\n\nA\nB"
+    },
+    {
+      "fn": "parseRawRecallSections",
+      "args": [
+        "### [unknown]\nignored\n### [user]\nkept"
+      ],
+      "expected": {
+        "userProfile": [
+          "kept"
+        ],
+        "projectMeta": [],
+        "projectMemory": [],
+        "feedbackMemory": []
+      }
+    },
+    {
+      "fn": "buildMemoryRecallSystemContext",
+      "args": [
+        "### [unknown]\nignored\n### [user]\nkept"
+      ],
+      "expected": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nkept"
+    },
+    {
+      "fn": "parseRawRecallSections",
+      "args": [
+        "### [user]\n  \n\n"
+      ],
+      "expected": {
+        "userProfile": [],
+        "projectMeta": [],
+        "projectMemory": [],
+        "feedbackMemory": []
+      }
+    },
+    {
+      "fn": "buildMemoryRecallSystemContext",
+      "args": [
+        "### [user]\n  \n\n"
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "parseRawRecallSections",
+      "args": [
+        "### [user]\nA\nroute=secret\nB"
+      ],
+      "expected": {
+        "userProfile": [
+          "A\nB"
+        ],
+        "projectMeta": [],
+        "projectMemory": [],
+        "feedbackMemory": []
+      }
+    },
+    {
+      "fn": "buildMemoryRecallSystemContext",
+      "args": [
+        "### [user]\nA\nroute=secret\nB"
+      ],
+      "expected": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nA\nB"
+    },
+    {
+      "fn": "buildMemoryRecallSystemContext",
+      "args": [
+        "  \n route=x \n  "
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        {
+          "$undefined": true
+        }
+      ],
+      "expected": false
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        ""
+      ],
+      "expected": false
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "   "
+      ],
+      "expected": false
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "route=auto"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "a\nroute=auto"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "a\rroute=auto"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "a route=auto"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "a ### [user]"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        " ### [user]"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "### [user]\n"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "### [project_meta]"
+      ],
+      "expected": true
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "x### [project]"
+      ],
+      "expected": false
+    },
+    {
+      "fn": "looksLikeRawRecallContext",
+      "args": [
+        "ROUTE=x"
+      ],
+      "expected": false
+    },
+    {
+      "fn": "normalizeCaseTraceContextPreview",
+      "args": [
+        {
+          "retrieval": {
+            "contextPreview": "### [user]\nAlice\n### [project]\nP"
+          }
+        }
+      ],
+      "expected": {
+        "retrieval": {
+          "contextPreview": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nAlice\n\n## Project Memory\n\nP"
+        }
+      }
+    },
+    {
+      "fn": "normalizeCaseTraceContextPreview",
+      "args": [
+        {
+          "a": 1,
+          "retrieval": {
+            "x": 1,
+            "contextPreview": "### [feedback]\nF\n### [user]\nU",
+            "y": 2
+          },
+          "b": 2
+        }
+      ],
+      "expected": {
+        "a": 1,
+        "retrieval": {
+          "x": 1,
+          "contextPreview": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nU\n\n## Feedback Memory\n\nF",
+          "y": 2
+        },
+        "b": 2
+      }
+    },
+    {
+      "fn": "normalizeCaseTraceContextPreview",
+      "args": [
+        {
+          "retrieval": {
+            "contextPreview": "not raw"
+          }
+        }
+      ],
+      "expected": {
+        "retrieval": {
+          "contextPreview": "not raw"
+        }
+      }
+    },
+    {
+      "fn": "normalizeCaseTraceContextPreview",
+      "args": [
+        {
+          "retrieval": {
+            "contextPreview": ""
+          }
+        }
+      ],
+      "expected": {
+        "retrieval": {
+          "contextPreview": ""
+        }
+      }
+    },
+    {
+      "fn": "normalizeCaseTraceContextPreview",
+      "args": [
+        {
+          "retrieval": {}
+        }
+      ],
+      "expected": {
+        "retrieval": {}
+      }
+    },
+    {
+      "fn": "normalizeCaseTraceContextPreview",
+      "args": [
+        {
+          "retrieval": null
+        }
+      ],
+      "expected": {
+        "retrieval": null
+      }
+    },
+    {
+      "fn": "normalizeCaseTraceContextPreview",
+      "args": [
+        {
+          "other": 1
+        }
+      ],
+      "expected": {
+        "other": 1
+      }
+    }
+  ]
+}

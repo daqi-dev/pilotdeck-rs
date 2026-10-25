@@ -18,6 +18,7 @@
 pub mod file_memory;
 mod node_fs;
 pub mod storage;
+pub mod text;
 
 pub use file_memory::{
     EdgeClawFileStores, FileMemoryError, FileMemoryStore, FileMemoryStoreOptions,
