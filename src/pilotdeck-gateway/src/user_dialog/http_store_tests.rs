@@ -27,6 +27,11 @@ const NODE_408: &[u8] =
 /// 67 bytes, same shape as [`NODE_408`].
 const NODE_431: &[u8] =
     include_bytes!("../../tests/fixtures/user-dialog-http-store/header-lifecycle/node-431.bin");
+/// 47 bytes: Node's default `clientError` answer for an incomplete request
+/// (`HPE_INVALID_EOF_STATE`), captured from a peer that sent a partial head or
+/// body and then `shutdown(SHUT_WR)` (fix-r2 probe `probe-half-close.mjs`).
+const NODE_400: &[u8] =
+    include_bytes!("../../tests/fixtures/user-dialog-http-store/header-lifecycle/node-400.bin");
 
 fn oracle() -> Value {
     serde_json::from_str(ORACLE).expect("fixture oracle.json is valid JSON")
@@ -563,6 +568,42 @@ async fn oversized_headers_receive_node_431_bytes() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// Frozen-ledger anchor (`specs/gateway-parity/accepted-diffs.md:575` and
+/// `:603`). fix-r1 renamed the old `oversized_headers_are_rejected_like_node`
+/// to `oversized_headers_receive_node_431_bytes`; the ledger is byte-frozen, so
+/// this name must keep existing. It keeps the original assertions (431, empty
+/// body, `connection: close`) and additionally pins Node's exact 67 bytes, so
+/// the name is no longer a "like Node" over-claim.
+#[tokio::test]
+async fn oversized_headers_are_rejected_like_node() {
+    let (store, directory) = file_store("headers-ledger-anchor");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let padding = "a".repeat(DEFAULT_MAX_HEADER_BYTES);
+    let request = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Pad: {padding}\r\nConnection: close\r\n\r\n"
+    );
+    let response = exchange(port, request.as_bytes()).await.unwrap();
+    assert_eq!(
+        status(&response),
+        431,
+        "oversized header must be 431: {:?}",
+        String::from_utf8_lossy(&response)
+    );
+    let text = String::from_utf8_lossy(&response);
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    assert!(body.is_empty(), "Node sends no body with 431");
+    assert!(
+        head.to_ascii_lowercase().contains("connection: close"),
+        "Node closes the connection after 431"
+    );
+    assert_eq!(
+        response, NODE_431,
+        "Node's 431 is the 67-byte constant, not hyper's content-length/date shape"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// Negative control for the header guard: 15,000 bytes stays under Node's
 /// 16 KiB field budget, so the request must reach the handler (405 for GET)
 /// instead of being rejected by an over-eager pre-reader. This is the same
@@ -810,8 +851,7 @@ async fn close_closes_idle_keep_alive_connections() {
 /// 60 s `headersTimeout`. A generated Node v22.22.0 server closes at 6,003 ms
 /// (probe record in `_tmp/20261025-issue-679/probe`). The timer is shortened
 /// here; the default constants are pinned separately.
-#[tokio::test]
-async fn idle_keep_alive_connections_close_at_keep_alive_timeout() {
+async fn assert_idle_keep_alive_connection_closes() {
     let (store, directory) = file_store("idle-timeout");
     let limits = ServeLimits {
         headers_timeout: Duration::from_secs(5),
@@ -838,6 +878,22 @@ async fn idle_keep_alive_connections_close_at_keep_alive_timeout() {
     );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn idle_keep_alive_connections_close_at_keep_alive_timeout() {
+    assert_idle_keep_alive_connection_closes().await;
+}
+
+/// Frozen-ledger anchor (`accepted-diffs.md:576`, `:603`). Before #679 an idle
+/// keep-alive connection was bounded only by `headersTimeout`, which is where
+/// the name comes from; #679 gave it its own `keepAliveTimeout` and renamed
+/// this test to [`idle_keep_alive_connections_close_at_keep_alive_timeout`].
+/// The ledger is byte-frozen, so the old name stays as a wrapper for the
+/// current (Node-aligned) idle-timer assertion.
+#[tokio::test]
+async fn idle_keep_alive_connections_close_at_headers_timeout() {
+    assert_idle_keep_alive_connection_closes().await;
 }
 
 /// End-to-end default check: Node v22.22.0 (keepAliveTimeout 5000 ms plus the
@@ -1718,8 +1774,7 @@ async fn anonymous_oversized_body_is_rejected_before_reading() {
 
 /// S2×E1T1: a partial first request head must receive Node's exact 51-byte
 /// 408 (`requestTimeoutResponse`), not the pre-#699 zero-byte EOF.
-#[tokio::test]
-async fn partial_headers_receive_node_408_bytes() {
+async fn assert_partial_headers_receive_node_408() {
     let (store, directory) = file_store("headers-timeout");
     let limits = ServeLimits {
         headers_timeout: Duration::from_millis(200),
@@ -1740,6 +1795,21 @@ async fn partial_headers_receive_node_408_bytes() {
     );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn partial_headers_receive_node_408_bytes() {
+    assert_partial_headers_receive_node_408().await;
+}
+
+/// Frozen-ledger anchor (`accepted-diffs.md:576`, `:603`). fix-r1 renamed this
+/// test to [`partial_headers_receive_node_408_bytes`]; the ledger is
+/// byte-frozen, so the old name stays as a wrapper. The assertion still means
+/// "a partial head is closed after `headersTimeout`", now with Node's 51 bytes
+/// in front of the EOF.
+#[tokio::test]
+async fn partial_headers_are_closed_after_headers_timeout() {
+    assert_partial_headers_receive_node_408().await;
 }
 
 /// S1×E1T1: Node arms `headersTimeout` on an accepted connection even before
@@ -1911,6 +1981,99 @@ async fn client_close_mid_body_sends_no_408_and_server_recovers() {
     assert!(
         !response.starts_with(NODE_408),
         "a client close must not be reported as a timeout"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Send `request`, half-close the write side (`shutdown(SHUT_WR)`) and read
+/// everything the server writes until it closes. This is the raw-socket shape
+/// Node's TCP peers use (`nc`): the peer only stops writing, its read half
+/// stays open, so the server must still answer.
+async fn half_close_exchange(port: u16, request: &[u8]) -> Vec<u8> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    if !request.is_empty() {
+        stream.write_all(request).await.unwrap();
+    }
+    stream.shutdown().await.expect("shutdown write half");
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(3), stream.read_to_end(&mut response))
+        .await
+        .expect("the server never closed after the peer half-closed")
+        .unwrap();
+    response
+}
+
+/// GLM fix-r2 P1: a peer FIN is a read-side half-close, not "connection
+/// closed". fix-r1 set one `closed` flag on read EOF, so `poll_write` answered
+/// every later response with BrokenPipe and a half-closed peer saw 0 bytes.
+///
+/// Node v22.22.0 (probe `_tmp/20261025-issue-699/fix-r2/node/probe-half-close.mjs`)
+/// sends 0 bytes for an empty connection, the 47-byte parser-level 400 for an
+/// incomplete head or body, and the normal response for a complete request.
+/// The complete-request cell is the positive control: the incomplete-response
+/// branch must not swallow a request that has nothing left to read.
+#[tokio::test]
+async fn half_closed_peers_receive_node_bytes() {
+    let (store, directory) = file_store("half-close");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+
+    // S0: no byte of a request arrived -> Node closes silently.
+    let empty = half_close_exchange(port, b"").await;
+    assert!(
+        empty.is_empty(),
+        "an empty half-closed connection must stay silent: {empty:?}"
+    );
+
+    // S1: some bytes of a request head arrived, but never the blank line.
+    let partial_head = half_close_exchange(
+        port,
+        b"POST /v1/gateway-user-dialog-store/list HTTP/1.1\r\nHost: h\r\nAuthoriz",
+    )
+    .await;
+    assert_eq!(
+        partial_head,
+        NODE_400,
+        "Node answers a partial head + FIN with the parser's 400: {:?}",
+        String::from_utf8_lossy(&partial_head)
+    );
+
+    // S2: the head completed, the Content-Length body did not.
+    let half_body = half_close_exchange(
+        port,
+        format!(
+            "POST {STORE_PATH_PREFIX}put HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+             Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+             Content-Length: 100\r\n\r\nhello"
+        )
+        .as_bytes(),
+    )
+    .await;
+    assert_eq!(
+        half_body,
+        NODE_400,
+        "Node answers an incomplete body + FIN with the parser's 400 \
+         (hyper's 500 must not be appended): {:?}",
+        String::from_utf8_lossy(&half_body)
+    );
+
+    // S3 positive control: a complete request that half-closes still reaches
+    // the handler and gets the real response, exactly like Node.
+    let complete = half_close_exchange(port, &http_post(&list_body())).await;
+    assert_eq!(
+        status(&complete),
+        200,
+        "a complete request + FIN must still get its response: {:?}",
+        String::from_utf8_lossy(&complete)
+    );
+    assert!(
+        complete.ends_with(br#"{"version":1,"result":[]}"#),
+        "the complete response body must reach the half-closed peer: {:?}",
+        String::from_utf8_lossy(&complete)
+    );
+    assert!(
+        !complete.starts_with(NODE_400),
+        "a complete request must not be answered with the incomplete-request 400"
     );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
