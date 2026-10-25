@@ -1,0 +1,8 @@
+{
+  "mode": "bundle",
+  "mismatch": true,
+  "ca": "<fixture-0>/ca.pem",
+  "url": "<fixture-3>",
+  "stdout": "{\"mcp\":{\"ok\":false,\"error\":\"MCP handshake failed: fetch failed\",\"code\":\"mcp_handshake_failed\"},\"hook\":{\"ok\":false,\"value\":{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}},\"model\":{\"ok\":false,\"error\":\"fetch failed\"},\"count\":{\"ok\":false,\"value\":{\"tokens\":7,\"source\":\"local\",\"exact\":false,\"localEstimateTokens\":7,\"estimatorError\":\"fetch failed\"}}}\n",
+  "stderr": "(node:99392) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+}

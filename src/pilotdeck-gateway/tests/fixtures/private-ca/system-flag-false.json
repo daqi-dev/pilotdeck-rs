@@ -1,0 +1,8 @@
+{
+  "mode": "system-flag",
+  "mismatch": false,
+  "ca": "<fixture-0>/ca.pem",
+  "url": "<fixture-2>",
+  "stdout": "{\"mcp\":{\"ok\":true},\"hook\":{\"ok\":true,\"value\":{\"stdout\":\"{}\",\"stderr\":\"\",\"exitCode\":0,\"outcome\":\"success\",\"output\":{\"type\":\"sync\",\"raw\":{}}}},\"model\":{\"ok\":true,\"value\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"tls-ok\"}],\"usage\":{\"inputTokens\":7,\"outputTokens\":1,\"totalTokens\":8},\"finishReason\":\"stop\",\"raw\":{\"id\":\"local\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"probe\",\"content\":[{\"type\":\"text\",\"text\":\"tls-ok\"}],\"stop_reason\":\"end_turn\",\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}}},\"count\":{\"ok\":true,\"value\":{\"tokens\":7,\"source\":\"provider\",\"exact\":true,\"localEstimateTokens\":7}}}\n",
+  "stderr": "(node:99523) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+}
