@@ -38,6 +38,9 @@ bytes = "=1.10.1"
 # ring backend (no cmake/aws-lc), webpki-roots = Mozilla bundle like Node.
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "tls12", "ring"] }
 hyper-rustls = { version = "=0.27.10", default-features = false, features = ["http1", "tls12", "ring", "webpki-tokio"] }
+# #682: already locked via hyper-rustls; retain bundled roots when adding PEM CAs.
+# Mozilla certificate data, CDLA-Permissive-2.0; no new version or binary.
+webpki-roots = "=1.0.9"
 # Hook-local connect deadline: hyper-util's `Connect` is blanket-implemented
 # for `tower_service::Service<Uri>`. Already in the tree via hyper-util
 # (same 0.3.3), so this adds no download and no version.

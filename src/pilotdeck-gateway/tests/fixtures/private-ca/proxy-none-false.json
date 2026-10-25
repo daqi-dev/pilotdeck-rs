@@ -1,0 +1,8 @@
+{
+  "mode": "proxy-none",
+  "mismatch": false,
+  "ca": "<fixture-0>/ca.pem",
+  "url": "<fixture-4>",
+  "stdout": "[proxy] Global fetch proxy → <fixture-5> (noProxy: 127.0.0.1,localhost)\n{\"mcp\":{\"ok\":false,\"error\":\"MCP handshake failed: fetch failed\",\"code\":\"mcp_handshake_failed\"},\"hook\":{\"ok\":false,\"value\":{\"stdout\":\"\",\"stderr\":\"fetch failed\",\"outcome\":\"non_blocking_error\",\"output\":{\"type\":\"sync\"}}},\"model\":{\"ok\":false,\"error\":\"fetch failed\"},\"count\":{\"ok\":false,\"value\":{\"tokens\":7,\"source\":\"local\",\"exact\":false,\"localEstimateTokens\":7,\"estimatorError\":\"fetch failed\"}}}\n",
+  "stderr": "(node:1046) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:1046) [DEP0123] DeprecationWarning: Setting the TLS ServerName to an IP address is not permitted by RFC 6066. This will be ignored in a future version.\n"
+}

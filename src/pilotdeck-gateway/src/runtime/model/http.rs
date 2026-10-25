@@ -45,6 +45,7 @@ use crate::host::ModuleError;
 
 mod errors;
 mod sse;
+mod tls;
 pub use errors::NetworkFetchError;
 pub(crate) use errors::retry_after_from_message;
 
@@ -244,8 +245,7 @@ pub struct HyperModelTransport {
     client: Client<hyper_rustls::HttpsConnector<ProxyConnect>, Full<Bytes>>,
 }
 impl HyperModelTransport {
-    /// Mozilla roots (`webpki-roots`), like Node's bundled CA store; the OS
-    /// trust store and `NODE_EXTRA_CA_CERTS` are not consulted.
+    /// Bundled roots plus Node-compatible explicit CA files; see `tls`.
     pub fn new() -> Self {
         Self::from_config(webpki_client_config(), ProxyConfig::from_settings(None))
     }
@@ -1028,12 +1028,9 @@ pub(crate) fn proxy_https_connector(
         })
 }
 
-/// rustls client config trusting the Mozilla roots (`webpki-roots`).
+/// Shared default trust configuration, including explicit extra CA sources.
 pub(crate) fn webpki_client_config() -> rustls::ClientConfig {
-    use hyper_rustls::ConfigBuilderExt;
-    HyperModelTransport::builder()
-        .with_webpki_roots()
-        .with_no_client_auth()
+    tls::client_config()
 }
 /// rustls client config trusting exactly `roots`.
 pub(crate) fn rooted_client_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {

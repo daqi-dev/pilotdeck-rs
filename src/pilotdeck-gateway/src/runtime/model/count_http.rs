@@ -57,7 +57,7 @@ impl HyperCountTransport {
         }
     }
 }
-/// Mozilla roots, like the stream transport.
+/// Shared default CA sources, like the stream transport.
 impl Default for HyperCountTransport {
     fn default() -> Self {
         Self::from_config(super::http::webpki_client_config())

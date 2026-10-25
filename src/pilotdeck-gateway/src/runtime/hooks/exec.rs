@@ -1192,8 +1192,7 @@ impl Default for HttpHookExecutor {
 }
 impl HttpHookExecutor {
     pub fn new() -> Self {
-        // Node's fetch trusts its bundled CA store; `webpki-roots` is the
-        // equivalent Mozilla bundle the model transport already uses.
+        // All default HTTP clients share the bundled and explicit extra CAs.
         Self::with_config(crate::runtime::model::http::webpki_client_config())
     }
     /// Trust exactly `roots` (tests use the fixture's throwaway CA).
