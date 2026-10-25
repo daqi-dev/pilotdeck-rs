@@ -226,33 +226,19 @@ fn proxy_url(proxy: &JsValue, port: u16) -> String {
 /// worker (see `generate.mts`). Returned rather than installed: the replay
 /// re-execs the test binary with this environment, because the workspace
 /// forbids `unsafe` and edition 2024 makes `set_var` unsafe.
-fn case_env(
-    case: &JsValue,
-    mock_port: u16,
-    proxy_port: u16,
-    closed_port: u16,
-) -> Vec<(String, String)> {
-    let replacements = vec![
-        ("<mock>".to_owned(), format!("0.0.0.0:{mock_port}")),
-        (
-            "<proxy>".to_owned(),
-            proxy_url(field(case, "proxy"), proxy_port),
-        ),
-        (
-            "<closedProxy>".to_owned(),
-            format!("http://127.0.0.1:{closed_port}"),
-        ),
-    ];
+fn case_env(case: &JsValue, replacements: &[(String, String)]) -> Vec<(String, String)> {
+    // Share all placeholders with URL/config expansion, including credentials
+    // built from <proxyAuthority> in the invalid-userinfo env scenario.
     let proxy = field(case, "proxy");
     let mut envs: Vec<(String, String)> = Vec::new();
     if let Some(key) = field(proxy, "env").as_string() {
-        envs.push((key.to_utf8().unwrap(), replace("<proxy>", &replacements)));
+        envs.push((key.to_utf8().unwrap(), replace("<proxy>", replacements)));
     }
     if let Some(extra) = field(case, "env").as_object() {
         for (key, value) in extra.own_entries() {
             envs.push((
                 key.to_utf8().unwrap(),
-                string(&fill(value, &replacements), "env"),
+                string(&fill(value, replacements), "env"),
             ));
         }
     }
@@ -261,7 +247,7 @@ fn case_env(
         envs.push((
             string(field(no_proxy, "name"), "noProxy name"),
             string(
-                &fill(field(no_proxy, "value"), &replacements),
+                &fill(field(no_proxy, "value"), replacements),
                 "noProxy value",
             ),
         ));
@@ -502,7 +488,7 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
         for key in PROXY_ENV_KEYS {
             command.env_remove(key);
         }
-        for (key, value) in case_env(case, mock.port, proxy_port, closed) {
+        for (key, value) in case_env(case, &replacements) {
             command.env(key, value);
         }
         if let Some(settings) = &settings {
