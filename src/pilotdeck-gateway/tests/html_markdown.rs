@@ -264,13 +264,26 @@ fn deep_dom_conversion_and_drop_do_not_recurse() {
         .unwrap();
 }
 
+/// Domino 2.2.0 compatibility cases. The first eleven rows are the original
+/// `accepted-diffs.md:64` gaps (select/hr, search, select inner tags); the rest
+/// pin the rewrite's allowed tokens, raw-text/template/table/foreign contexts,
+/// and the ordinary block negative control. All expected bytes are recorded
+/// from the real TS `getURLMarkdownContent` entry point. The historical test
+/// name is kept because the frozen ledger points at it.
 #[test]
-#[ignore = "pr9c: newer HTML5 parser rules differ from domino; not accepted differences"]
 fn parser_version_gaps_match_real_ts() {
     baseline::oracle(ORACLE);
     let oracle: serde_json::Value = serde_json::from_str(ORACLE).unwrap();
     let cases = oracle["parserGaps"].as_array().unwrap();
-    assert_eq!(cases.len(), 11);
+    assert_eq!(cases.len(), 53);
+    assert_eq!(
+        cases
+            .iter()
+            .map(|case| case["name"].as_str().unwrap())
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        53
+    );
     let mut failures = Vec::new();
     for case in cases {
         let actual = Turndown.convert(case["html"].as_str().unwrap()).unwrap();

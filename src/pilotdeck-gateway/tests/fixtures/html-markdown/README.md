@@ -30,7 +30,7 @@ H1/H2 是 setext，代码块缩进四空格，表格降成块文字，script/sty
 template 内容不输出。不能按常见 Markdown 转换器的偏好改这些行为。
 
 `cases.mjs` 只有输入；`record.mts` 通过真实 `getURLMarkdownContent` 和注入的 fetch hook
-录下 108 条 Markdown、2 条解析器版本缺口，以及真实 `createWebFetchTool` 的两次 raw 调用
+录下 108 条 Markdown、53 条解析器兼容性样例，以及真实 `createWebFetchTool` 的两次 raw 调用
 （第二次缓存命中）。没有网络请求或硬编码期望值。`oracle.json` 中还绑定两包的版本与
 `lib/`、`package.json` SHA256，以覆盖原有源码闭包守卫不追踪的 npm 外部导入。
 
@@ -69,17 +69,23 @@ cargo test --locked --offline -p pilotdeck-gateway --test web_tools \
 固定提交溯源并各跑两次，与现有金样逐字节一致；原始输出见
 `_tmp/20261020-a65-pr9b/RESULT.md` 的「修复轮 1（codex）」。
 
-## pr9c 待办：解析器版本差异
+## #677：解析器兼容性对齐（原 pr9c 待办）
 
-`parserGaps` 两条保留真实 TS 输出；对应 Rust 测试明确 `ignore`，不算通过或已接受差异：
+`parserGaps` 现为 53 条真实 TS 兼容性样例，全部由 `generate.mts` 从
+`getURLMarkdownContent` 录制，并由 `parser_version_gaps_match_real_ts`
+逐字节回放（名称保留以兼容冻结账本指针，但已不再 `ignore`）。旧版 `accepted-diffs.md:64` 的四类中，三类已在
+token 边界对齐：
 
-| 输入 | domino 2.2.0 的 Markdown | 原因 |
+| 类别 | 对齐方式 | 真实 TS 样例 |
 |---|---|---|
-| `<select><hr></select>` | 空串 | 新 HTML5 规则允许 SELECT 内 HR，旧 parser 忽略它 |
-| `<p>a<search>b</search>c</p>` | `abc` | 新 HTML5 规则把 SEARCH 当块级树构建元素，改变 P 边界 |
+| `<select><hr>` | `html_compat` 按 domino 旧 `in select` 模式丢弃 HR | `select-hr`、`select-hr-text`、`select-hr-option` |
+| `<search>` | 改名为中性行内元素 `x-pd-search`，不再是当前规范的 p-closing 块 | `search-element`、`search-empty`、`search-nested-p` 等 |
+| select 内元素家族 | 旧 `in select` 只保留 text/option/optgroup/script/template，`input`/`keygen`/`textarea` 与嵌套 select 关闭 select；表内 select 按 `in select in table` 先关闭 | 原 9 条 + script/template/textarea/input/nested/table 上下文 |
 
-不能仅靠输出后处理普遍修复树构建差异。后续需在 token/tree-building 边界有针对性对齐，
-补正负样本，再启用此测试；在此之前不宣称 HTML 解析已与 domino 完全等价。
+改写只发生在 `<select` / `<search` 存在的输入；其余字节原样交给 html5ever。
+不含这两个前缀的文档走借用快路径。宽子树 4 / 8 MiB 的 domino `Invalid array
+length` 是 V8 数组长度运行时差异，不能由 token 改写复刻；仍按未批准差异登记
+`specs/gateway-parity/diffs/A6.5-WEBFETCH-WIDE-RUNTIME-001.md`。
 
 
 ## 修复轮 1：资源预算与性能回归
@@ -187,7 +193,9 @@ n=25 的成功输出只存 UTF-16 长度 335544309 与完整 UTF-8 字节的 SHA
 select 家族未穷举：实测 div / p / li / table / h1 / ul / img / br / option>div
 与 TS 不同，真实 TS 原值由 `generate.mts` 录入 `oracle.json`；
 span 和纯文本两例一致，原值仅记工作区 RESULT「修复轮 9」。
-`parser_version_gaps_match_real_ts` 仍 ignore，不把未对齐计为通过。
+当时的 `parser_version_gaps_match_real_ts` 仍 ignore；issue #677 已把三类解析器
+差异对齐，同名测试已启用（见上文
+「#677：解析器兼容性对齐」）。
 
 `generate-large.mts` 追加 `reparent-wide-2mib`：240 个属性各异的 `<b a=i>`、
 `<p>`、重复 `<span>x</span>`、补齐 x、240 个 `</b>`，精确 2 MiB。

@@ -33,7 +33,7 @@ export async function record(baseline: string, sourceCommit: string, sourceSha25
   const recorded = await runCases(cases);
   const gaps = await runCases(parserGaps);
   assert.equal(recorded.length, 108);
-  assert.equal(gaps.length, 11);
+  assert.equal(gaps.length, 53);
   assert.equal(new Set(recorded.map(c => c.name)).size, recorded.length);
   const requests: unknown[] = [];
   clearWebFetchCache();
