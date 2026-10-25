@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Serial behavior mutations; restores exact source bytes even on failure."""
+"""Serial behavior mutations; locked, baseline-checked, exact byte restore."""
 import hashlib
 import os
 from pathlib import Path
-import subprocess
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 evidence = Path(sys.argv[1]).resolve()
 evidence.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
-original = source.read_text()
 prefix = 'runtime::session::owner::tests::hooks::'
 active, idle, other = 'active_user_turn_matches_ts', 'idle_hook_matches_ts_with_turn_interleaving', 'non_idle_hooks_are_silent'
 mutations = [
@@ -37,32 +38,42 @@ mutations = [
     ('early-callback', '.dispose(format!("session_{label}").into())\n            .await;', '.dispose(format!("session_{label}").into());', idle),
 ]
 env = dict(os.environ, CARGO_TARGET_DIR=str(root / '_build/cargo-target'))
-def run(label, test, red=False):
-    with (evidence / (label + '.log')).open('x') as log:
-        subprocess.run(['bash', 'scripts/cargo-slots.sh'], cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True)
-        command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', prefix + test, '--', '--nocapture']
-        result = subprocess.run(command, cwd=root / 'src', env=env, stdout=log, stderr=subprocess.STDOUT, timeout=600)
-    output = (evidence / (label + '.log')).read_text()
+def command(test):
+    return ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', prefix + test, '--', '--nocapture']
+def run(label, test, red, slots):
+    argv = command(test)
+    result = run_owned(argv, cwd=root / 'src', env=env, timeout=600)
+    output = slots.stdout + slots.stderr + result.stdout + result.stderr
+    (evidence / (label + '.log')).write_text('COMMAND ' + ' '.join(argv) + '\n' + output)
     assert ('running 1 test' if test else 'running 3 tests') in output, output[-3000:]
     assert result.returncode == (101 if red else 0), output[-3000:]
     assert ('test result: FAILED' if red else 'test result: ok') in output, output[-3000:]
     print(label + ': ' + ('behavior failure detected' if red else 'PASS'), flush=True)
-run('baseline', '')
-for name, before, after, test in mutations:
-    if len(sys.argv) > 2 and name not in sys.argv[2:]:
-        continue
-    assert original.count(before) == 1, (name, original.count(before))
-    changed = original.replace(before, after)
-    if name == 'early-snapshot':
-        changed = changed.replace('        result\n    }\n\n    fn emit', '        self.emit(key, reason);\n        result\n    }\n\n    fn emit')
-    if name == 'early-callback':
-        changed = changed.replace('        result\n    }\n\n    fn emit', '        result.await\n    }\n\n    fn emit')
-    (evidence / (name + '.mutation.txt')).write_text(before + '\n=>\n' + after)
+with mutating_sources(root, [source]) as snapshots:
+    original = snapshots[source]
+    text = original.decode()
     try:
-        source.write_text(changed)
-        run(name, test, True)
+        # Reserve the Cargo slot before exposing any mutation or running the
+        # unmodified baseline; the tree lock is already held.
+        run('baseline', '', False, wait_for_slot(root / 'scripts/cargo-slots.sh'))
+        for name, before, after, test in mutations:
+            if len(sys.argv) > 2 and name not in sys.argv[2:]:
+                continue
+            assert text.count(before) == 1, (name, text.count(before))
+            changed = text.replace(before, after)
+            if name == 'early-snapshot':
+                changed = changed.replace('        result\n    }\n\n    fn emit', '        self.emit(key, reason);\n        result\n    }\n\n    fn emit')
+            if name == 'early-callback':
+                changed = changed.replace('        result\n    }\n\n    fn emit', '        result.await\n    }\n\n    fn emit')
+            (evidence / (name + '.mutation.txt')).write_text(before + '\n=>\n' + after)
+            slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+            source.write_bytes(changed.encode())
+            try:
+                run(name, test, True, slots)
+            finally:
+                assert source.read_bytes() == changed.encode(), 'concurrent edit: refuse to overwrite'
+                source.write_bytes(original)
+        run('restored', '', False, wait_for_slot(root / 'scripts/cargo-slots.sh'))
     finally:
-        assert source.read_text() == changed, 'concurrent edit: refuse to overwrite'
-        source.write_text(original)
-run('restored', '')
-(evidence / 'restored.sha256').write_text(hashlib.sha256(source.read_bytes()).hexdigest() + '\n')
+        source.write_bytes(original)
+    (evidence / 'restored.sha256').write_text(hashlib.sha256(source.read_bytes()).hexdigest() + '\n')
