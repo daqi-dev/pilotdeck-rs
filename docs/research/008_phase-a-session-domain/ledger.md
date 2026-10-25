@@ -11,6 +11,8 @@ status: 静态账本完成；未闭合依赖显式 BLOCKED
 
 正本为 [ledger.json](../../../specs/gateway-coverage/ledger.json)，验证入口为 [check_ledger.py](../../../scripts/gateway-coverage/check_ledger.py)。本页只解释口径与更正，不复制逐方法数据。只读基线 `B/` 为 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck/`，已核实 HEAD 为冻结 commit `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；未运行基线。
 
+A5.1 覆盖视图（issue #616）：[coverage-manifest.json](../../../specs/gateway-coverage/coverage-manifest.json) 把同一 101 行投影成逐 method 的 owner、场景 ID、handler→provider→存储/内存→通知→成功/错误/未配置分支与 BLOCKED 原因，校验入口为 [check_coverage_manifest.py](../../../scripts/gateway-coverage/check_coverage_manifest.py)。深度证据仍以 `ledger.json` 为正本；manifest 不是第二份事实源，也不替代账本。
+
 **口径（自决·待复核）**：账本是**规划索引**。下游 A6/A7/A8 每个 PR 动手前必须复核所涉 method 的 provider/state/guard/error，并回写账本。校验器负责结构完整（集合、行号、领域码扫描、默认构造点）；单项语义细节由下游复核兜底，后续同类细节漏写按 P2 处理。
 
 **校验器防护边界（协调者裁定，自决·待复核）**：校验器防诚实的错误，包括遗漏、锚点过时、归属错误、解析错位导致漏码；不防刻意构造的绕过，例如故意伪造 origin 的虚构码。构造型绕过记 P2；本轮之后，若评审只剩构造型绕过，则按此边界收敛。真实漏码或观察到非法产码值仍须 FAIL，不因这条边界降级。
