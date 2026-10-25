@@ -10,8 +10,14 @@ composition + permission/hooks/steer). Those scenarios are reported as NOT_YET
 with the exact missing wiring; they are never marked PASS.
 
 Secrets: read at runtime from the repository `.env.local` (or --env-file),
-passed only in the probe child environment, redacted from every artifact, and
-never printed. The self-check reports hit/miss only.
+searching this checkout then the main checkout, passed only in the probe child
+environment, redacted from every artifact, and never printed. The self-check
+reports hit/miss only. An empty key set fails the self-check instead of
+passing vacuously.
+
+Exit codes: 0 PASS, 1 any scenario FAIL, 2 secret self-check failed, 3 BLOCKED
+(no model-runtime scenario actually ran, or another run owns the evidence
+lock).
 """
 
 import argparse
@@ -19,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -29,11 +36,28 @@ from pathlib import Path
 # llm-center host root, same value as scripts/run-review-roles.py:47.
 LLM_CENTER_BASE_URL = "https://llm-center.modelbest.co"
 
-# Hard limits for one smoke run (three probe scenarios, one request each).
-MAX_REQUESTS = 6
+# Hard limits for one smoke run. These are the single source of truth: the
+# probe receives the per-request token cap and the per-scenario timeout as
+# argv and echoes them back, so the report never quotes a second copy.
+SCENARIOS = ("text", "stream-cancel", "tool")
+MAX_REQUESTS = len(SCENARIOS)
 MAX_OUTPUT_TOKENS_PER_REQUEST = 128
 MAX_TOTAL_OUTPUT_TOKENS = MAX_REQUESTS * MAX_OUTPUT_TOKENS_PER_REQUEST
-PROBE_TIMEOUT_SECONDS = 120
+# Inner timeout enforced by the probe around one scenario.
+PROBE_SCENARIO_TIMEOUT_SECONDS = 45
+# Outer harness cap: the inner limit plus room to serialize a result. On
+# expiry the whole probe process group is killed and the scenario is marked
+# timeout (environment-or-provider), never product-or-protocol.
+PROBE_TIMEOUT_SECONDS = PROBE_SCENARIO_TIMEOUT_SECONDS + 15
+BUILD_TIMEOUT_SECONDS = 600
+CARGO_SLOTS_TIMEOUT_SECONDS = 30
+
+# Exit codes (also documented in scripts/smoke/README.md).
+EXIT_OK = 0
+EXIT_FAIL = 1
+EXIT_SELF_CHECK_FAILED = 2
+EXIT_BLOCKED = 3
+
 
 # Ports reserved for the future #589 host/WS assembly; checked before use.
 RESERVED_PORTS = (28789, 28790, 28810, 28811, 28812)
@@ -80,7 +104,6 @@ NOT_YET = {
     ),
 }
 
-SECRET_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 GENERIC_SECRET = re.compile(
     r"(?:sk-[A-Za-z0-9_-]{16,}|x-api-key\s*:\s*\S+|Bearer\s+[A-Za-z0-9._-]{16,})",
     re.IGNORECASE,
@@ -95,26 +118,183 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def env_candidates(root: Path) -> list[Path]:
+    """`.env.local` candidates, same search as scripts/run-review-roles.py.
+
+    A worktree does not carry the ignored `.env.local`; fall back to the main
+    checkout (the parent of `git rev-parse --git-common-dir`). Deduplicated so
+    a normal checkout yields one path.
+    """
+    roots = [root]
+    try:
+        common = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--path-format=absolute",
+             "--git-common-dir"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if common.returncode == 0 and common.stdout.strip():
+            roots.append(Path(common.stdout.strip()).parent)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    ordered: list[Path] = []
+    for candidate in (item / ".env.local" for item in roots):
+        if candidate not in ordered:
+            ordered.append(candidate)
+    return ordered
+
+
+def resolve_env_file(root: Path) -> Path | None:
+    return next((path for path in env_candidates(root) if path.is_file()), None)
+
+
+def parse_env_value(raw: str) -> str:
+    """dotenv subset modeled on scripts/review-deepseek.py:parse_env_value.
+
+    A quoted value ends at its closing quote, so `"sk-x" # local` keeps the
+    value and drops the comment. An unquoted value drops ` # …` (whitespace
+    before `#`), per POSIX .env semantics; `sk-x#prod` stays literal. Unlike
+    the review loader, an unbalanced quote returns "" (the key is unusable and
+    the run is BLOCKED) instead of aborting.
+    """
+    raw = raw.strip()
+    if not raw or raw.startswith("#"):
+        return ""
+    if raw[0] in "'\"":
+        end = raw.find(raw[0], 1)
+        if end < 0:
+            return ""  # unbalanced quote: treat as unusable, never guess
+        return raw[1:end]
+    return re.split(r"\s+#", raw, maxsplit=1)[0].strip()
+
+
 def read_env_file(path: Path, names: set[str]) -> dict[str, str]:
     """Read only the requested names. Never log keys or values."""
     found: dict[str, str] = {}
     if not path.is_file():
         return found
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return found
+    for line in lines:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        match = SECRET_LINE.match(line)
-        if not match:
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        if not sep:
             continue
-        key, value = match.group(1), match.group(2).strip()
+        key = key.strip()
         if key not in names:
             continue
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
+        value = parse_env_value(value)
         if value:
             found[key] = value
     return found
+
+
+def pid_alive(pid: object) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+class EvidenceLock:
+    """One writer per evidence directory, pdrs-parity style (mkdir + owner).
+
+    The second run refuses instead of deleting the first run's `run/` tree.
+    A stale lock (owner pid gone) is reclaimed by an atomic rename, so two
+    reclaimers cannot delete each other's fresh lock.
+    """
+
+    def __init__(self, evidence: Path):
+        self.evidence = evidence
+        self.path = evidence / ".smoke.lock"
+        self.held = False
+
+    def acquire(self) -> tuple[bool, str]:
+        try:
+            self.path.mkdir()
+        except FileExistsError:
+            owner: dict = {}
+            try:
+                owner = json.loads((self.path / "owner.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            pid = owner.get("pid")
+            if pid_alive(pid):
+                return False, f"another run holds {self.path} (pid {pid})"
+            stale = self.evidence / f".smoke.lock.stale-{os.getpid()}-{int(time.time() * 1000)}"
+            try:
+                os.rename(self.path, stale)
+            except FileNotFoundError:
+                pass  # another process reclaimed it first; retry below
+            except OSError as exc:
+                return False, f"cannot reclaim stale lock {self.path}: {exc}"
+            else:
+                shutil.rmtree(stale, ignore_errors=True)
+            try:
+                self.path.mkdir()
+            except FileExistsError:
+                return False, f"another run holds {self.path}"
+        (self.path / "owner.json").write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "startedAt": iso_now(),
+                    "argv": sys.argv,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self.held = True
+        return True, ""
+
+    def release(self) -> None:
+        if self.held:
+            shutil.rmtree(self.path, ignore_errors=True)
+            self.held = False
+
+
+def make_run_dir(evidence: Path) -> Path:
+    """Exclusive run directory; never overwrite or delete a previous run."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    base = evidence / f"run-{stamp}-{os.getpid()}"
+    candidate = base
+    counter = 1
+    while True:
+        try:
+            candidate.mkdir(parents=True)
+            return candidate
+        except FileExistsError:
+            candidate = Path(f"{base}-{counter}")
+            counter += 1
+
+
+def final_exit_code(report: dict, post_ok: bool, requests_sent: int) -> int:
+    """Three-state outcome: PASS=0, FAIL=1, self-check=2, BLOCKED=3.
+
+    BLOCKED (nothing actually ran) must never look like a green run.
+    """
+    if not post_ok:
+        return EXIT_BLOCKED if requests_sent == 0 else EXIT_SELF_CHECK_FAILED
+    model = [s["status"] for s in report["scenarios"] if s.get("layer") == "model-runtime"]
+    if any(status == "FAIL" for status in model):
+        return EXIT_FAIL
+    if requests_sent == 0 or not any(status in ("PASS", "FAIL") for status in model):
+        return EXIT_BLOCKED
+    return EXIT_OK
+
+
 
 
 def key_env_for(model: str) -> str:
@@ -150,68 +330,193 @@ def port_state(port: int) -> str:
         sock.close()
 
 
-def run_cargo_slots(root: Path) -> dict:
-    script = root.parent.parent / "scripts" / "cargo-slots.sh"
-    if not script.is_file():
-        return {"status": "SKIPPED", "detail": f"missing {script}"}
-    proc = subprocess.run(
-        ["sh", str(script)], capture_output=True, text=True, timeout=30
+def run_bounded(cmd: list[str], cwd: Path, env: dict[str, str],
+                timeout: float) -> dict:
+    """Run one child in its own process group and kill the whole group on
+    timeout.
+
+    `subprocess.run(timeout=...)` only kills the direct child. `cargo` spawns
+    `rustc` children that keep writing the shared target directory after
+    cargo dies, so the timeout must be a group kill (same rule as
+    scripts/cli-parity/README.md:16).
+    """
+    started = time.time()
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
     )
+    timed_out = False
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        stdout, stderr = proc.communicate()
     return {
-        "status": "PASS" if proc.returncode == 0 else "BLOCKED",
+        "stdout": stdout or "",
+        "stderr": stderr or "",
         "exit": proc.returncode,
-        "stdout": redactor({})(proc.stdout.strip()),
-        "stderr": redactor({})(proc.stderr.strip()),
+        "timedOut": timed_out,
+        "elapsedSeconds": round(time.time() - started, 3),
     }
 
 
-def build_probe(root: Path, evidence: Path, redact) -> dict:
+def run_cargo_slots(root: Path) -> dict:
+    # Every checkout (including this worktree) carries its own copy. The old
+    # root.parent.parent path only worked when the tree happened to be nested
+    # two levels under the main checkout, and silently skipped the guard
+    # elsewhere. A missing script is BLOCKED, never SKIPPED.
+    script = root / "scripts" / "cargo-slots.sh"
+    if not script.is_file():
+        return {"status": "BLOCKED", "detail": f"missing {script}"}
+    try:
+        result = run_bounded(
+            ["sh", str(script)], root, os.environ.copy(), CARGO_SLOTS_TIMEOUT_SECONDS
+        )
+    except OSError as exc:
+        return {
+            "status": "BLOCKED",
+            "detail": f"{type(exc).__name__}: {exc}",
+        }
+    return {
+        "status": "PASS" if result["exit"] == 0 and not result["timedOut"] else "BLOCKED",
+        "exit": result["exit"],
+        "timedOut": result["timedOut"],
+        "elapsedSeconds": result["elapsedSeconds"],
+        "stdout": redactor({})(result["stdout"].strip()),
+        "stderr": redactor({})(result["stderr"].strip()),
+        "detail": (
+            f"cargo-slots timed out after {CARGO_SLOTS_TIMEOUT_SECONDS}s"
+            if result["timedOut"]
+            else ""
+        ),
+    }
+
+
+def build_probe(root: Path, evidence: Path, run_dir: Path, redact) -> dict:
     probe = root / "scripts" / "smoke" / "probe"
-    target = evidence / "cargo-target"
+    target = (evidence / "cargo-target").resolve()
+    log_path = run_dir / "probe-build.log"
     env = os.environ.copy()
     env["CARGO_TARGET_DIR"] = str(target)
     env.pop("PDRS_PROVIDER_KEY", None)
     started = time.time()
-    proc = subprocess.run(
-        ["cargo", "build", "--offline"],
-        cwd=probe,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    log = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
-    (evidence / "probe-build.log").write_text(redact(log), encoding="utf-8")
     binary = target / "debug" / "real-provider-probe"
+    try:
+        result = run_bounded(
+            ["cargo", "build", "--offline"],
+            probe,
+            env,
+            BUILD_TIMEOUT_SECONDS,
+        )
+    except OSError as exc:
+        log = f"cargo build could not start: {type(exc).__name__}: {exc}\n"
+        log_path.write_text(redact(log), encoding="utf-8")
+        return {
+            "status": "FAIL",
+            "exit": None,
+            "timedOut": False,
+            "binary": str(binary),
+            "elapsedSeconds": round(time.time() - started, 2),
+            "log": str(log_path),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    log = result["stdout"] + ("\n" + result["stderr"] if result["stderr"] else "")
+    if result["timedOut"]:
+        log += (
+            f"\n[harness] cargo build exceeded {BUILD_TIMEOUT_SECONDS}s; "
+            "killed the whole process group\n"
+        )
+    log_path.write_text(redact(log), encoding="utf-8")
+    status = (
+        "PASS"
+        if result["exit"] == 0 and not result["timedOut"] and binary.is_file()
+        else "FAIL"
+    )
     return {
-        "status": "PASS" if proc.returncode == 0 and binary.is_file() else "FAIL",
-        "exit": proc.returncode,
+        "status": status,
+        "exit": result["exit"],
+        "timedOut": result["timedOut"],
         "binary": str(binary),
         "elapsedSeconds": round(time.time() - started, 2),
-        "log": str(evidence / "probe-build.log"),
+        "log": str(log_path),
     }
 
 
+
 def classify_failure(payload: dict) -> str:
+    """Attribute a FAIL. The needle list follows the gateway's canonical
+    error codes (runtime/model/http/errors.rs), not the Node-era strings
+    (`econn`, `fetch failed`) that Rust hyper never emits."""
+    kind = str(payload.get("kind") or "")
+    if kind == "timeout":
+        return "environment-or-provider (timeout)"
+    if kind == "harness":
+        return "harness (probe process failed; no product verdict)"
+    finish = str(payload.get("finishReason") or "").lower()
+    body = payload.get("text")
+    if finish == "length" and isinstance(body, str) and not body.strip():
+        # 20261018-deepseek-thinking: provider-side reasoning can consume the
+        # whole output budget and leave an empty text body. That is model /
+        # budget behaviour, not a product protocol defect.
+        return "environment-or-provider (token budget/thinking)"
     error = payload.get("error")
     text = json.dumps(error, ensure_ascii=False).lower() if error is not None else ""
-    if payload.get("kind") == "timeout":
-        return "environment-or-provider (timeout)"
+    if isinstance(error, dict):
+        text += " " + str(error.get("code") or "").lower()
     for needle in (
-        "authentication",
-        "permission_error",
+        "auth_error",
+        "billing",
+        "model_not_found",
+        "payload_too_large",
         "rate_limit",
-        "overloaded",
-        "api_error",
+        "server_error",
+        "provider_error",
         "timeout",
-        "econn",
+        "overloaded",
+        "prompt_too_long",
+        "request_too_large",
+        "dns",
+        "connection_reset",
+        "connection_refused",
+        "tls",
+        "proxy_error",
+        "certificate",
+        "econnreset",
+        "econnrefused",
         "network",
         "fetch failed",
-        "dns",
+        "socket hang up",
     ):
         if needle in text:
             return "environment-or-provider"
     return "product-or-protocol"
+
+
+def apply_probe_exit(payload: dict, code: int) -> dict:
+    """A probe that emitted a result and then crashed is not a PASS."""
+    payload["exit"] = code
+    if code != 0:
+        prior = payload.get("status")
+        if prior != "FAIL":
+            payload["status"] = "FAIL"
+            payload["kind"] = "harness"
+            payload["error"] = f"probe exited {code} after reporting {prior}"
+        else:
+            payload["exitNote"] = f"probe exited {code}"
+    return payload
+
 
 
 def run_probe(binary: Path, scenario: str, base_url: str, model: str, key: str,
@@ -229,20 +534,29 @@ def run_probe(binary: Path, scenario: str, base_url: str, model: str, key: str,
         "PDRS_PROVIDER_KEY": key,
     }
     started = time.time()
+    launched = True
     try:
-        proc = subprocess.run(
-            [str(binary), scenario, base_url, model],
-            cwd=cwd,
-            env=child_env,
-            capture_output=True,
-            text=True,
-            timeout=PROBE_TIMEOUT_SECONDS,
+        result = run_bounded(
+            [
+                str(binary),
+                scenario,
+                base_url,
+                model,
+                str(MAX_OUTPUT_TOKENS_PER_REQUEST),
+                str(PROBE_SCENARIO_TIMEOUT_SECONDS),
+            ],
+            cwd,
+            child_env,
+            PROBE_TIMEOUT_SECONDS,
         )
-        stdout, stderr, code = proc.stdout, proc.stderr, proc.returncode
-    except subprocess.TimeoutExpired as exc:
-        stdout = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
-        stderr = (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+        stdout, stderr, code = result["stdout"], result["stderr"], result["exit"]
+        timed_out = result["timedOut"]
+    except OSError as exc:
+        launched = False
+        stdout = ""
+        stderr = f"{type(exc).__name__}: {exc}"
         code = -1
+        timed_out = False
     elapsed = round(time.time() - started, 3)
     raw_dir = run_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -256,20 +570,35 @@ def run_probe(binary: Path, scenario: str, base_url: str, model: str, key: str,
             except json.JSONDecodeError:
                 payload = None
     if payload is None:
+        if timed_out:
+            kind = "timeout"
+            error = (
+                f"probe exceeded {PROBE_TIMEOUT_SECONDS}s "
+                "(harness killed the process group)"
+            )
+        else:
+            kind = "harness"
+            error = "probe produced no PROBE_RESULT line"
         payload = {
             "scenario": scenario,
             "status": "FAIL",
-            "kind": "harness",
-            "error": "probe produced no PROBE_RESULT line",
+            "kind": kind,
+            "error": error,
             "exit": code,
+            "timedOut": timed_out,
+            # A launched probe may already have sent one request even if it
+            # produced no result; count it as the conservative upper bound.
+            "requests": 1 if launched else 0,
         }
+    else:
+        payload.setdefault("requests", 1)
     payload["elapsedSeconds"] = elapsed
-    payload["exit"] = code
+    payload["timedOut"] = timed_out
     payload["raw"] = {
         "stdout": str(raw_dir / f"{scenario}.stdout.txt"),
         "stderr": str(raw_dir / f"{scenario}.stderr.txt"),
     }
-    return payload, code
+    return apply_probe_exit(payload, code), code
 
 
 def missing_scenarios() -> list[dict]:
@@ -294,7 +623,14 @@ def write_markdown(report: dict, path: Path) -> None:
         f"- model: `{report['provider']['model']}`",
         f"- credential source: `{report['provider']['keyAlias']}` (value never read out)",
         f"- limits: {report['limits']['maxRequests']} requests, "
-        f"{report['limits']['maxOutputTokensPerRequest']} output tokens/request",
+        f"{report['limits']['maxOutputTokensPerRequest']} output tokens/request, "
+        f"{report['limits']['maxTotalOutputTokens']} total; "
+        f"{report['limits']['probeScenarioTimeoutSeconds']} s per probe scenario, "
+        f"{report['limits']['probeHardTimeoutSeconds']} s harness hard cap",
+        f"- requests sent: {report['limits']['requestsSent']}; "
+        f"output tokens reported by probe: {report['limits']['outputTokensReported']}",
+        f"- exit code: {report.get('exitCode', 'pending')}"
+        " (0 PASS, 1 FAIL, 2 self-check, 3 BLOCKED)",
         f"- ports checked: {report['ports']}",
         "",
         "## Scenarios",
@@ -337,17 +673,27 @@ def write_markdown(report: dict, path: Path) -> None:
         "",
         "## Secret self-check",
         "",
-        "| key alias | result |",
-        "| --- | --- |",
     ]
-    for check in report["secretSelfCheck"]["keys"]:
-        lines.append(f"| `{check['alias']}` | {check['result']} |")
-    lines.append("")
-    lines.append(
-        f"Scanned {report['secretSelfCheck']['files']} artifact files "
-        f"(excluding cargo-target); generic-pattern hits: "
-        f"{report['secretSelfCheck']['genericHits']}."
-    )
+    check = report["secretSelfCheck"]
+    if not check.get("verifiable", False):
+        lines.append(
+            f"0 keys loaded ({check.get('files', 0)} files scanned), "
+            "cannot verify key leakage: **FAIL/NOT_RUN**"
+        )
+    else:
+        lines += [
+            "| key alias | result |",
+            "| --- | --- |",
+        ]
+        for item in check["keys"]:
+            lines.append(f"| `{item['alias']}` | {item['result']} |")
+        lines.append("")
+        lines.append(
+            f"Scanned {check['files']} artifact files "
+            f"(excluding cargo-target); generic-pattern hits: "
+            f"{check['genericHits']}."
+        )
+    lines.append(f"finalPass: {report.get('finalPass', False)}")
     lines += [
         "",
         "## What is not proven",
@@ -359,6 +705,48 @@ def write_markdown(report: dict, path: Path) -> None:
         "",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_reports(report: dict, directories: list[Path]) -> None:
+    """Write the summary to the evidence root and into the run directory.
+
+    The run copy is authoritative and never overwritten; the root copy is the
+    latest index. Raw per-scenario records stay under the unique run dir.
+    """
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "report.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        write_markdown(report, directory / "report.md")
+
+
+def write_limits(run_dir: Path, limits: dict) -> None:
+    (run_dir / "limits.json").write_text(
+        json.dumps(
+            {
+                "declared": {
+                    "maxRequests": MAX_REQUESTS,
+                    "maxOutputTokensPerRequest": MAX_OUTPUT_TOKENS_PER_REQUEST,
+                    "maxTotalOutputTokens": MAX_TOTAL_OUTPUT_TOKENS,
+                    "probeScenarioTimeoutSeconds": PROBE_SCENARIO_TIMEOUT_SECONDS,
+                    "probeHardTimeoutSeconds": PROBE_TIMEOUT_SECONDS,
+                    "buildTimeoutSeconds": BUILD_TIMEOUT_SECONDS,
+                    "cargoSlotsTimeoutSeconds": CARGO_SLOTS_TIMEOUT_SECONDS,
+                },
+                "actual": limits,
+                "scenarios": list(SCENARIOS),
+                "note": (
+                    "Declared limits are the constants in "
+                    "scripts/smoke/real_provider.py; the probe receives the "
+                    "token cap and inner timeout as argv and echoes them back."
+                ),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def collect_artifacts(evidence: Path) -> list[Path]:
@@ -391,8 +779,46 @@ def self_check(files: list[Path], secrets: dict[str, str]) -> dict:
     return {
         "files": len(files),
         "keys": keys,
+        "keysLoaded": len(secrets),
+        "verifiable": bool(secrets),
         "genericHits": generic,
     }
+
+
+def self_check_ok(check: dict) -> bool:
+    """An empty key set is NOT a pass: `all([])` used to make the leak check
+    vacuously green when `.env.local` was missing or unreadable."""
+    return (
+        bool(check.get("verifiable"))
+        and all(item["result"] == "未命中" for item in check.get("keys", []))
+        and check.get("genericHits") == 0
+    )
+
+
+def output_tokens(payload: dict) -> int:
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        value = usage.get("outputTokens")
+        if isinstance(value, (int, float)):
+            return int(value)
+    return 0
+
+
+def scenario_id(name: str) -> str:
+    return f"model_runtime_{name.replace('-', '_')}"
+
+
+def blocked_rows(reason: str) -> list[dict]:
+    return [
+        {
+            "id": scenario_id(name),
+            "layer": "model-runtime",
+            "status": "BLOCKED",
+            "missing": reason,
+            "raw": {},
+        }
+        for name in SCENARIOS
+    ]
 
 
 def main() -> int:
@@ -401,8 +827,12 @@ def main() -> int:
     parser.add_argument("--base-url", default=LLM_CENTER_BASE_URL)
     parser.add_argument("--key-env", default=None,
                         help="override the .env.local key name")
-    parser.add_argument("--env-file",
-                        default="/Users/da/ws/pilotdeck-rs/.env.local")
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help="explicit .env file; default searches this checkout then the "
+             "main checkout (git common dir parent)",
+    )
     parser.add_argument("--evidence-dir", default=None)
     parser.add_argument("--self-check-only", action="store_true",
                         help="scan existing evidence artifacts for key leakage")
@@ -410,13 +840,18 @@ def main() -> int:
 
     root = repo_root()
     evidence = Path(args.evidence_dir) if args.evidence_dir else (
-        root / "_tmp" / "20261025-real-provider-smoke"
+        root / "_tmp" / f"{datetime.now().strftime('%Y%m%d')}-real-provider-smoke"
     )
+    # Absolute paths matter twice: raw/run directories must not depend on the
+    # caller's cwd, and CARGO_TARGET_DIR is resolved by cargo relative to the
+    # probe cwd (scripts/smoke/probe), not to this script.
+    evidence = evidence.expanduser().resolve()
     evidence.mkdir(parents=True, exist_ok=True)
 
     key_alias = args.key_env or key_env_for(args.model)
     env_names = {key_alias, "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ZAI_API_KEY"}
-    secrets = read_env_file(Path(args.env_file), env_names)
+    env_path = Path(args.env_file) if args.env_file else resolve_env_file(root)
+    secrets = read_env_file(env_path, env_names) if env_path else {}
     # Redact/scan every key this run learned about, not only the one passed
     # to the child. Only `key` below reaches the child environment.
     redact = redactor(secrets)
@@ -426,6 +861,9 @@ def main() -> int:
         files = collect_artifacts(evidence)
         check = self_check(files, secrets)
         lines = [
+            f"env file: {env_path or 'none found'}",
+            f"keys loaded: {check['keysLoaded']}",
+            f"verifiable: {check['verifiable']}",
             f"files: {check['files']}",
             f"generic-pattern hits: {check['genericHits']}",
         ]
@@ -436,166 +874,229 @@ def main() -> int:
         )
         post = self_check(collect_artifacts(evidence), secrets)
         print("final secret self-check (all artifacts, cargo-target excluded):")
+        print(f"  env file: {env_path or 'none found'}")
+        print(f"  keys loaded: {post['keysLoaded']}")
         for item in post["keys"]:
             print(f"  {item['alias']}: {item['result']}")
         print(f"  generic-pattern hits: {post['genericHits']}")
-        ok = all(item["result"] == "未命中" for item in post["keys"]) and (
-            post["genericHits"] == 0
-        )
+        if not post["verifiable"]:
+            print("  0 keys loaded, cannot verify key leakage")
+        ok = self_check_ok(post)
         print(f"  finalPass: {ok}")
-        return 0 if ok else 2
+        return EXIT_OK if ok else EXIT_SELF_CHECK_FAILED
 
-    run_dir = evidence / "run"
-    if run_dir.exists():
-        shutil.rmtree(run_dir)
-    run_dir.mkdir(parents=True)
+    # One writer per evidence directory. A second run refuses before touching
+    # any artifact; it never deletes the first run's raw records.
+    lock = EvidenceLock(evidence)
+    acquired, reason = lock.acquire()
+    if not acquired:
+        print(f"BLOCKED: {reason}", file=sys.stderr)
+        return EXIT_BLOCKED
+    try:
+        run_dir = make_run_dir(evidence)
+        (run_dir / "owner.json").write_text(
+            json.dumps(
+                {"pid": os.getpid(), "startedAt": iso_now(), "argv": sys.argv},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        limits = {
+            "maxRequests": MAX_REQUESTS,
+            "maxOutputTokensPerRequest": MAX_OUTPUT_TOKENS_PER_REQUEST,
+            "maxTotalOutputTokens": MAX_TOTAL_OUTPUT_TOKENS,
+            "probeScenarioTimeoutSeconds": PROBE_SCENARIO_TIMEOUT_SECONDS,
+            "probeHardTimeoutSeconds": PROBE_TIMEOUT_SECONDS,
+            "requestsSent": 0,
+            "outputTokensReported": 0,
+            "violations": [],
+        }
+        write_limits(run_dir, limits)
 
-    git_commit = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"], cwd=root,
-        capture_output=True, text=True,
-    ).stdout.strip() or "unknown"
-    git_branch = subprocess.run(
-        ["git", "branch", "--show-current"], cwd=root,
-        capture_output=True, text=True,
-    ).stdout.strip() or "unknown"
+        git_commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=root,
+            capture_output=True, text=True,
+        ).stdout.strip() or "unknown"
+        git_branch = subprocess.run(
+            ["git", "branch", "--show-current"], cwd=root,
+            capture_output=True, text=True,
+        ).stdout.strip() or "unknown"
 
-    limits = {
-        "maxRequests": MAX_REQUESTS,
-        "maxOutputTokensPerRequest": MAX_OUTPUT_TOKENS_PER_REQUEST,
-        "maxTotalOutputTokens": MAX_TOTAL_OUTPUT_TOKENS,
-        "requestsSent": 0,
-    }
-    ports = {str(port): port_state(port) for port in RESERVED_PORTS}
-    slots = run_cargo_slots(root)
+        ports = {str(port): port_state(port) for port in RESERVED_PORTS}
+        slots = run_cargo_slots(root)
 
-    build = {"status": "SKIPPED", "detail": "no key available"}
-    scenarios: list[dict] = []
-    if not key:
-        for name in ("text", "stream-cancel", "tool"):
-            scenarios.append({
-                "id": f"model_runtime_{name.replace('-', '_')}",
-                "layer": "model-runtime",
-                "status": "BLOCKED",
-                "missing": f"{key_alias} is not present in the env file",
-                "raw": {},
-            })
-    elif slots["status"] == "BLOCKED":
-        for name in ("text", "stream-cancel", "tool"):
-            scenarios.append({
-                "id": f"model_runtime_{name.replace('-', '_')}",
-                "layer": "model-runtime",
-                "status": "BLOCKED",
-                "missing": "cargo-slots.sh reports all slots busy",
-                "raw": {},
-            })
-    else:
-        build = build_probe(root, evidence, redact)
-        if build["status"] != "PASS":
-            for name in ("text", "stream-cancel", "tool"):
-                scenarios.append({
-                    "id": f"model_runtime_{name.replace('-', '_')}",
-                    "layer": "model-runtime",
-                    "status": "BLOCKED",
-                    "missing": "probe build failed; see probe-build.log",
-                    "raw": {},
-                })
-        else:
-            binary = Path(build["binary"])
-            for name, scenario_id in (
-                ("text", "model_runtime_text"),
-                ("stream-cancel", "model_runtime_stream_cancel"),
-                ("tool", "model_runtime_tool"),
-            ):
-                if limits["requestsSent"] >= MAX_REQUESTS:
-                    scenarios.append({
-                        "id": scenario_id,
-                        "layer": "model-runtime",
-                        "status": "BLOCKED",
-                        "missing": "MAX_REQUESTS exhausted",
-                        "raw": {},
-                    })
-                    continue
-                limits["requestsSent"] += 1
-                payload, _ = run_probe(
-                    binary, name, args.base_url, args.model, key, run_dir, redact
+        build = {"status": "SKIPPED", "detail": "no key available"}
+        scenarios: list[dict] = []
+        if not key:
+            searched = (
+                str(env_path)
+                if env_path
+                else ", ".join(str(path) for path in env_candidates(root))
+            )
+            scenarios.extend(
+                blocked_rows(f"{key_alias} is not present in {searched}")
+            )
+        elif slots["status"] == "BLOCKED":
+            scenarios.extend(
+                blocked_rows(
+                    slots.get("detail")
+                    or "cargo-slots.sh reports all slots busy or timed out"
                 )
-                payload["id"] = scenario_id
-                payload["layer"] = "model-runtime"
-                if payload.get("status") == "FAIL":
-                    payload["classification"] = classify_failure(payload)
-                scenarios.append(payload)
+            )
+        else:
+            build = build_probe(root, evidence, run_dir, redact)
+            if build["status"] != "PASS":
+                if build.get("timedOut"):
+                    why = (
+                        f"probe build timed out after {BUILD_TIMEOUT_SECONDS}s; "
+                        "process group killed; see probe-build.log"
+                    )
+                else:
+                    why = "probe build failed; see probe-build.log"
+                scenarios.extend(blocked_rows(why))
+            else:
+                binary = Path(build["binary"])
+                for name in SCENARIOS:
+                    sid = scenario_id(name)
+                    if limits["requestsSent"] >= MAX_REQUESTS:
+                        scenarios.append({
+                            "id": sid,
+                            "layer": "model-runtime",
+                            "status": "BLOCKED",
+                            "missing": "MAX_REQUESTS exhausted",
+                            "raw": {},
+                        })
+                        continue
+                    payload, _ = run_probe(
+                        binary, name, args.base_url, args.model, key, run_dir, redact
+                    )
+                    payload["id"] = sid
+                    payload["layer"] = "model-runtime"
+                    reported_requests = payload.get("requests")
+                    if isinstance(reported_requests, (int, float)) and reported_requests >= 0:
+                        limits["requestsSent"] += int(reported_requests)
+                    else:
+                        limits["requestsSent"] += 1
+                    tokens = output_tokens(payload)
+                    limits["outputTokensReported"] += tokens
+                    violations = []
+                    echoed = payload.get("maxOutputTokens")
+                    if isinstance(echoed, (int, float)) and int(echoed) != (
+                        MAX_OUTPUT_TOKENS_PER_REQUEST
+                    ):
+                        violations.append(
+                            f"probe echoed maxOutputTokens={echoed}, "
+                            f"expected {MAX_OUTPUT_TOKENS_PER_REQUEST}"
+                        )
+                    if tokens > MAX_OUTPUT_TOKENS_PER_REQUEST:
+                        violations.append(
+                            f"scenario outputTokens={tokens} > "
+                            f"{MAX_OUTPUT_TOKENS_PER_REQUEST}"
+                        )
+                    if limits["outputTokensReported"] > MAX_TOTAL_OUTPUT_TOKENS:
+                        violations.append(
+                            f"total outputTokens={limits['outputTokensReported']} > "
+                            f"{MAX_TOTAL_OUTPUT_TOKENS}"
+                        )
+                    if violations:
+                        limits["violations"].extend(violations)
+                        payload["status"] = "FAIL"
+                        payload["kind"] = "harness"
+                        payload["error"] = "; ".join(violations)
+                    if payload.get("status") == "FAIL":
+                        payload["classification"] = classify_failure(payload)
+                    scenarios.append(payload)
 
-    scenarios.extend(missing_scenarios())
+        scenarios.extend(missing_scenarios())
 
-    report = {
-        "generatedAt": iso_now(),
-        "git": {"commit": git_commit, "branch": git_branch},
-        "provider": {
-            "baseUrl": args.base_url,
-            "model": args.model,
-            "protocol": "anthropic",
-            "keyAlias": key_alias,
-        },
-        "limits": limits,
-        "ports": ports,
-        "cargoSlots": slots,
-        "build": build,
-        "scenarios": scenarios,
-        "notes": [
-            "Layer 0 drives pilotdeck-gateway's public model HTTP runtime "
-            "(complete_model/stream_model) through scripts/smoke/probe.",
-            "Layer 1 gateway/permission/hooks/steer scenarios are NOT_YET, "
-            "not failures and not passes.",
-        ],
-    }
+        report = {
+            "generatedAt": iso_now(),
+            "git": {"commit": git_commit, "branch": git_branch},
+            "provider": {
+                "baseUrl": args.base_url,
+                "model": args.model,
+                "protocol": "anthropic",
+                "keyAlias": key_alias,
+                "envFile": str(env_path) if env_path else None,
+                "envCandidates": [str(path) for path in env_candidates(root)],
+            },
+            "limits": limits,
+            "ports": ports,
+            "cargoSlots": slots,
+            "build": build,
+            "scenarios": scenarios,
+            "notes": [
+                "Layer 0 drives pilotdeck-gateway's public model HTTP runtime "
+                "(complete_model/stream_model) through scripts/smoke/probe.",
+                "Layer 1 gateway/permission/hooks/steer scenarios are NOT_YET, "
+                "not failures and not passes.",
+                "requestsSent/outputTokensReported come from the probe's echoed "
+                "counters; an attempted probe with no result counts one request.",
+            ],
+        }
 
-    # First pass: artifacts with a placeholder check, so the scan sees the
-    # report itself too. Then write the final check result and rescan.
-    report["secretSelfCheck"] = {"files": 0, "keys": [], "genericHits": 0}
-    (evidence / "report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    write_markdown(report, evidence / "report.md")
-    check = self_check(collect_artifacts(evidence), secrets)
-    report["secretSelfCheck"] = check
-    (evidence / "report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    write_markdown(report, evidence / "report.md")
-    final = self_check(collect_artifacts(evidence), secrets)
-    final["finalPass"] = all(
-        item["result"] == "未命中" for item in final["keys"]
-    ) and final["genericHits"] == 0
-    report["secretSelfCheck"] = final
-    (evidence / "report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    write_markdown(report, evidence / "report.md")
+        # First pass: artifacts with a placeholder check, so the scan sees the
+        # report itself too. Then write the final check result and rescan.
+        report["secretSelfCheck"] = {
+            "files": 0, "keys": [], "keysLoaded": len(secrets),
+            "verifiable": bool(secrets), "genericHits": 0,
+        }
+        report["finalPass"] = False
+        report["exitCode"] = EXIT_BLOCKED
+        write_reports(report, [run_dir, evidence])
+        check = self_check(collect_artifacts(evidence), secrets)
+        report["secretSelfCheck"] = check
+        write_reports(report, [run_dir, evidence])
+        final = self_check(collect_artifacts(evidence), secrets)
+        final["finalPass"] = self_check_ok(final)
+        report["secretSelfCheck"] = final
+        report["finalPass"] = final["finalPass"]
+        report["exitCode"] = final_exit_code(
+            report, final["finalPass"], limits["requestsSent"]
+        )
+        write_limits(run_dir, limits)
+        write_reports(report, [run_dir, evidence])
 
-    # Post-write scan: the last writes add only check results/booleans, but
-    # verify the exact bytes on disk once more.
-    post = self_check(collect_artifacts(evidence), secrets)
-    post_ok = all(item["result"] == "未命中" for item in post["keys"]) and (
-        post["genericHits"] == 0
-    )
+        # Post-write scan: verify the exact bytes on disk once more.
+        post = self_check(collect_artifacts(evidence), secrets)
+        post_ok = self_check_ok(post)
+        code = final_exit_code(report, post_ok, limits["requestsSent"])
+        if code != report["exitCode"] or post_ok != report["finalPass"]:
+            report["secretSelfCheck"] = post
+            report["finalPass"] = post_ok
+            report["exitCode"] = code
+            write_reports(report, [run_dir, evidence])
 
-    print(f"evidence: {evidence}")
-    print(f"model: {args.model} via {args.base_url} (key={key_alias})")
-    print(f"requests sent: {limits['requestsSent']} / {MAX_REQUESTS}")
-    for item in report["scenarios"]:
-        line = f"{item['status']:8} {item['id']} ({item['layer']})"
-        if item["status"] == "FAIL":
-            line += f" [{item.get('classification', 'product-or-protocol')}]"
-        print(line)
-    print("secret self-check (artifacts, cargo-target excluded):")
-    for item in post["keys"]:
-        print(f"  {item['alias']}: {item['result']}")
-    print(f"  generic-pattern hits: {post['genericHits']}")
-    print(f"  finalPass: {post_ok}")
-    print(f"report: {evidence / 'report.md'}")
-    if not post_ok:
-        return 2
-    return 1 if any(s["status"] == "FAIL" for s in report["scenarios"]) else 0
+        print(f"evidence: {evidence}")
+        print(f"run: {run_dir}")
+        print(f"env file: {env_path or 'none found'} "
+              f"(keys loaded: {post['keysLoaded']})")
+        print(f"model: {args.model} via {args.base_url} (key={key_alias})")
+        print(f"requests sent: {limits['requestsSent']} / {MAX_REQUESTS}")
+        print(f"output tokens reported: {limits['outputTokensReported']} / "
+              f"{MAX_TOTAL_OUTPUT_TOKENS}")
+        for violation in limits["violations"]:
+            print(f"limit violation: {violation}")
+        for item in report["scenarios"]:
+            line = f"{item['status']:8} {item['id']} ({item['layer']})"
+            if item["status"] == "FAIL":
+                line += f" [{item.get('classification', 'product-or-protocol')}]"
+            if item["status"] == "BLOCKED" and item.get("missing"):
+                line += f" [{item['missing']}]"
+            print(line)
+        print("secret self-check (artifacts, cargo-target excluded):")
+        for item in post["keys"]:
+            print(f"  {item['alias']}: {item['result']}")
+        print(f"  generic-pattern hits: {post['genericHits']}")
+        if not post["verifiable"]:
+            print("  0 keys loaded, cannot verify key leakage")
+        print(f"  finalPass: {post_ok}")
+        print(f"report: {evidence / 'report.md'} (run copy: {run_dir / 'report.md'})")
+        print(f"exitCode: {code}")
+        return code
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":

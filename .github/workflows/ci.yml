@@ -63,6 +63,7 @@ jobs:
           python3 -I scripts/test-approval-provenance.py
           python3 -I scripts/test-review-deepseek.py
           python3 -I scripts/test-review-roles.py
+          python3 -I scripts/test-smoke-real-provider.py
           bash scripts/test-pdrs-loop.sh
           python3 -I scripts/check-approval-provenance.py
           python3 -I scripts/ui-server-parity/check_frozen.py
