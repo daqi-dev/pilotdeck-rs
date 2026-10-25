@@ -2356,21 +2356,9 @@ mod context_storage_tests {
         );
     }
 
-    // Two `create_session` inputs are not observable in this composition and
-    // are deliberately not claimed as covered:
-    //
-    // - `ContextOptions.project_root` is consumed only by memory retrieval
-    //   (`prepare.rs` passes it to `MemoryRetrieveInput`), and
-    //   `create_session` leaves `memory_resolver: None`.
-    // - `memory_retrieval_timeout_ms` (the 30_000.0 default and the
-    //   `config.memory.retrievalTimeoutMs` override) is passed only to that
-    //   same memory build.
-    //
-    // Prerequisite before either can be pinned through `create_session`:
-    // context storage must acquire `Resource::Memory` (or another resolver)
-    // and set `Options.memory_resolver`; a slow resolver then makes the
-    // timeout observable. The separate `self.project_root` used by
-    // instruction discovery is covered by the discovery test below.
+    // project_root and the default/overridden retrieval timeout are exercised
+    // through normalized config and the real memory resource/session chain in
+    // factory_memory_tests.rs (#639).
 
     fn prepare_input(cwd: &Path) -> ContextInput {
         let cwd = cwd.to_string_lossy().into_owned();
@@ -4040,3 +4028,6 @@ fn bind_steer(
 
 #[path = "interaction_host_tests.rs"]
 mod interaction_host;
+
+#[path = "factory_memory_tests.rs"]
+mod context_memory_tests;
