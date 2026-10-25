@@ -553,31 +553,35 @@ impl SessionOwner {
         track(&mut state, project, completion.clone());
         let owner = self.clone();
         let key = key.clone();
-        tokio::spawn(async move {
-            let _exclusive = ticket.enter().await;
-            let (record, identity) = {
-                let mut state = owner.0.state.lock().unwrap();
-                state.order.retain(|item| item != &key);
-                state.completion_owners.remove(&key);
-                (
-                    state.records.remove(&key),
-                    owner.0.turns.admission.turn_identity(&key),
-                )
-            };
-            let outcome = if let Some(record) = record {
-                let result = owner.evict(&key, record, EvictionReason::Closed).await;
-                let _state = owner.0.state.lock().unwrap();
-                owner
-                    .0
-                    .turns
-                    .admission
-                    .end_identity(&key, identity.as_ref());
-                result
-            } else {
-                Ok(())
-            };
-            done.send_replace(Some(outcome));
-        });
+        super::super::cleanup_task::spawn_with_error(
+            &tokio::runtime::Handle::current(),
+            done,
+            RuntimeError::new("Session close task was dropped or panicked before completion."),
+            async move {
+                let _exclusive = ticket.enter().await;
+                let (record, identity) = {
+                    let mut state = owner.0.state.lock().unwrap();
+                    state.order.retain(|item| item != &key);
+                    state.completion_owners.remove(&key);
+                    (
+                        state.records.remove(&key),
+                        owner.0.turns.admission.turn_identity(&key),
+                    )
+                };
+                if let Some(record) = record {
+                    let result = owner.evict(&key, record, EvictionReason::Closed).await;
+                    let _state = owner.0.state.lock().unwrap();
+                    owner
+                        .0
+                        .turns
+                        .admission
+                        .end_identity(&key, identity.as_ref());
+                    result
+                } else {
+                    Ok(())
+                }
+            },
+        );
         Box::pin(wait_result(completion))
     }
 
@@ -600,33 +604,37 @@ impl SessionOwner {
         let owner = self.clone();
         let project = project.clone();
         let (done, completion) = watch::channel(None);
-        tokio::spawn(async move {
-            for pending in pending {
-                let _ = wait_result(pending).await;
-            }
-            let keys: Vec<_> = {
-                let state = owner.0.state.lock().unwrap();
-                state
-                    .order
-                    .iter()
-                    .filter(|key| {
-                        state.records[*key].context.project_key.as_ref() == Some(&project)
-                    })
-                    .cloned()
-                    .collect()
-            };
-            let mut drains = tokio::task::JoinSet::new();
-            for key in &keys {
-                drains.spawn(owner.close(key));
-            }
-            while let Some(outcome) = drains.join_next().await {
-                if let Err(error) = outcome.expect("project session close panicked") {
-                    done.send_replace(Some(Err(error)));
-                    return;
+        super::super::cleanup_task::spawn_with_error(
+            &tokio::runtime::Handle::current(),
+            done,
+            RuntimeError::new(
+                "Session project close task was dropped or panicked before completion.",
+            ),
+            async move {
+                for pending in pending {
+                    let _ = wait_result(pending).await;
                 }
-            }
-            done.send_replace(Some(Ok(keys)));
-        });
+                let keys: Vec<_> = {
+                    let state = owner.0.state.lock().unwrap();
+                    state
+                        .order
+                        .iter()
+                        .filter(|key| {
+                            state.records[*key].context.project_key.as_ref() == Some(&project)
+                        })
+                        .cloned()
+                        .collect()
+                };
+                let mut drains = tokio::task::JoinSet::new();
+                for key in &keys {
+                    drains.spawn(owner.close(key));
+                }
+                while let Some(outcome) = drains.join_next().await {
+                    outcome.expect("project session close panicked")?;
+                }
+                Ok(keys)
+            },
+        );
         Box::pin(wait_result(completion))
     }
 
@@ -663,10 +671,17 @@ impl SessionOwner {
             let (done, completion) = watch::channel(None);
             track(&mut state, record.context.project_key.clone(), completion);
             let owner = self.clone();
-            tokio::spawn(async move {
-                let _exclusive = ticket.enter().await;
-                done.send_replace(Some(owner.evict(&key, record, EvictionReason::Idle).await));
-            });
+            super::super::cleanup_task::spawn_with_error(
+                &tokio::runtime::Handle::current(),
+                done,
+                RuntimeError::new(
+                    "Session idle eviction task was dropped or panicked before completion.",
+                ),
+                async move {
+                    let _exclusive = ticket.enter().await;
+                    owner.evict(&key, record, EvictionReason::Idle).await
+                },
+            );
         }
         state.gates.retain(|_, gate| gate.strong_count() > 0);
     }
@@ -692,31 +707,33 @@ impl SessionOwner {
         let (done, completion) = watch::channel(None);
         state.shutdown = Some(completion.clone());
         let owner = self.clone();
-        tokio::spawn(async move {
-            let mut failures = Vec::new();
-            for pending in pending {
-                if let Err(error) = wait_result(pending.completion).await {
-                    failures.push(error);
+        super::super::cleanup_task::spawn_with_error(
+            &tokio::runtime::Handle::current(),
+            done,
+            RuntimeError::new("Session shutdown task was dropped or panicked before completion."),
+            async move {
+                let mut failures = Vec::new();
+                for pending in pending {
+                    if let Err(error) = wait_result(pending.completion).await {
+                        failures.push(error);
+                    }
                 }
-            }
-            // Start every disposal before waiting for any one writer to drain.
-            let mut drains = Vec::new();
-            for (key, record) in records {
-                let owner = owner.clone();
-                drains.push(tokio::spawn(async move {
-                    owner.evict(&key, record, EvictionReason::Shutdown).await
-                }));
-            }
-            for drain in drains {
-                if let Err(error) = drain.await.expect("session disposal panicked") {
-                    failures.push(error);
+                // Start every disposal before waiting for any one writer to drain.
+                let mut drains = Vec::new();
+                for (key, record) in records {
+                    let owner = owner.clone();
+                    drains.push(tokio::spawn(async move {
+                        owner.evict(&key, record, EvictionReason::Shutdown).await
+                    }));
                 }
-            }
-            done.send_replace(Some(aggregate(
-                "Failed to shut down all agent sessions.",
-                failures,
-            )));
-        });
+                for drain in drains {
+                    if let Err(error) = drain.await.expect("session disposal panicked") {
+                        failures.push(error);
+                    }
+                }
+                aggregate("Failed to shut down all agent sessions.", failures)
+            },
+        );
         Box::pin(wait_result(completion))
     }
 

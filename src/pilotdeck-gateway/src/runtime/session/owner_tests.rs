@@ -1390,3 +1390,137 @@ async fn replacement_adapter_drains_real_owner_before_storage() {
 
 #[path = "owner_hooks_tests.rs"]
 mod hooks;
+
+fn observer_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn session_close_completion_survives_stopped_executor() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let probe = Probe::default();
+    let owner = probe.owner();
+    executor.block_on(async {
+        owner.get_or_create(context("a")).await.unwrap();
+    });
+    let pending = {
+        let _entered = executor.enter();
+        owner.close(&"a".into())
+    };
+    drop(executor); // close task queued but never polled
+    observer_runtime().block_on(async {
+        let error = tokio::time::timeout(Duration::from_secs(1), pending)
+            .await
+            .expect("session close completion must survive stopped executor")
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Session close task was dropped or panicked before completion."
+        );
+    });
+}
+
+#[test]
+fn session_close_project_completion_survives_stopped_executor() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let probe = Probe::default();
+    let owner = probe.owner();
+    executor.block_on(async {
+        owner.get_or_create(context("a")).await.unwrap();
+    });
+    let pending = {
+        let _entered = executor.enter();
+        owner.close_project(&"project".into())
+    };
+    drop(executor);
+    observer_runtime().block_on(async {
+        let error = tokio::time::timeout(Duration::from_secs(1), pending)
+            .await
+            .expect("close_project completion must survive stopped executor")
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Session project close task was dropped or panicked before completion."
+        );
+    });
+}
+
+#[test]
+fn session_idle_eviction_completion_survives_stopped_executor() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let probe = Probe::default();
+    let owner = probe.owner();
+    executor.block_on(async {
+        owner.get_or_create(context("a")).await.unwrap();
+    });
+    let completion = {
+        let _entered = executor.enter();
+        probe.time(1_000);
+        owner.sweep_idle();
+        owner
+            .0
+            .state
+            .lock()
+            .unwrap()
+            .pending
+            .last()
+            .expect("sweep must track the idle eviction")
+            .completion
+            .clone()
+    };
+    drop(executor);
+    observer_runtime().block_on(async {
+        let error = tokio::time::timeout(Duration::from_secs(1), wait_result(completion))
+            .await
+            .expect("idle eviction completion must survive stopped executor")
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Session idle eviction task was dropped or panicked before completion."
+        );
+    });
+}
+
+#[test]
+fn session_shutdown_completion_survives_stopped_executor() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let probe = Probe::default();
+    let owner = probe.owner();
+    executor.block_on(async {
+        owner.get_or_create(context("a")).await.unwrap();
+    });
+    let pending = {
+        let _entered = executor.enter();
+        owner.shutdown()
+    };
+    drop(executor);
+    let observer = observer_runtime();
+    observer.block_on(async {
+        let error = tokio::time::timeout(Duration::from_secs(1), pending)
+            .await
+            .expect("shutdown completion must survive stopped executor")
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Session shutdown task was dropped or panicked before completion."
+        );
+        // Repeated observation through the memoized shutdown receiver.
+        let repeated = owner.shutdown().await.unwrap_err();
+        assert_eq!(repeated.message, error.message);
+    });
+}

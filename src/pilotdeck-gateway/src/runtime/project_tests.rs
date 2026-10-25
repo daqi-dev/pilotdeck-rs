@@ -648,3 +648,114 @@ fn cleanup_completion_survives_stopped_executor() {
         drop(registry);
     }
 }
+
+#[test]
+fn project_reload_rollback_completion_survives_stopped_executor() {
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    for spawn_before_shutdown in [false, true] {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let probe = Arc::new(Probe::default());
+        let scratch = Scratch::new();
+        let registry = {
+            let _entered = executor.enter();
+            probe.registry(&scratch.0)
+        };
+        let pending = {
+            let _entered = executor.enter();
+            registry.acquire(None).unwrap();
+            probe.fail_at.store(2, Ordering::SeqCst);
+            let mut pending = Box::pin(registry.reload());
+            if spawn_before_shutdown {
+                assert!(matches!(
+                    pending
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop())),
+                    Poll::Pending
+                ));
+            }
+            pending
+        };
+        // The rollback task is queued but never polled. Without the guard its
+        // sender disappears and the reload future waits forever.
+        drop(executor);
+        let observer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        observer.block_on(async {
+            let error = tokio::time::timeout(Duration::from_secs(1), pending)
+                .await
+                .expect("reload rollback completion must survive stopped executor")
+                .unwrap_err();
+            assert_eq!(
+                error.message,
+                "Project runtime reload rollback task was dropped or panicked before completion."
+            );
+            println!(
+                "spawn_before_shutdown={spawn_before_shutdown}: {}",
+                error.message
+            );
+        });
+        drop(registry);
+    }
+}
+
+#[test]
+fn project_dispose_completion_survives_stopped_executor() {
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    for spawn_before_shutdown in [false, true] {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let probe = Arc::new(Probe::default());
+        let scratch = Scratch::new();
+        let registry = {
+            let _entered = executor.enter();
+            probe.registry(&scratch.0)
+        };
+        let pending = {
+            let _entered = executor.enter();
+            registry.acquire(None).unwrap();
+            let mut pending = Box::pin(registry.dispose());
+            if spawn_before_shutdown {
+                assert!(matches!(
+                    pending
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop())),
+                    Poll::Pending
+                ));
+            }
+            pending
+        };
+        drop(executor);
+        let observer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        observer.block_on(async {
+            let error = tokio::time::timeout(Duration::from_secs(1), pending)
+                .await
+                .expect("project dispose completion must survive stopped executor")
+                .unwrap_err();
+            assert_eq!(
+                error.message,
+                "Project runtime dispose task was dropped or panicked before completion."
+            );
+            println!(
+                "spawn_before_shutdown={spawn_before_shutdown}: {}",
+                error.message
+            );
+        });
+        drop(registry);
+    }
+}

@@ -123,10 +123,14 @@ fn start_lease_release(
     let plugins = plugins.to_vec();
     let state = Arc::clone(state);
     let waiters = Arc::clone(waiters);
-    tokio::spawn(async move {
-        let result = release_lease_plugins(&plugins, &state, &waiters).await;
-        let _ = tx.send(Some(result));
-    });
+    super::super::cleanup_task::spawn_with_error(
+        &tokio::runtime::Handle::current(),
+        tx,
+        super::PluginRuntimeError::new(
+            "Plugin lease release task was dropped or panicked before completion.",
+        ),
+        async move { release_lease_plugins(&plugins, &state, &waiters).await },
+    );
     rx
 }
 

@@ -1309,3 +1309,54 @@ fn session_key_identity_is_utf16_exact() {
         lone.units()
     );
 }
+
+#[test]
+fn memory_dispose_completion_survives_stopped_executor() {
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let events = Arc::new(Events::default());
+    let mut options = ProjectMemoryBundleOptions::new(PROJECT);
+    options.provider_factory = Some(Arc::new({
+        let events = Arc::clone(&events);
+        move |_| Ok(Some(provider_with_events(Arc::clone(&events), false)))
+    }));
+    let bundle = Arc::new(ProjectMemoryBundle::new(options));
+    bundle.stage().unwrap();
+    let mut pending = {
+        let _entered = executor.enter();
+        Box::pin(bundle.dispose())
+    };
+    {
+        let _entered = executor.enter();
+        assert!(matches!(
+            pending
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+    }
+    drop(executor); // the disposer task is queued but never polled
+    let observer = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    observer.block_on(async {
+        let error = tokio::time::timeout(Duration::from_secs(1), pending)
+            .await
+            .expect("memory dispose completion must survive stopped executor")
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Memory provider dispose task was dropped or panicked before completion."
+        );
+        let repeated = bundle.dispose().await.unwrap_err();
+        assert_eq!(repeated.message, error.message);
+    });
+    assert_eq!(events.snapshot(), Vec::<String>::new());
+}

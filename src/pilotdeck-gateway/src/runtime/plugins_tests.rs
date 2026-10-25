@@ -705,3 +705,142 @@ fn plugin_single_flight_completion_survives_runtime_shutdown() {
         });
     }
 }
+
+#[test]
+fn plugin_lease_release_completion_survives_runtime_shutdown() {
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let runtime = empty_runtime();
+    let mut lease = executor.block_on(async {
+        runtime
+            .acquire_command_catalog()
+            .await
+            .expect("empty generation lease")
+    });
+    let mut pending = {
+        let _entered = executor.enter();
+        Box::pin(lease.release())
+    };
+    {
+        let _entered = executor.enter();
+        assert!(matches!(
+            pending
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+    }
+    drop(executor); // the release task was never polled
+    let observer = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    observer.block_on(async {
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), pending)
+            .await
+            .expect("lease release completion must survive runtime shutdown")
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Plugin lease release task was dropped or panicked before completion."
+        );
+        println!("{}", error.message);
+    });
+}
+
+type DisposalStartReceiver = watch::Receiver<Option<Result<(), PluginRuntimeError>>>;
+
+fn plugin_disposal_receivers() -> (DisposalStartReceiver, Vec<DisposalReceiver>) {
+    let plugin = Arc::new(LoadedPlugin {
+        name: "guarded".into(),
+        path: "/guarded".into(),
+        source: PluginSource::Global,
+        commands: Vec::new(),
+        skills: Vec::new(),
+        output_styles: Vec::new(),
+        hooks_config: None,
+        mcp_servers: None,
+        lsp_servers: None,
+        dispose: Some(Box::new(|| Box::pin(async { Ok(()) }))),
+    });
+    let mut registry = PluginRegistry::new();
+    let state = Arc::new(TokioMutex::new(PluginRuntimeState {
+        registry: PluginRegistry::new(),
+        refresh_sender: None,
+        refresh_receiver: None,
+        disposal_requested: false,
+        dispose_sender: None,
+        dispose_receiver: None,
+    }));
+    let pending = start_disposals(&mut registry, vec![plugin], &state);
+    let started = registry
+        .disposal_start_receiver
+        .take()
+        .expect("disposal start barrier");
+    (started, pending)
+}
+
+#[test]
+fn plugin_disposal_start_completion_survives_runtime_shutdown() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (started, _pending) = {
+        let _entered = executor.enter();
+        plugin_disposal_receivers()
+    };
+    drop(executor); // the start task and its per-plugin tasks were never polled
+    let observer = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    observer.block_on(async {
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), wait_watch(started))
+            .await
+            .expect("disposal start completion must survive runtime shutdown")
+            .unwrap_err();
+        assert_eq!(
+            error.message,
+            "Plugin disposal start task was dropped or panicked before completion."
+        );
+        println!("{}", error.message);
+    });
+}
+
+#[test]
+fn plugin_disposal_completion_survives_runtime_shutdown() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (_started, pending) = {
+        let _entered = executor.enter();
+        plugin_disposal_receivers()
+    };
+    drop(executor); // per-plugin disposal tasks were never polled
+    let observer = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    observer.block_on(async {
+        for receiver in pending {
+            let error =
+                tokio::time::timeout(std::time::Duration::from_secs(1), wait_watch(receiver))
+                    .await
+                    .expect("per-plugin disposal completion must survive runtime shutdown")
+                    .unwrap_err();
+            assert_eq!(
+                error.message,
+                "Plugin disposal task was dropped or panicked before completion."
+            );
+            println!("{}", error.message);
+        }
+    });
+}

@@ -523,23 +523,30 @@ impl ProjectRuntimeRegistry {
         };
         if let Some((error, staged)) = failed {
             let (sender, completion) = watch::channel(None);
-            self.executor.spawn(async move {
-                // Keep the queue blocked through rollback even if the caller
-                // cancels its reload future while waiting for cleanup.
-                let _serial = serial;
-                let mut failures = vec![error];
-                let mut staged = staged;
-                staged.rotate_right(1); // TS: partial cleanup, then staged map order.
-                for (_, runtime) in staged {
-                    if let Err(error) = runtime.wait_disposed().await {
-                        failures.push(error);
+            super::cleanup_task::spawn_with_error(
+                &self.executor,
+                sender,
+                RuntimeError::new(
+                    "Project runtime reload rollback task was dropped or panicked before completion.",
+                ),
+                async move {
+                    // Keep the queue blocked through rollback even if the caller
+                    // cancels its reload future while waiting for cleanup.
+                    let _serial = serial;
+                    let mut failures = vec![error];
+                    let mut staged = staged;
+                    staged.rotate_right(1); // TS: partial cleanup, then staged map order.
+                    for (_, runtime) in staged {
+                        if let Err(error) = runtime.wait_disposed().await {
+                            failures.push(error);
+                        }
                     }
-                }
-                sender.send_replace(Some(RuntimeError::aggregate(
-                    "Failed to stage and clean up project runtime reload.",
-                    failures,
-                )));
-            });
+                    RuntimeError::aggregate(
+                        "Failed to stage and clean up project runtime reload.",
+                        failures,
+                    )
+                },
+            );
             wait_completion(completion).await
         } else {
             Ok(())
@@ -579,36 +586,43 @@ impl ProjectRuntimeRegistry {
                 let (sender, completion) = watch::channel(None);
                 state.disposal = Some(completion.clone());
                 let reload_gate = Arc::clone(&self.reload_gate);
-                self.executor.spawn(async move {
-                    // TS dispose chains after reloadTail, including rollback.
-                    let reload = reload_gate.lock().await;
-                    drop(reload); // Admission is closed; never hold this while draining leases.
-                    let mut failures = Vec::new();
-                    let mut leased = Vec::new();
-                    for runtime in runtimes {
-                        // Completed old/failed candidates no longer belong to
-                        // TS's pending-disposal set; do not replay their errors.
-                        if runtime.state() == RuntimeState::Disposed {
-                            continue;
+                super::cleanup_task::spawn_with_error(
+                    &self.executor,
+                    sender,
+                    RuntimeError::new(
+                        "Project runtime dispose task was dropped or panicked before completion.",
+                    ),
+                    async move {
+                        // TS dispose chains after reloadTail, including rollback.
+                        let reload = reload_gate.lock().await;
+                        drop(reload); // Admission is closed; never hold this while draining leases.
+                        let mut failures = Vec::new();
+                        let mut leased = Vec::new();
+                        for runtime in runtimes {
+                            // Completed old/failed candidates no longer belong to
+                            // TS's pending-disposal set; do not replay their errors.
+                            if runtime.state() == RuntimeState::Disposed {
+                                continue;
+                            }
+                            if runtime.enable_cleanup() {
+                                if let Err(error) = runtime.wait_disposed().await {
+                                    failures.push(error);
+                                }
+                            } else {
+                                leased.push(runtime);
+                            }
                         }
-                        if runtime.enable_cleanup() {
+                        for runtime in leased {
                             if let Err(error) = runtime.wait_disposed().await {
                                 failures.push(error);
                             }
-                        } else {
-                            leased.push(runtime);
                         }
-                    }
-                    for runtime in leased {
-                        if let Err(error) = runtime.wait_disposed().await {
-                            failures.push(error);
-                        }
-                    }
-                    sender.send_replace(Some(RuntimeError::aggregate(
-                        "Failed to dispose project runtime generations.",
-                        failures,
-                    )));
-                });
+                        RuntimeError::aggregate(
+                            "Failed to dispose project runtime generations.",
+                            failures,
+                        )
+                    },
+                );
                 completion
             }
         };
