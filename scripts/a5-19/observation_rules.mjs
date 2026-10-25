@@ -17,6 +17,28 @@ export const RULES = Object.freeze({
 function requireRule(ok, rule) {
   if (!ok) throw Object.assign(new Error(`${rule}: ${RULES[rule]}`), { rule });
 }
+
+// Python validate_calibration derives the expected variant/phase/repetition
+// from the preregistered ID; the direct Node oracle must not trust the labels.
+function requireLabel(ok, detail) {
+  if (!ok) throw Object.assign(new Error(`COVERAGE: ${detail}`), { rule: 'COVERAGE' });
+}
+
+export function checkObservationLabels(o) {
+  requireLabel(o !== null && typeof o === 'object', 'observation must be an object');
+  requireLabel(typeof o.id === 'string', 'observation id must be a string');
+  const parts = o.id.split('/');
+  requireLabel(parts.length === 4 && parts.every(part => part.length > 0),
+    `${o.id}: observation id must be <cell>/<variant>/<phase>/<repetition>`);
+  const [, variant, phase, repetition] = parts;
+  requireLabel(/^[1-9][0-9]*$/.test(repetition),
+    `${o.id}: repetition must be a canonical positive integer`);
+  requireLabel(Number.isInteger(o.repetition) && o.repetition === Number(repetition),
+    `${o.id}: repetition does not match preregistered ID`);
+  requireLabel(o.phase === phase, `${o.id}: phase does not match preregistered ID`);
+  requireLabel(o.variant !== null && typeof o.variant === 'object' && !Array.isArray(o.variant)
+    && o.variant.name === variant, `${o.id}: variant does not match preregistered ID`);
+}
 const rows = (o, kind) => o.timeline.filter(r => r.kind === kind);
 const keys = (o, kind) => rows(o, kind).map(r => r.key);
 const statuses = text => text.trim() ? text.trim().split('\n').map(JSON.parse)
@@ -51,7 +73,7 @@ export function checkRegistry(o) {
     keys(o, 'registry.append.attempt')), 'REGISTRY_FIFO');
 }
 export function checkObservation(o) {
-  checkFrames(o); checkStatus(o); checkRegistry(o);
+  checkObservationLabels(o); checkFrames(o); checkStatus(o); checkRegistry(o);
 }
 
 // Equality alone can accept two identical damaged observers. Validate each side
