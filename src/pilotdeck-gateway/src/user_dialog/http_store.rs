@@ -19,7 +19,10 @@ use super::{
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
-    HeaderMap, Method, Request, Response, StatusCode, body::Incoming, header, server::conn::http1,
+    HeaderMap, Method, Request, Response, StatusCode,
+    body::{Body, Frame, Incoming, SizeHint},
+    header,
+    server::conn::http1,
     service::service_fn,
 };
 use hyper_util::{
@@ -27,9 +30,18 @@ use hyper_util::{
     rt::{TokioExecutor, TokioIo, TokioTimer},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
-use std::{convert::Infallible, fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    convert::Infallible,
+    fmt,
+    future::Future,
+    io,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll, Waker},
+    time::Duration,
+};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::{TcpListener, TcpStream},
     sync::{Semaphore, watch},
     task::JoinSet,
@@ -44,6 +56,13 @@ pub const STORE_PATH_PREFIX: &str = "/v1/gateway-user-dialog-store/";
 const DEFAULT_HEADERS_TIMEOUT: Duration = Duration::from_secs(60);
 /// Node `http.createServer` default `requestTimeout` (v22.22.0: 300000 ms).
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// Node `http.createServer` default `keepAliveTimeout` (v22.22.0: 5000 ms).
+const DEFAULT_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Node `server.keepAliveTimeoutBuffer` default (v22.22.0: 1000 ms). Node arms
+/// the idle socket timeout with `keepAliveTimeout + keepAliveTimeoutBuffer`, so
+/// an idle keep-alive connection actually closes after 6 s; the advertised
+/// `Keep-Alive: timeout=` value is still `keepAliveTimeout`.
+const DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER: Duration = Duration::from_secs(1);
 /// Node `http.maxHeaderSize` default (v22.22.0: 16384 bytes). hyper's
 /// `max_buf_size` is also its read-buffer cap and replays Node's 431.
 const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -1700,6 +1719,8 @@ impl GatewayUserDialogStoreHttpServer {
 struct ServeLimits {
     headers_timeout: Duration,
     request_timeout: Duration,
+    keep_alive_timeout: Duration,
+    keep_alive_timeout_buffer: Duration,
     max_header_bytes: usize,
     max_body_bytes: usize,
     max_connections: usize,
@@ -1709,10 +1730,293 @@ impl Default for ServeLimits {
         Self {
             headers_timeout: DEFAULT_HEADERS_TIMEOUT,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            keep_alive_timeout: DEFAULT_KEEP_ALIVE_TIMEOUT,
+            keep_alive_timeout_buffer: DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER,
             max_header_bytes: DEFAULT_MAX_HEADER_BYTES,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             max_connections: DEFAULT_MAX_CONNECTIONS,
         }
+    }
+}
+
+/// Where one connection is in Node's timeout model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TimeoutPhase {
+    /// Before the first complete request head: only `headersTimeout` applies.
+    InitialHeaders,
+    /// After a response was fully written: `keepAliveTimeout + buffer`, reset by
+    /// socket activity.
+    Idle,
+    /// Bytes of a pipelined/follow-up request arrived: the idle inactivity timer
+    /// and a fresh `headersTimeout` both run until the head completes.
+    NextHeaders,
+    /// A complete request head was parsed; `requestTimeout` (inside `serve`)
+    /// owns the body and no connection-level timer may interrupt it.
+    Request,
+}
+
+#[derive(Debug)]
+struct TimeoutState {
+    phase: TimeoutPhase,
+    header_deadline: Option<tokio::time::Instant>,
+    idle_deadline: Option<tokio::time::Instant>,
+}
+impl TimeoutState {
+    fn nearest_deadline(&self) -> Option<tokio::time::Instant> {
+        match (self.header_deadline, self.idle_deadline) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (left, right) => left.or(right),
+        }
+    }
+}
+
+/// Node v22.22.0 connection timers, reproduced on top of hyper:
+///
+/// * the first request head is bounded by `headersTimeout` (60 s);
+/// * after a response, `socket.setTimeout(keepAliveTimeout + buffer)` starts a
+///   6 s inactivity timer (5 s + 1 s default);
+/// * socket activity resets that inactivity timer, but does not postpone a
+///   second request's `headersTimeout`, which starts at its first byte;
+/// * a parsed request head clears the connection timers; the body is bounded by
+///   `requestTimeout` in [`serve`].
+///
+/// The timeout closes the connection silently (`poll_read` returns EOF), like
+/// Node's `socket.destroy()` after an idle/header timeout.
+#[derive(Debug)]
+struct KeepAliveTimer {
+    headers_timeout: Duration,
+    keep_alive_timeout: Duration,
+    state: Mutex<TimeoutState>,
+    /// Connection read waker. A state change (arm/disarm/reset) must wake a
+    /// `poll_read` that is parked on an older deadline.
+    waker: Mutex<Option<Waker>>,
+}
+impl KeepAliveTimer {
+    fn new(headers_timeout: Duration, keep_alive_timeout: Duration) -> Self {
+        let now = tokio::time::Instant::now();
+        Self {
+            headers_timeout,
+            keep_alive_timeout,
+            state: Mutex::new(TimeoutState {
+                phase: TimeoutPhase::InitialHeaders,
+                header_deadline: Some(now + headers_timeout),
+                idle_deadline: None,
+            }),
+            waker: Mutex::new(None),
+        }
+    }
+
+    fn store_waker(&self, cx: &Context<'_>) {
+        *self.waker.lock().unwrap() = Some(cx.waker().clone());
+    }
+
+    fn wake(&self) {
+        if let Some(waker) = self.waker.lock().unwrap().take() {
+            waker.wake();
+        }
+    }
+
+    /// A complete request head reached the handler; stop the connection timers
+    /// so a slow request body is governed only by `requestTimeout`.
+    fn request_started(&self) {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.phase = TimeoutPhase::Request;
+            state.header_deadline = None;
+            state.idle_deadline = None;
+        }
+        self.wake();
+    }
+
+    /// The response body ended. Node arms the keep-alive inactivity timer from
+    /// the response `finish` event; direct arming here is at most one flush
+    /// early, and the next write resets the deadline (see [`Self::write_activity`]).
+    fn response_finished(&self) {
+        let now = tokio::time::Instant::now();
+        {
+            let mut state = self.state.lock().unwrap();
+            state.phase = TimeoutPhase::Idle;
+            state.header_deadline = None;
+            state.idle_deadline = Some(now + self.keep_alive_timeout);
+        }
+        self.wake();
+    }
+
+    /// Any successfully read byte resets the keep-alive inactivity timer. The
+    /// first byte of a follow-up request additionally starts `headersTimeout`.
+    fn read_activity(&self) {
+        let now = tokio::time::Instant::now();
+        {
+            let mut state = self.state.lock().unwrap();
+            match state.phase {
+                TimeoutPhase::InitialHeaders => {}
+                TimeoutPhase::Idle => {
+                    state.phase = TimeoutPhase::NextHeaders;
+                    state.header_deadline = Some(now + self.headers_timeout);
+                    state.idle_deadline = Some(now + self.keep_alive_timeout);
+                }
+                TimeoutPhase::NextHeaders => {
+                    state.idle_deadline = Some(now + self.keep_alive_timeout);
+                }
+                TimeoutPhase::Request => {}
+            }
+        }
+        self.wake();
+    }
+
+    /// Writes count as socket activity for Node's `socket.setTimeout`, so a slow
+    /// response flush must not consume the idle budget.
+    fn write_activity(&self) {
+        let now = tokio::time::Instant::now();
+        {
+            let mut state = self.state.lock().unwrap();
+            if matches!(state.phase, TimeoutPhase::Idle | TimeoutPhase::NextHeaders) {
+                state.idle_deadline = Some(now + self.keep_alive_timeout);
+            }
+        }
+        self.wake();
+    }
+
+    fn nearest_deadline(&self) -> Option<tokio::time::Instant> {
+        self.state.lock().unwrap().nearest_deadline()
+    }
+}
+
+/// Transport wrapper that turns the shared deadline into a silent EOF. Keeping
+/// the timer in `poll_read` means hyper is always the task that observes it, so
+/// no background task can race the connection state.
+struct TimeoutStream<S> {
+    inner: S,
+    timer: Arc<KeepAliveTimer>,
+    sleep: Pin<Box<tokio::time::Sleep>>,
+    armed_deadline: Option<tokio::time::Instant>,
+}
+impl<S> TimeoutStream<S> {
+    fn new(inner: S, timer: Arc<KeepAliveTimer>) -> Self {
+        let armed_deadline = timer.nearest_deadline();
+        let sleep = Box::pin(tokio::time::sleep_until(armed_deadline.unwrap_or_else(
+            || tokio::time::Instant::now() + Duration::from_secs(86_400),
+        )));
+        Self {
+            inner,
+            timer,
+            sleep,
+            armed_deadline,
+        }
+    }
+
+    fn refresh_deadline(&mut self) -> Option<tokio::time::Instant> {
+        let deadline = self.timer.nearest_deadline();
+        if deadline != self.armed_deadline {
+            self.armed_deadline = deadline;
+            if let Some(deadline) = deadline {
+                self.sleep.as_mut().reset(deadline);
+            }
+        }
+        deadline
+    }
+}
+impl<S: AsyncRead + Unpin> AsyncRead for TimeoutStream<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        let deadline = this.refresh_deadline();
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            return Poll::Ready(Ok(()));
+        }
+        match Pin::new(&mut this.inner).poll_read(cx, buffer) {
+            Poll::Ready(Ok(())) => {
+                if !buffer.filled().is_empty() {
+                    this.timer.read_activity();
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Pending => {
+                this.timer.store_waker(cx);
+                if deadline.is_some() && this.sleep.as_mut().poll(cx).is_ready() {
+                    Poll::Ready(Ok(()))
+                } else {
+                    Poll::Pending
+                }
+            }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+        }
+    }
+}
+impl<S: AsyncWrite + Unpin> AsyncWrite for TimeoutStream<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll_write(cx, buffer) {
+            Poll::Ready(Ok(written)) => {
+                if written > 0 {
+                    this.timer.write_activity();
+                }
+                Poll::Ready(Ok(written))
+            }
+            poll => poll,
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+/// Response body that tells the connection timer when the response is done.
+struct KeepAliveBody {
+    inner: Full<Bytes>,
+    timer: Arc<KeepAliveTimer>,
+    finished: bool,
+}
+impl KeepAliveBody {
+    fn new(inner: Full<Bytes>, timer: Arc<KeepAliveTimer>) -> Self {
+        Self {
+            inner,
+            timer,
+            finished: false,
+        }
+    }
+}
+impl Body for KeepAliveBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<std::result::Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        let frame = Pin::new(&mut this.inner).poll_frame(cx);
+        if !this.finished
+            && match &frame {
+                Poll::Ready(None) => true,
+                Poll::Ready(Some(Ok(frame))) => frame.is_data() && this.inner.is_end_stream(),
+                _ => false,
+            }
+        {
+            this.finished = true;
+            this.timer.response_finished();
+        }
+        frame
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
     }
 }
 
@@ -1748,6 +2052,8 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
     let handler = Arc::new(handler);
     // hyper asserts `max_buf_size >= 8192`; keep that h1 minimum.
     let max_header_bytes = limits.max_header_bytes.max(8 * 1024);
+    // Node arms `socket.setTimeout(keepAliveTimeout + keepAliveTimeoutBuffer)`.
+    let keep_alive_timeout = limits.keep_alive_timeout + limits.keep_alive_timeout_buffer;
     let connections = Arc::new(Semaphore::new(limits.max_connections));
     let (shutdown, shutdown_rx) = watch::channel(false);
     let task = tokio::spawn(async move {
@@ -1774,14 +2080,34 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                     let mut connection_shutdown = shutdown_rx.clone();
                     tasks.spawn(async move {
                         let _permit = permit;
+                        let timer = Arc::new(KeepAliveTimer::new(
+                            limits.headers_timeout,
+                            keep_alive_timeout,
+                        ));
+                        let service_timer = timer.clone();
                         let service = service_fn(move |request: Request<Incoming>| {
                             let handler = handler.clone();
-                            async move { Ok::<_, Infallible>(serve(handler, request, limits).await) }
+                            let timer = service_timer.clone();
+                            async move {
+                                // The complete request head is in; only
+                                // `requestTimeout` may bound the body now.
+                                timer.request_started();
+                                let response = serve(handler, request, limits).await;
+                                Ok::<_, Infallible>(
+                                    response.map(|body| KeepAliveBody::new(body, timer)),
+                                )
+                            }
                         });
                         let mut builder = http1::Builder::new();
                         builder
                             .timer(TokioTimer::new())
-                            .header_read_timeout(limits.headers_timeout)
+                            // Node's `headersTimeout` is enforced by
+                            // `TimeoutStream` from the first byte of each
+                            // request. hyper's timer starts while the
+                            // connection is still idle after a response, which
+                            // would make a late partial head inherit a shorter
+                            // deadline than Node's fresh 60 s.
+                            .header_read_timeout(None::<Duration>)
                             // Node's `maxHeaderSize` (16 KiB) rejects with 431.
                             // hyper's own default caps at 100 fields; Node
                             // v22.22.0's runtime `maxHeadersCount` default is
@@ -1790,8 +2116,10 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                             // the 16 KiB buffer can hold.
                             .max_headers(4096)
                             .max_buf_size(max_header_bytes);
-                        let connection =
-                            builder.serve_connection(TokioIo::new(stream), service);
+                        let connection = builder.serve_connection(
+                            TokioIo::new(TimeoutStream::new(stream, timer)),
+                            service,
+                        );
                         tokio::pin!(connection);
                         tokio::select! {
                             _ = wait_for_shutdown(&mut connection_shutdown) => {

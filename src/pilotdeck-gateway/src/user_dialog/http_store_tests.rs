@@ -511,15 +511,18 @@ async fn close_closes_idle_keep_alive_connections() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
-/// Node has no separate Rust-side keep-alive timer; the 60 s header timeout is
-/// the registered fallback that eventually releases an idle connection's
-/// permit. A short test timeout proves that fallback actually covers the gap
-/// between two requests, not just a half-written first head.
+/// Node's observable idle keep-alive deadline is `keepAliveTimeout` (5 s) plus
+/// `server.keepAliveTimeoutBuffer` (1 s), not the bare 5 s property and not the
+/// 60 s `headersTimeout`. A generated Node v22.22.0 server closes at 6,003 ms
+/// (probe record in `_tmp/20261025-issue-679/probe`). The timer is shortened
+/// here; the default constants are pinned separately.
 #[tokio::test]
-async fn idle_keep_alive_connections_close_at_headers_timeout() {
+async fn idle_keep_alive_connections_close_at_keep_alive_timeout() {
     let (store, directory) = file_store("idle-timeout");
     let limits = ServeLimits {
-        headers_timeout: Duration::from_millis(200),
+        headers_timeout: Duration::from_secs(5),
+        keep_alive_timeout: Duration::from_millis(200),
+        keep_alive_timeout_buffer: Duration::ZERO,
         ..ServeLimits::default()
     };
     let (server, port) = start_limited(store, limits).await;
@@ -532,15 +535,175 @@ async fn idle_keep_alive_connections_close_at_headers_timeout() {
     let mut byte = [0u8; 1];
     let read = tokio::time::timeout(Duration::from_secs(2), idle.read(&mut byte))
         .await
-        .expect("an idle keep-alive connection outlived headersTimeout");
-    assert_eq!(read.unwrap(), 0, "expected EOF at headersTimeout");
+        .expect("an idle keep-alive connection outlived keepAliveTimeout");
+    assert_eq!(read.unwrap(), 0, "expected EOF at keepAliveTimeout");
     assert!(
         started.elapsed() < Duration::from_secs(2),
-        "the fallback did not fire promptly: {:?}",
+        "the keep-alive timer did not fire promptly: {:?}",
         started.elapsed()
     );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
+}
+
+/// End-to-end default check: Node v22.22.0 (keepAliveTimeout 5000 ms plus the
+/// default 1000 ms buffer) closed an idle keep-alive socket at 6,003 ms in the
+/// recorded probe. The bare 5 s property or the 60 s header timeout would both
+/// be wrong here.
+#[tokio::test]
+async fn default_idle_keep_alive_connection_closes_after_six_seconds() {
+    let (store, directory) = file_store("idle-default-timeout");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let mut idle = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    idle.write_all(&http_get(false)).await.unwrap();
+    let response = read_response(&mut idle).await;
+    assert!(response.starts_with(b"HTTP/1.1 405"), "{response:?}");
+
+    let started = Instant::now();
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(8), idle.read(&mut byte))
+        .await
+        .expect("the default idle keep-alive connection did not close");
+    assert_eq!(read.unwrap(), 0, "expected EOF at the default deadline");
+    assert!(
+        started.elapsed() >= Duration::from_millis(5_500),
+        "closed before Node's keepAliveTimeout + buffer: {:?}",
+        started.elapsed()
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Node's keep-alive timer is an inactivity timer (`socket.setTimeout`): a
+/// byte from the client resets it. Without the reset, the connection would
+/// close 300 ms after the first response instead of 300 ms after the partial
+/// follow-up head; the 400 ms probe is longer than the old deadline and shorter
+/// than the fresh one.
+#[tokio::test]
+async fn partial_next_request_resets_keep_alive_inactivity_timer() {
+    let (store, directory) = file_store("idle-reset");
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_secs(2),
+        keep_alive_timeout: Duration::from_millis(800),
+        keep_alive_timeout_buffer: Duration::ZERO,
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(&http_get(false)).await.unwrap();
+    let response = read_response(&mut stream).await;
+    assert!(response.starts_with(b"HTTP/1.1 405"), "{response:?}");
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    stream
+        .write_all(b"POST /v1/gateway-user-dialog-store/list HTTP/1.1\r\nHost: h\r\nX-Partial: ")
+        .await
+        .unwrap();
+
+    let mut byte = [0u8; 1];
+    let early = tokio::time::timeout(Duration::from_millis(600), stream.read(&mut byte)).await;
+    assert!(
+        early.is_err(),
+        "keep-alive inactivity was not reset by the partial head: {early:?}"
+    );
+    let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut byte))
+        .await
+        .expect("the reset keep-alive timer never fired");
+    assert_eq!(read.unwrap(), 0, "expected EOF after the reset timer");
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Node starts a fresh `headersTimeout` at the first byte of a follow-up
+/// request; the idle timer alone would allow 2 s here. The partial head must be
+/// closed by the 300 ms header deadline, proving the start-on-first-byte branch.
+#[tokio::test]
+async fn next_request_headers_timeout_starts_at_first_byte() {
+    let (store, directory) = file_store("next-headers-timeout");
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_millis(300),
+        keep_alive_timeout: Duration::from_secs(2),
+        keep_alive_timeout_buffer: Duration::ZERO,
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(&http_get(false)).await.unwrap();
+    let response = read_response(&mut stream).await;
+    assert!(response.starts_with(b"HTTP/1.1 405"), "{response:?}");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    stream
+        .write_all(b"GET /v1/gateway-user-dialog-store/list HTTP/1.1\r\nHost: h\r\nX-Partial: ")
+        .await
+        .unwrap();
+    let started = Instant::now();
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut byte))
+        .await
+        .expect("a partial follow-up head waited for the idle timer, not headersTimeout");
+    assert_eq!(read.unwrap(), 0, "expected EOF at headersTimeout");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the header timer did not fire promptly: {:?}",
+        started.elapsed()
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// The keep-alive timer must not run while a request is in flight: a body that
+/// arrives after more than `keepAliveTimeout` must still be accepted, until the
+/// separate `requestTimeout` bound.
+#[tokio::test]
+async fn keep_alive_timeout_does_not_close_active_request() {
+    let (store, directory) = file_store("active-request");
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_secs(2),
+        request_timeout: Duration::from_secs(2),
+        keep_alive_timeout: Duration::from_millis(150),
+        keep_alive_timeout_buffer: Duration::ZERO,
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(&http_get(false)).await.unwrap();
+    let response = read_response(&mut stream).await;
+    assert!(response.starts_with(b"HTTP/1.1 405"), "{response:?}");
+
+    let body = put_body();
+    let head = format!(
+        "POST {STORE_PATH_PREFIX}put HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    stream.write_all(&body[..10]).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    stream.write_all(&body[10..]).await.unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(2), read_response(&mut stream))
+        .await
+        .expect("the keep-alive timer killed an active request body");
+    assert_eq!(status(&response), 200, "{response:?}");
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Pin the measured Node v22.22.0 defaults: 5 s keepAliveTimeout plus the 1 s
+/// buffer (6 s observable idle deadline), 60 s headersTimeout and 300 s
+/// requestTimeout.
+#[test]
+fn default_connection_timeouts_match_node_v22() {
+    assert_eq!(DEFAULT_KEEP_ALIVE_TIMEOUT, Duration::from_secs(5));
+    assert_eq!(DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER, Duration::from_secs(1));
+    assert_eq!(DEFAULT_HEADERS_TIMEOUT, Duration::from_secs(60));
+    assert_eq!(DEFAULT_REQUEST_TIMEOUT, Duration::from_secs(300));
+    let limits = ServeLimits::default();
+    assert_eq!(
+        limits.keep_alive_timeout + limits.keep_alive_timeout_buffer,
+        Duration::from_secs(6)
+    );
 }
 
 /// A mutation that changes the default host to `0.0.0.0` must be caught: every
