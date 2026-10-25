@@ -117,6 +117,6 @@ for (const [kind, Bus] of [['permission',GatewayPermissionBus],['question',Gatew
   }
 }
 assertBaseline(baseline); assert.deepEqual(await baselineSourceHashes(baseline,sources),sourceSha256);
-const output = resolve(process.argv[2]); await mkdir(output,{recursive:false});
+const output = resolve(process.argv[2]); await mkdir(output,{recursive:true});
 await writeFile(join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,cases,ordering,lifecycle},null,2)+'\n',{flag:'wx'});
 console.log(JSON.stringify({node:process.version,sourceCommit,cases:cases.length,ordering:ordering.length,lifecycle:lifecycle.length,output}));

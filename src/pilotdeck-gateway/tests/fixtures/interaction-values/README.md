@@ -17,7 +17,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/interaction-values/negative_control
 ```
 
 负控须独占写树与 cargo：每次一个编译成功但断言失败的变异，finally 逐字节还原并保存 SHA-256；
-编译失败/信号/超时不算检出，全部还原后重跑正控。复现输出目录必须不存在。
+编译失败/信号/超时不算检出，全部还原后重跑正控。复现时输出目录可由守卫预先创建（`mkdir` 为 `recursive:true`），但其中不得已有 `oracle.json`（`writeFile` 的 `wx` 拒绝覆盖）。
 
 生产调用 `GatewayPermissionBus::register_producer` / `GatewayElicitationBus::register_producer`；
 可单独调用 `to_interaction_replay_value`。arena 数组/对象索引保留共享/循环身份；Map/Set/类传
