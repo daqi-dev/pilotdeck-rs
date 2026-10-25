@@ -1,0 +1,2560 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f",
+    "src/tool/builtin/web/urlFetcher.ts": "ee76a642317c3b8cccb0612c60c11db07b2bf6b327f715c424ceab99bb783069"
+  },
+  "node": "v22.22.0",
+  "dependencies": [
+    {
+      "dependency": "undici",
+      "version": "8.3.0",
+      "sourceSha256": {
+        "index.js": "93fc85c00a59b58f410c901e5477d56770de3816bfbe183e751624aeb4a5e6a5",
+        "package.json": "c437529628fa8814a7e68efe0fe8bb4d0c9e64cd97e00f6e461a9c7fa2a847e4",
+        "lib/web/fetch/index.js": "d7652962f1eb65cc6763529f0f588bd7595eff67ab3a3591ee7728e8198e8996",
+        "lib/web/fetch/body.js": "9c0a4cc04cfbad2b4f48c56c9e4b2ed01ad9fe1eda9aff406ef4411a8d6921cd",
+        "lib/web/fetch/request.js": "b4b36815f3c0d082ab8f413a27085f0b197f8cdf04880db15bf7d1f0084d780a",
+        "lib/web/fetch/response.js": "0c376c359711217831d095d8139fb62b290c77dca1fe93e708d1b081074812fc"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "web_fetch/headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "web_fetch/headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "web_fetch/headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "web_fetch/headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "web_fetch/headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "web_fetch/headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "web_fetch/headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "web_fetch/headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "web_fetch/headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "web_fetch/headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "web_fetch/headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "web_fetch/headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "web_fetch/body/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "web_fetch/body/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "web_fetch/body/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "web_fetch/body/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "web_fetch/body/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "web_fetch/body/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "web_fetch/body/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "web_fetch/body/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "web_fetch/body/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "web_fetch/body/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "web_fetch/body/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "web_fetch/body/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "web_fetch/redirect-hop/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "web_fetch/redirect-hop/fulfilled/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "web_fetch/redirect-hop/fulfilled/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "web_fetch/redirect-hop/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "web_fetch/redirect-hop/rejected/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "web_fetch/redirect-hop/rejected/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "web_fetch/redirect-hop/rejected/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "web_fetch/redirect-hop/rejected/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "web_fetch/redirect-hop/idle/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "web_fetch/redirect-hop/idle/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "web_fetch/redirect-hop/idle/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "web_fetch/redirect-hop/idle/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "web_fetch/retry-status/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "web_fetch/retry-status/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "web_fetch/retry-status/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "web_fetch/retry-status/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "web_fetch/retry-error/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "web_fetch/retry-error/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "web_fetch/retry-error/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "web_fetch/retry-error/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "fetch_redirect/headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "fetch_redirect/headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "fetch_redirect/headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "fetch_redirect/headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "fetch_redirect/headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "fetch_redirect/headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "fetch_redirect/body/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "fetch_redirect/body/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/body/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/body/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "fetch_redirect/body/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "fetch_redirect/body/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/body/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/body/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "fetch_redirect/body/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "fetch_redirect/body/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/body/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/body/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "fetch_redirect/text-body/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "fetch_redirect/text-body/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/text-body/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/text-body/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "fetch_redirect/text-body/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "fetch_redirect/text-body/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/text-body/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/text-body/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "fetch_redirect/text-body/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "fetch_redirect/text-body/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/text-body/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "text-body",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/text-body/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "fetch_redirect/redirect-hop/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "fetch_redirect/redirect-hop/fulfilled/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/redirect-hop/fulfilled/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/redirect-hop/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "fetch_redirect/redirect-hop/rejected/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "fetch_redirect/redirect-hop/rejected/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/redirect-hop/rejected/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/redirect-hop/rejected/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "fetch_redirect/redirect-hop/idle/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "fetch_redirect/redirect-hop/idle/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/redirect-hop/idle/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/redirect-hop/idle/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "fetch_redirect/retry-status/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 3
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "fetch_redirect/retry-status/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/retry-status/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/retry-status/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 3
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "fetch_redirect/retry-error/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 3
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "fetch_redirect/retry-error/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/retry-error/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/retry-error/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 3
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false
+      }
+    }
+  ]
+}
