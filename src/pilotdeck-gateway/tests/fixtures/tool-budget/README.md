@@ -39,6 +39,8 @@ Rust 回放按 `Scratch` 独占临时目录重建同一布局，逐步比较完�
 `filesJson` 的逐字节内容，条数精确断言（39 cases / 42 steps）。路径统一规范化为
 `<fixture>`；`locale` 固定 en-US。
 
+#638/#690 fix-r1 回放路径映射：Rust 平铺文件名使用 `context-<uuid>-` 前缀，预置的 session 文件也映射到对应前缀文件。回放将实际生成的文件名前缀映射回 TS 名，再比较完整 outputJson/filesJson；不删除任何目录项，不剥 context 子目录，按映射后的路径恢复 TS 字典序。其余字段与文件字节严格比较。差异登记见 `A7.4-TOOLBUDGET-CONTEXT-ISOLATION-001-R1`。
+
 覆盖：
 
 - 预算内不动、`maxResultSizeChars` 刚好等于 UTF-8 字节数、`maxResultSizeTokens`

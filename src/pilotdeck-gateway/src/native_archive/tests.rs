@@ -760,3 +760,73 @@ fn project_key_miss_keeps_raw_units_like_real_node() {
         Some(&JsValue::Bool(true))
     );
 }
+
+#[tokio::test]
+async fn budget_spills_are_readable_by_archive() {
+    use crate::runtime::context::tool_budget::{ToolResultBudget, ToolResultBudgetOptions};
+    use base64::Engine;
+    let root = crate::test_scratch::Scratch::new("budget-archive");
+    let dir = root.path().join(".pilotdeck/tool-results/fixture");
+    let mut options = ToolResultBudgetOptions::new(&dir);
+    options.max_result_size_chars = Some(1);
+    let budget = ToolResultBudget::new(options);
+    let body = "原始字节\nXXXXXXXX";
+    let msg = pilotdeck_protocol::parse_json(&serde_json::json!({"role":"user","content":[{"type":"tool_result","toolCallId":"call","content":[{"type":"text","text":body}]}]}).to_string()).unwrap();
+    let text = budget
+        .apply_to_message(&msg, Some(&"turn".into()))
+        .await
+        .unwrap();
+    let media_msg = pilotdeck_protocol::parse_json(
+        r#"{"role":"user","content":[{"type":"image","mimeType":"image/png","data":"abcdefgh"}]}"#,
+    )
+    .unwrap();
+    let media = budget
+        .apply_to_supplemental_message(&media_msg, Some(&"call".into()), Some(&"turn".into()))
+        .await
+        .unwrap();
+    let metadata = Metadata {
+        home: root.path().to_path_buf(),
+        cwd: root.path().to_path_buf(),
+        files: NativeFiles,
+    };
+    for (value, expected) in [(text, body.as_bytes()), (media, b"abcdefgh".as_slice())] {
+        let JsValue::Array(items) = field(&value, "content") else {
+            panic!("content")
+        };
+        let path = PathBuf::from(text_field(&items[0], "path").unwrap());
+        assert_eq!(
+            path.parent(),
+            Some(dir.as_path()),
+            "archive requires flat layout"
+        );
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let params = object([
+            ("sessionKey", "fixture".into()),
+            ("artifactName", name.into()),
+        ]);
+        let result = callback(
+            &metadata,
+            "native_archive_artifact",
+            &params,
+            session(&params).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        let content = text_field(&result, "content").unwrap();
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(content)
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            field(&result, "bytes").as_number(),
+            Some(expected.len() as f64)
+        );
+    }
+    assert!(
+        fs::read_dir(dir)
+            .unwrap()
+            .all(|entry| entry.unwrap().file_type().unwrap().is_file())
+    );
+}

@@ -2444,10 +2444,7 @@ mod context_storage_tests {
             (&second_ref, "session-a", &second_text),
         ] {
             let path = PathBuf::from(text_field(reference, "path"));
-            assert_eq!(
-                path.parent().unwrap().parent(),
-                Some(dir.join(session_id).as_path())
-            );
+            assert_eq!(path.parent(), Some(dir.join(session_id).as_path()));
             assert_eq!(std::fs::read_to_string(path).unwrap(), *expected);
             let alias = text_field(reference, "readFilePath");
             assert!(alias.starts_with(".pilotdeck/tool-results/refs/result-"));
@@ -2611,10 +2608,7 @@ mod context_storage_tests {
         {
             let session_id = format!("session-{id}");
             let path = PathBuf::from(text_field(reference, "path"));
-            assert_eq!(
-                path.parent().unwrap().parent(),
-                Some(dir.join(&session_id).as_path())
-            );
+            assert_eq!(path.parent(), Some(dir.join(&session_id).as_path()));
             assert_eq!(std::fs::read_to_string(path).unwrap(), *expected);
             let alias = text_field(reference, "readFilePath");
             assert_eq!(
@@ -2942,7 +2936,7 @@ mod context_storage_tests {
         let first_text = "a".repeat(200_001);
         let second_text = "b".repeat(200_001);
 
-        // Both IDs sanitize to c-1; context directories keep them apart.
+        // Both IDs sanitize to c-1; context filename prefixes keep them apart.
         let first_ref = spill_with(&first, &first_text, "t1", "c/1").await;
         let second_ref = spill_with(&second, &second_text, "t1", "c-1").await;
 
@@ -2953,11 +2947,17 @@ mod context_storage_tests {
             second_text
         );
         assert_eq!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("t1-c-1.txt")
+            path,
+            PathBuf::from(
+                first
+                    .tool_result_budget
+                    .spill_path(&"t1-c-1.txt".into())
+                    .to_utf8()
+                    .unwrap()
+            )
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), first_text);
-        // Sanitization cannot merge the two context directories.
+        // Sanitization cannot merge the two context filename prefixes.
         let preview = text_field(&second_ref, "preview");
         assert!(preview.starts_with('b'));
         assert!(!preview.contains('a'));
@@ -3008,8 +3008,14 @@ mod context_storage_tests {
 
         let path = PathBuf::from(text_field(&first_ref, "path"));
         assert_eq!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some("t1-c-1.txt")
+            path,
+            PathBuf::from(
+                session
+                    .tool_result_budget
+                    .spill_path(&"t1-c-1.txt".into())
+                    .to_utf8()
+                    .unwrap()
+            )
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), first_text);
         let alias = text_field(&first_ref, "readFilePath");

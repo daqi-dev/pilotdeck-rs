@@ -184,14 +184,29 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
             max_result_size_tokens: optional_usize(budget_options.get("maxResultSizeTokens")),
             preview_bytes: optional_usize(budget_options.get("previewBytes")),
         }));
-        let isolated = PathBuf::from(budget.spill_directory().to_utf8().unwrap());
-        let namespace = isolated.file_name().unwrap().to_str().unwrap().to_owned();
+        let prefix = PathBuf::from(budget.spill_path(&"".into()).to_utf8().unwrap())
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
         if let Some(files) = case.get("files") {
             for file in array(files) {
                 let path = case_root.join(text(field(file, "path")));
                 let path = path
                     .strip_prefix(&tool_results_dir)
-                    .map(|p| isolated.join(p))
+                    .map(|p| {
+                        if p.components().count() == 1 {
+                            PathBuf::from(
+                                budget
+                                    .spill_path(&p.to_string_lossy().as_ref().into())
+                                    .to_utf8()
+                                    .unwrap(),
+                            )
+                        } else {
+                            tool_results_dir.join(p)
+                        }
+                    })
                     .unwrap_or(path);
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
                 fs::write(path, text(field(file, "text"))).unwrap();
@@ -243,23 +258,26 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
                 .unwrap()
                 .unwrap()
                 .replace(&root_string, "<fixture>")
-                .replace(&format!("/{namespace}"), "");
+                .replace(&format!("/{prefix}"), "/");
             let expected = text(field(step, "outputJson"));
             assert_eq!(actual, expected, "case {name} step {index} output");
             let files = snapshot(&case_root);
-            // Removing the context component restores the TS lexical walk order.
+            // Map only each entry's filename, preserving contents and every entry.
+            // Restore the TS lexical walk order after changing filename prefixes.
             let mut files: Vec<_> = array(&files)
                 .iter()
-                .filter(|entry| !text(field(entry, "path")).ends_with(&namespace))
-                .cloned()
+                .map(|entry| {
+                    let mut entry = entry.as_object().unwrap().clone();
+                    let path = text(entry.get("path").unwrap());
+                    entry.insert(
+                        "path".into(),
+                        JsValue::String(path.replace(&format!("/{prefix}"), "/").into()),
+                    );
+                    JsValue::Object(entry)
+                })
                 .collect();
-            files.sort_by_key(|entry| {
-                text(field(entry, "path")).replace(&format!("/{namespace}"), "")
-            });
-            let actual_files = stringify_json(&JsValue::Array(files))
-                .unwrap()
-                .unwrap()
-                .replace(&format!("/{namespace}"), "");
+            files.sort_by_key(|entry| text(field(entry, "path")));
+            let actual_files = stringify_json(&JsValue::Array(files)).unwrap().unwrap();
             let expected_files = text(field(step, "filesJson"));
             assert_eq!(
                 actual_files, expected_files,
@@ -386,7 +404,16 @@ async fn spill_rejects_symlinked_copy_source() {
     });
     let isolated = PathBuf::from(budget.spill_directory().to_utf8().unwrap());
     fs::create_dir_all(&isolated).unwrap();
-    std::os::unix::fs::symlink(&secret_path, isolated.join("turn-file-call-file.txt")).unwrap();
+    std::os::unix::fs::symlink(
+        &secret_path,
+        PathBuf::from(
+            budget
+                .spill_path(&"turn-file-call-file.txt".into())
+                .to_utf8()
+                .unwrap(),
+        ),
+    )
+    .unwrap();
     let message = obj(vec![
         ("role", "user".into()),
         (
@@ -470,7 +497,16 @@ async fn spill_rejects_hardlinked_copy_source() {
     });
     let isolated = PathBuf::from(budget.spill_directory().to_utf8().unwrap());
     fs::create_dir_all(&isolated).unwrap();
-    fs::hard_link(&secret_path, isolated.join("turn-hard-call-hard.txt")).unwrap();
+    fs::hard_link(
+        &secret_path,
+        PathBuf::from(
+            budget
+                .spill_path(&"turn-hard-call-hard.txt".into())
+                .to_utf8()
+                .unwrap(),
+        ),
+    )
+    .unwrap();
     let message = obj(vec![
         ("role", "user".into()),
         (
@@ -593,4 +629,10 @@ async fn runtime_without_budget_passes_messages_through() {
 #[ignore = "requires fixed TS checkout and Node v22.22.0"]
 fn spill_isolation_regenerates_identically() {
     baseline::regenerates_identically("spill-isolation");
+}
+
+#[test]
+#[ignore = "requires fixed TS baseline and a real 30 s slow write"]
+fn spill_lease_regenerates_identically() {
+    baseline::regenerates_identically("spill-lease");
 }

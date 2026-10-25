@@ -95,8 +95,8 @@ impl ContextStorageResources {
     /// `ProjectSessionRuntimeBundle.ts:520,574`. There is no project-flat
     /// default.
     ///
-    /// **Isolation.** Each budget owns a UUID subdirectory under the supplied
-    /// root; identical or sanitize-equal IDs in different contexts cannot
+    /// **Isolation.** Each budget prefixes flat filenames with its own UUID under
+    /// the supplied root; identical or sanitize-equal IDs in different contexts cannot
     /// alias a spill file. Read aliases remain exclusive-created under refs.
     /// Within one budget a sanitized key still identifies its cached record.
     /// Expired writes are retired after the bounded wait; their successors
