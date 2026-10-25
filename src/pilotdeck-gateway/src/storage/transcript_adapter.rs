@@ -418,11 +418,20 @@ impl SessionStorage {
     }
     /// ProjectSessionStorage.ts:337-348: persistence.load (store.read without
     /// options) then SessionRuntime.restore, which validates the whole log
-    /// before any state changes. Diagnostics do not fail the restore.
+    /// before any state changes. Malformed-line diagnostics do not fail the
+    /// restore; a size-limited read cannot seed a writable chain and is rejected.
     pub fn restore(&self) -> AdapterResult<TranscriptRead> {
         // Serialize the read and state installation with every producer.
         let inner = self.transcript.lock();
         let read = self.read_transcript(None)?;
+        // A truncated read cannot seed a writable session's sequence chain.
+        if let Some(diagnostic) = read
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "transcript_too_large")
+        {
+            return Err(AdapterError::Store(invalid(diagnostic.message.clone())));
+        }
         self.transcript.restore_entries(&read.entries, inner)?;
         Ok(read)
     }

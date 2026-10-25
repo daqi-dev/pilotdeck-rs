@@ -4386,3 +4386,6 @@ mod interaction_host;
 
 #[path = "factory_memory_tests.rs"]
 mod context_memory_tests;
+
+#[path = "persistence_tests.rs"]
+mod persistence_tests;

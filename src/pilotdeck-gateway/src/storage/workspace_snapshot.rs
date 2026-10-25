@@ -1,7 +1,7 @@
 //! Content-addressed workspace snapshots, ported from TS
 //! `src/storage/workspaceSnapshot.ts` (fixed baseline). Storage contract
-//! only: the recorder and provider are not wired into the host, any gateway
-//! method, or the default proxy route; the WS projection is A6.6-pr4.
+//! with project resource composition in `runtime::project::persistence`.
+//! This does not enable capture in the gateway turn or default proxy route.
 //!
 //! On-disk layout and bytes are the TS ones: `objects/sha256/<xy>/<zw>/<digest>`
 //! object files deduplicated by content, and
