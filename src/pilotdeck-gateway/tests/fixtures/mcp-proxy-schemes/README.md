@@ -17,6 +17,26 @@ node --import /abs/PilotDeck/node_modules/tsx/dist/loader.mjs \
 
 回放：`cargo test --offline -p pilotdeck-gateway --test mcp_proxy_schemes -- --nocapture`（在 src）。可用 `PDRS_SCHEME_EVIDENCE` 指定原始日志父目录，`PDRS_SCHEME_FILTER` 选场景；测试不自动删除 wire 证据。
 
-TS 对非法 reload 保留旧 dispatcher，初次非法安装仍可能直连。Rust 此时明确拒绝连接；这是 #676 授权的防御性差异，见 `A6.5-MCP-PROXY-FALLBACK-001-R1`。streamable 的公开错误沿用 `MCP handshake failed: fetch failed`；共享 connector 单测验证具体配置错误 cause，并证明 NO_PROXY 本地目标也没有收到连接。SSE/底层错误文本和 SOCKS 分阶段计时不声称完全逐字对齐（SOCKS 使用共享 10 秒 whole-connect deadline，TS 另有 5 秒阶段计时）。
+TS 对非法 reload 保留旧 dispatcher，初次非法安装仍可能直连。Rust 对结构非法及 reload 安装失败明确拒绝连接，startup userinfo-only 失败保留直连；边界见 `A6.5-MCP-PROXY-FALLBACK-001-R1`。streamable 的公开错误沿用 `MCP handshake failed: fetch failed`；共享 connector 单测验证具体配置错误 cause，并证明结构非法时 NO_PROXY 本地目标也没有收到连接。SSE/底层错误文本和 SOCKS 分阶段计时不声称完全逐字对齐（SOCKS 使用共享 10 秒 whole-connect deadline，TS 另有 5 秒阶段计时）。
 
 原始实测：本树 `_tmp/20261025-issue-676/ts-wire/`、`ts-repeat/`（两次 oracle 逐字节一致）、`ts-edges.log`、`ts-socks-edges.log`；负控与恢复哈希见该目录 `negative-controls.json`。原有 HTTP/NO_PROXY 测试与旧金样不重录。
+
+## userinfo 启动失败补充（#676 fix-r1）
+
+`generate-userinfo.mts` 调用同一固定 TS 基线的真实安装入口和 `McpClient`，仅连接 127.0.0.1。
+`userinfo-oracle.json` 含 61 例：四协议的 user/password 非法转义、截断/非法 UTF-8、
+空 username、合法编码，以及 env/config/startup/reload 来源组合。每例独立进程，12 s 截止；
+客户端握手/调用上限 2 s。TS 的 startup `%ZZ`/`%FF` 安装失败后直连；reload 则保留旧代理。
+生成器保存每例 Node 原始输出、MCP 目标请求收据、代理连接数及 dispatcher 状态。
+
+```sh
+PDRS_BASELINE=/absolute/path/to/PilotDeck LANG=en_US.UTF-8 \
+node --import /absolute/path/to/PilotDeck/node_modules/tsx/dist/loader.mjs \
+src/pilotdeck-gateway/tests/fixtures/mcp-proxy-schemes/generate-userinfo.mts /new/evidence/directory
+```
+
+两次生成 `oracle.json` 必须逐字节一致。Rust 的
+`runtime::model::http::proxy_tests::proxy_userinfo_install_paths_replay_ts_matrix`
+逐例消费该金样，通过生产解析入口和真实 connector 验证连接/拒绝；结构非法与 reload 的
+已授权差异显式列出，边界见 `specs/gateway-parity/diffs/A6.5-MCP-PROXY-FALLBACK-001-R1.md`。
+本轮复采原始证据及负控见 `_tmp/20261025-issue-676/fix-r1/RESULT.md`，旧 35-case 金样保持不变。

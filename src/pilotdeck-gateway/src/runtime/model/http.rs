@@ -362,8 +362,9 @@ where
 //   (`node_modules/undici/lib/dispatcher/env-http-proxy-agent.js:82-140`).
 //
 // HTTP/HTTPS CONNECT and SOCKS5 (including `socks:`) share this connector.
-// A selected but invalid proxy fails closed, including NO_PROXY destinations;
-// only an absent proxy selects direct transport (#676).
+// A structurally invalid proxy fails closed, including NO_PROXY destinations.
+// At startup only, otherwise valid URLs with undecodable userinfo leave the
+// direct dispatcher active, matching TS; reload failures still fail closed.
 //
 // Every HTTP/HTTPS-proxied request, including plain `http:` targets, uses
 // `CONNECT` because undici's ProxyAgent defaults to `proxyTunnel: true`.
@@ -485,10 +486,17 @@ pub(crate) struct ProxyConfig {
     entries: Vec<NoProxyEntry>,
     /// The CONNECT `Proxy-Authorization` value, built at construction like
     /// `ProxyAgent`'s constructor. `decodeURIComponent` throws on malformed
-    /// userinfo, which makes the TS install fail; here that is `None` from
-    /// the parser instead. The install path retains an explicit failure.
+    /// userinfo, which makes the TS install fail. Keep that error distinct
+    /// from invalid URL structure so startup can retain direct transport.
     authorization: Option<String>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProxyParseError {
+    Configuration,
+    Userinfo,
+}
+
 impl ProxyConfig {
     /// Testable seam over the same lookup order, so env precedence is pinned
     /// without mutating the process environment.
@@ -542,12 +550,28 @@ impl ProxyConfig {
         let parsed = Self::new_with_extra(&proxy_url, &user_no_proxy, extra_no_proxy.as_deref());
         // TS first tries env, then config at startup. An invalid env install
         // must not prevent a valid config from being installed.
-        let parsed = parsed.or_else(|| {
-            settings
-                .filter(|settings| settings.mode == ProxyInstallMode::Startup)
-                .and_then(|settings| Self::new_with_extra(&settings.url, &user_no_proxy, None))
+        let parsed = parsed.or_else(|error| {
+            let Some(settings) = settings.filter(|settings| {
+                settings.mode == ProxyInstallMode::Startup && !settings.url.is_empty()
+            }) else {
+                return Err(error);
+            };
+            Self::new_with_extra(&settings.url, &user_no_proxy, None).map_err(|fallback| {
+                // A failed fallback must not hide a structural env error (or
+                // vice versa). Only userinfo-only startup failures go direct.
+                if error == ProxyParseError::Userinfo && fallback == ProxyParseError::Userinfo {
+                    ProxyParseError::Userinfo
+                } else {
+                    ProxyParseError::Configuration
+                }
+            })
         });
-        Some(parsed.unwrap_or_else(|| Self {
+        if matches!(parsed, Err(ProxyParseError::Userinfo))
+            && settings.is_none_or(|settings| settings.mode == ProxyInstallMode::Startup)
+        {
+            return None;
+        }
+        Some(parsed.unwrap_or_else(|_| Self {
             proxy: None,
             no_proxy: String::new(),
             entries: Vec::new(),
@@ -557,26 +581,26 @@ impl ProxyConfig {
 
     #[cfg(test)]
     fn new(proxy_url: &str, user_no_proxy: &str) -> Option<Self> {
-        Self::new_with_extra(proxy_url, user_no_proxy, None)
+        Self::new_with_extra(proxy_url, user_no_proxy, None).ok()
     }
 
     fn new_with_extra(
         proxy_url: &str,
         user_no_proxy: &str,
         extra_no_proxy: Option<&str>,
-    ) -> Option<Self> {
-        let proxy = url::Url::parse(proxy_url).ok()?;
+    ) -> Result<Self, ProxyParseError> {
+        let proxy = url::Url::parse(proxy_url).map_err(|_| ProxyParseError::Configuration)?;
         if proxy.host_str().is_none()
             || !matches!(proxy.scheme(), "http" | "https" | "socks5" | "socks")
         {
-            return None;
+            return Err(ProxyParseError::Configuration);
         }
         if matches!(proxy.scheme(), "http" | "https")
             && (proxy.path() != "/"
                 || proxy.query().is_some_and(|value| !value.is_empty())
                 || proxy.fragment().is_some_and(|value| !value.is_empty()))
         {
-            return None;
+            return Err(ProxyParseError::Configuration);
         }
         let no_proxy = [
             Some(user_no_proxy),
@@ -621,8 +645,8 @@ impl ProxyConfig {
                 port: port.filter(|port| *port != 0),
             });
         }
-        let authorization = proxy_authorization(&proxy).ok()?;
-        Some(Self {
+        let authorization = proxy_authorization(&proxy).map_err(|_| ProxyParseError::Userinfo)?;
+        Ok(Self {
             proxy: Some(proxy),
             no_proxy,
             entries,
@@ -824,8 +848,8 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 /// decodeURIComponent(password))`, or `None` for no username. An invalid
 /// escape or a percent-decoded byte sequence that is not UTF-8 makes
 /// `decodeURIComponent` throw `URIError: URI malformed` in TS, which aborts
-/// the whole proxy install; `Err` here makes the caller reject installation
-/// without opening a direct connection or sending credentials.
+/// the whole proxy install. The caller chooses startup direct fallback or
+/// reload fail-closed; malformed credentials are never sent to a proxy.
 fn proxy_authorization(proxy: &url::Url) -> Result<Option<String>, ()> {
     let username = proxy.username();
     if username.is_empty() {
@@ -4184,7 +4208,6 @@ mod proxy_tests {
         for url in [
             "not a url",
             "ftp://127.0.0.1:9",
-            "http://user%ZZ:pass@127.0.0.1:9",
             "http://127.0.0.1:9/path",
             "https://127.0.0.1:9/?q",
             "http://127.0.0.1:9/#fragment",
@@ -4215,6 +4238,100 @@ mod proxy_tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn proxy_userinfo_install_paths_replay_ts_matrix() {
+        use tower_service::Service;
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/mcp-proxy-schemes/userinfo-oracle.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            oracle["sourceCommit"],
+            "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
+        );
+        let cases = oracle["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 61);
+        for case in cases {
+            let id = case["id"].as_str().unwrap();
+            let fill = |value: &str| value.replace("<proxy>", "127.0.0.1:9");
+            let settings = case["config"].as_str().map(|url| ProxySettings {
+                url: fill(url),
+                no_proxy: None,
+                mode: if case["mode"] == "reload" {
+                    ProxyInstallMode::Reload
+                } else {
+                    ProxyInstallMode::Startup
+                },
+            });
+            let proxy = ProxyConfig::from_settings_lookup(settings.as_ref(), |key| {
+                (key == case["envKey"].as_str().unwrap_or("PILOTDECK_PROXY"))
+                    .then(|| case["env"].as_str().map(fill))
+                    .flatten()
+            });
+            // Explicit differences from the recorded TS behavior, documented
+            // in A6.5-MCP-PROXY-FALLBACK-001-R1: structural failures and reload
+            // must fail closed. Neither can hide behind a userinfo error.
+            let fail_closed = matches!(
+                id,
+                "bad-env-structural-config"
+                    | "structural-env-bad-config"
+                    | "valid-env-bad-reload"
+                    | "bad-userinfo-invalid-path"
+                    | "bad-userinfo-unsupported"
+            );
+            if fail_closed {
+                assert!(proxy.as_ref().is_some_and(|p| p.proxy.is_none()), "{id}");
+            } else if case["ts"]["state"] == "proxy" {
+                let expected =
+                    url::Url::parse(&fill(case["ts"]["proxyUrl"].as_str().unwrap())).unwrap();
+                assert_eq!(
+                    proxy.as_ref().and_then(|p| p.proxy.as_ref()),
+                    Some(&expected),
+                    "{id}"
+                );
+            } else {
+                assert!(proxy.is_none(), "{id}: TS kept direct transport");
+            }
+
+            // Exercise the production connector, not just the parsing seam.
+            // A loopback destination still catches accidentally fail-closed
+            // userinfo and accidentally direct structural/reload failures.
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let target = format!("http://{}/", listener.local_addr().unwrap());
+            let mut connector = proxy_https_connector(webpki_client_config(), proxy);
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                connector.call(target.parse().unwrap()),
+            )
+            .await
+            .expect("local connector deadline");
+            if fail_closed {
+                let error = match result {
+                    Ok(_) => panic!("{id}: rejected configuration opened target"),
+                    Err(error) => error,
+                };
+                assert!(
+                    error
+                        .to_string()
+                        .contains("Invalid or unsupported proxy configuration"),
+                    "{id}: {error}"
+                );
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                        .await
+                        .is_err(),
+                    "{id}: target received connection"
+                );
+            } else {
+                assert!(result.is_ok(), "{id}: TS direct connection must succeed");
+                tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                    .await
+                    .expect("target receipt deadline")
+                    .unwrap();
+            }
+        }
     }
 
     #[tokio::test]
