@@ -2108,20 +2108,46 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                             keep_alive_timeout,
                         ));
                         let service_timer = timer.clone();
+                        let service_shutdown = connection_shutdown.clone();
                         let service = service_fn(move |request: Request<Incoming>| {
                             let handler = handler.clone();
                             let timer = service_timer.clone();
+                            let shutdown = service_shutdown.clone();
                             async move {
                                 // The complete request head is in; only
                                 // `requestTimeout` may bound the body now.
+                                let version = request.version();
                                 let keep_alive = keep_alive_advertisement(
-                                    request.version(),
+                                    version,
                                     request.headers(),
                                     limits.keep_alive_timeout,
                                 );
                                 timer.request_started();
                                 let mut response = serve(handler, request, limits).await;
-                                add_keep_alive_headers(&mut response, keep_alive);
+                                if version == Version::HTTP_10 {
+                                    // Node answers HTTP/1.0 with
+                                    // `Connection: close` even when the request
+                                    // says `Connection: keep-alive` (probed on
+                                    // v22.22.0 against the real TS server: the
+                                    // implicit content-length is not known when
+                                    // Node's `_storeHeader` picks keep-alive, so
+                                    // it closes). Pinning the response version
+                                    // stops hyper's `fix_keep_alive` from
+                                    // turning the parser keep-alive into an
+                                    // advertisement of a connection it will
+                                    // close.
+                                    *response.version_mut() = Version::HTTP_10;
+                                    insert_close(&mut response);
+                                } else if *shutdown.borrow() {
+                                    // `graceful_shutdown` already disabled
+                                    // hyper's keep-alive. Advertising here would
+                                    // leave `connection: close` next to a stale
+                                    // `Keep-Alive: timeout=5` (measured before
+                                    // the fix).
+                                    insert_close(&mut response);
+                                } else {
+                                    add_keep_alive_headers(&mut response, keep_alive);
+                                }
                                 Ok::<_, Infallible>(
                                     response.map(|body| KeepAliveBody::new(body, timer)),
                                 )
@@ -2253,6 +2279,11 @@ async fn serve(
     request: Request<Incoming>,
     limits: ServeLimits,
 ) -> Response<Full<Bytes>> {
+    // hyper's `Incoming` reports `exact() == Some(0)` only when the parser
+    // decoded an empty body (no Content-Length and no Transfer-Encoding);
+    // `Some(n)` / `None` mean there are bytes left to consume. A response
+    // written before those bytes are read cannot keep the connection alive.
+    let body_pending = request.body().size_hint().exact() != Some(0);
     let method = request.method().as_str().to_string();
     let path = request
         .uri()
@@ -2304,7 +2335,8 @@ async fn serve(
     // of the body is read. 405/404/401 must not wait for (or buffer) the body.
     let operation = match handler.precheck(&method, &url, &headers) {
         Ok(operation) => operation,
-        Err(response) => return build(response),
+        // 405/404/401 are answered before a byte of the body is read.
+        Err(response) => return close_if_body_pending(build(response), body_pending),
     };
     // An honest Content-Length lets us refuse before reading; a lying or absent
     // one is still caught by `Limited`.
@@ -2315,7 +2347,7 @@ async fn serve(
         .and_then(|value| value.parse::<u64>().ok())
         && length > limits.max_body_bytes as u64
     {
-        return build(payload_too_large());
+        return close_if_body_pending(build(payload_too_large()), body_pending);
     }
     let body = match tokio::time::timeout(
         limits.request_timeout,
@@ -2324,9 +2356,16 @@ async fn serve(
     .await
     {
         Ok(Ok(body)) => body,
-        Ok(Err(RequestBodyError::TooLarge)) => return build(payload_too_large()),
+        // `Limited` stopped at the first byte over the cap; the rest of the
+        // body is still unread, so this response cannot reuse the connection.
+        Ok(Err(RequestBodyError::TooLarge)) => {
+            return close_if_body_pending(build(payload_too_large()), true);
+        }
         Ok(Err(RequestBodyError::Failed(error))) => {
-            return build(error_response(500, "server_failure", &error));
+            return close_if_body_pending(
+                build(error_response(500, "server_failure", &error)),
+                true,
+            );
         }
         Err(_) => {
             // `requestTimeout` in Node also answers with an empty body and
@@ -2384,6 +2423,30 @@ fn keep_alive_advertisement(
     })
 }
 
+/// Mark a response as the last one on this connection.
+fn insert_close(response: &mut Response<Full<Bytes>>) {
+    response.headers_mut().insert(
+        header::CONNECTION,
+        header::HeaderValue::from_static("close"),
+    );
+}
+
+/// Close a response that returns before the request body was consumed. hyper
+/// cannot reuse such a connection (`poll_drain_or_close_read` gives up when one
+/// poll does not finish the body), so advertising keep-alive would be a lie.
+/// Node instead drains the body and keeps the connection; not reading it is the
+/// deliberate early-rejection deviation registered as
+/// `A7.4-HTTPSTORE-AUTH-BEFORE-BODY-001`.
+fn close_if_body_pending(
+    mut response: Response<Full<Bytes>>,
+    body_pending: bool,
+) -> Response<Full<Bytes>> {
+    if body_pending {
+        insert_close(&mut response);
+    }
+    response
+}
+
 fn add_keep_alive_headers(
     response: &mut Response<Full<Bytes>>,
     keep_alive: Option<KeepAliveHeader>,
@@ -2391,8 +2454,8 @@ fn add_keep_alive_headers(
     let Some(keep_alive) = keep_alive else {
         return;
     };
-    // 431/408 close responses carry their own `Connection: close`; never
-    // overwrite an explicit close with an advertisement.
+    // Explicit closes (431/408, HTTP/1.0, an early response whose request body
+    // was not read) must never be overwritten by an advertisement.
     if response.headers().contains_key(header::CONNECTION) {
         return;
     }
