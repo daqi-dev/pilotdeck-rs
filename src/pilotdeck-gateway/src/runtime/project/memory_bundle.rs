@@ -34,7 +34,7 @@ use crate::runtime::memory::{
     MemoryModelConfig, MemoryModelProvider, MemoryProviderFactoryFn, MemoryScheduleConfig,
     NativeProviderFactoryFn, ProjectMemoryBundle, ProjectMemoryBundleOptions,
 };
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsString, JsValue};
 use std::{any::Any, sync::Arc};
 
 /// The MemoryBundle family source (ProjectMemoryBundle).
@@ -158,7 +158,7 @@ fn memory_config(snapshot: &JsValue) -> Option<MemoryConfig> {
         .get("schedule")
         .and_then(JsValue::as_object)
         .map(|schedule| MemoryScheduleConfig {
-            reasoning_mode: text(schedule.get("reasoningMode")),
+            reasoning_mode: js_text(schedule.get("reasoningMode")),
             auto_index_interval_minutes: schedule
                 .get("autoIndexIntervalMinutes")
                 .and_then(JsValue::as_number),
@@ -168,10 +168,14 @@ fn memory_config(snapshot: &JsValue) -> Option<MemoryConfig> {
         });
     Some(MemoryConfig {
         enabled: memory.get("enabled")?.as_bool()?,
-        provider: memory.get("provider")?.as_string()?.to_utf8().ok()?,
-        root_dir: text(memory.get("rootDir")).unwrap_or_default(),
-        capture_strategy: match text(memory.get("captureStrategy")).as_deref() {
-            Some("full_session") => MemoryCaptureStrategy::FullSession,
+        // Carrier, not a Rust `String`: the snapshot keeps the raw UTF-16
+        // units, so a lone surrogate must survive to the provider factory.
+        provider: memory.get("provider")?.as_string()?.clone(),
+        root_dir: js_text(memory.get("rootDir")).unwrap_or_default(),
+        capture_strategy: match js_text(memory.get("captureStrategy")) {
+            Some(strategy) if strategy.equals_str("full_session") => {
+                MemoryCaptureStrategy::FullSession
+            }
             _ => MemoryCaptureStrategy::LastTurn,
         },
         include_assistant: memory
@@ -182,8 +186,8 @@ fn memory_config(snapshot: &JsValue) -> Option<MemoryConfig> {
         retrieval_timeout_ms: memory
             .get("retrievalTimeoutMs")
             .and_then(JsValue::as_number),
-        model: text(memory.get("model")),
-        api_type: text(memory.get("apiType")),
+        model: js_text(memory.get("model")),
+        api_type: js_text(memory.get("apiType")),
         schedule,
         heartbeat_batch_size: memory
             .get("heartbeatBatchSize")
@@ -212,17 +216,20 @@ fn model_config(snapshot: &JsValue) -> Option<MemoryModelConfig> {
         config.providers.insert(
             id,
             MemoryModelProvider {
-                protocol: text(provider.get("protocol")),
-                url: text(provider.get("url")),
-                api_key: text(provider.get("apiKey")),
+                protocol: js_text(provider.get("protocol")),
+                url: js_text(provider.get("url")),
+                api_key: js_text(provider.get("apiKey")),
             },
         );
     }
     Some(config)
 }
 
-fn text(value: Option<&JsValue>) -> Option<String> {
-    value?.as_string()?.to_utf8().ok()
+/// Carry a snapshot string as raw UTF-16 units. Never `to_utf8()`: a lone
+/// surrogate is a legal JS string and must reach the provider factory intact
+/// (the review's `"test/mem\uD800"` case).
+fn js_text(value: Option<&JsValue>) -> Option<JsString> {
+    value?.as_string().cloned()
 }
 
 /// `snapshot.config.agent.model.id` (normalized by `config::snapshot::agent`).
@@ -313,5 +320,91 @@ impl FamilyResource for MemoryManagementResource {
 impl MemoryManagementResource {
     pub fn management(&self) -> &Arc<dyn MemoryManagementService> {
         &self.management
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilotdeck_protocol::JsObject;
+
+    /// A legal JS string with an unpaired high surrogate, as YAML
+    /// `"\uD800x"` produces after UTF-16 normalization.
+    fn surrogate(prefix: &str) -> JsString {
+        JsString::from_utf16(prefix.encode_utf16().chain([0xD800]).collect())
+    }
+
+    fn assert_units(value: Option<&JsString>, expected: &JsString, label: &str) {
+        let value = value.unwrap_or_else(|| panic!("{label} must be carried, not dropped"));
+        assert_eq!(value.units(), expected.units(), "{label}: UTF-16 units");
+        assert!(
+            !value.units().contains(&0xFFFD),
+            "{label}: must not be replacement-decoded"
+        );
+    }
+
+    /// #636 fix-r1 P2: the option carrier must not decode config strings to
+    /// UTF-8. `"test/mem\uD800"` is a valid JS string; TS hands it to
+    /// `providerFactory` unchanged, so the Rust carrier keeps the units.
+    #[test]
+    fn lone_surrogate_config_strings_keep_their_utf16_units() {
+        let marker = surrogate("test/mem");
+
+        let mut memory = JsObject::new();
+        memory.insert("enabled".into(), JsValue::Bool(true));
+        memory.insert(
+            "provider".into(),
+            JsValue::String(JsString::from("edgeclaw")),
+        );
+        memory.insert("rootDir".into(), JsValue::String(marker.clone()));
+        memory.insert(
+            "captureStrategy".into(),
+            JsValue::String(JsString::from("full_session")),
+        );
+        memory.insert("includeAssistant".into(), JsValue::Bool(false));
+        memory.insert("model".into(), JsValue::String(marker.clone()));
+        memory.insert("apiType".into(), JsValue::String(marker.clone()));
+        let mut schedule = JsObject::new();
+        schedule.insert("reasoningMode".into(), JsValue::String(marker.clone()));
+        memory.insert("schedule".into(), JsValue::Object(schedule));
+
+        let mut provider = JsObject::new();
+        provider.insert("protocol".into(), JsValue::String(marker.clone()));
+        provider.insert("url".into(), JsValue::String(marker.clone()));
+        provider.insert("apiKey".into(), JsValue::String(marker.clone()));
+        let mut providers = JsObject::new();
+        providers.insert("test".into(), JsValue::Object(provider));
+        let mut model = JsObject::new();
+        model.insert("providers".into(), JsValue::Object(providers));
+
+        let mut config = JsObject::new();
+        config.insert("memory".into(), JsValue::Object(memory));
+        config.insert("model".into(), JsValue::Object(model));
+        let mut snapshot = JsObject::new();
+        snapshot.insert("config".into(), JsValue::Object(config));
+        let snapshot = JsValue::Object(snapshot);
+
+        let config = memory_config(&snapshot).expect("a normalized memory config");
+        assert_units(Some(&config.root_dir), &marker, "rootDir");
+        assert_units(config.model.as_ref(), &marker, "model");
+        assert_units(config.api_type.as_ref(), &marker, "apiType");
+        assert_units(
+            config
+                .schedule
+                .as_ref()
+                .and_then(|schedule| schedule.reasoning_mode.as_ref()),
+            &marker,
+            "schedule.reasoningMode",
+        );
+        assert_eq!(
+            config.provider.units(),
+            "edgeclaw".encode_utf16().collect::<Vec<_>>().as_slice()
+        );
+
+        let model = model_config(&snapshot).expect("a normalized model config");
+        let provider = model.providers.get("test").expect("the test provider");
+        assert_units(provider.protocol.as_ref(), &marker, "protocol");
+        assert_units(provider.url.as_ref(), &marker, "url");
+        assert_units(provider.api_key.as_ref(), &marker, "apiKey");
     }
 }

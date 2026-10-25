@@ -2724,16 +2724,16 @@ mod memory_bundle_tests {
     fn expected_memory_config() -> MemoryConfig {
         MemoryConfig {
             enabled: true,
-            provider: "edgeclaw".into(),
-            root_dir: "/normalized/root".into(),
+            provider: JsString::from("edgeclaw"),
+            root_dir: JsString::from("/normalized/root"),
             capture_strategy: MemoryCaptureStrategy::FullSession,
             include_assistant: false,
             max_message_chars: Some(321.0),
             retrieval_timeout_ms: Some(42.0),
-            model: Some("test/mem".into()),
-            api_type: Some("openai-completions".into()),
+            model: Some(JsString::from("test/mem")),
+            api_type: Some(JsString::from("openai-completions")),
             schedule: Some(MemoryScheduleConfig {
-                reasoning_mode: Some("accuracy_first".into()),
+                reasoning_mode: Some(JsString::from("accuracy_first")),
                 auto_index_interval_minutes: Some(5.0),
                 auto_dream_interval_minutes: Some(9.0),
             }),
@@ -2912,12 +2912,18 @@ mod memory_bundle_tests {
             .providers
             .get("test")
             .expect("the configured provider entry must survive");
-        assert_eq!(provider_entry.protocol.as_deref(), Some("openai"));
         assert_eq!(
-            provider_entry.url.as_deref(),
-            Some("http://127.0.0.1:28794/v1")
+            provider_entry.protocol.as_ref(),
+            Some(&JsString::from("openai"))
         );
-        assert_eq!(provider_entry.api_key.as_deref(), Some("test-only-key"));
+        assert_eq!(
+            provider_entry.url.as_ref(),
+            Some(&JsString::from("http://127.0.0.1:28794/v1"))
+        );
+        assert_eq!(
+            provider_entry.api_key.as_ref(),
+            Some(&JsString::from("test-only-key"))
+        );
         assert_eq!(
             options
                 .now

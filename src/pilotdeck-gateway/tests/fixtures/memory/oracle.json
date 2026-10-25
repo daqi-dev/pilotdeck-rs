@@ -480,6 +480,276 @@
         "after-dispose-call",
         "after-await"
       ]
+    },
+    {
+      "name": "factory-options-full",
+      "recorder": "full",
+      "factory": "success",
+      "factoryCalls": 1,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "rootDir": "/pdrs-fixture/memory-root",
+          "captureStrategy": "full_session",
+          "includeAssistant": false,
+          "maxMessageChars": 321,
+          "retrievalTimeoutMs": 42,
+          "model": "test/mem",
+          "apiType": "openai-completions",
+          "schedule": {
+            "reasoningMode": "accuracy_first",
+            "autoIndexIntervalMinutes": 5,
+            "autoDreamIntervalMinutes": 9
+          },
+          "heartbeatBatchSize": 7
+        },
+        "modelConfig": {
+          "test": {
+            "protocol": "openai",
+            "url": "http://127.0.0.1:28794/v1",
+            "apiKey": "fixture-not-a-secret"
+          }
+        },
+        "agentModel": "test/mock",
+        "hasNow": true,
+        "hasTelemetry": true
+      },
+      "factoryOptions": {
+        "projectRoot": "/pdrs-fixture/project",
+        "agentModel": "test/mock",
+        "hasProviderFactory": true,
+        "hasCreateProvider": false,
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "rootDir": "/pdrs-fixture/memory-root",
+          "captureStrategy": "full_session",
+          "includeAssistant": false,
+          "maxMessageChars": 321,
+          "retrievalTimeoutMs": 42,
+          "model": "test/mem",
+          "apiType": "openai-completions",
+          "schedule": {
+            "reasoningMode": "accuracy_first",
+            "autoIndexIntervalMinutes": 5,
+            "autoDreamIntervalMinutes": 9
+          },
+          "heartbeatBatchSize": 7
+        },
+        "modelConfig": {
+          "test": {
+            "protocol": "openai",
+            "url": "http://127.0.0.1:28794/v1",
+            "apiKey": "fixture-not-a-secret"
+          }
+        },
+        "hasNow": true,
+        "hasTelemetry": true
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "result": {
+            "keys": [
+              "memory",
+              "memoryManagement",
+              "memoryService"
+            ],
+            "memory": true,
+            "maintenance": true,
+            "management": true
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "factory",
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "factory",
+            "after-dispose-call",
+            "dispose",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "factory",
+        "after-dispose-call",
+        "dispose",
+        "after-await"
+      ]
+    },
+    {
+      "name": "native-options-full",
+      "recorder": "full",
+      "factory": "native",
+      "factoryCalls": 1,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "rootDir": "/pdrs-fixture/memory-root",
+          "captureStrategy": "full_session",
+          "includeAssistant": false,
+          "maxMessageChars": 321,
+          "retrievalTimeoutMs": 42,
+          "model": "test/mem",
+          "apiType": "openai-completions",
+          "schedule": {
+            "reasoningMode": "accuracy_first",
+            "autoIndexIntervalMinutes": 5,
+            "autoDreamIntervalMinutes": 9
+          },
+          "heartbeatBatchSize": 7
+        },
+        "modelConfig": {
+          "test": {
+            "protocol": "openai",
+            "url": "http://127.0.0.1:28794/v1",
+            "apiKey": "fixture-not-a-secret"
+          }
+        },
+        "agentModel": "test/mock",
+        "hasNow": true,
+        "hasTelemetry": true
+      },
+      "nativeOptions": {
+        "projectRoot": "/pdrs-fixture/project",
+        "agentModel": "test/mock",
+        "hasProviderFactory": false,
+        "hasCreateProvider": false,
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "rootDir": "/pdrs-fixture/memory-root",
+          "captureStrategy": "full_session",
+          "includeAssistant": false,
+          "maxMessageChars": 321,
+          "retrievalTimeoutMs": 42,
+          "model": "test/mem",
+          "apiType": "openai-completions",
+          "schedule": {
+            "reasoningMode": "accuracy_first",
+            "autoIndexIntervalMinutes": 5,
+            "autoDreamIntervalMinutes": 9
+          },
+          "heartbeatBatchSize": 7
+        },
+        "modelConfig": {
+          "test": {
+            "protocol": "openai",
+            "url": "http://127.0.0.1:28794/v1",
+            "apiKey": "fixture-not-a-secret"
+          }
+        },
+        "hasNow": true,
+        "hasTelemetry": true
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "result": {
+            "keys": [
+              "memory",
+              "memoryManagement",
+              "memoryService"
+            ],
+            "memory": true,
+            "maintenance": true,
+            "management": true
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "create",
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "create",
+            "after-dispose-call",
+            "close",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "create",
+        "after-dispose-call",
+        "close",
+        "after-await"
+      ]
+    },
+    {
+      "name": "factory-throws-structured",
+      "recorder": "full",
+      "factory": "throws-structured",
+      "factoryCalls": 1,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw",
+          "rootDir": "/pdrs-fixture/memory-root",
+          "captureStrategy": "full_session",
+          "includeAssistant": false,
+          "maxMessageChars": 321,
+          "retrievalTimeoutMs": 42,
+          "model": "test/mem",
+          "apiType": "openai-completions",
+          "schedule": {
+            "reasoningMode": "accuracy_first",
+            "autoIndexIntervalMinutes": 5,
+            "autoDreamIntervalMinutes": 9
+          },
+          "heartbeatBatchSize": 7
+        },
+        "modelConfig": null,
+        "agentModel": null,
+        "hasNow": false,
+        "hasTelemetry": false
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "FACTORY_FAILED",
+            "message": "structured factory boom",
+            "requires_host": true
+          }
+        },
+        {
+          "op": "stage-again",
+          "error": {
+            "name": "Error",
+            "code": null,
+            "message": "ProjectMemoryBundle.stage called more than once."
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "factory",
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "factory",
+            "after-dispose-call",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "factory",
+        "after-dispose-call",
+        "after-await"
+      ]
     }
   ],
   "projectionCases": [

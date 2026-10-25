@@ -30,7 +30,12 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   `memory-only-provider`（可选成员缺省仍保留三个键）、
   `dispose-rejects`（disposer 抛错时 dispose promise 拒绝，重复调用观察到同一拒绝）、
   `native-disabled`（无工厂 + `config.enabled:false`，真实 native 工厂早退不建
-  EdgeClaw）。
+  EdgeClaw）。fix-r1 追加三个场景：`factory-options-full` / `native-options-full`
+  （`config` 全部 11 个字段、`modelConfig.providers[*].{protocol,url,apiKey}`、
+  `hasNow`/`hasTelemetry`）与 `factory-throws-structured`
+  （`DialogGatewayError`/`FACTORY_FAILED`/`requires_host`）。前 10 个场景用
+  `committedCaptureOptions` 固定记录，追加场景用全量 `captureOptions`；前 10 个
+  场景的 oracle 记录字节自入库起保持不变。
 - `projectionCases`：从 `createLocalGateway.ts` 提取未修改的
   `memoryList`/`memoryWipe` 方法体，注入假 `dialog.projects.resolveProjectKey`、
   `registry.resolve` 和 provider。覆盖 list 的 100 上限、sessionKey 真值过滤
@@ -48,5 +53,5 @@ cd src
 cargo test --locked --offline -p pilotdeck-gateway --test memory
 ```
 
-`tests/memory.rs` 精确断言 10 个 bundle case、10 个 projection case 及每个
+`tests/memory.rs` 精确断言 13 个 bundle case、10 个 projection case 及每个
 step；回放顺序、事件、工厂入参、返回/错误与调用序列均来自 oracle。

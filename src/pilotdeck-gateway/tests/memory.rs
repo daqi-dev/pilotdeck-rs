@@ -6,14 +6,17 @@ mod baseline;
 use pilotdeck_gateway::runtime::{
     context::memory::{MemoryFuture as RetrieveFuture, MemoryRetrieveInput, MemoryRetrieveResult},
     memory::{
-        MemoryBundleError, MemoryConfig, MemoryDisposeFn, MemoryFuture, MemoryListInput,
-        MemoryMaintenanceService, MemoryManagementService, MemoryProjection, MemoryProjectionError,
-        MemoryProviderError, MemoryResolver, MemoryWipeInput, NativeMemoryProviderOptions,
+        MemoryBundleError, MemoryCaptureStrategy, MemoryConfig, MemoryDisposeFn, MemoryFuture,
+        MemoryListInput, MemoryMaintenanceService, MemoryManagementService, MemoryModelConfig,
+        MemoryModelProvider, MemoryProjection, MemoryProjectionError, MemoryProviderError,
+        MemoryResolver, MemoryScheduleConfig, MemoryWipeInput, NativeMemoryProviderOptions,
         NativeMemoryService, NativeProjectMemoryProvider, ProjectMemoryBundle,
         ProjectMemoryBundleOptions, ProjectMemoryProvider, ProjectMemoryRegistry,
         ProjectMemoryResources,
     },
-    project::{ProjectRuntimeRegistry, ResourceBundle, RuntimeError, RuntimeResult},
+    project::{
+        ProjectRuntimeRegistry, ResourceBundle, RuntimeError, RuntimeResult, TelemetryClient,
+    },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
@@ -25,6 +28,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
+    time::{Duration, UNIX_EPOCH},
 };
 
 const ORACLE: &str = include_str!("fixtures/memory/oracle.json");
@@ -98,20 +102,40 @@ fn resources_json(resources: &ProjectMemoryResources) -> Value {
     })
 }
 
+/// Project an error the way a JS consumer sees it: take the real
+/// `name`/`code`/`message` (and `requires_host`) from the retained JS shape
+/// instead of hardcoding `name:"Error"`. Omitting `requires_host` when false
+/// keeps the committed cases' oracle bytes stable.
+fn error_shape_json(error: &MemoryProjectionError) -> Value {
+    let mut shape = serde_json::Map::new();
+    shape.insert("name".into(), Value::String(error.name().to_owned()));
+    shape.insert(
+        "code".into(),
+        error
+            .code()
+            .map_or(Value::Null, |code| Value::String(code.to_owned())),
+    );
+    shape.insert(
+        "message".into(),
+        Value::String(
+            error
+                .message()
+                .to_utf8()
+                .expect("fixture error messages are valid UTF-8"),
+        ),
+    );
+    if error.requires_host() {
+        shape.insert("requires_host".into(), Value::Bool(true));
+    }
+    Value::Object(shape)
+}
+
 fn bundle_error_json(error: &MemoryBundleError) -> Value {
-    json!({
-        "name": "Error",
-        "code": Value::Null,
-        "message": error.to_string(),
-    })
+    error_shape_json(&MemoryProjectionError::from(error.clone()))
 }
 
 fn runtime_error_json(error: &RuntimeError) -> Value {
-    json!({
-        "name": "Error",
-        "code": Value::Null,
-        "message": error.message,
-    })
+    error_shape_json(&MemoryProjectionError::from(error.clone()))
 }
 
 fn assert_dispose_outcome(result: &RuntimeResult, step: &Value, label: &str) {
@@ -127,21 +151,78 @@ fn assert_dispose_outcome(result: &RuntimeResult, step: &Value, label: &str) {
     }
 }
 
-fn options_from_fixture(case: &Value) -> ProjectMemoryBundleOptions {
-    let options = &case["options"];
-    let project_root = options["projectRoot"].as_str().unwrap();
-    let mut bundle = ProjectMemoryBundleOptions::new(project_root);
-    if let Some(config) = options.get("config").filter(|value| !value.is_null()) {
-        bundle.config = Some(MemoryConfig::new(
-            config["enabled"].as_bool().unwrap(),
-            config["provider"].as_str().unwrap(),
-        ));
-    }
-    bundle.agent_model = options["agentModel"].as_str().map(str::to_owned);
-    bundle
+fn json_text(value: &JsString) -> String {
+    value.to_utf8().expect("fixture strings are valid UTF-8")
 }
 
+/// Emit an integral `f64` as a JSON integer so the value equals the fixture's
+/// `321`/`7` (serde_json's `Number(321.0)` is not `Number(321)`).
+fn json_number(value: Option<f64>) -> Value {
+    let Some(value) = value else {
+        return Value::Null;
+    };
+    if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
+        Value::Number((value as i64).into())
+    } else {
+        serde_json::Number::from_f64(value).map_or(Value::Null, Value::Number)
+    }
+}
+
+fn config_json(config: &MemoryConfig) -> Value {
+    json!({
+        "enabled": config.enabled,
+        "provider": json_text(&config.provider),
+        "rootDir": json_text(&config.root_dir),
+        "captureStrategy": config.capture_strategy.as_str(),
+        "includeAssistant": config.include_assistant,
+        "maxMessageChars": json_number(config.max_message_chars),
+        "retrievalTimeoutMs": json_number(config.retrieval_timeout_ms),
+        "model": config.model.as_ref().map(json_text),
+        "apiType": config.api_type.as_ref().map(json_text),
+        "schedule": config.schedule.as_ref().map(|schedule| json!({
+            "reasoningMode": schedule.reasoning_mode.as_ref().map(json_text),
+            "autoIndexIntervalMinutes": json_number(schedule.auto_index_interval_minutes),
+            "autoDreamIntervalMinutes": json_number(schedule.auto_dream_interval_minutes),
+        })),
+        "heartbeatBatchSize": json_number(config.heartbeat_batch_size),
+    })
+}
+
+fn model_config_json(config: &MemoryModelConfig) -> Value {
+    Value::Object(
+        config
+            .providers
+            .iter()
+            .map(|(id, provider)| {
+                (
+                    id.clone(),
+                    json!({
+                        "protocol": provider.protocol.as_ref().map(json_text),
+                        "url": provider.url.as_ref().map(json_text),
+                        "apiKey": provider.api_key.as_ref().map(json_text),
+                    }),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// Full recorder projection (`captureOptions` in generate.mts).
 fn options_json(options: &ProjectMemoryBundleOptions) -> Value {
+    json!({
+        "projectRoot": options.project_root.to_string_lossy(),
+        "agentModel": options.agent_model,
+        "hasProviderFactory": options.provider_factory.is_some(),
+        "hasCreateProvider": options.create_provider.is_some(),
+        "config": options.config.as_ref().map(config_json),
+        "modelConfig": options.model_config.as_ref().map(model_config_json),
+        "hasNow": options.now.is_some(),
+        "hasTelemetry": options.telemetry.is_some(),
+    })
+}
+
+/// The pinned two-field recorder used by the ten committed cases.
+fn committed_options_json(options: &ProjectMemoryBundleOptions) -> Value {
     json!({
         "projectRoot": options.project_root.to_string_lossy(),
         "agentModel": options.agent_model,
@@ -149,9 +230,131 @@ fn options_json(options: &ProjectMemoryBundleOptions) -> Value {
         "hasCreateProvider": options.create_provider.is_some(),
         "config": options.config.as_ref().map(|config| json!({
             "enabled": config.enabled,
-            "provider": config.provider.clone(),
+            "provider": json_text(&config.provider),
         })),
     })
+}
+
+fn native_options_json(input: &NativeMemoryProviderOptions) -> Value {
+    json!({
+        "projectRoot": input.project_root.to_string_lossy(),
+        "agentModel": input.agent_model,
+        "hasProviderFactory": false,
+        "hasCreateProvider": false,
+        "config": input.config.as_ref().map(config_json),
+        "modelConfig": input.model_config.as_ref().map(model_config_json),
+        "hasNow": input.now.is_some(),
+        "hasTelemetry": input.telemetry.is_some(),
+    })
+}
+
+fn committed_native_options_json(input: &NativeMemoryProviderOptions) -> Value {
+    json!({
+        "projectRoot": input.project_root.to_string_lossy(),
+        "agentModel": input.agent_model,
+        "hasProviderFactory": false,
+        "hasCreateProvider": false,
+        "config": input.config.as_ref().map(|config| json!({
+            "enabled": config.enabled,
+            "provider": json_text(&config.provider),
+        })),
+    })
+}
+
+fn memory_config_from_fixture(config: &Value) -> MemoryConfig {
+    MemoryConfig {
+        enabled: config["enabled"].as_bool().expect("config.enabled"),
+        provider: JsString::from(config["provider"].as_str().expect("config.provider")),
+        root_dir: config
+            .get("rootDir")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .into(),
+        capture_strategy: match config.get("captureStrategy").and_then(Value::as_str) {
+            Some("full_session") => MemoryCaptureStrategy::FullSession,
+            _ => MemoryCaptureStrategy::LastTurn,
+        },
+        include_assistant: config
+            .get("includeAssistant")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        max_message_chars: config.get("maxMessageChars").and_then(Value::as_f64),
+        retrieval_timeout_ms: config.get("retrievalTimeoutMs").and_then(Value::as_f64),
+        model: config
+            .get("model")
+            .and_then(Value::as_str)
+            .map(JsString::from),
+        api_type: config
+            .get("apiType")
+            .and_then(Value::as_str)
+            .map(JsString::from),
+        schedule: config
+            .get("schedule")
+            .and_then(Value::as_object)
+            .map(|schedule| MemoryScheduleConfig {
+                reasoning_mode: schedule
+                    .get("reasoningMode")
+                    .and_then(Value::as_str)
+                    .map(JsString::from),
+                auto_index_interval_minutes: schedule
+                    .get("autoIndexIntervalMinutes")
+                    .and_then(Value::as_f64),
+                auto_dream_interval_minutes: schedule
+                    .get("autoDreamIntervalMinutes")
+                    .and_then(Value::as_f64),
+            }),
+        heartbeat_batch_size: config.get("heartbeatBatchSize").and_then(Value::as_f64),
+    }
+}
+
+fn model_config_from_fixture(model_config: &Value) -> MemoryModelConfig {
+    MemoryModelConfig {
+        providers: model_config
+            .as_object()
+            .expect("modelConfig providers")
+            .iter()
+            .map(|(id, provider)| {
+                (
+                    id.clone(),
+                    MemoryModelProvider {
+                        protocol: provider
+                            .get("protocol")
+                            .and_then(Value::as_str)
+                            .map(JsString::from),
+                        url: provider
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .map(JsString::from),
+                        api_key: provider
+                            .get("apiKey")
+                            .and_then(Value::as_str)
+                            .map(JsString::from),
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+fn options_from_fixture(case: &Value) -> ProjectMemoryBundleOptions {
+    let options = &case["options"];
+    let project_root = options["projectRoot"].as_str().unwrap();
+    let mut bundle = ProjectMemoryBundleOptions::new(project_root);
+    if let Some(config) = options.get("config").filter(|value| !value.is_null()) {
+        bundle.config = Some(memory_config_from_fixture(config));
+    }
+    if let Some(model_config) = options.get("modelConfig").filter(|value| !value.is_null()) {
+        bundle.model_config = Some(model_config_from_fixture(model_config));
+    }
+    bundle.agent_model = options["agentModel"].as_str().map(str::to_owned);
+    if options["hasNow"].as_bool() == Some(true) {
+        bundle.now = Some(Arc::new(|| UNIX_EPOCH + Duration::from_millis(1234)));
+    }
+    if options["hasTelemetry"].as_bool() == Some(true) {
+        let telemetry: TelemetryClient = Arc::new(());
+        bundle.telemetry = Some(telemetry);
+    }
+    bundle
 }
 
 fn provider_with_events(events: Arc<Events>, with_services: bool) -> ProjectMemoryProvider {
@@ -180,11 +383,18 @@ fn bundle_from_fixture(
     factory_calls: Arc<AtomicUsize>,
 ) -> ProjectMemoryBundle {
     let mut options = options_from_fixture(case);
+    // Cases appended by fix-r1 record the full option surface; the ten
+    // committed cases keep their pinned two-field recorder.
+    let full = case.get("recorder").and_then(Value::as_str) == Some("full");
     match case["factory"].as_str().unwrap() {
         "success" => {
             options.provider_factory = Some(Arc::new(move |input: ProjectMemoryBundleOptions| {
                 factory_calls.fetch_add(1, Ordering::SeqCst);
-                *captured_factory.lock().unwrap() = Some(options_json(&input));
+                *captured_factory.lock().unwrap() = Some(if full {
+                    options_json(&input)
+                } else {
+                    committed_options_json(&input)
+                });
                 events.push("factory");
                 Ok(Some(provider_with_events(Arc::clone(&events), true)))
             }));
@@ -197,6 +407,19 @@ fn bundle_from_fixture(
                 Err(MemoryBundleError::Factory(MemoryProviderError::new(
                     "factory boom",
                 )))
+            }));
+        }
+        "throws-structured" => {
+            let factory_events = Arc::clone(&events);
+            options.provider_factory = Some(Arc::new(move |_: ProjectMemoryBundleOptions| {
+                factory_calls.fetch_add(1, Ordering::SeqCst);
+                factory_events.push("factory");
+                Err(MemoryBundleError::Factory(MemoryProviderError {
+                    name: "DialogGatewayError".into(),
+                    code: Some("FACTORY_FAILED".into()),
+                    message: JsString::from("structured factory boom"),
+                    requires_host: true,
+                }))
             }));
         }
         "undefined" => {
@@ -213,16 +436,11 @@ fn bundle_from_fixture(
             options.create_provider = Some(Arc::new(move |input: &NativeMemoryProviderOptions| {
                 factory_calls_native.fetch_add(1, Ordering::SeqCst);
                 factory_events.push("create");
-                *captured_native.lock().unwrap() = Some(json!({
-                    "projectRoot": input.project_root.to_string_lossy(),
-                    "agentModel": input.agent_model,
-                    "hasProviderFactory": false,
-                    "hasCreateProvider": false,
-                    "config": input.config.as_ref().map(|config| json!({
-                        "enabled": config.enabled,
-                        "provider": config.provider,
-                    })),
-                }));
+                *captured_native.lock().unwrap() = Some(if full {
+                    native_options_json(input)
+                } else {
+                    committed_native_options_json(input)
+                });
                 Ok(Some(NativeProjectMemoryProvider {
                     provider: Arc::new(FakeResolver),
                     service: Arc::new(FakeNativeService {
@@ -234,7 +452,11 @@ fn bundle_from_fixture(
         "preferred" => {
             options.provider_factory = Some(Arc::new(move |input: ProjectMemoryBundleOptions| {
                 factory_calls.fetch_add(1, Ordering::SeqCst);
-                *captured_factory.lock().unwrap() = Some(options_json(&input));
+                *captured_factory.lock().unwrap() = Some(if full {
+                    options_json(&input)
+                } else {
+                    committed_options_json(&input)
+                });
                 events.push("factory");
                 Ok(Some(provider_with_events(Arc::clone(&events), false)))
             }));
@@ -309,7 +531,7 @@ async fn real_ts_memory_bundle_oracle() {
         .unwrap();
     let bundle: Value = serde_json::from_str(&bundle).unwrap();
     let cases = bundle.as_array().unwrap();
-    assert_eq!(cases.len(), 10);
+    assert_eq!(cases.len(), 13);
     let mut replayed = 0;
     for case in cases {
         let events = Arc::new(Events::default());
@@ -451,7 +673,7 @@ async fn real_ts_memory_bundle_oracle() {
         }
         replayed += 1;
     }
-    assert_eq!(replayed, 10);
+    assert_eq!(replayed, 13);
 }
 
 fn optional_js_string(input: &JsValue, key: &str) -> Option<JsString> {

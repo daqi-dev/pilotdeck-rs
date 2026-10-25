@@ -64,9 +64,15 @@ const PROJECT = '/pdrs-fixture/project';
 const FALLBACK = '/pdrs-fixture/fallback';
 
 function errorJson(error: any) {
-  return { name: error?.name ?? 'Error', code: error?.code ?? null, message: error?.message ?? String(error) };
+  const shape: any = { name: error?.name ?? 'Error', code: error?.code ?? null, message: error?.message ?? String(error) };
+  // Additive: ordinary errors keep their committed bytes. A structured
+  // factory rejection (DialogGatewayError + requires_host) records the flag.
+  if (error?.requires_host) shape.requires_host = true;
+  return shape;
 }
-function captureOptions(input: any) {
+// The ten committed cases keep the recorder they were generated with so
+// their oracle bytes stay stable across the fix-r1 regeneration.
+function committedCaptureOptions(input: any) {
   return {
     projectRoot: input.projectRoot,
     agentModel: input.agentModel ?? null,
@@ -75,6 +81,56 @@ function captureOptions(input: any) {
     config: input.config
       ? { enabled: input.config.enabled, provider: input.config.provider }
       : null,
+  };
+}
+function captureConfig(config: any) {
+  if (!config) return null;
+  return {
+    enabled: config.enabled,
+    provider: config.provider,
+    rootDir: config.rootDir ?? null,
+    captureStrategy: config.captureStrategy ?? null,
+    includeAssistant: config.includeAssistant ?? null,
+    maxMessageChars: config.maxMessageChars ?? null,
+    retrievalTimeoutMs: config.retrievalTimeoutMs ?? null,
+    model: config.model ?? null,
+    apiType: config.apiType ?? null,
+    schedule: config.schedule
+      ? {
+          reasoningMode: config.schedule.reasoningMode ?? null,
+          autoIndexIntervalMinutes: config.schedule.autoIndexIntervalMinutes ?? null,
+          autoDreamIntervalMinutes: config.schedule.autoDreamIntervalMinutes ?? null,
+        }
+      : null,
+    heartbeatBatchSize: config.heartbeatBatchSize ?? null,
+  };
+}
+function captureModelConfig(modelConfig: any) {
+  const providers = modelConfig?.providers;
+  if (!providers) return null;
+  return Object.fromEntries(
+    Object.entries(providers).map(([id, provider]: [string, any]) => [
+      id,
+      {
+        protocol: provider.protocol ?? null,
+        url: provider.url ?? null,
+        apiKey: provider.apiKey ?? null,
+      },
+    ]),
+  );
+}
+// Full recorder (fix-r1): every config field, the modelConfig subset the
+// memory factory reads, and whether now/telemetry were supplied.
+function captureOptions(input: any) {
+  return {
+    projectRoot: input.projectRoot,
+    agentModel: input.agentModel ?? null,
+    hasProviderFactory: typeof input.providerFactory === 'function',
+    hasCreateProvider: typeof input.createProvider === 'function',
+    config: captureConfig(input.config),
+    modelConfig: captureModelConfig(input.modelConfig),
+    hasNow: typeof input.now === 'function',
+    hasTelemetry: input.telemetry !== undefined && input.telemetry !== null,
   };
 }
 function resourceShape(value: any) {
@@ -90,6 +146,23 @@ function bundleOptions(config: any, agentModel: any = null) {
     projectRoot: PROJECT,
     config: config ? { enabled: config.enabled, provider: config.provider } : null,
     agentModel,
+  };
+}
+// Replay input for the appended full-recorder cases: mirrors captureConfig /
+// captureModelConfig plus the now/telemetry presence flags.
+function bundleOptionsFull(
+  config: any,
+  modelConfig: any = null,
+  agentModel: any = null,
+  presence: { hasNow?: boolean; hasTelemetry?: boolean } = {},
+) {
+  return {
+    projectRoot: PROJECT,
+    config: captureConfig(config),
+    modelConfig: captureModelConfig(modelConfig),
+    agentModel,
+    hasNow: presence.hasNow === true,
+    hasTelemetry: presence.hasTelemetry === true,
   };
 }
 function stageResult(run: () => any) {
@@ -117,7 +190,7 @@ const bundleCases: any[] = [];
     projectRoot: PROJECT,
     providerFactory: (input: any) => {
       events.push('factory');
-      captured = captureOptions(input);
+      captured = committedCaptureOptions(input);
       return {
         memory,
         maintenance,
@@ -251,7 +324,7 @@ const bundleCases: any[] = [];
     projectRoot: PROJECT,
     createProvider: (input: any) => {
       events.push('create');
-      captured = captureOptions(input);
+      captured = committedCaptureOptions(input);
       return { provider: memory, service };
     },
   });
@@ -277,7 +350,7 @@ const bundleCases: any[] = [];
     projectRoot: PROJECT,
     providerFactory: (input: any) => {
       events.push('factory');
-      captured = captureOptions(input);
+      captured = committedCaptureOptions(input);
       return { memory, dispose: () => { events.push('dispose'); } };
     },
     createProvider: () => {
@@ -375,6 +448,169 @@ const bundleCases: any[] = [];
   events.push('after-await');
   steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
   bundleCases.push({ name: 'native-disabled', factory: 'none', factoryCalls: 0, options: bundleOptions({ enabled: false, provider: 'edgeclaw' }), steps, events });
+}
+
+// ---- fix-r1 appended cases (full recorder) ---------------------------------
+// The ten cases above keep the committed recorder byte-for-byte; these three
+// exercise the fields the old recorder dropped.
+
+const FULL_CONFIG = {
+  enabled: true,
+  provider: 'edgeclaw',
+  rootDir: '/pdrs-fixture/memory-root',
+  captureStrategy: 'full_session',
+  includeAssistant: false,
+  maxMessageChars: 321,
+  retrievalTimeoutMs: 42,
+  model: 'test/mem',
+  apiType: 'openai-completions',
+  schedule: {
+    reasoningMode: 'accuracy_first',
+    autoIndexIntervalMinutes: 5,
+    autoDreamIntervalMinutes: 9,
+  },
+  heartbeatBatchSize: 7,
+};
+const FULL_MODEL_CONFIG = {
+  providers: {
+    test: {
+      protocol: 'openai',
+      url: 'http://127.0.0.1:28794/v1',
+      apiKey: 'fixture-not-a-secret',
+    },
+  },
+};
+
+// 11. Every config field, the modelConfig subset and now/telemetry presence
+//     reach providerFactory.
+{
+  const events: string[] = [];
+  const telemetry = { marker: 'telemetry-sentinel' };
+  let captured: any;
+  const bundle = new ProjectMemoryBundle({
+    config: FULL_CONFIG,
+    modelConfig: FULL_MODEL_CONFIG,
+    agentModel: 'test/mock',
+    projectRoot: PROJECT,
+    now: () => new Date(1234),
+    telemetry,
+    providerFactory: (input: any) => {
+      events.push('factory');
+      captured = captureOptions(input);
+      return {
+        memory: {},
+        maintenance: { async runDueScheduledMaintenance() { return {}; } },
+        management: { list() { return []; }, clear() {}, clearSession() {} },
+        dispose: () => { events.push('dispose'); },
+      };
+    },
+  });
+  const steps: any[] = [];
+  steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
+  const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
+  events.push('after-dispose-call');
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
+  events.push('after-await');
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
+  bundleCases.push({
+    name: 'factory-options-full',
+    recorder: 'full',
+    factory: 'success',
+    factoryCalls: 1,
+    options: bundleOptionsFull(FULL_CONFIG, FULL_MODEL_CONFIG, 'test/mock', { hasNow: true, hasTelemetry: true }),
+    factoryOptions: captured,
+    steps,
+    events,
+  });
+}
+
+// 12. The deprecated createProvider input carries the same fields (without
+//     the two factory hooks).
+{
+  const events: string[] = [];
+  const telemetry = { marker: 'telemetry-sentinel' };
+  let captured: any;
+  const bundle = new ProjectMemoryBundle({
+    config: FULL_CONFIG,
+    modelConfig: FULL_MODEL_CONFIG,
+    agentModel: 'test/mock',
+    projectRoot: PROJECT,
+    now: () => new Date(1234),
+    telemetry,
+    createProvider: (input: any) => {
+      events.push('create');
+      captured = captureOptions(input);
+      return {
+        provider: {},
+        service: {
+          async runDueScheduledMaintenance() { return {}; },
+          list() { return []; },
+          clear() {},
+          clearSession() {},
+          close() { events.push('close'); },
+        },
+      };
+    },
+  });
+  const steps: any[] = [];
+  steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
+  const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
+  events.push('after-dispose-call');
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
+  events.push('after-await');
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
+  bundleCases.push({
+    name: 'native-options-full',
+    recorder: 'full',
+    factory: 'native',
+    factoryCalls: 1,
+    options: bundleOptionsFull(FULL_CONFIG, FULL_MODEL_CONFIG, 'test/mock', { hasNow: true, hasTelemetry: true }),
+    nativeOptions: captured,
+    steps,
+    events,
+  });
+}
+
+// 13. A factory rejection keeps name/code/requires_host (the old recorder
+//     hardcoded name:"Error" and dropped the code).
+{
+  const events: string[] = [];
+  const thrown = Object.assign(new Error('structured factory boom'), {
+    name: 'DialogGatewayError',
+    code: 'FACTORY_FAILED',
+    requires_host: true,
+  });
+  const bundle = new ProjectMemoryBundle({
+    config: FULL_CONFIG,
+    projectRoot: PROJECT,
+    providerFactory: () => {
+      events.push('factory');
+      throw thrown;
+    },
+  });
+  const steps: any[] = [];
+  steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
+  steps.push({ op: 'stage-again', ...stageResult(() => bundle.stage()) });
+  const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
+  events.push('after-dispose-call');
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
+  events.push('after-await');
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
+  bundleCases.push({
+    name: 'factory-throws-structured',
+    recorder: 'full',
+    factory: 'throws-structured',
+    factoryCalls: 1,
+    options: bundleOptionsFull(FULL_CONFIG),
+    steps,
+    events,
+  });
 }
 
 // The management methods are plain JS once extracted; execute the exact source
