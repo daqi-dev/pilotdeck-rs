@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import importlib.machinery
 import json
 import math
 import os
@@ -40,6 +41,18 @@ def digest(path):
 SCRIPT_SUFFIXES = ('.py', '.pyw', '.sh', '.bash', '.zsh', '.js', '.mjs', '.cjs',
                    '.jsx', '.ts', '.mts', '.cts', '.tsx')
 BYTECODE_SUFFIXES = ('.pyc', '.pyo')
+# CPython probes these before falling back to a same-directory ``.py``, so an
+# unregistered extension module shadows the registered source at import time.
+# importlib.machinery is the authoritative list for this interpreter
+# (``.cpython-<abi>-<platform>.so`` / ``.abi3.so`` / ``.so``; ``.pyd`` on
+# Windows); the explicit tail keeps the scan complete if a build omits one.
+EXTENSION_SUFFIXES = tuple(dict.fromkeys(
+    tuple(importlib.machinery.EXTENSION_SUFFIXES) +
+    ('.so', '.pyd', '.dylib', '.node')))
+# site only reads ``.pth`` from site-package directories (and none under ``-I``),
+# so a ``.pth`` beside the apparatus is inert today; reject it anyway because it
+# is an executable-input shape that must not appear unregistered.
+SITE_SUFFIXES = ('.pth',)
 
 
 def tree_digest(folder):
@@ -83,6 +96,11 @@ def unknown_apparatus_files(script=None):
     __pycache__ bytecode is tolerated because CPython only consumes it next to a
     matching source file; a legacy ``.pyc``/``.pyo`` beside the sources could be
     imported on its own, so it is rejected like an unregistered script.
+    Extension modules are rejected wherever they sit: CPython consults
+    ``EXTENSION_SUFFIXES`` in the same directory *before* ``.py``, so a
+    ``compare.cpython-<abi>-<platform>.so`` would run while ``compare.py`` keeps
+    its registered hash.  Node native addons (``.node``) and ``.pth`` files are
+    rejected for the same executable-input rule.
     """
     script = Path(script) if script is not None else SCRIPT
     found = []
@@ -95,6 +113,8 @@ def unknown_apparatus_files(script=None):
                 if rel.as_posix() not in A2_SCRIPTS and rel.as_posix() not in A3_SCRIPTS:
                     found.append(rel.as_posix())
             elif path.suffix in BYTECODE_SUFFIXES and '__pycache__' not in rel.parts:
+                found.append(rel.as_posix())
+            elif name.endswith(EXTENSION_SUFFIXES) or name.endswith(SITE_SUFFIXES):
                 found.append(rel.as_posix())
     return sorted(found)
 
