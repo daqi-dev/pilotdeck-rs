@@ -1,0 +1,93 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/extension/hooks/execution/HookRuntime.ts": "1b8c7c6549b538bf5f85576f0f1638fc5f82ebd13f5a1dad8a01cf2c518a417e",
+    "src/extension/hooks/execution/AsyncHookRegistry.ts": "3605fd1393dc363030cc364d14c0b6f60aceefd9d8c6cdd28047a479e43a1294",
+    "src/lifecycle/runtime/LifecycleRuntime.ts": "90afe325048ab832c822d184f7433b80df810dfa9e3da429f861aab135df0a26",
+    "src/agent/session/AgentSession.ts": "1d1f929fb6f08a5f0957b900cd0a1bfb65ae14080d7f26e971c141d2c5f1d789",
+    "src/agent/session/SteerMailbox.ts": "2c8cfdd37728fac21c2b4839a549403f58c2e9c07b5108890c07e7fe409ee743",
+    "src/agent/turn/TurnRunner.ts": "8bf4dab4c8e40bba78781e6ad7352dda79e3fc52adf99b9504f1213e0157a5ac",
+    "src/agent/loop/AgentLoop.ts": "d9949a78b6396e58060f5b19d32d51ba15139bc9900de8bf9fe1c1231621aff2",
+    "src/agent/loop/AgentTurnCapabilities.ts": "573db659bdc8c26702b15d01ce8fc499d0505272fdcf5e482e9b8e895530ddcb",
+    "src/gateway/permission/createGatewayPermissionHook.ts": "38cf333b8de143f4d81140688d190fc7392029935fefa9590b66db0d356d5e57",
+    "src/gateway/permission/GatewayPermissionBus.ts": "b0caf4420156bf71eeaddb03159c80d9bc57c0a678f3d8714878486b96634ba8",
+    "src/gateway/elicitation/GatewayElicitationBus.ts": "f75544dfad91afbdbb37dbfb8e97e418b98ccefc5f1f7d9b0abde0a1ef382904"
+  },
+  "hooks": {
+    "firstPending": [
+      "command:1"
+    ],
+    "secondPending": [
+      "command:2"
+    ],
+    "firstEvents": [
+      "started",
+      "response"
+    ],
+    "secondEvents": [
+      "started",
+      "response"
+    ],
+    "completedOldAfterNextTurn": true,
+    "collectedResponses": [
+      "command:1"
+    ],
+    "completedAfterDispose": false,
+    "noticeEvents": []
+  },
+  "steer": {
+    "events": [
+      {
+        "type": "turn_started"
+      },
+      {
+        "type": "input_accepted"
+      },
+      {
+        "type": "user_prompt_submitted"
+      },
+      {
+        "type": "steer_unapplied",
+        "itemId": "a",
+        "reason": "turn_ended",
+        "sessionId": "s",
+        "turnId": "t"
+      },
+      {
+        "type": "turn_completed"
+      }
+    ],
+    "noticeEvents": [
+      {
+        "type": "steer_unapplied",
+        "itemId": "a",
+        "reason": "turn_ended",
+        "sessionId": "s",
+        "turnId": "t"
+      }
+    ],
+    "modelCalls": 0
+  },
+  "permission": {
+    "emitted": [
+      "permission_request"
+    ],
+    "pendingBeforeClose": 1,
+    "pendingAfterClose": 0,
+    "resultEvents": [
+      "started",
+      "response"
+    ],
+    "resultBlockingErrors": [],
+    "noticeEvents": []
+  },
+  "elicitation": {
+    "pendingBeforeClose": 1,
+    "pendingAfterClose": 0,
+    "rejected": "turn_ended",
+    "noticeEvents": []
+  },
+  "discardNoticeNames": [
+    "interaction_pending_discarded"
+  ]
+}

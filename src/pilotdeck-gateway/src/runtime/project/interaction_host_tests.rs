@@ -939,3 +939,111 @@ fn interaction_cleanup_completion_survives_stopped_executor() {
         drop(registry);
     }
 }
+
+#[tokio::test]
+async fn host_next_turn_surfaces_the_pending_hook_discard_notice() {
+    use crate::host::modules::event::EventSink as _;
+
+    let scratch = Scratch::new();
+    let registry = Arc::new(interaction_registry(&scratch));
+    let identity = identity();
+    let mut first_options = options();
+    first_options.hooks = command_hook_settings(r#"printf '%s' '{"async":true}'"#);
+    first_options.permission.context.cwd =
+        std::env::temp_dir().to_string_lossy().to_string().into();
+    first_options.base_env = Some(
+        parse_json(r#"{"PATH":"/usr/bin:/bin"}"#)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    let first = InteractionTurn::bind(
+        registry.acquire(None).unwrap(),
+        &identity,
+        router(&identity),
+        first_options,
+    )
+    .await
+    .unwrap();
+    first
+        .module_call(parse_json(
+            r#"{"module":"lifecycle","payload":{"operation":"dispatch","event":"PreToolUse","payload":{}}}"#,
+        ).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        first
+            .ports()
+            .hooks
+            .unwrap()
+            .pending_receipts()
+            .unwrap()
+            .len(),
+        1
+    );
+    bounded(first.dispose()).await.unwrap();
+
+    let second = InteractionTurn::bind(
+        registry.acquire(None).unwrap(),
+        &identity,
+        router(&identity),
+        options(),
+    )
+    .await
+    .unwrap();
+    let events = second.ports().events.unwrap();
+    let mut started = JsObject::new();
+    started.insert("type".into(), "turn_started".into());
+    started.insert("sessionId".into(), "session".into());
+    started.insert("turnId".into(), "turn".into());
+    events.emit(started).unwrap();
+    let drained = second.drain_events().unwrap();
+    let started_at = drained
+        .iter()
+        .position(|event| {
+            event
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str("turn_started"))
+        })
+        .unwrap();
+    let warning_at = drained
+        .iter()
+        .position(|event| {
+            event
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str("warning"))
+        })
+        .expect("predecessor hook notice must be visible to the next turn");
+    assert!(started_at < warning_at);
+    let warning = &drained[warning_at];
+    assert_eq!(
+        warning
+            .get("code")
+            .and_then(JsValue::as_string)
+            .map(|v| v.to_utf8().unwrap()),
+        Some("interaction_pending_discarded".into())
+    );
+    let metadata = warning
+        .get("metadata")
+        .and_then(JsValue::as_object)
+        .unwrap();
+    assert_eq!(
+        metadata
+            .get("source")
+            .and_then(JsValue::as_string)
+            .map(|v| v.to_utf8().unwrap()),
+        Some("hooks".into())
+    );
+    assert_eq!(
+        metadata
+            .get("runId")
+            .and_then(JsValue::as_string)
+            .map(|v| v.to_utf8().unwrap()),
+        Some("run".into())
+    );
+    bounded(second.dispose()).await.unwrap();
+    bounded(registry.dispose()).await.unwrap();
+}

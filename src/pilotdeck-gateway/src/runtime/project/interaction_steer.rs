@@ -3,6 +3,7 @@
 //! Host prerequisite: mutation and transcript recorders must complete in bounded
 //! time (including their own I/O deadlines). Disposal preserves durable-first
 //! ordering and cannot release the lease while an admitted recorder is pending.
+use super::interaction_notice::{DiscardNotice, DiscardSource, take_session_notices};
 use super::{DisposeFuture, FamilyResource, RuntimeError};
 use crate::{
     host::{
@@ -20,7 +21,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
@@ -35,6 +36,9 @@ struct State {
     // Keep the session key after revocation: replacement mailboxes must not
     // overtake durable writes, even across multiple not-yet-started bindings.
     draining: Vec<(JsString, Arc<Run>)>,
+    // #686: discarded-but-unapplied steer items, kept until the same session
+    // binds its next turn (or the generation closes).
+    notices: Vec<DiscardNotice>,
 }
 struct Session {
     identity: Arc<()>,
@@ -44,6 +48,8 @@ struct Session {
 struct Run {
     id: JsString,
     turn_id: JsString,
+    session_key: JsString,
+    owner: Weak<Mutex<State>>,
     steers: TurnSteers,
     external: Cancellation,
     authorizations: Option<SteerAuthorizations>,
@@ -67,6 +73,22 @@ impl Run {
             let _applying = run.applying.lock().await;
             let result = run.steers.mailbox.close(run.turn_id.clone()).await;
             run.steers.mailbox.finish(&run.turn_id);
+            // Record before `done` resolves: `wait_ready` on the next turn is
+            // the barrier that makes the notice visible to that turn.
+            if let Ok(discarded) = &result
+                && !discarded.is_empty()
+            {
+                let notice = DiscardNotice::new(
+                    DiscardSource::Steer,
+                    discarded.len(),
+                    run.session_key.clone(),
+                    run.id.clone(),
+                );
+                notice.log();
+                if let Some(owner) = run.owner.upgrade() {
+                    owner.lock().unwrap().notices.push(notice);
+                }
+            }
             run.releases.fetch_add(1, Ordering::SeqCst);
             result
         });
@@ -246,6 +268,8 @@ impl SessionSteer {
         let run = Arc::new(Run {
             id: run_id,
             turn_id: turn_id.clone(),
+            session_key: self.key.clone(),
+            owner: Arc::downgrade(&self.owner.0),
             steers: TurnSteers::new(session.mailbox.clone(), turn_id, messages),
             external: signal,
             authorizations: router.turn.authorizations.clone(),
@@ -460,6 +484,11 @@ impl TurnSteer {
     }
     pub fn release_count(&self) -> usize {
         self.run.releases.load(Ordering::SeqCst)
+    }
+    /// Take this session's pending-discard notices for next-turn delivery.
+    pub fn take_discard_notices(&self) -> Vec<DiscardNotice> {
+        let mut state = self.session.owner.0.lock().unwrap();
+        take_session_notices(&mut state.notices, &self.run.session_key)
     }
 }
 fn stale() -> HostError {

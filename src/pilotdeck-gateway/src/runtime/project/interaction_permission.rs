@@ -2,6 +2,7 @@
 //! as in PermissionRuntime.ts and createGatewayPermissionHook.ts (cc7c4e6).
 //! Callers retain the generation lease until the bound turn ends. The lifecycle
 //! adapter in interaction_hooks consumes request(); binding alone does not install hooks.
+use super::interaction_notice::{DiscardNotice, DiscardSource, take_session_notices};
 use super::{DisposeFuture, FamilyResource, InteractionProfile, RuntimeError, RuntimeResult};
 use crate::{
     config::permission::RuleSetHandle,
@@ -22,7 +23,10 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use tokio::sync::oneshot;
@@ -55,6 +59,7 @@ struct State {
     closed: bool,
     releases: usize,
     turns: HashMap<JsString, Arc<Run>>,
+    notices: Vec<DiscardNotice>,
 }
 struct Run {
     session: JsString,
@@ -62,13 +67,22 @@ struct Run {
     cancelled: Cancellation,
     requests: Mutex<HashMap<JsString, Registration>>,
     options: PermissionTurnOptions,
+    closed: AtomicBool,
 }
 impl Run {
-    fn close(&self) {
+    /// Close once. Returns the pending request count observed at the close
+    /// transition, or `None` when this call observed an already-closed run.
+    fn close(&self) -> Option<usize> {
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return None;
+        }
         self.cancelled.cancel();
+        let mut pending = 0;
         for (_, registration) in lock(&self.requests).drain() {
+            pending += 1;
             registration.dispose();
         }
+        Some(pending)
     }
 }
 /// All fields are host authority. A wire context is never merged into these.
@@ -119,9 +133,20 @@ impl InteractionPermission {
             cancelled: Cancellation::new(),
             requests: Mutex::default(),
             options,
+            closed: AtomicBool::new(false),
         });
-        if let Some(previous) = state.turns.insert(session, run.clone()) {
-            previous.close();
+        if let Some(previous) = state.turns.insert(session, run.clone())
+            && let Some(pending) = previous.close()
+            && pending > 0
+        {
+            let notice = DiscardNotice::new(
+                DiscardSource::Permission,
+                pending,
+                previous.session.clone(),
+                previous.run_id.clone(),
+            );
+            notice.log();
+            state.notices.push(notice);
         }
         let turn = TurnPermission {
             state: self.state.clone(),
@@ -138,8 +163,22 @@ impl InteractionPermission {
         }
         state.closed = true;
         state.releases += 1;
+        let mut notices = Vec::new();
         for (_, run) in state.turns.drain() {
-            run.close();
+            if let Some(pending) = run.close()
+                && pending > 0
+            {
+                notices.push(DiscardNotice::new(
+                    DiscardSource::Permission,
+                    pending,
+                    run.session.clone(),
+                    run.run_id.clone(),
+                ));
+            }
+        }
+        for notice in notices {
+            notice.log();
+            state.notices.push(notice);
         }
     }
     pub fn is_closed(&self) -> bool {
@@ -209,7 +248,18 @@ impl TurnPermission {
     }
     pub fn close(&self) {
         let mut state = lock(&self.state);
-        self.run.close();
+        if let Some(pending) = self.run.close()
+            && pending > 0
+        {
+            let notice = DiscardNotice::new(
+                DiscardSource::Permission,
+                pending,
+                self.run.session.clone(),
+                self.run.run_id.clone(),
+            );
+            notice.log();
+            state.notices.push(notice);
+        }
         if state
             .turns
             .get(&self.run.session)
@@ -217,6 +267,11 @@ impl TurnPermission {
         {
             state.turns.remove(&self.run.session);
         }
+    }
+    /// Take this session's pending-discard notices for next-turn delivery.
+    pub fn take_discard_notices(&self) -> Vec<DiscardNotice> {
+        let mut state = lock(&self.state);
+        take_session_notices(&mut state.notices, &self.run.session)
     }
     /// PermissionRequest callback boundary. Returns behavior/message, ready for
     /// a hook's specific.decision. Request IDs are host minted, never toolCallId.
