@@ -2167,6 +2167,14 @@ async fn send_provider_request(
 }
 
 /// `await response.text()`: UTF-8 with BOM stripped.
+///
+/// The byte→string conversion runs only after the body reached EOF, exactly
+/// like TS `Response.text()`: an over-`MAX_STRING_LENGTH` body is still read
+/// to the end (real TS probes, `_tmp/20261025-issue-641/RESULT.md`), so a
+/// mid-read body failure keeps priority over the string error, and at EOF a
+/// trailing incomplete UTF-8 sequence becomes one U+FFFD unit that counts
+/// toward the cap. The conversion throws V8's plain `Error`, never a
+/// `RangeError`.
 async fn response_text(
     body: &mut ModelBody,
     options: &StreamOptions,
@@ -2179,6 +2187,7 @@ async fn response_text(
     let mut decoder = sse::Utf8Decoder::default();
     let mut text = String::new();
     let mut units = 0usize;
+    let mut too_long = false;
     loop {
         use crate::runtime::network::{Exchange, body_frame};
         match body_frame(
@@ -2206,21 +2215,38 @@ async fn response_text(
             Exchange::Response(None, _) => break,
             Exchange::Response(Some(Ok(frame)), _) => {
                 if let Some(data) = frame.data_ref() {
+                    if too_long {
+                        // The string conversion has not run yet; keep draining
+                        // so EOF / the body idle timeout still decide and a body
+                        // failure keeps priority over the string error.
+                        continue;
+                    }
                     let start = text.len();
                     decoder.decode(data, &mut text);
                     // V8's cap counts UTF-16 code units of the decoded text.
                     units += text[start..].encode_utf16().count();
-                    if units > super::count_http::MAX_STRING_LENGTH {
-                        return Err(ModelStreamError::thrown(
-                            "RangeError",
-                            "Cannot create a string longer than 0x1fffffe8 characters",
-                        ));
+                    if units > string_limit() {
+                        // The conversion throws only after EOF; retain nothing
+                        // once the text can only be rejected.
+                        too_long = true;
+                        text = String::new();
                     }
                 }
             }
         }
     }
+    // A trailing incomplete UTF-8 sequence becomes one U+FFFD at EOF; the
+    // real conversion sees that unit too, so it can push the text over the
+    // cap even when the frames alone fit exactly.
+    let start = text.len();
     decoder.finish(&mut text);
+    units += text[start..].encode_utf16().count();
+    if too_long || units > string_limit() {
+        return Err(ModelStreamError::thrown(
+            "Error",
+            crate::fetch_redirect::STRING_TOO_LONG,
+        ));
+    }
     Ok(text)
 }
 
