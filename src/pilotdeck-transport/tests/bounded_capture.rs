@@ -319,6 +319,28 @@ impl<H: HostPort> HostPort for RetirementHost<H> {
         result
     }
 }
+// The turn can return before the peer thread has drained the writer's channel,
+// and the Absent/Retired/Uncancelled scenarios have no capture receipt to
+// synchronize on. Wait, bounded, until the receipts hold every stream_next this
+// scenario dispatches instead of judging a single early read; a request that
+// never lands still fails the exact-count assertion at the call site.
+fn stable_receipts(
+    receipts: &Arc<Mutex<Vec<(JsString, String)>>>,
+    expected_stream_next: usize,
+) -> Vec<(JsString, String)> {
+    let bound = Instant::now() + Duration::from_secs(5);
+    loop {
+        let records = receipts.lock().unwrap().clone();
+        let seen = records
+            .iter()
+            .filter(|(_, operation)| operation == "stream_next")
+            .count();
+        if seen >= expected_stream_next || Instant::now() >= bound {
+            return records;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 fn run_pending(capture: Capture, requested: bool, tool: bool) {
     let owner = ConnectionOwner::new(
         SidecarBinding {
@@ -342,16 +364,12 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     let cancellation = Cancellation::default();
     let control = CallControl {
         cancellation: cancellation.clone(),
-        // Handshakes drive retirement ordering. A longer failure watchdog also
-        // bounds the model calls if a broken writer never reaches the peer.
-        deadline: Some(
-            Instant::now()
-                + if matches!(capture, Capture::RetiredBefore | Capture::RetiredAtDispatch) {
-                    Duration::from_secs(10)
-                } else {
-                    Duration::from_millis(120)
-                },
-        ),
+        // Handshakes drive retirement ordering: every scenario cancellation is
+        // peer-driven, and this watchdog only bounds the model calls if a
+        // broken writer never reaches the peer. Keep it far beyond any CI-load
+        // scheduling delay so it cannot preempt the peer's cancellation and
+        // abort the turn before the peer has recorded the request.
+        deadline: Some(Instant::now() + Duration::from_secs(10)),
     };
     let cleanup = CallControl {
         cancellation: cancellation.clone(),
@@ -553,10 +571,25 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
     }
-    let records = receipts.lock().unwrap().clone();
+    let expected_stream_next = if tool { 1 } else { 2 };
+    let records = if matches!(
+        capture,
+        Capture::Absent
+            | Capture::RetiredBefore
+            | Capture::RetiredAtDispatch
+            | Capture::UncancelledUnknown
+    ) {
+        // These scenarios never receive a capture receipt to synchronize on,
+        // so the turn can return while the peer has not yet drained (and
+        // recorded) the writer's flushed requests: wait, bounded, for the
+        // receipts to stabilize instead of judging a single early read.
+        stable_receipts(&receipts, expected_stream_next)
+    } else {
+        receipts.lock().unwrap().clone()
+    };
     assert_eq!(
         records.iter().filter(|(_, op)| op == "stream_next").count(),
-        if tool { 1 } else { 2 }
+        expected_stream_next
     );
     let original = owner.call_record(&records[1].0).unwrap();
     assert!(
