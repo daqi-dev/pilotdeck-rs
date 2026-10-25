@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Recording input/ownership runtime controls; use the shared source guard."""
 import json
+from functools import partial
 import os
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from _negative_common import mutate, run
 
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
@@ -54,18 +56,12 @@ if sys.argv[2:]:
     selected = set(sys.argv[2:])
     assert selected <= {m[0] for m in mutations}
     mutations = [m for m in mutations if m[0] in selected]
-def run(name):
-    slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-    (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
-    result = run_owned(command, cwd=root, env=env, timeout=900)
-    (out / f'{name}.log').write_text(result.stdout + result.stderr)
-    return result
+run = partial(run, root=root, out=out, command=command, env=env)
 with mutating_sources(root, [source, runner], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:
     assert run('positive').returncode == 0
     for name, path, old, new in mutations:
         original = originals[path].decode()
-        assert original.count(old) == (2 if name == 'blocks-shape' else 1), name
-        path.write_text(original.replace(old, new, 1))
+        path.write_text(mutate(original, None, [(old, new)], expected_count=2 if name == 'blocks-shape' else 1))
         result = run(name)
         assert result.returncode != 0 and 'test result: FAILED' in result.stdout, name
         assert 'panicked at' in result.stdout + result.stderr, name

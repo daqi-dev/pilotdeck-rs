@@ -143,7 +143,7 @@ async fn replay(name: &str) {
         _ => "",
     };
     let f = Fixture::new(fault, if name == "complete-once" { 1 } else { 99 });
-    let expected: Vec<_> = array(row.get("events").unwrap())
+    let mut expected: Vec<_> = array(row.get("events").unwrap())
         .into_iter()
         .filter(|e| {
             !["user_prompt_submitted", "model_event"]
@@ -176,6 +176,27 @@ async fn replay(name: &str) {
         if runner.is_complete() || name == "consumer-drop" {
             return Ok(());
         }
+        if row.get("openStep") == Some(&JsValue::Bool(true)) {
+            runner.recorder.record_model_request(&"s".into(), &"t".into(), object([("messages", JsValue::Array(vec![]))]))?;
+        }
+        if let Some(error) = row.get("failureError") {
+            let mut error = error.clone();
+            if row.get("failureMessageUndefined") == Some(&JsValue::Bool(true)) {
+                let JsValue::Object(fields) = &mut error else { panic!("error object") };
+                fields.insert("message".into(), JsValue::Undefined);
+                // TS yields the original loop error; JSON drops its undefined
+                // property. Restore only that input in the raw event assertion.
+                let event = expected.iter_mut().find(|e| e.get("type") == Some(&"turn_failed".into())).unwrap();
+                let JsValue::Object(fields) = event else { panic!("event object") };
+                fields.insert("error".into(), error.clone());
+            }
+            let failures = advance(&mut recording, RecordingAction::LoopFailed(error)).await?;
+            if name != "loop-null-message" {
+                assert!(failures[0].get("text").is_none(), "wire status must omit undefined text");
+                assert!(failures[0].get("detail").unwrap().get("message").is_none());
+            }
+            events.extend(failures);
+        }
         if ["loop-fails-twice", "status-fails", "loop-null-hint"].contains(&name) {
             for _ in 0..2 {
                 events.extend(advance(&mut recording, RecordingAction::LoopFailed(
@@ -188,7 +209,9 @@ async fn replay(name: &str) {
         } else if name == "loop-throws" {
             RecordingAction::Fail(parse_json(r#"{"code":"agent_invalid_state","message":"injected loop failure"}"#).unwrap())
         } else {
-            let result = if name.starts_with("complete-") {
+            let result = if let Some(raw) = row.get("rawResult") {
+                raw.clone()
+            } else if name.starts_with("complete-") {
                 rows.iter()
                     .find(|r| r.get("name") == Some(&"success".into()))
                     .unwrap()
@@ -207,6 +230,9 @@ async fn replay(name: &str) {
         };
         events.extend(advance(&mut recording, action).await?);
         assert!(recording.runner().unwrap().is_complete());
+        if row.get("rawResult").is_some() {
+            assert!(recording.runner().unwrap().recorder.record_model_request(&"s".into(), &"t".into(), object([])).is_err(), "invalid result must close recorder turn");
+        }
         Ok(())
     }
     .await;
@@ -287,7 +313,7 @@ async fn cancelled_transition_keeps_worker_lease_until_io_exits() {
 }
 
 #[tokio::test]
-async fn invalid_transitions_and_identity_never_write() {
+async fn invalid_transitions_never_write() {
     let f = Fixture::new("", 0);
     assert!(
         matches!(f.runner().accept(input()).await,Err(e) if e.to_string()=="Invalid turn recording transition.")
@@ -296,20 +322,125 @@ async fn invalid_transitions_and_identity_never_write() {
         matches!(f.runner().fail(object([])).await,Err(e) if e.to_string()=="Invalid turn recording transition.")
     );
     assert!(!f.key.transcript_path.exists());
-    for wrong in [
-        r#"{"type":"success","sessionId":"other","turnId":"t"}"#,
-        r#"{"type":"success","sessionId":"s","turnId":"other"}"#,
-    ] {
-        let f = Fixture::new("", 0);
-        let (runner, _) = f.runner().start().await.unwrap();
-        let (runner, _) = runner.accept(input()).await.unwrap();
-        let before = fs::read(&f.key.transcript_path).unwrap();
-        assert!(
-            matches!(runner.complete(parse_json(wrong).unwrap()).await,Err(e) if e.to_string()=="Turn result identity mismatch.")
-        );
-        assert_eq!(fs::read(&f.key.transcript_path).unwrap(), before);
-    }
 }
+
+async fn invalid_result_difference(name: &str) {
+    let oracle = baseline::oracle(include_str!(
+        "../../../tests/fixtures/turn-runner/oracle.json"
+    ));
+    let rows = array(oracle.get("matrix").unwrap());
+    let row = rows
+        .iter()
+        .find(|r| r.get("name") == Some(&name.into()))
+        .unwrap();
+    let f = Fixture::new("", 0);
+    let (runner, _) = f.runner().start().await.unwrap();
+    let (runner, _) = runner.accept(input()).await.unwrap();
+    let step = row.get("openStep") == Some(&JsValue::Bool(true));
+    if step {
+        runner
+            .recorder
+            .record_model_request(
+                &"s".into(),
+                &"t".into(),
+                object([("messages", JsValue::Array(vec![]))]),
+            )
+            .unwrap();
+    }
+    let raw = row.get("rawResult").unwrap().clone();
+    // Preserve the TS discrepancy, including its original completion payload.
+    assert_eq!(
+        array(row.get("events").unwrap())
+            .last()
+            .unwrap()
+            .get("result"),
+        Some(&raw)
+    );
+    let (runner, events) = runner.complete(raw).await.unwrap();
+    assert!(runner.is_complete());
+    assert_eq!(
+        events
+            .iter()
+            .map(|e| text(e.get("type").unwrap()))
+            .collect::<Vec<_>>(),
+        ["agent_status", "turn_failed", "turn_completed"]
+    );
+    let result = events[2].get("result").unwrap();
+    assert_eq!(result.get("type"), Some(&"error".into()));
+    assert_eq!(result.get("sessionId"), Some(&"s".into()));
+    assert_eq!(result.get("turnId"), Some(&"t".into()));
+    assert_eq!(
+        events[1].get("error"),
+        Some(&object([
+            ("code", "agent_invalid_state".into()),
+            ("message", "Turn result identity mismatch.".into())
+        ]))
+    );
+    let entries: Vec<_> = fs::read_to_string(&f.key.transcript_path)
+        .unwrap()
+        .lines()
+        .map(|line| parse_json(line).unwrap())
+        .collect();
+    assert!(
+        entries.iter().all(
+            |e| e.get("sessionId") == Some(&"s".into()) && e.get("turnId") == Some(&"t".into())
+        )
+    );
+    let terminal: Vec<_> = entries
+        .iter()
+        .filter(|e| e.get("type") == Some(&"turn_result".into()))
+        .collect();
+    assert_eq!(terminal.len(), 1);
+    assert_eq!(terminal[0].get("result"), Some(result));
+    let closed: Vec<_> = entries
+        .iter()
+        .filter(|e| e.get("type") == Some(&"step_completed".into()))
+        .collect();
+    assert_eq!(closed.len(), usize::from(step));
+    if step {
+        assert_eq!(closed[0].get("outcome"), Some(&"failed".into()));
+    }
+    assert!(
+        runner
+            .recorder
+            .record_model_request(&"s".into(), &"t".into(), object([]))
+            .is_err(),
+        "turn removed from recorder"
+    );
+    drop(runner);
+    assert_eq!(f.registry.resolve(None).unwrap().lease_count(), 0);
+}
+case!(runner_invalid_result_turn_idle, "invalid-result-turn-idle");
+case!(runner_invalid_result_turn_step, "invalid-result-turn-step");
+#[tokio::test]
+async fn runner_invalid_result_session_idle() {
+    invalid_result_difference("invalid-result-session-idle").await;
+}
+#[tokio::test]
+async fn runner_invalid_result_session_step() {
+    invalid_result_difference("invalid-result-session-step").await;
+}
+#[tokio::test]
+async fn runner_invalid_result_number_idle() {
+    invalid_result_difference("invalid-result-number-idle").await;
+}
+#[tokio::test]
+async fn runner_invalid_result_number_step() {
+    invalid_result_difference("invalid-result-number-step").await;
+}
+#[tokio::test]
+async fn runner_invalid_result_array_idle() {
+    invalid_result_difference("invalid-result-array-idle").await;
+}
+#[tokio::test]
+async fn runner_invalid_result_array_step() {
+    invalid_result_difference("invalid-result-array-step").await;
+}
+case!(runner_invalid_result_null_idle, "invalid-result-null-idle");
+case!(runner_invalid_result_null_step, "invalid-result-null-step");
+case!(runner_loop_missing_message, "loop-missing-message");
+case!(runner_loop_undefined_message, "loop-undefined-message");
+case!(runner_loop_null_message, "loop-null-message");
 
 #[test]
 #[ignore = "requires Node 22 and pinned TS; spawns real sidecars"]

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Runtime mutations of the durable runner; always restore the owned tree."""
 import json
+from functools import partial
 import os
-import re
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from _negative_common import mutate, run
 
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
@@ -36,6 +37,11 @@ mutations = [
     ('catch-phase-guard', 'fail_inner', [('!matches!(self.phase, Phase::Started | Phase::Accepted)', 'false')]),
     ('identity-turn-guard', 'complete', [('|| result.get("turnId") != Some(&JsValue::String(self.turn.clone()))', '|| false')]),
     ('identity-guard', 'complete', [('if result.get("sessionId")', 'if false && result.get("sessionId")')]),
+    ('invalid-result-early-return', 'complete', [('let message = match &result {', 'if true { return Err(RecorderError::State("mutant early return".into())); } let message = match &result {')]),
+    ('invalid-result-error-shape', 'complete', [('("message", JsValue::String(message)),', '("message", { let _ = message; "wrong error".into() }),')]),
+    ('status-undefined-detail', 'status', [('].into_iter().filter(|(_, value)| !matches!(value, JsValue::Undefined)))', '].into_iter())')]),
+    ('status-null-text', 'status', [('.filter(|(_, field)| !matches!(field, JsValue::Undefined))', '.filter(|(_, field)| !matches!(field, JsValue::Undefined | JsValue::Null))')]),
+    ('status-undefined-text', 'status', [('.filter(|(_, field)| !matches!(field, JsValue::Undefined))', '.filter(|_| true)')]),
     ('best-effort-status', 'status', [('.await;', '.await.expect("mutant status failure");')]),
 ]
 
@@ -43,26 +49,7 @@ if sys.argv[2:]:
     selected = set(sys.argv[2:])
     assert selected <= {row[0] for row in mutations}, 'unknown mutation'
     mutations = [row for row in mutations if row[0] in selected]
-def mutate(original, scope, replacements):
-    methods = list(re.finditer(r'^    (?:pub(?:\([^)]*\))? )?(?:async )?fn (\w+)', original, re.M))
-    matches = [i for i, method in enumerate(methods) if method[1] == scope]
-    assert len(matches) == 1, (scope, matches)
-    i = matches[0]
-    start = methods[i].start()
-    end = methods[i + 1].start() if i + 1 < len(methods) else len(original)
-    body = original[start:end]
-    for old, new in replacements:
-        assert old == old.lstrip() and '\n' not in old, old
-        assert body.count(old) == 1, (scope, old, body.count(old))
-        body = body.replace(old, new)
-    return original[:start] + body + original[end:]
-
-def run(name):
-    slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-    (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
-    result = run_owned(command, cwd=root, env=env, timeout=900)
-    (out / f'{name}.log').write_text(result.stdout + result.stderr)
-    return result
+run = partial(run, root=root, out=out, command=command, env=env)
 with mutating_sources(root, [source], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:
     original = originals[source].decode()
     assert run('positive').returncode == 0

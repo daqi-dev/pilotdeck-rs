@@ -199,9 +199,29 @@ impl TurnRunner {
         if result.get("sessionId") != Some(&JsValue::String(self.session.clone()))
             || result.get("turnId") != Some(&JsValue::String(self.turn.clone()))
         {
-            return Err(RecorderError::State(
-                "Turn result identity mismatch.".into(),
-            ));
+            // Invalid loop output must still finish the owned turn. Numbers and
+            // arrays silently dedup in TS; deliberately close them here (see
+            // A7.2-TURN-INVALID-RESULT-001).
+            let message = match &result {
+                JsValue::Null => "Cannot read properties of null (reading 'turnId')".into(),
+                JsValue::Object(fields) => match fields.get("turnId") {
+                    Some(JsValue::String(turn)) if turn != &self.turn => JsString::from_utf16(
+                        "Durable turn "
+                            .encode_utf16()
+                            .chain(turn.units().iter().copied())
+                            .chain(" has not started.".encode_utf16())
+                            .collect(),
+                    ),
+                    _ => "Turn result identity mismatch.".into(),
+                },
+                _ => "Turn result identity mismatch.".into(),
+            };
+            return self
+                .fail(object([
+                    ("code", "agent_invalid_state".into()),
+                    ("message", JsValue::String(message)),
+                ]))
+                .await;
         }
         let written = result.clone();
         if let Err(error) = self.io(move |r, s, t| r.complete_turn(s, t, written)).await {
@@ -267,13 +287,16 @@ impl TurnRunner {
         let detail = object([("message", message.clone()), ("code", error.get("code").cloned().unwrap_or(JsValue::Undefined)),
             ("severity", "error".into()), ("visible", JsValue::Bool(true)),
             ("userHint", error.get("userHint").filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined)).cloned().unwrap_or_else(|| "Retry the turn; if it repeats, check the gateway logs or adjust the request.".into())),
-            ("scope", "turn".into()), ("source", "agent".into())]);
-        let fields = [
+            ("scope", "turn".into()), ("source", "agent".into())].into_iter().filter(|(_, value)| !matches!(value, JsValue::Undefined)));
+        let fields: Vec<_> = [
             ("event", "turn_failed".into()),
             ("kind", "error".into()),
             ("text", message),
             ("detail", detail),
-        ];
+        ]
+        .into_iter()
+        .filter(|(_, field)| !matches!(field, JsValue::Undefined))
+        .collect();
         let written = object(fields.clone());
         let _ = self
             .io(move |r, s, t| Ok(r.writer().record_agent_status_message(s, t, &written)?))
