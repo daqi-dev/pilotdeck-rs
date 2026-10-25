@@ -9,6 +9,7 @@ mod json_walk;
 mod jsonrepair;
 pub mod provider_registry;
 pub(crate) mod providers;
+mod proxy_socks;
 pub mod router;
 pub mod stats;
 pub mod token_accounting;
