@@ -1343,8 +1343,10 @@ fn is_path_within_root(candidate: &JsString, root: &JsString, process_cwd: &JsSt
 /// cwd throws `ENOENT ... uv_cwd`; TS never substitutes an empty string. The
 /// warm path is Node's process-wide cache and is intentionally not modelled
 /// here: failing closed on a deleted cwd is stricter than returning the stale
-/// cached path (#335 ②).
-fn process_cwd_units() -> Result<JsString, HostError> {
+/// cached path (#335 ②). The lifecycle dispatcher shares this helper because
+/// TS `buildTurnEnvironment` resolves a relative `cwd` through the same
+/// `path.resolve`/`process.cwd()` cold path.
+pub(crate) fn process_cwd_units() -> Result<JsString, HostError> {
     std::env::current_dir()
         .map(|path| JsString::from(path.to_string_lossy().as_ref()))
         .map_err(|error| HostError::new(HostErrorKind::Io, process_cwd_error(&error)))

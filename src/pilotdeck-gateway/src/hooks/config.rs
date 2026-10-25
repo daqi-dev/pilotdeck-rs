@@ -259,13 +259,16 @@ pub struct HookConditionInput<'a> {
     pub tool_input: Option<&'a JsValue>,
 }
 
-// Node 22.22.0: real HookRuntime.run, with 0/32 extra synchronous frames,
-// serializes 6500 nested arrays/objects but throws at 7000; the exact first
-// failure wanders in ~6580..6620 because V8's remaining stack depends on the
-// caller. 6500 is the largest depth measured stable across the real entry.
-// Fixed-budget gap, not human-approved: specs/gateway-parity/accepted-diffs.md
-// A6.7-HOOK-RESOURCE-001 (its 4000 value is now stale; follow-up correction).
-const MAX_STRINGIFY_DEPTH: usize = 6500;
+// Node 22.22.0: the condition entry serializes 6500 nested containers but
+// throws at 7000; the exact first failure wanders in ~6580..6620 because V8's
+// remaining stack depends on the caller. 6500 is the largest depth measured
+// stable across that entry. The four hook executors (`CommandHookExecutor`,
+// `HttpHookExecutor`, `PromptHookExecutor`, `AgentHookExecutor`) measured a
+// first failure at 6886 and all accept 6500, so they share this fixed budget
+// instead of `js_value::MAX_ARRAY_DEPTH` (2000), which answers a different
+// predicate. Fixed-budget gap, not human-approved; see
+// specs/gateway-parity/diffs/A6.7-HOOK-RESOURCE-001-R1.md.
+pub(crate) const MAX_STRINGIFY_DEPTH: usize = 6500;
 
 /// Unlike matcher regex errors, TS does not catch condition serialization errors.
 #[derive(Clone, Debug, PartialEq, Eq)]
