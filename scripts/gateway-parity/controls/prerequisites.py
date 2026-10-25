@@ -136,13 +136,12 @@ def run_prerequisites(output, code_root=ROOT):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('A2')
         hashes = common.apparatus_hashes()
-        for name in ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs',
-                     'nested/node_modules/dependency/tool.py', 'notes.txt'):
+        for name in ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs'):
             path = common.SCRIPT / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('A3 or nested installed dependency')
+            path.write_text('registered A3 tool')
             record('apparatus-excludes-' + name, common.apparatus_hashes() == hashes,
-                   'unrelated or nested script cannot invalidate A2 evidence')
+                   'registered A3 tool does not invalidate A2 evidence')
         # #85: the installed top-level node_modules bytes must be bound to A2
         # evidence; skipping them let a swapped loader/tool run unobserved.
         path = common.SCRIPT / 'node_modules/dependency/index.mjs'
@@ -151,33 +150,20 @@ def run_prerequisites(output, code_root=ROOT):
         record('apparatus-binds-node_modules', common.apparatus_hashes() != hashes,
                'installed dependency bytes change the evidence hash')
 
-        # #85: every shape the scan rejects gets its own machine control here;
-        # this list tracks test_safety.ApparatusInputs one for one (script
-        # suffixes, root bytecode, extension modules, links, module-named dirs).
-        # Link targets live outside SCRIPT so only the link is the probe.
+        # #85: every shape the scan rejects gets its own machine control here.
+        # The table lives in common.APPARATUS_PROBES and is shared with
+        # test_safety.ApparatusInputs, so the two machine controls cannot drift
+        # apart.  Link targets live outside SCRIPT so only the link is a probe.
         shadows = common.ROOT / 'outside-apparatus'
         shadows.mkdir()
         (shadows / '__init__.py').write_text('shadow package')
         (shadows / 'evil.py').write_text('shadow module')
-        # --code-root may point at a pre-fix tree whose common.py predates
-        # EXTENSION_SUFFIXES; keep a distinct probe name instead of crashing,
-        # and let the old scan accept it (that is the demonstrated blind spot).
-        abi = (getattr(common, 'EXTENSION_SUFFIXES', ()) or ('.cpython-abi.so',))[0]
-        probes = [
-            ('file', 'extra.py'), ('file', 'extra.pyw'), ('file', 'extra.mjs'),
-            ('file', 'extra.mts'), ('file', 'extra.js'), ('file', 'extra.cjs'),
-            ('file', 'extra.jsx'), ('file', 'extra.ts'),
-            ('file', 'extra.cts'), ('file', 'extra.tsx'), ('file', 'extra.sh'),
-            ('file', 'extra.bash'), ('file', 'extra.zsh'),
-            ('file', 'nested/extra.py'), ('file', 'nested/check_schema.py'),
-            ('file', 'legacy.pyc'),
-            ('file', 'probe' + abi), ('file', 'probe.abi3.so'),
-            ('file', 'probe.so'), ('file', 'probe.pyd'), ('file', 'probe.dylib'),
-            ('file', 'probe.node'), ('file', 'evil.pth'),
-            ('dir-link', 'linked-dir'), ('file-link', 'linked-file.txt'),
-            ('dir-link', 'compare'),  # shadows the registered compare.py
-            ('dir', 'observer'),  # module-named directory shadows observer.py
-        ]
+        probes = getattr(common, 'APPARATUS_PROBES', None)
+        if probes is None:
+            # --code-root may point at a pre-fix tree whose common.py predates
+            # the shared table; take the table from the running apparatus.
+            probes = module_at('prerequisite_probe_table',
+                               Path(__file__).resolve().parents[1] / 'common.py').APPARATUS_PROBES
         for kind, name in probes:
             path = common.SCRIPT / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +173,15 @@ def run_prerequisites(output, code_root=ROOT):
                 path.symlink_to(shadows / 'evil.py')
             elif kind == 'dir':
                 path.mkdir()
+            elif kind == 'nested-modules':
+                path.mkdir()
+                (path / 'evil.py').write_text('unregistered nested dependency')
+            elif kind == 'nested-modules-empty':
+                path.mkdir()
+            elif kind == 'unreadable-dir':
+                path.mkdir()
+                (path / 'evil.py').write_text('unregistered file')
+                os.chmod(path, 0)
             else:
                 path.write_text('unregistered script')
             try:
@@ -195,13 +190,21 @@ def run_prerequisites(output, code_root=ROOT):
             except ValueError as error:
                 unknown_rejected = ('unregistered gateway-parity scripts:' in str(error)
                                     and name in str(error))
+            except PermissionError:
+                # Only the unreadable-directory probe may surface this; any
+                # other probe raising it is a broken control, not a pass.
+                unknown_rejected = kind == 'unreadable-dir'
             finally:
-                if kind == 'dir':
+                if kind == 'unreadable-dir':
+                    os.chmod(path, 0o700)
+                if kind in ('nested-modules', 'nested-modules-empty', 'unreadable-dir'):
+                    shutil.rmtree(path)
+                elif kind == 'dir':
                     path.rmdir()
                 else:
                     path.unlink()
             record('apparatus-unregistered-' + name, unknown_rejected,
-                   'script, bytecode, link or module-named directory outside the whitelist must FAIL')
+                   'any file outside the whitelist shape, or an unreadable directory, must FAIL')
         (common.SCRIPT / 'compare.py').write_text('modified A2')
         record('apparatus-binds-A2', common.apparatus_hashes() != hashes, 'A2 edit changes evidence hash')
         (common.SCRIPT / 'compare.py').unlink()

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Bounded offline regressions for lock lifecycle, corrupt evidence and observer."""
 import json
-import importlib.machinery
 import multiprocessing
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -17,7 +17,8 @@ import unittest
 # is the only trusted import root.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (MAX_AGE, baseline_dependency_hashes, cargo_config_problems, guard,
+from common import (APPARATUS_PROBES, DATA_FILES, MAX_AGE, apparatus_whitelist,
+                    baseline_dependency_hashes, cargo_config_problems, guard,
                     node_modules_entry, owner, parity_lock, save, unknown_apparatus_files)
 from compare import Normalizer, compare, wire_frame
 from observer import Decoder
@@ -213,60 +214,75 @@ class ApparatusInputs(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
-    def test_every_executable_suffix_is_rejected_unless_registered(self):
-        for name in ('probe.py', 'probe.pyw', 'probe.sh', 'probe.bash', 'probe.zsh',
-                     'probe.js', 'probe.mjs', 'probe.cjs', 'probe.jsx',
-                     'probe.ts', 'probe.mts', 'probe.cts', 'probe.tsx'):
-            with self.subTest(name=name):
-                path = self.root / name
-                path.write_text('x')
-                self.assertEqual(unknown_apparatus_files(self.root), [name])
-                path.unlink()
-        (self.root / 'common.py').write_text('registered member')
-        self.assertEqual(unknown_apparatus_files(self.root), [])
+    # Shared probes (common.APPARATUS_PROBES): the kind says how to materialize
+    # the shape, and every one must be rejected.  The same table drives
+    # controls/prerequisites.py, so the two machine controls cannot drift apart.
+    def _materialize(self, kind, name, outside):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if kind == 'dir-link':
+            path.symlink_to(outside, target_is_directory=True)
+        elif kind == 'file-link':
+            path.symlink_to(outside / 'evil.py')
+        elif kind == 'dir':
+            path.mkdir()
+        elif kind == 'nested-modules':
+            path.mkdir()
+            (path / 'evil.py').write_text('unregistered nested dependency')
+        elif kind == 'nested-modules-empty':
+            path.mkdir()
+        elif kind == 'unreadable-dir':
+            path.mkdir()
+            (path / 'evil.py').write_text('unregistered file in an unreadable tree')
+            os.chmod(path, 0)
+        else:
+            path.write_text('unregistered apparatus input')
+        return path
 
-    def test_extension_modules_and_pth_are_rejected_unless_registered(self):
-        # CPython resolves a same-directory extension module before .py, so the
-        # shadow runs while the registered source hash is unchanged.  Node loads
-        # .node addons explicitly; site reads .pth only from site-packages (and
-        # never under -I), but it is still unregistered executable input.
-        native = f'compare{importlib.machinery.EXTENSION_SUFFIXES[0]}'
-        for name in (native, 'probe.abi3.so', 'probe.so', 'probe.pyd',
-                     'probe.dylib', 'probe.node', 'evil.pth'):
-            with self.subTest(name=name):
-                path = self.root / name
-                path.write_bytes(b'')
-                self.assertEqual(unknown_apparatus_files(self.root), [name])
-                path.unlink()
-        self.assertEqual(unknown_apparatus_files(self.root), [])
+    def _remove(self, kind, path):
+        if kind in ('nested-modules', 'nested-modules-empty', 'unreadable-dir'):
+            if kind == 'unreadable-dir':
+                os.chmod(path, 0o700)
+            shutil.rmtree(path)
+        elif kind == 'dir':
+            path.rmdir()
+        else:
+            path.unlink()
 
-    def test_symlinks_and_module_named_dirs_are_rejected(self):
-        # os.walk does not descend a linked directory, and CPython checks a
-        # same-directory package before its .py siblings, so a linked ``compare``
-        # package can run while ``compare.py`` keeps its registered hash.  The
-        # link itself must be unregistered even when the link name looks inert.
-        (self.root / 'common.py').write_text('registered member')
+    def test_every_shared_probe_is_rejected(self):
         outside = Path(tempfile.mkdtemp(prefix='pdrs-apparatus-outside-', dir=self.root.parent))
         self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
         (outside / '__init__.py').write_text('shadow package')
-        (outside / 'evil.js').write_text('shadow module')
-        for name, target, is_dir in [
-                ('linked-dir', outside, True),
-                ('linked-file.txt', outside / 'evil.js', False),
-                ('compare', outside, True),  # same-name shadow of compare.py
-                (f'compare{importlib.machinery.EXTENSION_SUFFIXES[0]}', outside / 'evil.js', False)]:
-            with self.subTest(name=name):
-                path = self.root / name
-                path.symlink_to(target, target_is_directory=is_dir)
-                self.assertEqual(unknown_apparatus_files(self.root), [name])
-                path.unlink()
-        (self.root / 'compare').mkdir()
-        self.assertEqual(unknown_apparatus_files(self.root), ['compare'])
-        (self.root / 'compare').rmdir()
+        (outside / 'evil.py').write_text('shadow module')
+        for kind, name in APPARATUS_PROBES:
+            with self.subTest(kind=kind, name=name):
+                if kind == 'unreadable-dir' and os.geteuid() == 0:
+                    continue  # root can read mode-000 directories
+                path = self._materialize(kind, name, outside)
+                try:
+                    if kind == 'unreadable-dir':
+                        # onerror must surface the failure, never skip the tree.
+                        with self.assertRaises(OSError):
+                            unknown_apparatus_files(self.root)
+                    else:
+                        self.assertEqual(unknown_apparatus_files(self.root), [name])
+                finally:
+                    self._remove(kind, path)
         self.assertEqual(unknown_apparatus_files(self.root), [])
 
+    def test_whitelisted_and_data_files_are_accepted_by_path(self):
+        for name in apparatus_whitelist():
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('registered apparatus input')
+        self.assertEqual(unknown_apparatus_files(self.root), [])
+        extra = self.root / 'fixtures/extra.json'
+        extra.write_text('{}')
+        self.assertEqual(unknown_apparatus_files(self.root), ['fixtures/extra.json'])
+        self.assertIn('fixtures/gateway-protocol.fixtures.json', DATA_FILES)
+
     def test_node_modules_symlinks_are_digested_not_scanned(self):
-        # Installed dependencies stay pruned from the scan; links inside them are
+        # The one exempt top-level tree stays pruned; links inside it are
         # covered by the node_modules digest, which records the link target.
         modules = self.root / 'node_modules'
         modules.mkdir()
@@ -284,15 +300,57 @@ class ApparatusInputs(unittest.TestCase):
         self.assertNotEqual(node_modules_entry(self.root), first)
         self.assertEqual(unknown_apparatus_files(self.root), [])
 
-    def test_bytecode_and_node_modules_classification(self):
+    def test_bytecode_cache_is_tolerated_only_for_a_registered_source(self):
         (self.root / '__pycache__').mkdir()
-        (self.root / '__pycache__/common.pyc').write_bytes(b'x')
+        cache = self.root / '__pycache__/common.cpython-314.pyc'
+        cache.write_bytes(b'x')
+        self.assertEqual(unknown_apparatus_files(self.root), ['__pycache__/common.cpython-314.pyc'])
+        (self.root / 'common.py').write_text('registered member')
         self.assertEqual(unknown_apparatus_files(self.root), [])
+        orphan = self.root / '__pycache__/orphan.cpython-314.pyc'
+        orphan.write_bytes(b'x')
+        self.assertEqual(unknown_apparatus_files(self.root), ['__pycache__/orphan.cpython-314.pyc'])
+        orphan.unlink()
+        (self.root / '__pycache__/evil.py').write_text('not cache bytecode')
+        self.assertEqual(unknown_apparatus_files(self.root), ['__pycache__/evil.py'])
+        (self.root / '__pycache__/evil.py').unlink()
+        cache.unlink()
         (self.root / 'legacy.pyc').write_bytes(b'x')
         self.assertEqual(unknown_apparatus_files(self.root), ['legacy.pyc'])
-        (self.root / 'node_modules/nested').mkdir(parents=True)
-        (self.root / 'node_modules/nested/loader.js').write_text('x')
-        self.assertEqual(unknown_apparatus_files(self.root), ['legacy.pyc'])
+
+    def test_registered_path_case_variant_requires_the_same_inode(self):
+        (self.root / 'common.py').write_text('registered member')
+        variant = self.root / 'COMMON.PY'
+        variant.write_text('case variant')
+        same = os.path.samefile(self.root / 'common.py', variant)
+        # APFS is case-insensitive: the variant is the registered inode.  On a
+        # case-sensitive filesystem it is a distinct, unregistered file.
+        self.assertEqual(unknown_apparatus_files(self.root), [] if same else ['COMMON.PY'])
+
+    def test_unreadable_directory_aborts_the_digest_too(self):
+        if os.geteuid() == 0:
+            self.skipTest('root can read mode-000 directories')
+        modules = self.root / 'node_modules/locked'
+        modules.mkdir(parents=True)
+        (modules / 'index.js').write_text('x')
+        os.chmod(modules, 0)
+        try:
+            with self.assertRaises(OSError):
+                node_modules_entry(self.root)
+        finally:
+            os.chmod(modules, 0o700)
+
+    def test_frozen_hash_rows_are_inside_the_whitelist(self):
+        manifest = Path(__file__).resolve().parents[2] / 'specs/gateway-parity/FROZEN.md'
+        rows = re.findall(r'^[0-9a-f]{64}\s+\.\./\.\./scripts/gateway-parity/(\S+)\s*$',
+                          manifest.read_text(encoding='utf-8'), re.M)
+        self.assertTrue(rows)
+        self.assertEqual(sorted(set(rows) - set(apparatus_whitelist())), [])
+
+    def test_real_apparatus_has_no_unregistered_files(self):
+        # The frozen tree itself must pass the whitelist: no existing data file
+        # or generated cache may be misclassified.
+        self.assertEqual(unknown_apparatus_files(), [])
 
     def test_installed_dependency_bytes_change_digest(self):
         self.assertIsNone(node_modules_entry(self.root))

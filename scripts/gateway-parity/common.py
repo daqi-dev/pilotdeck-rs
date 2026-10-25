@@ -34,10 +34,10 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-# Executable script suffixes: anything the apparatus could import or execute.
-# Python launches .py/.pyw; POSIX shells may launch .sh/.bash/.zsh; Node/tsx
-# loads .js/.mjs/.cjs/.jsx/.ts/.mts/.cts/.tsx directly or via its loader. A new
-# file with one of these suffixes must be registered before it can affect a run.
+# Executable script suffixes the shared probe table exercises.  The scan itself
+# no longer keys on suffixes: registration is by exact path (see
+# ``apparatus_whitelist``).  Keeping the tuple makes every one of these shapes
+# an explicit negative control and documents what the apparatus may execute.
 SCRIPT_SUFFIXES = ('.py', '.pyw', '.sh', '.bash', '.zsh', '.js', '.mjs', '.cjs',
                    '.jsx', '.ts', '.mts', '.cts', '.tsx')
 BYTECODE_SUFFIXES = ('.pyc', '.pyo')
@@ -45,14 +45,128 @@ BYTECODE_SUFFIXES = ('.pyc', '.pyo')
 # unregistered extension module shadows the registered source at import time.
 # importlib.machinery is the authoritative list for this interpreter
 # (``.cpython-<abi>-<platform>.so`` / ``.abi3.so`` / ``.so``; ``.pyd`` on
-# Windows); the explicit tail keeps the scan complete if a build omits one.
+# Windows); the explicit tail keeps the probe table complete if a build omits
+# one.
 EXTENSION_SUFFIXES = tuple(dict.fromkeys(
     tuple(importlib.machinery.EXTENSION_SUFFIXES) +
     ('.so', '.pyd', '.dylib', '.node')))
 # site only reads ``.pth`` from site-package directories (and none under ``-I``),
-# so a ``.pth`` beside the apparatus is inert today; reject it anyway because it
-# is an executable-input shape that must not appear unregistered.
+# so a ``.pth`` beside the apparatus is inert today; it is still an
+# executable-input shape the whitelist must reject rather than assume.
 SITE_SUFFIXES = ('.pth',)
+
+# A5.3 registers E1 adapters here so A2 continues to reject unknown scripts.
+# The new hashes require coordinator review/registration before merge (plan 005).
+A2_SCRIPTS = (
+    'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
+    'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',
+    'observer.py', 'run_round.py', 'test_safety.py', 'watcher.mjs',
+    'session_domain.py', 'session_observations.mjs', 'controls/session_domain.py',
+)
+A3_SCRIPTS = ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs')
+
+# Non-executable apparatus inputs, listed by exact path so the whitelist cannot
+# silently grow.  Everything else in the directory is unregistered, whatever its
+# suffix: a ``.json``/``.txt``/extensionless file is as much an input as a
+# ``.py`` one (fixtures drive the comparators; package files drive A3 tooling).
+DATA_FILES = (
+    'README.md',                                # apparatus documentation
+    'fixtures/gateway-protocol.fixtures.json',  # A3/A4 protocol fixtures
+    'fixtures/session-calibration.json',        # A5.3 E1 fixture; FROZEN hash row
+    'package.json',                             # npm manifest for A3 tooling
+    'package-lock.json',                        # pinned A3 dependency graph
+)
+
+
+def apparatus_whitelist():
+    """Relative paths the apparatus accepts without a FROZEN hash row."""
+    return tuple(sorted(set(A2_SCRIPTS) | set(A3_SCRIPTS) | set(DATA_FILES)))
+
+
+# Case-insensitive lookup because APFS is case-insensitive by default;
+# _registered() still confirms a case variant is the same inode.
+_REGISTERED = {name.casefold(): name for name in apparatus_whitelist()}
+NATIVE_SUFFIX = EXTENSION_SUFFIXES[0] if EXTENSION_SUFFIXES else '.so'
+
+# One shared negative-control table: test_safety.py and controls/prerequisites.py
+# both import APPARATUS_PROBES, so a newly rejected shape gets one machine
+# control instead of two hand-maintained lists that can drift apart.
+# kinds: file | dir | dir-link | file-link | nested-modules |
+#        nested-modules-empty | unreadable-dir.
+APPARATUS_PROBES = tuple(dict.fromkeys((
+    *(('file', f'probe{suffix}') for suffix in SCRIPT_SUFFIXES),
+    ('file', 'nested/extra.py'),
+    ('file', 'nested/check_schema.py'),
+    ('file', 'legacy.pyc'),
+    ('file', f'probe{NATIVE_SUFFIX}'),
+    ('file', 'probe.abi3.so'),
+    ('file', 'probe.so'),
+    ('file', 'probe.pyd'),
+    ('file', 'probe.dylib'),
+    ('file', 'probe.node'),
+    ('file', 'evil.pth'),
+    # APFS is case-insensitive by default: ``import weird`` resolves WEIRD.PY,
+    # so a case-sensitive suffix test would miss this file.
+    ('file', 'WEIRD.PY'),
+    ('file', 'PROBE.SO'),
+    # The whitelist rejects by path, so these are unregistered too.
+    ('file', 'notes.txt'),
+    ('file', 'notes'),
+    ('file', '.hidden'),
+    # Only SCRIPT/node_modules is covered by node_modules_entry()'s digest; a
+    # nested node_modules at any depth (or in any case) is unregistered.
+    ('nested-modules', 'nested/node_modules'),
+    ('nested-modules', 'nested/deeper/node_modules'),
+    ('nested-modules-empty', 'nested/NODE_MODULES'),
+    # Symbolic links and module-named directories (fix-r3, kept).
+    ('dir-link', 'linked-dir'),
+    ('file-link', 'linked-file.txt'),
+    ('file-link', f'compare{NATIVE_SUFFIX}'),
+    ('dir-link', 'compare'),
+    ('dir', 'observer'),
+    # An unreadable subtree must fail the scan, never be skipped.
+    ('unreadable-dir', 'unreadable'),
+)))
+
+
+def _raise(error):
+    """os.walk error hook: an unreadable directory must fail, never be skipped."""
+    raise error
+
+
+def _same_inode(left, right):
+    try:
+        return os.path.samefile(left, right)
+    except OSError:
+        return False
+
+
+def _registered(script, rel):
+    """True only for a whitelisted path, case-insensitively the same inode."""
+    name = _REGISTERED.get(rel.as_posix().casefold())
+    if name is None:
+        return False
+    if name == rel.as_posix():
+        return True
+    # APFS presents a registered path under a different case; accept it only
+    # when it is the same inode.  On a case-sensitive filesystem the variant is
+    # a distinct, unregistered file.
+    return _same_inode(script / name, script / rel)
+
+
+def _cache_bytecode(script, rel):
+    """Bytecode generated from a registered source, e.g. ``__pycache__/a.pyc``."""
+    parts = rel.parts
+    # Exact names only: CPython writes ``__pycache__/<stem>.pyc`` and reads no
+    # case variant, so widening here would accept bytes nothing can load.
+    if len(parts) < 2 or parts[-2] != '__pycache__':
+        return False
+    if rel.suffix not in BYTECODE_SUFFIXES:
+        return False
+    source = rel.parent.parent / (parts[-1].split('.', 1)[0] + '.py')
+    # The source must still exist: a cache for a removed module is not covered
+    # by any registered hash row and is treated as unregistered.
+    return (script / source).is_file() and _registered(script, source)
 
 
 def tree_digest(folder):
@@ -60,11 +174,12 @@ def tree_digest(folder):
 
     The root is resolved (pnpm/npm package directories may be symlinks); nested
     directory symlinks are recorded but not followed, matching Node's own
-    package resolution boundaries.
+    package resolution boundaries.  An unreadable directory raises instead of
+    being skipped, so the digest can never cover a silently partial tree.
     """
     folder = Path(folder).resolve()
     entries = {}
-    for current, dirs, files in os.walk(folder, followlinks=False):
+    for current, dirs, files in os.walk(folder, onerror=_raise, followlinks=False):
         current = Path(current)
         dirs.sort()
         for name in sorted(dirs):
@@ -91,16 +206,33 @@ def node_modules_entry(script=None):
 
 
 def unknown_apparatus_files(script=None):
-    """Executable/runtime files that are neither A2 apparatus nor A3 tools.
+    """Apparatus files that no whitelist row covers.
 
-    __pycache__ bytecode is tolerated because CPython only consumes it next to a
-    matching source file; a legacy ``.pyc``/``.pyo`` beside the sources could be
-    imported on its own, so it is rejected like an unregistered script.
-    Extension modules are rejected wherever they sit: CPython consults
-    ``EXTENSION_SUFFIXES`` in the same directory *before* ``.py``, so a
-    ``compare.cpython-<abi>-<platform>.so`` would run while ``compare.py`` keeps
-    its registered hash.  Node native addons (``.node``) and ``.pth`` files are
-    rejected for the same executable-input rule.
+    Registration is by path, not by suffix: every file under ``SCRIPT`` must be
+    an A2/A3 member (both already hash-bound) or one of the explicit
+    ``DATA_FILES``, so a new ``.json``, ``.txt``, extensionless or
+    upper-case-suffixed input fails exactly like a new ``.py``.  ``FROZEN.md``
+    keeps the other direction honest: ``check_frozen`` requires a hash row for
+    every A2 member that exists.
+
+    Generated bytecode is the one tolerated class: a ``.pyc``/``.pyo`` directly
+    inside ``__pycache__`` whose stem names a registered source (for example
+    ``__pycache__/common.cpython-314.pyc`` beside ``common.py``).  CPython only
+    reads that cache together with the source, so its bytes are not an
+    independent input; an orphan cache or any other file under ``__pycache__``
+    is still unregistered, and a ``.pyc``/``.pyo`` beside the sources could be
+    imported on its own, so it is rejected too.
+
+    Paths compare case-insensitively because APFS is case-insensitive by
+    default: ``WEIRD.PY`` is what ``import weird`` resolves.  A registered name
+    presented in another case is accepted only when ``os.path.samefile`` shows
+    it is the very same inode, so on a case-sensitive filesystem a distinct case
+    variant remains unregistered.
+
+    Only the top-level ``node_modules`` is exempt: ``node_modules_entry`` binds
+    that whole tree by digest.  A ``node_modules`` at any deeper level is
+    rejected as a directory, since that digest cannot cover it; a top-level case
+    variant is exempt only when it is the same inode as the digested directory.
 
     Symbolic links are rejected outright outside ``node_modules``, whatever
     their own suffix: ``os.walk`` does not descend into a linked directory, so
@@ -110,27 +242,37 @@ def unknown_apparatus_files(script=None):
     compare`` load the linked package while ``compare.py`` keeps its registered
     hash, so ``check_frozen``/``apparatus_hashes`` would otherwise PASS.  A
     plain directory named like a registered module is rejected as well: a
-    directory with ``__init__.py`` already has that file caught below (measured:
-    an empty directory does not shadow ``.py``, since the file suffix loop still
-    runs), but reporting the shadow container names the real hazard instead of a
-    nested file.  Links inside ``node_modules`` stay under the
-    installed-dependency rule: ``tree_digest`` records each as
-    ``link:<target>`` and never follows it, so repointing a link changes the
-    digest, while the bytes behind it are not bound (documented boundary).
+    directory with ``__init__.py`` already has that file caught as a file
+    (measured: an empty directory does not shadow ``.py``, since the file suffix
+    loop still runs), but reporting the shadow container names the real hazard.
+    Links inside ``node_modules`` stay under the installed-dependency rule:
+    ``tree_digest`` records each as ``link:<target>`` and never follows it, so
+    repointing a link changes the digest, while the bytes behind it are not
+    bound (documented boundary).
+
+    ``os.walk`` gets an ``onerror`` hook that re-raises: an unreadable directory
+    fails the scan instead of silently dropping its subtree (``check_frozen``
+    turns the ``OSError`` into ``cannot scan apparatus``).
     """
-    script = Path(script) if script is not None else SCRIPT
+    script = Path(script if script is not None else SCRIPT).resolve()
     # Importable names a directory could shadow: module stems, e.g. ``compare``.
-    module_names = {Path(name).stem for name in A2_SCRIPTS + A3_SCRIPTS}
+    module_names = {Path(name).stem.casefold() for name in A2_SCRIPTS + A3_SCRIPTS}
     found = set()
-    for folder, dirs, files in os.walk(script, followlinks=False):
+    for folder, dirs, files in os.walk(script, onerror=_raise, followlinks=False):
         current = Path(folder)
         descend = []
         for name in dirs:
             path = current / name
-            if name == 'node_modules':
+            rel = path.relative_to(script)
+            folded = name.casefold()
+            if folded == 'node_modules':
+                # Only the directory node_modules_entry() digests is covered.
+                if current == script and _same_inode(script / 'node_modules', path):
+                    continue
+                found.add(rel.as_posix())
                 continue
-            if path.is_symlink() or name in module_names:
-                found.add(path.relative_to(script).as_posix())
+            if path.is_symlink() or folded in module_names:
+                found.add(rel.as_posix())
             else:
                 descend.append(name)
         dirs[:] = sorted(descend)
@@ -141,29 +283,18 @@ def unknown_apparatus_files(script=None):
                 # Covers links to files, broken links, and links whose target
                 # is a directory but which os.walk lists as a file.
                 found.add(rel.as_posix())
-            elif path.suffix in SCRIPT_SUFFIXES:
-                if rel.as_posix() not in A2_SCRIPTS and rel.as_posix() not in A3_SCRIPTS:
-                    found.add(rel.as_posix())
-            elif path.suffix in BYTECODE_SUFFIXES and '__pycache__' not in rel.parts:
+            elif not path.is_file():
+                # FIFO/socket/device: never a registered data or script file.
                 found.add(rel.as_posix())
-            elif name.endswith(EXTENSION_SUFFIXES) or name.endswith(SITE_SUFFIXES):
+            elif _cache_bytecode(script, rel):
+                continue
+            elif not _registered(script, rel):
                 found.add(rel.as_posix())
     return sorted(found)
 
 
-# A5.3 registers E1 adapters here so A2 continues to reject unknown scripts.
-# The new hashes require coordinator review/registration before merge (plan 005).
-A2_SCRIPTS = (
-    'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
-    'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',
-    'observer.py', 'run_round.py', 'test_safety.py', 'watcher.mjs',
-    'session_domain.py', 'session_observations.mjs', 'controls/session_domain.py',
-)
-A3_SCRIPTS = ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs')
-
-
 def apparatus_hashes():
-    """Reject unregistered executable files, then hash A2 and installed deps."""
+    """Reject unregistered files, then hash A2 and installed deps."""
     unknown = unknown_apparatus_files()
     if unknown:
         raise ValueError(f'unregistered gateway-parity scripts: {unknown}')
