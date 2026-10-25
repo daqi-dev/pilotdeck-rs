@@ -71,6 +71,8 @@ impl PersistenceResources {
         let persistent = transcript_path.is_some();
         let (store, transcript_path): (Arc<dyn TranscriptStore>, _) = match transcript_path {
             Some(path) => {
+                // The store retains this spelling for diagnostics while the
+                // key uses the canonical path protected by its writer lock.
                 let (store, path) =
                     JsonlTranscriptStore::open_locked(&path).map_err(RecorderError::Store)?;
                 (Arc::new(store), path)

@@ -345,7 +345,7 @@ fn oversized_transcript_cannot_open_as_a_new_session() {
         .unwrap()
         .set_len(size)
         .unwrap();
-    let read = read_transcript(scratch.path().canonicalize().unwrap()).unwrap();
+    let read = read_transcript(scratch.path()).unwrap();
     assert!(read.entries.is_empty());
     assert_eq!(read.diagnostics.len(), 1);
     assert_eq!(read.diagnostics[0].code, "transcript_too_large");

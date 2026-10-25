@@ -14,7 +14,7 @@ use super::{
     recorder::{RecorderClock, RecorderError, RecorderResult, RecorderUuid},
     session_domain::DomainState,
     transcript::{
-        LedgerLock, create_temporary, private_dirs, private_open, read_transcript_limited, uuid,
+        LedgerLock, create_temporary, private_dirs, private_open, read_transcript_limited_at, uuid,
     },
 };
 use crate::js_value;
@@ -155,16 +155,21 @@ pub struct JsonlTranscriptStore {
     /// Only project-owned session stores opt into the shared ledger fence.
     /// The store is retained by every Arc<TranscriptWriter> clone.
     _owner: Option<LedgerLock>,
+    /// A project-owned store serves one canonical transcript; diagnostics keep
+    /// the original spelling supplied when that writer acquired its fence.
+    diagnostic_path: Option<PathBuf>,
 }
 impl JsonlTranscriptStore {
     pub fn new() -> Self {
         Self::default()
     }
     pub(crate) fn open_locked(path: &Path) -> StoreResult<(Self, PathBuf)> {
+        let diagnostic_path = path.to_path_buf();
         let (path, owner) = LedgerLock::acquire(path)?;
         Ok((
             Self {
                 _owner: Some(owner),
+                diagnostic_path: Some(diagnostic_path),
                 ..Self::default()
             },
             path,
@@ -240,7 +245,13 @@ impl TranscriptStore for JsonlTranscriptStore {
         Ok(())
     }
     fn read(&self, key: &TranscriptKey, max_bytes: Option<u64>) -> StoreResult<TranscriptRead> {
-        read_transcript_limited(&key.transcript_path, max_bytes)
+        read_transcript_limited_at(
+            &key.transcript_path,
+            self.diagnostic_path
+                .as_deref()
+                .unwrap_or(&key.transcript_path),
+            max_bytes,
+        )
     }
     fn has(&self, key: &TranscriptKey) -> Option<StoreResult<bool>> {
         Some(Ok(fs::metadata(&key.transcript_path).is_ok()))
