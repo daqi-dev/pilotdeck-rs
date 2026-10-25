@@ -30,6 +30,9 @@ mod test_process;
 #[cfg(test)]
 #[path = "../tests/common/scratch.rs"]
 mod test_scratch;
+#[cfg(all(test, unix))]
+#[path = "../tests/common/write_stage.rs"]
+mod test_write_stage;
 pub mod upload;
 mod upstream;
 pub mod user_dialog;
@@ -65,6 +68,27 @@ pub fn node_fs_message(
         path
     };
     node_io::diagnostic(error, syscall, path).map(|(_, message)| message)
+}
+
+/// [`node_fs_message`] with libuv's `UV_UNKNOWN` fallback for errnos outside
+/// the generated table. The fallback keeps the same stage rule — a descriptor
+/// read/write error carries no path — so callers cannot end up with an
+/// `UNKNOWN` message that the shared formatter would never produce.
+pub fn node_fs_message_or_unknown(
+    error: &std::io::Error,
+    syscall: &str,
+    path: Option<&str>,
+) -> String {
+    node_fs_message(error, syscall, path).unwrap_or_else(|| {
+        let suffix = if matches!(syscall, "read" | "write") {
+            String::new()
+        } else {
+            path.filter(|path| !path.is_empty())
+                .map(|path| format!(" '{path}'"))
+                .unwrap_or_default()
+        };
+        format!("UNKNOWN: unknown error, {syscall}{suffix}")
+    })
 }
 
 /// Read the original session bytes without transcript validation or sorting.

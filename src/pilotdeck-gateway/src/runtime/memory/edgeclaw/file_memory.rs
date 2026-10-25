@@ -3248,3 +3248,77 @@ mod round6_tests {
         });
     }
 }
+
+/// The two staged whole-file write ports behind memory mutations:
+/// `project_files::overwrite_at` (the unix write path) and `helpers::io_write`
+/// (the snapshot writes and the non-unix leg). Both must report the
+/// descriptor write stage like Node's `writeFileSync`/`writeFile` —
+/// `EFBIG: file too large, write` with no path (node v22.22.0,
+/// `_tmp/20261025-issue-656/node-probe/write-stages.out`) — which is also how
+/// their staged errors render through `FileMemoryError` on the mutation path.
+#[cfg(all(test, unix))]
+mod write_stage_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "spawned by overwrite_reports_the_write_stage_like_node"]
+    fn overwrite_child_over_file_size_limit() {
+        let Ok(root_path) = std::env::var(crate::test_write_stage::CHILD_PATH_ENV) else {
+            panic!(
+                "{} not set; spawn via overwrite_reports_the_write_stage_like_node",
+                crate::test_write_stage::CHILD_PATH_ENV
+            );
+        };
+        crate::test_write_stage::ignore_sigxfsz_like_gateway();
+        // The same pinned root `mutation_target` hands to `overwrite_at`:
+        // realpath-resolved, because the NOFOLLOW walk starts at `/`.
+        let root_path = fs::canonicalize(&root_path).unwrap();
+        let root = crate::project_files::open_directory_beneath(&root_path, &root_path).unwrap();
+        let error = crate::project_files::overwrite_at(
+            &root,
+            std::path::Path::new("sub/entry.md"),
+            &[b'a'; 4096],
+        )
+        .expect_err("a write past RLIMIT_FSIZE must fail");
+        println!("WRITE_ERROR={}", FileMemoryError::Io(error));
+    }
+
+    #[test]
+    fn overwrite_reports_the_write_stage_like_node() {
+        let scratch = crate::test_scratch::Scratch::new("overwrite-write-stage");
+        fs::create_dir(scratch.path().join("sub")).unwrap();
+        let line = crate::test_write_stage::child_write_error(
+            "runtime::memory::edgeclaw::file_memory::write_stage_tests::overwrite_child_over_file_size_limit",
+            1,
+            scratch.path(),
+        );
+        assert_eq!(line, "EFBIG: file too large, write");
+    }
+
+    #[test]
+    #[ignore = "spawned by io_write_reports_the_write_stage_like_node"]
+    fn io_write_child_over_file_size_limit() {
+        let Ok(path) = std::env::var(crate::test_write_stage::CHILD_PATH_ENV) else {
+            panic!(
+                "{} not set; spawn via io_write_reports_the_write_stage_like_node",
+                crate::test_write_stage::CHILD_PATH_ENV
+            );
+        };
+        crate::test_write_stage::ignore_sigxfsz_like_gateway();
+        let error = io_write(std::path::Path::new(&path), [b'a'; 4096])
+            .expect_err("a write past RLIMIT_FSIZE must fail");
+        println!("WRITE_ERROR={}", FileMemoryError::Io(error));
+    }
+
+    #[test]
+    fn io_write_reports_the_write_stage_like_node() {
+        let scratch = crate::test_scratch::Scratch::new("io-write-write-stage");
+        let target = scratch.path().join("entry.md");
+        let line = crate::test_write_stage::child_write_error(
+            "runtime::memory::edgeclaw::file_memory::write_stage_tests::io_write_child_over_file_size_limit",
+            1,
+            &target,
+        );
+        assert_eq!(line, "EFBIG: file too large, write");
+    }
+}

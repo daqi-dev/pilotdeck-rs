@@ -119,6 +119,17 @@ pub fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> Op
     pilotdeck_gateway::node_fs_message(error, syscall, Some(path.as_ref()))
 }
 
+/// [`node_fs_message`] with libuv's `UV_UNKNOWN` fallback for errnos outside
+/// the table, under the same stage rule: a descriptor read/write error
+/// carries no path even in the fallback.
+pub fn node_fs_message_or_unknown(error: &std::io::Error, syscall: &str, path: &Path) -> String {
+    pilotdeck_gateway::node_fs_message_or_unknown(
+        error,
+        syscall,
+        Some(path.to_string_lossy().as_ref()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

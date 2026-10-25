@@ -629,8 +629,18 @@ impl UploadStore {
                 "Upload metadata symlink leaves the upload directory.",
             ));
         }
-        let bytes = match fs::read(&canonical_path) {
-            Ok(b) => b,
+        // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
+        // open error names its path, a descriptor read error (EISDIR after a
+        // directory swap, EIO, ...) is `read` without one (node v22.22.0,
+        // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
+        let bytes = match fs::File::open(&canonical_path) {
+            Ok(mut file) => {
+                let mut bytes = Vec::new();
+                match file.read_to_end(&mut bytes) {
+                    Ok(_) => bytes,
+                    Err(e) => return Err(UploadError::io(e, "read", None)),
+                }
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(UploadError::io(e, "open", Some(&canonical_path))),
         };

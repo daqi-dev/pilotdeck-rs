@@ -1135,16 +1135,13 @@ mod errno_tests {
     #[ignore = "spawned by write_tool_reports_the_write_stage_like_node"]
     #[cfg(unix)]
     fn write_tool_child_over_file_size_limit() {
-        let Ok(path) = std::env::var("PDRS_WRITE_STAGE_PATH") else {
+        let Ok(path) = std::env::var(crate::test_write_stage::CHILD_PATH_ENV) else {
             panic!(
-                "PDRS_WRITE_STAGE_PATH not set; spawn via write_tool_reports_the_write_stage_like_node"
+                "{} not set; spawn via write_tool_reports_the_write_stage_like_node",
+                crate::test_write_stage::CHILD_PATH_ENV
             );
         };
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async { crate::ensure_sigxfsz_ignored() });
+        crate::test_write_stage::ignore_sigxfsz_like_gateway();
         let error = super::write_text_file(&JsString::from(path.as_str()), &"a".repeat(4096))
             .err()
             .expect("a write past RLIMIT_FSIZE must fail");
@@ -1161,34 +1158,13 @@ mod errno_tests {
     #[cfg(unix)]
     #[test]
     fn write_tool_reports_the_write_stage_like_node() {
-        let dir = std::env::temp_dir().join(format!(
-            "pdrs-write-stage-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&dir).unwrap();
-        let target = dir.join("big.txt");
-        let output = std::process::Command::new("/bin/sh")
-            .arg("-c")
-            .arg("ulimit -f 1; exec \"$0\" --exact runtime::tools::builtin::errno_tests::write_tool_child_over_file_size_limit --ignored --nocapture")
-            .arg(std::env::current_exe().unwrap())
-            .env("PDRS_WRITE_STAGE_PATH", &target)
-            .output()
-            .unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(
-            output.status.code(),
-            Some(0),
-            "child killed or failed: {stdout}"
+        let scratch = crate::test_scratch::Scratch::new("write-stage");
+        let target = scratch.path().join("big.txt");
+        let line = crate::test_write_stage::child_write_error(
+            "runtime::tools::builtin::errno_tests::write_tool_child_over_file_size_limit",
+            1,
+            &target,
         );
-        let line = stdout
-            .lines()
-            .find_map(|line| line.strip_prefix("WRITE_ERROR="))
-            .unwrap_or_else(|| panic!("no WRITE_ERROR line: {stdout}"));
         assert_eq!(line, "EFBIG: file too large, write");
     }
 
@@ -1284,6 +1260,8 @@ mod errno_tests {
     /// read`), never the open label with the path. Both `read_text_file` and
     /// the no-limit Read path go through the helper; their own `is_file`
     /// guards make a directory unreachable there, so the helper is the seam.
+    /// POSIX-only: opening a directory read-only succeeds there.
+    #[cfg(unix)]
     #[test]
     fn read_stage_errors_omit_the_path() {
         let dir = std::env::temp_dir().join(format!(

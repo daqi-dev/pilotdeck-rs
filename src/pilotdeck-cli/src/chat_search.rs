@@ -461,7 +461,9 @@ mod tests {
     /// (NodeSessionSearchPort.ts:189), whose directory error is
     /// `EISDIR: illegal operation on a directory, read` with no path (node
     /// v22.22.0, `_tmp/20261025-issue-651/node-probe-stream.out`); the CLI
-    /// must not report the caller's `open` label with the path.
+    /// must not report the caller's `open` label with the path. POSIX-only:
+    /// opening a directory read-only succeeds there, unlike Windows.
+    #[cfg(unix)]
     #[test]
     fn a_directory_named_like_a_session_reports_the_read_stage() {
         let home = std::env::temp_dir().join(format!(

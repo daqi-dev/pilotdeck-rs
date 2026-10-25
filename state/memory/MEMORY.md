@@ -49,3 +49,4 @@
 - [只按 pid 停进程](20261022-kill-by-pid.md) — 禁 pkill -n / 宽模式 pkill -f；实验与正式任务输出目录不同名（10-22 两次误杀）
 - [DeepSeek 50 RPM](20261022-deepseek-rpm.md) — dsh 默认 ≤8 同跑（dsh-slot.sh），撞 429 由 dsh-retry.sh 自动续跑
 - [合并队列只认 rebase](20261022-merge-queue-rebase-only.md) — PR 分支不能有合并提交，否则入队后被静默踢出；rebase 冲突 ours/theirs 与 merge 相反
+- [fs 错误按阶段区分](20261025-fs-stage-messages.md) — 整文件读写拆 open/read、open/write 两阶段报错；写阶段用共享 ulimit 子进程装置（tests/common/write_stage.rs），小内容用 ulimit -f 0

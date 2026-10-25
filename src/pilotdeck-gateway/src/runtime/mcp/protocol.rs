@@ -1328,17 +1328,17 @@ fn read_mcp_config(
 /// shared `pilotdeck_gateway::node_fs_message`. Callers keep the open and
 /// read stages apart (a directory read is `read` without a path, as in
 /// `readFileSync`); an errno outside the shared table keeps Node's synthetic
-/// `UNKNOWN: unknown error` text (libuv's `UV_UNKNOWN`).
+/// `UNKNOWN: unknown error` text (libuv's `UV_UNKNOWN`) under the same stage
+/// rule, so a descriptor read/write error still carries no path.
 pub(crate) fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> String {
-    crate::node_fs_message(error, syscall, Some(&path.to_string_lossy())).unwrap_or_else(|| {
-        let (code, description) = errno_text(error);
-        format!("{code}: {description}, {syscall} '{}'", path.display())
-    })
+    crate::node_fs_message_or_unknown(error, syscall, Some(&path.to_string_lossy()))
 }
 
 /// libuv's `uv_err_name` / `uv_strerror` from the shared Node v22 table.
 /// Errnos outside that table keep Node's synthetic `UNKNOWN: unknown error`
 /// text (libuv's `UV_UNKNOWN`), matching Node's `UVException` formatting.
+/// The MCP fs formatting goes through `node_fs_message`; the wire layer uses
+/// this for spawn diagnostics.
 pub(crate) fn errno_text(error: &std::io::Error) -> (&'static str, &'static str) {
     crate::node_io::lookup(error).unwrap_or(("UNKNOWN", "unknown error"))
 }
@@ -1453,12 +1453,33 @@ mod tests {
             ),
             "UNKNOWN: unknown error, mkdir '/c'"
         );
+        // An errno outside the shared table returns `None` there, so the
+        // `UV_UNKNOWN` fallback fires — and it keeps the stage rule: a
+        // descriptor read/write error carries no path there either.
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(123456),
+                "read",
+                Path::new("/c/mcp.json")
+            ),
+            "UNKNOWN: unknown error, read"
+        );
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(123456),
+                "write",
+                Path::new("/c/mcp.json")
+            ),
+            "UNKNOWN: unknown error, write"
+        );
     }
 
     /// A directory at the config path is the one reachable read-stage failure
     /// (`existsSync` passes, the open succeeds, the descriptor read fails):
     /// like `readFileSync` it must read `read` without the path, never the
-    /// caller-supplied `open` label with it.
+    /// caller-supplied `open` label with it. POSIX-only: opening a directory
+    /// read-only succeeds there, unlike Windows.
+    #[cfg(unix)]
     #[test]
     fn read_mcp_config_reports_a_directory_at_the_read_stage() {
         struct Env;
