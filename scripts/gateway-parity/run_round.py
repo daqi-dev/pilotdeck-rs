@@ -16,7 +16,13 @@ import sys
 import time
 import urllib.request
 
-from common import DEFAULT_OUT, READ_METHODS, ROOT, SCRIPT, SCENARIOS, apparatus_hashes, digest, install_shutdown, parity_lock, save
+# python3 -I removes the script directory from sys.path; the apparatus directory
+# is the only trusted import root.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from common import (DEFAULT_OUT, READ_METHODS, ROOT, SCRIPT, SCENARIOS, apparatus_hashes,
+                    baseline_dependency_hashes, cargo_config_problems, digest, install_shutdown,
+                    parity_lock, save)
 
 TOKEN = 'gateway-parity-isolated-token'
 
@@ -39,6 +45,13 @@ def run_round(side, label, output=DEFAULT_OUT, baseline=None, ports=(28791, 2879
         raise FileExistsError('refusing to overwrite runtime or evidence; choose another output/label')
     if not 0 < timeout <= 900:
         raise ValueError('round timeout must be <=900s')
+    if side == 'rust':
+        # A Rust binary can only be trusted when cargo saw no config outside the
+        # reviewed repository. Checked at run time as well as by build_proxy.py.
+        problems = cargo_config_problems()
+        if problems:
+            raise ValueError('BLOCKED: cargo build inputs are not frozen: ' + '; '.join(problems))
+    dependencies = baseline_dependency_hashes(baseline)
     for port in ports:
         with socket.socket() as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -101,6 +114,7 @@ webui:
     run = {'side': side, 'label': label, 'status': 'RUNNING', 'apparatusSha256': apparatus_hashes(), 'scenarios': {},
            'runtime': {'pilotHome': str(home), 'cwd': str(project), 'tmpdir': str(cur / 'tmp')},
            'ports': list(ports), 'baseline': str(baseline), 'pollWatcher': True,
+           'baselineDepsSha256': dependencies,
            'baselineSourceSha256': digest(baseline / 'src/gateway/server/GatewayServer.ts'),
            'baselineDistSha256': digest(baseline / 'dist/src/cli/pilotdeck.js')}
 
@@ -154,7 +168,7 @@ webui:
         ready(mock_port, mock)
         ts = start('gateway', ['node', '--import', SCRIPT / 'watcher.mjs', baseline / 'dist/src/cli/pilotdeck.js', 'server'], gateway_port)
         ready(gateway_port, ts)
-        observer = start('observer', [sys.executable, SCRIPT / 'observer.py', '--port', observer_port,
+        observer = start('observer', [sys.executable, '-I', SCRIPT / 'observer.py', '--port', observer_port,
                                     '--upstream', gateway_port, '--out', cur / 'upstream.jsonl'], observer_port)
         ready(observer_port, observer)
         # Direct means official driver -> TS. Observer only serves Rust's upstream.
@@ -188,6 +202,10 @@ webui:
             save(cur / 'run.json', run)
             if time.monotonic() >= start_time + timeout:
                 raise TimeoutError('round wall-clock timeout')
+        if apparatus_hashes() != run['apparatusSha256']:
+            raise ValueError('apparatus changed during round; report cannot certify mixed versions')
+        if baseline_dependency_hashes(baseline) != dependencies:
+            raise ValueError('baseline dependencies changed during round; report cannot certify mixed versions')
         run['status'] = 'DONE'
     except Exception as error:
         run['status'] = 'ERROR'

@@ -2,11 +2,16 @@
 """Check coordinator-approved hash manifest; absence means DRAFT, never PASS."""
 import argparse
 import json
+from pathlib import Path
 import re
 import subprocess
 import sys
 
-from common import ROOT, digest
+# python3 -I removes the script directory from sys.path; the apparatus directory
+# is the only trusted import root.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from common import A2_SCRIPTS, ROOT, SCRIPT, digest, unknown_apparatus_files
 
 
 ENTRY_ID = r'[A-Z][A-Z0-9]*(?:\.[0-9]+)*-(?:[A-Z0-9]+-)+[0-9]{3}'
@@ -159,10 +164,26 @@ def main(argv=None):
     required = {'acceptance.md', 'normalization.md', 'accepted-diffs.md'}
     if not required.issubset({name for _, name in entries}) or len(entries) != len({name for _, name in entries}):
         failures.append('missing required / duplicate hash entries')
+    # An unregistered executable file can run inside an otherwise frozen
+    # apparatus, so absence from the manifest is an error, never a skip.
+    try:
+        failures.extend(f'unregistered apparatus file: {name}'
+                        for name in unknown_apparatus_files())
+    except OSError as error:
+        failures.append(f'cannot scan apparatus: {error}')
     for expected, name in entries:
         path = (folder / name).resolve()
         if not path.is_relative_to(ROOT) or not path.is_file() or digest(path) != expected:
             failures.append(name)
+    # Membership in A2_SCRIPTS is not registration: a whitelisted-but-unhashed
+    # apparatus file would run while its bytes are unverified. Only files that
+    # actually exist are required, so trimmed-down test trees stay valid.
+    registered = {name for _, name in entries}
+    unregistered = sorted(f'../../scripts/gateway-parity/{name}' for name in A2_SCRIPTS
+                          if (SCRIPT / name).is_file()
+                          and f'../../scripts/gateway-parity/{name}' not in registered)
+    if unregistered:
+        failures.append('A2 apparatus missing FROZEN hash: ' + ', '.join(unregistered))
     try:
         failures.extend(check_diffs(folder, ROOT))
     except (OSError, UnicodeError) as error:

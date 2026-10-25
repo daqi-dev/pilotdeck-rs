@@ -15,7 +15,12 @@ import subprocess
 import sys
 import time
 
-from common import ROOT, SCRIPT, apparatus_hashes, digest, install_shutdown, parity_lock, save
+# python3 -I removes the script directory from sys.path; the apparatus directory
+# is the only trusted import root.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from common import (ROOT, SCRIPT, apparatus_hashes, baseline_dependency_hashes, digest,
+                    install_shutdown, parity_lock, save)
 from compare import wire_frame
 from observer import Decoder
 
@@ -61,7 +66,7 @@ def hashes():
 
 
 def frozen_check():
-    process = subprocess.run([sys.executable, str(SCRIPT / 'check_frozen.py')],
+    process = subprocess.run([sys.executable, '-I', str(SCRIPT / 'check_frozen.py')],
                              capture_output=True, text=True, timeout=15)
     return {'exitCode': process.returncode, 'stdout': process.stdout, 'stderr': process.stderr}
 
@@ -91,7 +96,7 @@ def process_tree(root_pid):
 
 
 def run_fixture(output, baseline):
-    command = [sys.executable, str(ROOT / 'scripts/a5-19/run.py'),
+    command = [sys.executable, '-I', str(ROOT / 'scripts/a5-19/run.py'),
                '--baseline', str(baseline), '--output', str(output / 'six-cells')]
     audit = {'command': command, 'cwd': str(ROOT), 'launcherPid': os.getpid(),
              'processSnapshots': [], 'status': 'RUNNING', 'launcherAndFixtureReaped': False,
@@ -368,10 +373,23 @@ def main():
                                    'pass --baseline or set PDRS_BASELINE'}, ensure_ascii=False))
         return 2
     output = args.output.resolve()
+    # E1 drives the baseline TS source through the baseline runtime; bind the
+    # bytes of tsx/ws (and their declared dependencies) so a swapped loader or
+    # ws cannot certify a calibration (#85 85.1).
+    dependencies = None
+    if args.suite == 'calibrate':
+        try:
+            dependencies = baseline_dependency_hashes(args.baseline.resolve())
+        except ValueError as error:
+            print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error': str(error)},
+                             ensure_ascii=False))
+            return 2
     output.mkdir(parents=True, exist_ok=False)
     install_shutdown()
     report = {'suite': args.suite, 'scope': 'A5.3 draft apparatus', 'status': 'RUNNING',
               'acceptanceStatus': 'NOT_RUN', 'apparatusSha256': hashes(), 'frozen': frozen_check()}
+    if dependencies is not None:
+        report['baselineDepsSha256'] = dependencies
     save(output / 'report.json', report)
     code = 0
     try:
@@ -400,6 +418,9 @@ def main():
                 report['calibrationStatus'] = 'OBSERVED'
                 report['freezeStatus'] = 'DRAFT_AWAITING_A5_4'
         require(report['apparatusSha256'] == hashes(), 'APPARATUS_CHANGED', 'apparatus changed while collecting evidence')
+        if dependencies is not None:
+            require(baseline_dependency_hashes(args.baseline.resolve()) == dependencies,
+                    'BASELINE_DEPS_CHANGED', 'baseline runtime dependencies changed while collecting evidence')
         require(report['frozen'] == frozen_check(), 'FROZEN_CHANGED', 'frozen inputs changed during suite')
         if args.suite == 'calibrate' and report['frozen']['exitCode'] != 0:
             report['status'] = 'BLOCKED'

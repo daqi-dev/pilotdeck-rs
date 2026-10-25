@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-25 重登记（A5.4 冻结前置 · 第 2 包：#85 85.1/85.2 + #52，PR 待填，AI 代批，待人复核）**：#52 把 `common.py:unknown_apparatus_files` 的未登记文件扫描从 `.py/.mjs/.mts` 扩到 `.py/.pyw/.sh/.bash/.zsh/.js/.mjs/.cjs/.jsx/.ts/.mts/.cts/.tsx`（依据：Python 直接运行 .py/.pyw 与 POSIX shell 脚本；Node/tsx 直接加载或经 loader 解析 .js/.mjs/.cjs/.jsx/.ts/.mts/.cts/.tsx），`__pycache__` 外的 `.pyc/.pyo` 一律视为未登记；`apparatus_hashes` 在存在 `node_modules/` 时另记整树字节摘要。**85.2**：`check_frozen.py` 改用同一扫描，遇未登记文件**报错**（旧行为是只跳过），并新增「A2 白名单内且实际存在的脚本必须在 FROZEN 有哈希行」检查；装置入口与 CI 直接调用一律 `python3 -I`，各入口显式把装置目录加入 `sys.path`（隔离模式不自动加脚本目录）；保留的非 -I 仅两处且已逐条核对：`scripts/test-gateway-ledger.py` 的敌意 PYTHON* 环境 UTF-8 用例（`-I` 会忽略这些变量，故该夹具故意不加；装置入口本身的调用已 `-I`）与 `check_schema.py` 的文档示例（非调用点，且该文件受 schema-FROZEN 冻结）；grep 清单见证据。**85.1**：`run_round` / `check_ruler` / `session_domain` 记录并复核 `baselineDepsSha256`——按**实际文件字节**（非 package-lock integrity；integrity 不约束 Node 实际解析到的磁盘字节）哈希基线 `node_modules/tsx`、`node_modules/ws` 及二者 `package.json` 声明的传递依赖（本机集合：tsx、esbuild、@esbuild/darwin-arm64、fsevents、ws）；E1 calibrate 报告同记该字段并在结尾复核。cargo 构建前（`run_round --side rust`、`check_ruler`、新增 `build_proxy.py`）检查并拒绝：本树未跟踪的 `.cargo/config[.toml]`、祖先目录的 `.cargo/config[.toml]`、`$CARGO_HOME/config[.toml]`，命中打印 `BLOCKED` 并列路径。**边界（威胁模型同 `specs/ui-server-parity/acceptance.md`：防意外漂移与仓库内改动，不防本机恶意者）**：① 基线依赖只覆盖 tsx/ws 及其声明的传递依赖，不覆盖基线 dist 动态 require 的其它包，也不校验基线 package-lock；嵌套符号链接只记链接目标字符串、不追随其字节；② 装置 `node_modules/` 整树摘要仅在存在时记录，未逐包登记（跨平台安装字节不同），不校验 npm integrity；③ cargo 不校验 `$CARGO_HOME/registry/src` 或 `.crate` 缓存字节，不校验 `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS` 等环境，也不证明一次绕过 `build_proxy.py` 的 `cargo build` 如何被调用；④ 未登记扫描按后缀与 `__pycache__` 规则，无后缀但带 shebang 的可执行文件不在覆盖内（不会被装置自动加载）。未改阈值/分母/判分语义，未改 `accepted-diffs.md`、`specs/parity/`、`scripts/ui-server-parity/`。真实数据复算：E1 calibrate `status=PASS` / 72 例 / 360 次 / frozen `exit 0` / `e1Controls PASS`（`_tmp/20261025-a54-pkg2/calibrate/report.json`），controls `--source` 全过（`_tmp/20261025-a54-pkg2/controls-source/results.json`），`check_frozen.py --base origin/main` PASS（`_tmp/20261025-a54-pkg2/final-checks.log`）；负控（未登记 .js/.cjs/.ts/.cts/.sh、影子模块、根 `.pyc`、登记文件改一字节、装置 node_modules 换字节、基线 tsx 换字节、未跟踪/持久 cargo config）见 `_tmp/20261025-a54-pkg2/negative/`，逐项「有检查 FAIL / 去掉检查 PASS（旧实现或只删该检查的副本）」并逐字节还原。本次更新 10 个既有文件哈希 + 新增 `build_proxy.py` 一行；其余行不变。两家非作者评审由协调者续办。
+
 > **2026-10-25 重登记（A5.4 冻结前置 · #170 / #165，含 fix-r1 更正，PR 待填，AI 代批，待人复核）**：#170 补 Node 侧直接 oracle 对预注册标签的核对——`scripts/a5-19/observation_rules.mjs` 新增 `checkObservationLabels`，由 `checkObservation` 在按 id 取观察时按 `<cell>/<variant>/<phase>/<repetition>` 逐项核对 `repetition` / `phase` / `variant.name`，不一致以 `COVERAGE` 拒绝；与 `session_domain.py:validate_calibration`（205-210 行）的三项同名检查在 `phase`、`variant.name` 与整数 `repetition` 上同口径（Python 仍额外以 `type(...) is int` 强制 repetition 为整数，并强制 72 例 × 5 次完整 ID 集合与 cell/registry 归属；Node 只拿 id 与标签，不能替代该分母检查）。**已知 Node 结构性不可检（fix-r1 更正）**：JSON `"repetition": 1.0` 经 `JSON.parse` 后就是数字 1，与整数无法区分，故 Node 侧无法拒绝该 float 情形；该情形由 Python `validate_calibration` 的 `type(...) is int` 兜底——E1 calibrate 在调用 Node 桥（226 行）之前先跑该 Python 检查，`controls/session_domain.py` 的 `calibration-repetition` 也以 float 变体逐次回放；只有不经 Python、单独直跑 `node scripts/gateway-parity/session_observations.mjs` 的手写 JSON 路径会接受 1.0，不构成现网闸口假 PASS。fix-r1 起 `controls/session_domain.py` 的直接路径标签用例扩为 13 条：12 条负控（repetition 的 zero / wrong-round / out-of-range / boolean / string / null，phase，variant 的 wrong-name / null / array，五段 id，以及 id 的 repetition 段非规范正整数），每条都在同一输入上验证「保留核对即拒绝、仅去掉对应子句即接受」；float 另立 1 条「已知接受」钉住（`observation-repetition-float-known-accept`，若 Node 将来能拒绝它即转红并提示更新登记），不伪装成负控；`run_all` 仅对该钉住按期望接受判定，其余负控仍要求 exit 1 / FAIL，未放宽任何既有检查。未改任何判分/阈值/分母。**只变严，不改判分语义**。#165 把 `scripts/gateway-parity/fixtures/session-calibration.json` 与 `session_domain.py:FIXTURE_NAMES` 的全部 `scripts/a5-19/*`（run.py、six_cells.mts、observation_rules.mjs、append-observer.mjs、cleanup-observer.mjs）纳入白名单；`check_frozen.py` 无需改动即可逐字节校验（负控：改一字节即 FAIL，恢复即 PASS）。真实数据复算：E1 calibrate status PASS / 72 例 / 360 次 / frozen exit 0 与 controls 全过见 `_tmp/20261025-a54-pkg1/fix-r1/calibrate/report.json`、`_tmp/20261025-a54-pkg1/fix-r1/controls-source/results.json`；12 条标签负控的逐子句移除对照与 float 钉住（Node 接受 / Python 拒绝）对照见 `_tmp/20261025-a54-pkg1/fix-r1/negative-labels/`，FROZEN 负控见 `_tmp/20261025-a54-pkg1/fix-r1/frozen-negative.log`。本次更新 `scripts/a5-19/observation_rules.mjs` 与 `scripts/gateway-parity/controls/session_domain.py` 两个哈希（前者含注释更正，核对逻辑未改）；其余行不变。两家非作者评审由协调者续办。
 
 > **2026-10-23 修复轮 2 重登记（#581 / PR #582，人批范围内）**：merge-base 等于 HEAD 且 base 解析提交不同于 HEAD 时拒绝无效的只追加对照；base 本身等于 HEAD 时保留工作树字节核验并注明（如空推送）。显式使用 UTF-8 读取文本及解码 Git 输出；仅更新 check_frozen.py 哈希。真实账本复算与回归、负控证据见 `_tmp/20261023-issue-581-ledger-split/RESULT.md`「修复轮 2」。
@@ -123,26 +125,27 @@
 > **2026-10-14 重登记（A4 前置 #45，PR #50）**：时钟归一收紧到容器组合、装置哈希改 12 件显式白名单（未登记脚本即 FAIL）、具名键前置写入 normalization；两家（GLM、Claude 替补 DeepSeek）两轮均无 P0/P1；rebase 后正式重跑 `check_ruler` 机器项全 true。**AI 代批，待人复核**。
 > 2026-10-14 冻结。**AI 代批，待人复核**（依据：`check_ruler.py` 机器项全 true——TS 自比 k=5 十对、五个不同 gateway 进程、阳性对照 33 项主规则命中、两侧同坏拒绝、代理一致；双谱系评审第 3 轮 GLM、DeepSeek 均 `independent_review: true`，无 P0/P1，P2 转跟进 issue）。
 > 冻结后改任何一份都要另开 issue、两家评审同意、写明理由（`CLAUDE.md` §五「尺子不许自己改」）。A3 的 schema 产物与脚本另见 `schema-FROZEN.md`，不在本表。
-> 校验：`python3 scripts/gateway-parity/check_frozen.py`（下面每行「sha256 两空格 相对本目录的路径」）。
+> 校验：`python3 -I scripts/gateway-parity/check_frozen.py`（下面每行「sha256 两空格 相对本目录的路径」）。
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
-e565167df638b8fd1659bf7b714c942a4873dd02ad3d77a62541c0de636e984b  ../../scripts/gateway-parity/check_frozen.py
-3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
-967969d8b1b1cea7bdc25d361ac39eeda964e23f8bec64f4fceadd30898e8a9e  ../../scripts/gateway-parity/common.py
-4ae7570b725bfb79fdef01b0860d67f0a36864582a667da5a1e53eba1ecb8436  ../../scripts/gateway-parity/compare.py
-0bf89d5277e04fea0da89da8d24a2c05680d1d77a6c20390a8a27a2cd28b0da5  ../../scripts/gateway-parity/controls/prerequisites.py
-13e1f91b3fe5c81140dd8fcbf9d6ac24695ec8f1098b330c6ab0bc4ef2c382ea  ../../scripts/gateway-parity/controls/run_all.py
+53f3ffd39178c5b61337e924f807aae2e476bf43deb5b95de48b163c54ff087f  ../../scripts/gateway-parity/build_proxy.py
+53d66178ebe1a368a97dca37283795a4979efb7537eac57e918bd798393d0752  ../../scripts/gateway-parity/check_frozen.py
+c7af644c482abd6a0771cd9a040794e98a94b3b7ca0e3df2c4c45c6026cd1774  ../../scripts/gateway-parity/check_ruler.py
+de92322db0bd8d6efe2f174eca9e39e0409d0efc0ad1fd5722e9bb2b2319ccf0  ../../scripts/gateway-parity/common.py
+6c09b13a6a021b8846e94648c1dd1ce1df6347aa57f659b2a46c08baf2190f1b  ../../scripts/gateway-parity/compare.py
+cc49ab21c970b7d53797a775375f52c4621089b4205d0b3b0bc2993fda20f776  ../../scripts/gateway-parity/controls/prerequisites.py
+877c61bd280b479d80acda7d5a5b93f7bf64deaf8a52164cd14615cc1a4c3d25  ../../scripts/gateway-parity/controls/run_all.py
 5f8e906fa532a58b994dff4f5e6438b07e31f14195b8142b75b398b6778e9e63  ../../scripts/gateway-parity/driver.mts
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 3a758aa57cbb5d8129c2e9b73c0baa04028a87aa7bae5dba6d8519f713869692  ../../scripts/gateway-parity/observer.py
-d3e99961f28d4fdbd8521be51b689e6f075bbc78412a41387b5dc2b46202efca  ../../scripts/gateway-parity/run_round.py
-9d8a1825e4a152affbcb6df6c8e3e682edad634281e782ad21c1493e673c1d67  ../../scripts/gateway-parity/test_safety.py
+93b1258e03202e6342f98b2d505edbfe7ee76916630663a852237c0cae90eda5  ../../scripts/gateway-parity/run_round.py
+fb58f77f65b866280e24d491cecfe63a140897565287c59c103f58b7064ce70c  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
-70f248715b6f3c3c20127df963999706e1432765340be411a0c98340089ba0bc  ../../scripts/gateway-parity/session_domain.py
+41a9347543d9907f58fd2b075e8b83343e03326e95b1aa663ea87fdc72d43222  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-c42357058d07e798cf512b7364d014aabb3e070302b06492c150fe053b7d2e6b  ../../scripts/gateway-parity/controls/session_domain.py
+4007a0bc9742605282c21ab64f7455b629069bd5df455795dea0e621f007d6a9  ../../scripts/gateway-parity/controls/session_domain.py
 41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json
 8ea02eadd41cc6bbf75c1e67c22152f37f6b729007ad1e3a34a190c9ab60188c  ../../scripts/a5-19/observation_rules.mjs
 0248507e617648bd8e81e1a54ae8b448cd7b7a2f14f1542424adc3a83b398c84  ../../scripts/a5-19/run.py

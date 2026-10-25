@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import threading
@@ -11,7 +12,12 @@ import tempfile
 import time
 import unittest
 
-from common import MAX_AGE, guard, owner, parity_lock, save
+# python3 -I removes the script directory from sys.path; the apparatus directory
+# is the only trusted import root.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from common import (MAX_AGE, baseline_dependency_hashes, cargo_config_problems, guard,
+                    node_modules_entry, owner, parity_lock, save, unknown_apparatus_files)
 from compare import Normalizer, compare, wire_frame
 from observer import Decoder
 
@@ -196,6 +202,88 @@ class Safety(unittest.TestCase):
         for data in ('', '81', '817e00', '817f0000', '8182'):
             with self.assertRaises(ValueError):
                 wire_frame({'wireHex': data})
+
+
+class ApparatusInputs(unittest.TestCase):
+    """#52 / #85: unregistered files, installed deps and cargo configs are inputs."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='pdrs-apparatus-inputs-')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_every_executable_suffix_is_rejected_unless_registered(self):
+        for name in ('probe.py', 'probe.pyw', 'probe.sh', 'probe.bash', 'probe.zsh',
+                     'probe.js', 'probe.mjs', 'probe.cjs', 'probe.jsx',
+                     'probe.ts', 'probe.mts', 'probe.cts', 'probe.tsx'):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.write_text('x')
+                self.assertEqual(unknown_apparatus_files(self.root), [name])
+                path.unlink()
+        (self.root / 'common.py').write_text('registered member')
+        self.assertEqual(unknown_apparatus_files(self.root), [])
+
+    def test_bytecode_and_node_modules_classification(self):
+        (self.root / '__pycache__').mkdir()
+        (self.root / '__pycache__/common.pyc').write_bytes(b'x')
+        self.assertEqual(unknown_apparatus_files(self.root), [])
+        (self.root / 'legacy.pyc').write_bytes(b'x')
+        self.assertEqual(unknown_apparatus_files(self.root), ['legacy.pyc'])
+        (self.root / 'node_modules/nested').mkdir(parents=True)
+        (self.root / 'node_modules/nested/loader.js').write_text('x')
+        self.assertEqual(unknown_apparatus_files(self.root), ['legacy.pyc'])
+
+    def test_installed_dependency_bytes_change_digest(self):
+        self.assertIsNone(node_modules_entry(self.root))
+        (self.root / 'node_modules/pkg').mkdir(parents=True)
+        (self.root / 'node_modules/pkg/index.js').write_text('a')
+        first = node_modules_entry(self.root)
+        self.assertIsNotNone(first)
+        (self.root / 'node_modules/pkg/index.js').write_text('b')
+        self.assertNotEqual(node_modules_entry(self.root), first)
+
+    def test_baseline_dependencies_bind_loaded_packages(self):
+        modules = self.root / 'baseline/node_modules'
+        for name in ('tsx', 'ws'):
+            package = modules / name
+            package.mkdir(parents=True)
+            (package / 'package.json').write_text(json.dumps({'name': name, 'dependencies': {}}))
+            (package / 'index.js').write_text(name)
+        before = baseline_dependency_hashes(self.root / 'baseline')
+        self.assertEqual(sorted(before), ['node_modules/tsx', 'node_modules/ws'])
+        (modules / 'tsx/index.js').write_text('tampered loader')
+        self.assertNotEqual(baseline_dependency_hashes(self.root / 'baseline'), before)
+        shutil.rmtree(modules / 'ws')
+        with self.assertRaises(ValueError):
+            baseline_dependency_hashes(self.root / 'baseline')
+
+    def test_untracked_and_persistent_cargo_configs_block(self):
+        environ = {'CARGO_HOME': str(self.root / 'cargo-home')}
+        self.assertEqual(cargo_config_problems(self.root, environ), [])
+        (self.root / '.cargo').mkdir()
+        (self.root / '.cargo/config.toml').write_text('[build]\n')
+        self.assertTrue(any('untracked worktree config' in item
+                            for item in cargo_config_problems(self.root, environ)))
+        (self.root / '.cargo/config.toml').unlink()
+        (self.root / '.cargo').rmdir()
+        home = self.root / 'cargo-home'
+        home.mkdir()
+        (home / 'config.toml').write_text('[registries]\n')
+        self.assertTrue(any('persistent CARGO_HOME config' in item
+                            for item in cargo_config_problems(self.root, environ)))
+        (home / 'config.toml').unlink()
+        self.assertEqual(cargo_config_problems(self.root, environ), [])
+
+    def test_tracked_worktree_cargo_config_is_reviewable(self):
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, timeout=30)
+        config = self.root / '.cargo/config.toml'
+        config.parent.mkdir()
+        config.write_text('[build]\n')
+        subprocess.run(['git', '-C', str(self.root), 'add', '.cargo/config.toml'],
+                       check=True, timeout=30)
+        environ = {'CARGO_HOME': str(self.root / 'cargo-home')}
+        self.assertEqual(cargo_config_problems(self.root, environ), [])
 
 
 if __name__ == '__main__':

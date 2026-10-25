@@ -9,10 +9,16 @@ from contextlib import redirect_stdout
 import importlib.util
 from itertools import combinations
 import json
+import os
 from pathlib import Path
 import sys
 
-from common import DEFAULT_OUT, ROOT, SCRIPT, apparatus_hashes, digest, install_shutdown, parity_lock, save
+# python3 -I removes the script directory from sys.path; the apparatus directory
+# is the only trusted import root.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from common import (DEFAULT_OUT, ROOT, SCRIPT, apparatus_hashes, baseline_dependency_hashes,
+                    cargo_config_problems, digest, install_shutdown, parity_lock, save)
 from compare import compare
 from run_round import run_round
 
@@ -25,6 +31,12 @@ def main():
     ap.add_argument('--lock-timeout', type=float, default=600)
     args = ap.parse_args()
     output = args.output.resolve()
+    baseline = Path(args.baseline or os.environ.get('PDRS_BASELINE')
+                    or ROOT / 'resources/PilotDeck').resolve()
+    problems = cargo_config_problems()
+    if problems:
+        raise ValueError('BLOCKED: cargo build inputs are not frozen: ' + '; '.join(problems))
+    dependencies = baseline_dependency_hashes(baseline)
     hashes = apparatus_hashes()
     takeovers = []
     with parity_lock(args.lock_timeout, takeovers):
@@ -33,6 +45,8 @@ def main():
                 archived = json.loads((output / label / 'run.json').read_text())
                 if archived.get('apparatusSha256') != hashes:
                     raise ValueError(f'{label}: apparatus hash mismatch; choose a fresh --output')
+                if archived.get('baselineDepsSha256') != dependencies:
+                    raise ValueError(f'{label}: baseline dependency hash mismatch; choose a fresh --output')
             else:
                 with redirect_stdout(sys.stderr):
                     run_round('rust' if label == 'proxy' else 'ts', label, output, args.baseline)
@@ -71,6 +85,7 @@ def main():
         cases = controls.get('cases', {})
         report = {
             'k': 5, 'pairs': comparisons, 'apparatusSha256': hashes,
+            'baselineDepsSha256': dependencies,
             'self_compare': distinct and all(item['status'] == 'PASS' for item in comparisons),
             'distinct_ts_rounds': distinct, 'gateway_pids': identities,
             'positive_controls': bool(cases) and all(item['passed'] for name, item in cases.items() if not item.get('bothSides')),
@@ -89,6 +104,8 @@ def main():
             report['status'] = 'FAIL'
         if apparatus_hashes() != hashes:
             raise ValueError('apparatus changed during run; report cannot certify mixed versions')
+        if baseline_dependency_hashes(baseline) != dependencies:
+            raise ValueError('baseline dependencies changed during run; report cannot certify mixed versions')
         if any(digest(ROOT / name) != expected for name, expected in report['prerequisiteSha256'].items()):
             raise ValueError('prerequisite inputs changed after controls; report cannot certify mixed versions')
         if digest(ROOT / 'docs/reviews/002_a4-prerequisites.md') != report['prerequisiteAuditSha256']:

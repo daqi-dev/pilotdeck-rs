@@ -71,20 +71,20 @@ jobs:
       # 基线侧一致性由下方 gateway-schema-baseline job 按冻结 commit 克隆基线钉死。
       - name: gateway 协议 schema 静态断言（A3）
         working-directory: .
-        run: python3 scripts/gateway-parity/check_schema.py
+        run: python3 -I scripts/gateway-parity/check_schema.py
       - name: gateway 冻结账本（静态规则与只追加）
         working-directory: .
         env:
           LEDGER_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
         run: |
-          python3 scripts/test-gateway-ledger.py -v
+          python3 -I scripts/test-gateway-ledger.py -v
           if [ "${{ github.event_name }}" != "push" ] && [ "$LEDGER_BASE" = "$(git rev-parse HEAD)" ]; then
             echo "ledger base 等于 HEAD（${{ github.event_name }}），只追加对照无效，拒绝" >&2; exit 1
           fi
           if [ -n "$LEDGER_BASE" ] && [ "$LEDGER_BASE" != "0000000000000000000000000000000000000000" ]; then
-            python3 scripts/gateway-parity/check_frozen.py --base "$LEDGER_BASE"
+            python3 -I scripts/gateway-parity/check_frozen.py --base "$LEDGER_BASE"
           else
-            python3 scripts/gateway-parity/check_frozen.py
+            python3 -I scripts/gateway-parity/check_frozen.py
           fi
       - uses: actions/setup-node@v4
         with:
@@ -150,7 +150,7 @@ jobs:
         run: |
           PDRS_REQUIRE_BASELINE=1 \
           PDRS_BASELINE="$GITHUB_WORKSPACE/pilotdeck-baseline" \
-          python3 scripts/gateway-parity/check_schema.py
+          python3 -I scripts/gateway-parity/check_schema.py
       - name: 产品入口覆盖总账（独立枚举 × 任务归属）
         run: python3 scripts/product-coverage/check.py --baseline "$GITHUB_WORKSPACE/pilotdeck-baseline"
       - name: 入口漏项/重复/无主负对照及 UI runtime 对账
