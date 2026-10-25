@@ -416,19 +416,58 @@ struct StreamHandler {
     forwarding: Arc<Mutex<Forwarding>>,
 }
 
-type Delivery = (
-    Option<tokio::sync::oneshot::Receiver<()>>,
-    tokio::sync::oneshot::Sender<()>,
-);
+/// A cancelled slot hands its unfinished predecessor to its successor, even
+/// when that successor has already moved from the wire queue into a callback.
+struct DeliveryWait(tokio::sync::oneshot::Receiver<Option<DeliveryWait>>);
+
+impl Drop for DeliveryWait {
+    fn drop(&mut self) {
+        // Long runs of cancelled slots can nest completed channel values.
+        // Close before draining to exclude concurrent sends, then dismantle
+        // that chain iteratively rather than recursively dropping receivers.
+        self.0.close();
+        while let Ok(Some(mut previous)) = self.0.try_recv() {
+            previous.0.close();
+            std::mem::swap(&mut self.0, &mut previous.0);
+        }
+    }
+}
+
+struct Delivery {
+    previous: Option<DeliveryWait>,
+    done: Option<tokio::sync::oneshot::Sender<Option<DeliveryWait>>>,
+}
+
+impl Delivery {
+    async fn wait(&mut self) {
+        while let Some(previous) = self.previous.as_mut() {
+            // Keep the pending receiver in self so cancellation while waiting
+            // still transfers it through Drop to the next surviving callback.
+            self.previous = (&mut previous.0).await.unwrap_or(None);
+        }
+    }
+}
+
+impl Drop for Delivery {
+    fn drop(&mut self) {
+        if let Some(done) = self.done.take() {
+            let _ = done.send(self.previous.take());
+        }
+    }
+}
+
 #[derive(Default)]
 struct Forwarding {
-    tail: Option<tokio::sync::oneshot::Receiver<()>>,
+    tail: Option<DeliveryWait>,
     wire: std::collections::VecDeque<(Arc<()>, Delivery)>,
 }
 impl Forwarding {
     fn reserve(&mut self) -> Delivery {
         let (done, next) = tokio::sync::oneshot::channel();
-        (self.tail.replace(next), done)
+        Delivery {
+            previous: self.tail.replace(DeliveryWait(next)),
+            done: Some(done),
+        }
     }
 }
 impl StreamHandler {
@@ -463,17 +502,13 @@ impl StreamHandler {
         }
         // One send chain across module and wire callbacks: concurrent futures
         // cannot interleave batches or overtake an earlier callback's payload.
-        let (previous, done) =
-            delivery.unwrap_or_else(|| self.forwarding.lock().unwrap().reserve());
+        let mut delivery = delivery.unwrap_or_else(|| self.forwarding.lock().unwrap().reserve());
         let events = self.events.clone();
         let integrity = self.integrity.clone();
         Box::pin(async move {
-            let _done = done; // drop wakes the next sender on every exit
             let buffered = buffered?;
             let result = applied.await?;
-            if let Some(previous) = previous {
-                let _ = previous.await;
-            }
+            delivery.wait().await;
             for event in buffered.into_iter().map(JsValue::Object).chain(payload) {
                 let permit = events.reserve().await.map_err(|_| {
                     HostError::new(HostErrorKind::Callback, "LiveTurn event receiver closed.")
@@ -487,6 +522,7 @@ impl StreamHandler {
                 }
                 permit.send(event);
             }
+            drop(delivery); // wake the next sender only after the whole batch
             Ok(result)
         })
     }
@@ -516,6 +552,8 @@ impl HostHandler for StreamHandler {
         Ok(EventGuard::new(move || {
             // event() normally consumes this slot. Abandoning the queue or an
             // unpolled callback must release it too, without retaining handler.
+            // Delivery::drop splices its unfinished predecessor into the send
+            // chain instead of making a successor ready ahead of that work.
             let mut forwarding = forwarding.lock().unwrap();
             forwarding.wire.retain(|(id, _)| !Arc::ptr_eq(id, &key));
             drop(forwarding);
