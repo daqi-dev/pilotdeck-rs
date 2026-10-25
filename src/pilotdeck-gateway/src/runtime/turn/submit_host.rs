@@ -239,9 +239,12 @@ impl SubmitHost for GatewaySubmitHost {
             // The lease is owned from here: a failure in any later prepare
             // step still reaches finish_pump, which releases it.
             if let Some(lease) = lease {
+                // A poisoned lock must not strand the lease: the map itself
+                // is never left half-updated (a panicking holder cannot
+                // observe the insert), so recovery takes the data through.
                 self.leases
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .insert((run.session_key.clone(), run.run_id.clone()), lease.release);
             }
             let agent_input = self
@@ -289,11 +292,13 @@ impl SubmitHost for GatewaySubmitHost {
     }
     fn finish_pump<'a>(&'a self, run: &'a RunRef) -> SubmitFuture<'a, Result<(), SubmitError>> {
         // Removal before release is the exactly-once guard: repeated or
-        // racing finish_pump calls find no entry for the second caller.
+        // racing finish_pump calls find no entry for the second caller. The
+        // lock is taken poison-tolerantly: a panic elsewhere must not block
+        // the pump's tail from releasing an acquired lease.
         let release = self
             .leases
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&(run.session_key.clone(), run.run_id.clone()));
         Box::pin(async move {
             match release {

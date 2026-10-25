@@ -83,13 +83,28 @@ with mutating_sources(repo, [source, host_source]) as snapshots:
         ('snapshot-cwd-refusal-skipped', 'return Err(SubmitError::new(\n                    "CAPABILITY_UNAVAILABLE",\n                    "Workspace snapshot cwd is unavailable.",\n                ));', '/* silently skip missing snapshot cwd */', 'invalid-mode', 'snapshot-cwd-unavailable: explicit capability refusal', 'snapshot-cwd-unavailable'),
         ('cwd-capability-error-ignored', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd)', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd).or(Ok::<(), SubmitError>(()))', 'invalid-mode', 'cwd-host-unavailable: explicit capability refusal', 'cwd-host-unavailable'),
         # Production-host mutants live in submit_host.rs; the lease guard's
-        # exactly-once assertion lives in the unit tests there.
+        # exactly-once assertion lives in the unit tests there. The host lease
+        # mutant skips the release outright: a mutation that would release
+        # twice cannot be written against the FnOnce ownership type, so the
+        # repeated-finish_pump counter assertion is the double-release guard.
         ('guard-config-not-provided', 'self.services\n            .run_policy()\n            .and_then(|policy| policy.get("failureGuard").cloned())', 'None', 'guard-model-trip', 'guard-model-trip: step', None),
-        ('lease-release-guard-removed', 'let release = self\n            .leases\n            .lock()\n            .unwrap()\n            .remove(&(run.session_key.clone(), run.run_id.clone()));', 'let release: Option<SubmitLeaseRelease> = None;', None, 'finish_pump_releases_a_lease_exactly_once', None),
+        ('host-lease-release-skipped', 'let release = self\n            .leases\n            .lock()\n            .unwrap_or_else(|poisoned| poisoned.into_inner())\n            .remove(&(run.session_key.clone(), run.run_id.clone()));', 'let release: Option<SubmitLeaseRelease> = None;', None, 'finish_pump_releases_a_lease_exactly_once', None),
+        # opus P2-1: the host's own cwd capability refusal, distinct from the
+        # submit.rs call-site mutant cwd-capability-error-ignored above.
+        ('cwd-host-unavailable-ok', 'None => Err(SubmitError::new(\n                "CAPABILITY_UNAVAILABLE",\n                "Session cwd host capability is unavailable.",\n            )),', 'None => Ok(()),', 'invalid-mode', 'cwd-host-unavailable: explicit capability refusal', 'cwd-host-unavailable'),
+        # DeepSeek P1-1: reverting either poison-tolerant lock to unwrap()
+        # strands the lease after an unrelated panic.
+        ('lease-poison-unwrap-finish', 'unwrap_or_else(|poisoned| poisoned.into_inner())\n            .remove(', 'unwrap()\n            .remove(', None, 'finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned', None),
+        ('lease-poison-unwrap-prepare', 'unwrap_or_else(|poisoned| poisoned.into_inner())\n                    .insert(', 'unwrap()\n                    .insert(', None, 'finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned', None),
     ]
     mutant_source = {'guard-config-not-provided': host_source,
-                     'lease-release-guard-removed': host_source}
-    mutant_test = {'lease-release-guard-removed': host_test}
+                     'host-lease-release-skipped': host_source,
+                     'cwd-host-unavailable-ok': host_source,
+                     'lease-poison-unwrap-finish': host_source,
+                     'lease-poison-unwrap-prepare': host_source}
+    mutant_test = {'host-lease-release-skipped': host_test,
+                   'lease-poison-unwrap-finish': host_test,
+                   'lease-poison-unwrap-prepare': host_test}
     summary = []
     try:
         for name, before, _, _, _, _ in mutants:
@@ -139,9 +154,11 @@ with mutating_sources(repo, [source, host_source]) as snapshots:
                 returncode = -signal.SIGKILL
             finally:
                 target.write_bytes(target_original)
-            valid = not timed_out and ((returncode == 0 and 'test result: ok. 3 passed' in raw and 'test result: ok. 8 passed' in raw) if name == 'baseline' else (
+            valid = not timed_out and ((returncode == 0 and 'test result: ok. 4 passed' in raw and 'test result: ok. 10 passed' in raw) if name == 'baseline' else (
                 returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw
-                and 'assertion' in raw and marker in raw and used_test in raw))
+                # Product panics (a poison-unwrap mutant) are failure evidence
+                # alongside assertion diffs.
+                and ('assertion' in raw or 'panicked at' in raw) and marker in raw and used_test in raw))
             (output / f'{name}.log').write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={returncode}\n')
             summary.append(dict(name=name, case=case, before=before, after=after, exit=returncode, marker=marker, valid=valid))
             (output/'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
