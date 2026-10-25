@@ -10,17 +10,23 @@
 //! 字面量目标做传递闭包得到的全部编译源（不按扩展名过滤，`.rs.data` 与无扩展名
 //! 文件同样扫描）；闭包中的每个目标都必须留在该 vendored 包目录内、是文件、
 //! 不是 symlink。扫描面是 rustc 的 fail-closed 超集：目录下所有 `.rs` 文件，以及
-//! 所有含 `#[path` / `#[r#path` / `path=`（cfg_attr 形式）/ `include!` /
-//! `r#include!` 的常规文件，不论扩展名；marker 匹配先剥注释（含嵌套 `/* */` 与
-//! `//`）再忽略空白，故 `#/*c*/[/*c*/path`、`include/*c*/!(` 也算。UTF-8 解码
-//! 失败的二进制数据不会被 rustc 当源码编译，跳过；命中的非 `.rs` 文件若
-//! tokenizer 失败则 fail-closed。`#[path]` 只允许出现在文件顶层：用 tokenizer
-//! 跟踪全部 `{}` `()` `[]` 的嵌套深度（该属性自身的 `#[...]` 与 cfg_attr 参数
-//! 括号除外），任何非顶层 `#[path]`（宏体、`mod $i { ... }`、inline module、
-//! 函数体、宏调用实参）一律拒绝，因为其基准目录取决于展开上下文，与本扫描器
-//! 的「文件目录 + 字面量」不一致，否则会审到诱饵文件而漏掉真正编译的文件。
-//! `macro_rules!` 定义体内的 `include!` 同样拒绝：展开处与定义处文件可能不同，
-//! 基准不可静态确定。vendored 包内部的 unsafe 本身仍不属于本守卫范围。
+//! 所有能被 Rust 词法解析、且 token 序列里出现 `#[path]` / `#[r#path]` /
+//! `cfg_attr(..., path|r#path = ...)` 或 `include!` 的常规文件，不论扩展名。
+//! 词法统一用 `proc_macro2::TokenStream::from_str`：注释、raw string（含
+//! `br"..."` / `cr"..."` 前缀）与字面量边界由它判定，本文件不再手写扫描器。
+//! UTF-8 解码失败的二进制数据不会被 rustc 当源码编译，跳过；非 `.rs` 文件
+//! 词法失败时，只有原文（去空白）不含 `#[path` / `include!` / `cfg_attr(...path=...)`
+//! 这类真实边 marker 才视为普通文本，否则 fail-closed。`.rs` 文件和候选非 `.rs`
+//! 文件词法失败一律拒绝。
+//! `#[path]` 只允许出现在文件顶层：直接按 `Group` 嵌套判断，任何非顶层
+//! `#[path]`（宏体、`mod $i { ... }`、inline module、函数体、宏调用实参）一律
+//! 拒绝，因为其基准目录取决于展开上下文，与本扫描器的「文件目录 + 字面量」
+//! 不一致，否则会审到诱饵文件而漏掉真正编译的文件。doc 注释会被 proc-macro2
+//! 转成 `#[doc = "..."]`，只认 `doc` 以外的属性名，doc 文本里的 `#[path]`
+//! 只是字符串，不构成边。`macro_rules!` 定义体内的 `include!` 同样拒绝：展开
+//! 处与定义处文件可能不同，基准不可静态确定。字面量只接受不含反斜杠的普通
+//! `"..."` 和 `r#*"..."#*`；带转义、`b"` / `br"` / `c"` / `cr"` 以及带后缀的
+//! 字面量一律拒绝。vendored 包内部的 unsafe 本身仍不属于本守卫范围。
 //! vendored 源码内容不做哈希 pin：内容本身是否可信属于冻结件/人工评审边界；
 //! 本守卫只锁“声明边与源码包含边不能引出该目录”。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
@@ -35,8 +41,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    str::FromStr,
 };
 
+use proc_macro2::{Delimiter, Ident, TokenStream, TokenTree};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -146,123 +154,70 @@ fn declared_local_dependency_boundary(
     }
 }
 
-// Tokens that keep string literals, unlike `rust_tokens` (which drops them so
-// the child-source pin stays comment/string insensitive). Vendored source
-// edges are exactly the string-valued `#[path]` and `include!` sites, so the
-// values must be visible here.
+// One lexer for every vendored source decision. `proc_macro2` owns comments,
+// raw strings (including `br"..."` / `cr"..."`), literals and delimiter
+// matching; this file only projects and inspects the token tree. `Group`
+// nesting is the depth that decides whether a `#[path]` is at file top level.
 #[derive(Debug, PartialEq)]
 enum SourceToken {
     Ident(String),
-    Str { value: String, escaped: bool },
+    Literal(String),
     Punct(char),
+    Group {
+        delimiter: Delimiter,
+        tokens: Vec<SourceToken>,
+    },
 }
 
-fn source_tokens(source: &str) -> Vec<SourceToken> {
-    let bytes = source.as_bytes();
-    let mut i = 0;
-    let mut tokens = Vec::new();
-    while i < bytes.len() {
-        if bytes[i..].starts_with(b"//") {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-        } else if bytes[i..].starts_with(b"/*") {
-            i += 2;
-            let mut depth = 1;
-            while depth != 0 {
-                assert!(i < bytes.len(), "unclosed comment");
-                if bytes[i..].starts_with(b"/*") {
-                    depth += 1;
-                    i += 2;
-                } else if bytes[i..].starts_with(b"*/") {
-                    depth -= 1;
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-        } else if bytes[i] == b'r'
-            && bytes[i + 1..].iter().copied().find(|&b| b != b'#') == Some(b'"')
-        {
-            let hashes = bytes[i + 1..].iter().take_while(|&&b| b == b'#').count();
-            i += hashes + 2;
-            let start = i;
-            loop {
-                assert!(i < bytes.len(), "unclosed raw string");
-                if bytes[i] == b'"'
-                    && bytes
-                        .get(i + 1..i + 1 + hashes)
-                        .is_some_and(|suffix| suffix.iter().all(|&b| b == b'#'))
-                {
-                    let value = String::from_utf8_lossy(&bytes[start..i]).into_owned();
-                    i += hashes + 1;
-                    tokens.push(SourceToken::Str {
-                        value,
-                        escaped: false,
-                    });
-                    break;
-                }
-                i += 1;
-            }
-        } else if bytes[i] == b'r'
-            && bytes.get(i + 1) == Some(&b'#')
-            && bytes
-                .get(i + 2)
-                .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
-        {
-            // Raw identifiers (`r#path`, `r#include!`) name the same item as
-            // their plain spelling. Normalize to the bare identifier so every
-            // identifier-text check sees one shape instead of `r`, `#`, name.
-            let start = i + 2;
-            i = start;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            tokens.push(SourceToken::Ident(source[start..i].to_owned()));
-        } else if bytes[i] == b'"' {
-            i += 1;
-            let mut value = Vec::new();
-            let mut escaped = false;
-            loop {
-                assert!(i < bytes.len(), "unclosed string");
-                match bytes[i] {
-                    b'\\' => {
-                        escaped = true;
-                        i += 2;
-                    }
-                    b'"' => {
-                        i += 1;
-                        break;
-                    }
-                    byte => {
-                        value.push(byte);
-                        i += 1;
-                    }
-                }
-            }
-            tokens.push(SourceToken::Str {
-                value: String::from_utf8_lossy(&value).into_owned(),
-                escaped,
-            });
-        } else if bytes[i] == b'\''
-            && (bytes.get(i + 2) == Some(&b'\'')
-                || (bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'')))
-        {
-            i += if bytes[i + 1] == b'\\' { 4 } else { 3 };
-        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
-            let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            tokens.push(SourceToken::Ident(source[start..i].to_owned()));
-        } else {
-            if !bytes[i].is_ascii_whitespace() {
-                tokens.push(SourceToken::Punct(char::from(bytes[i])));
-            }
-            i += 1;
-        }
+fn lex_source(source: &str) -> Result<Vec<SourceToken>, proc_macro2::LexError> {
+    let stream = TokenStream::from_str(source)?;
+    Ok(lex_stream(stream))
+}
+
+fn lex_stream(stream: TokenStream) -> Vec<SourceToken> {
+    stream
+        .into_iter()
+        .map(|token| match token {
+            TokenTree::Ident(ident) => SourceToken::Ident(ident_text(&ident)),
+            TokenTree::Literal(literal) => SourceToken::Literal(literal.to_string()),
+            TokenTree::Punct(punct) => SourceToken::Punct(punct.as_char()),
+            TokenTree::Group(group) => SourceToken::Group {
+                delimiter: group.delimiter(),
+                tokens: lex_stream(group.stream()),
+            },
+        })
+        .collect()
+}
+
+// `r#path` and `r#include` name the same item as their plain spelling. Normalize
+// at the lexer boundary so every identifier check has one shape.
+fn ident_text(ident: &Ident) -> String {
+    let text = ident.to_string();
+    text.strip_prefix("r#").unwrap_or(&text).to_owned()
+}
+
+fn delimiter_chars(delimiter: Delimiter) -> Option<(char, char)> {
+    match delimiter {
+        Delimiter::Parenthesis => Some(('(', ')')),
+        Delimiter::Brace => Some(('{', '}')),
+        Delimiter::Bracket => Some(('[', ']')),
+        Delimiter::None => None,
     }
-    tokens
+}
+
+// Only a plain string without escapes or a raw string is a static path. Bytes,
+// C strings, escaped strings and suffixed literals are rejected: a new literal
+// shape must extend this scanner instead of silently skipping an edge.
+fn plain_string_value(literal: &str) -> Option<String> {
+    if literal.starts_with('"') {
+        let value = literal.strip_prefix('"')?.strip_suffix('"')?;
+        return (!value.contains('\\') && !value.contains('"')).then(|| value.to_owned());
+    }
+    let rest = literal.strip_prefix('r')?;
+    let hashes = rest.bytes().take_while(|byte| *byte == b'#').count();
+    let body = rest[hashes..].strip_prefix('"')?;
+    let closing = format!("\"{}", "#".repeat(hashes));
+    body.strip_suffix(&closing).map(str::to_owned)
 }
 
 fn assert_vendored_source_target(
@@ -308,304 +263,309 @@ fn assert_vendored_source_target(
     target
 }
 
-// Match the delimiter that closes `open_index`, using the tokenizer's own
-// delimiter vocabulary. Used to find the end of a `macro_rules!` body.
-fn matching_delimiter(tokens: &[SourceToken], open_index: usize) -> Option<usize> {
-    let SourceToken::Punct(open) = tokens.get(open_index)? else {
-        return None;
-    };
-    let mut stack = vec![match open {
-        '{' => '}',
-        '(' => ')',
-        '[' => ']',
-        _ => return None,
-    }];
-    for (index, token) in tokens.iter().enumerate().skip(open_index + 1) {
-        match token {
-            SourceToken::Punct('{') => stack.push('}'),
-            SourceToken::Punct('(') => stack.push(')'),
-            SourceToken::Punct('[') => stack.push(']'),
-            SourceToken::Punct(close @ ('}' | ')' | ']')) if stack.last() == Some(close) => {
-                stack.pop();
-                if stack.is_empty() {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-// Fail closed on escaped strings and macro-generated (non-literal) paths:
-// parsing arbitrary macro expansion is out of scope, so a new literal shape
-// must extend this scanner instead of silently skipping an edge.
+// Fail closed on non-literal paths and macro-generated edges: parsing an
+// arbitrary macro expansion is out of scope, so a new literal shape must
+// extend this scanner instead of silently skipping an edge. `#[path]` is only
+// auditable at the file top level: inside any `Group` (a `macro_rules!` body,
+// an inline `mod name { ... }`, the `mod $i { ... }` shape a macro expands to,
+// a function body, or macro invocation arguments) rustc derives the base
+// directory from the expansion context. This scanner would instead audit
+// `<file dir>/<literal>` and could pass a decoy while rustc compiles a
+// different file, so the shape is rejected.
 fn vendored_source_edges(package: &str, directory: &Path, file: &Path) -> Vec<PathBuf> {
-    let source = fs::read_to_string(file).unwrap();
-    let tokens = source_tokens(&source);
-    // A `#[path]` is only auditable when it belongs to the source file itself.
-    // Inside any other `{}` / `()` / `[]` (a `macro_rules!` body, an inline
-    // `mod name { ... }`, the `mod $i { ... }` shape a macro expands to, a
-    // function body, or macro invocation arguments) rustc derives the base
-    // directory from the expansion context; this scanner would instead audit
-    // `<file dir>/<literal>` and could pass a decoy while rustc compiles a
-    // different file. Reproducing rustc's directory ownership rules (they also
-    // differ for crate roots and `mod.rs`) is out of scope, so the shape is
-    // rejected. The attribute's own `#[...]` and `cfg_attr(...)` argument
-    // parentheses are part of the attribute syntax, not a surrounding context,
-    // and are excluded from the depth. Record the nesting depth before every
-    // token so a `path` token can be checked without re-scanning.
-    let mut top_level_before = Vec::with_capacity(tokens.len());
-    let mut attribute_stack: Vec<bool> = Vec::new();
-    let mut depth = 0usize;
-    let mut non_attribute_depth = 0usize;
-    for (index, token) in tokens.iter().enumerate() {
-        top_level_before.push(depth > 0 && non_attribute_depth == 0);
-        match token {
-            SourceToken::Punct(open @ ('{' | '(' | '[')) => {
-                let attribute = match open {
-                    // `#[...]` and `#![...]`.
-                    '[' => {
-                        matches!(
-                            tokens.get(index.wrapping_sub(1)),
-                            Some(SourceToken::Punct('#'))
-                        ) || (matches!(
-                            tokens.get(index.wrapping_sub(1)),
-                            Some(SourceToken::Punct('!'))
-                        ) && matches!(
-                            tokens.get(index.wrapping_sub(2)),
-                            Some(SourceToken::Punct('#'))
-                        ))
-                    }
-                    // The `cfg_attr(...)` argument list that belongs to an
-                    // enclosing attribute.
-                    '(' => {
-                        matches!(
-                            tokens.get(index.wrapping_sub(1)),
-                            Some(SourceToken::Ident(word)) if word == "cfg_attr"
-                        ) && attribute_stack.last() == Some(&true)
-                    }
-                    _ => false,
-                };
-                if !attribute {
-                    non_attribute_depth += 1;
-                }
-                attribute_stack.push(attribute);
-                depth += 1;
-            }
-            SourceToken::Punct('}' | ')' | ']') => {
-                if attribute_stack.pop() == Some(false) {
-                    non_attribute_depth = non_attribute_depth.saturating_sub(1);
-                }
-                depth = depth.saturating_sub(1);
-            }
-            _ => {}
-        }
-    }
-    // `include!` inside a `macro_rules!` definition is resolved at the
-    // expansion site, which may be a different file from the definition, so
-    // the base directory is not statically knowable here. Record every
-    // `macro_rules! name <body>` body delimiter and its close.
-    let mut macro_opens = HashSet::new();
-    let mut macro_closes = HashSet::new();
-    let mut index = 0;
-    while index + 1 < tokens.len() {
-        if matches!(&tokens[index], SourceToken::Ident(word) if word == "macro_rules")
-            && tokens.get(index + 1) == Some(&SourceToken::Punct('!'))
-        {
-            let mut cursor = index + 2;
-            if matches!(tokens.get(cursor), Some(SourceToken::Ident(_))) {
-                cursor += 1;
-            }
-            if let Some(SourceToken::Punct('{' | '(' | '[')) = tokens.get(cursor) {
-                if let Some(close) = matching_delimiter(&tokens, cursor) {
-                    macro_closes.insert(close);
-                }
-                // If the body is unterminated, treat everything after the
-                // opener as inside it: fail closed rather than skip.
-                macro_opens.insert(cursor);
-            }
-        }
-        index += 1;
-    }
-    let mut targets = Vec::new();
-    let mut macro_depth = 0usize;
-    for (index, token) in tokens.iter().enumerate() {
-        if macro_opens.contains(&index) {
-            macro_depth += 1;
-        }
-        if macro_closes.contains(&index) {
-            macro_depth -= 1;
-        }
-        let SourceToken::Ident(word) = token else {
-            continue;
-        };
-        // `#[path = "..."]` and the `cfg_attr(..., path = "...")` shape.
-        // A preceding `[` or `,` distinguishes an attribute from an
-        // ordinary `let path = "..."` binding.
-        if word == "path"
-            && matches!(
-                tokens.get(index.wrapping_sub(1)),
-                Some(SourceToken::Punct('[')) | Some(SourceToken::Punct(','))
-            )
-            && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
-        {
-            assert!(
-                top_level_before[index],
-                "vendored package {package} #[path] must appear at the file top level; a non-top-level #[path] (macro body, `mod $i {{ ... }}`, inline module, function body, or macro argument) has a base directory determined by the expansion context, so this scanner rejects it: {}",
-                file.display()
-            );
-            match tokens.get(index + 2) {
-                Some(SourceToken::Str { value, escaped }) => {
-                    assert!(
-                        !escaped,
-                        "vendored package {package} #[path] must be a plain string literal: {}",
-                        file.display()
-                    );
-                    targets.push(assert_vendored_source_target(
-                        package, directory, file, "#[path]", value,
-                    ));
-                }
-                _ => panic!(
-                    "vendored package {package} #[path] must be a plain string literal: {}",
-                    file.display()
-                ),
-            }
-        }
-        // `include!("...")`, including `include ! ( "..." )` spacing.
-        if word == "include"
-            && tokens.get(index + 1) == Some(&SourceToken::Punct('!'))
-            && matches!(
-                tokens.get(index + 2),
-                Some(SourceToken::Punct('('))
-                    | Some(SourceToken::Punct('['))
-                    | Some(SourceToken::Punct('{'))
-            )
-        {
-            assert!(
-                macro_depth == 0,
-                "vendored package {package} include! appears inside a macro_rules! definition body; the expansion site may be a different file, so the base directory cannot be determined statically; fail closed: {}",
-                file.display()
-            );
-            match tokens.get(index + 3) {
-                Some(SourceToken::Str { value, escaped }) => {
-                    assert!(
-                        !escaped,
-                        "vendored package {package} include! must be a plain string literal: {}",
-                        file.display()
-                    );
-                    targets.push(assert_vendored_source_target(
-                        package, directory, file, "include!", value,
-                    ));
-                }
-                _ => panic!(
-                    "vendored package {package} include! must be a plain string literal: {}",
-                    file.display()
-                ),
-            }
-        }
-    }
-    targets
+    let source = read_vendored_source(package, file);
+    let tokens = lex_source(&source).unwrap_or_else(|error| {
+        panic!(
+            "vendored package {package} source is not lexable Rust; fail closed: {} ({error})",
+            file.display()
+        )
+    });
+    let mut scanner = EdgeScanner {
+        package,
+        directory,
+        file,
+        targets: Vec::new(),
+        macro_depth: 0,
+    };
+    scanner.walk(&tokens, true);
+    scanner.targets
 }
 
-// Remove Rust comments while preserving strings, raw strings, and char
-// literals: comment text is not compiled, but a `/*` or `//` inside a string
-// must not swallow code that follows it. Block comments nest, matching rustc.
-fn strip_comments(source: &str) -> String {
-    let bytes = source.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i..].starts_with(b"//") {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            out.push(b' ');
-        } else if bytes[i..].starts_with(b"/*") {
-            i += 2;
-            let mut depth = 1usize;
-            while depth != 0 && i < bytes.len() {
-                if bytes[i..].starts_with(b"/*") {
-                    depth += 1;
-                    i += 2;
-                } else if bytes[i..].starts_with(b"*/") {
-                    depth -= 1;
-                    i += 2;
+// The `.rs` branch and the candidate branch both read bytes first so an
+// invalid-UTF-8 source is reported as this guard's own fail-closed panic
+// instead of an `unwrap` of `io::ErrorKind::InvalidData`.
+fn read_vendored_source(package: &str, file: &Path) -> String {
+    let bytes = fs::read(file).unwrap_or_else(|error| {
+        panic!(
+            "vendored package {package} source cannot be read: {} ({error})",
+            file.display()
+        )
+    });
+    String::from_utf8(bytes).unwrap_or_else(|error| {
+        panic!(
+            "vendored package {package} source is not valid UTF-8; fail closed: {} ({error})",
+            file.display()
+        )
+    })
+}
+
+struct EdgeScanner<'a> {
+    package: &'a str,
+    directory: &'a Path,
+    file: &'a Path,
+    targets: Vec<PathBuf>,
+    macro_depth: usize,
+}
+
+impl EdgeScanner<'_> {
+    fn walk(&mut self, tokens: &[SourceToken], top_level: bool) {
+        let mut index = 0;
+        while index < tokens.len() {
+            // `#[...]` and `#![...]` are attribute syntax, not ordinary
+            // nesting. `cfg_attr(...)` argument groups stay part of the
+            // attribute and are walked by `attribute`.
+            if tokens[index] == SourceToken::Punct('#') {
+                let attribute = if tokens.get(index + 1) == Some(&SourceToken::Punct('!')) {
+                    index + 2
                 } else {
-                    i += 1;
-                }
-            }
-            out.push(b' ');
-        } else if bytes[i] == b'r'
-            && bytes[i + 1..].iter().copied().find(|&byte| byte != b'#') == Some(b'"')
-        {
-            let hashes = bytes[i + 1..]
-                .iter()
-                .take_while(|&&byte| byte == b'#')
-                .count();
-            let mut end = i + hashes + 2;
-            while end < bytes.len() {
-                if bytes[end] == b'"'
-                    && bytes
-                        .get(end + 1..end + 1 + hashes)
-                        .is_some_and(|suffix| suffix.iter().all(|&byte| byte == b'#'))
+                    index + 1
+                };
+                if let Some(SourceToken::Group {
+                    delimiter: Delimiter::Bracket,
+                    tokens: attribute_tokens,
+                }) = tokens.get(attribute)
                 {
-                    end += hashes + 1;
-                    break;
-                }
-                end += 1;
-            }
-            out.extend_from_slice(&bytes[i..end]);
-            i = end;
-        } else if bytes[i] == b'"' {
-            let start = i;
-            i += 1;
-            while i < bytes.len() {
-                match bytes[i] {
-                    b'\\' => i += 2,
-                    b'"' => {
-                        i += 1;
-                        break;
-                    }
-                    _ => i += 1,
+                    self.attribute(attribute_tokens, top_level);
+                    index = attribute + 1;
+                    continue;
                 }
             }
-            out.extend_from_slice(&bytes[start..i.min(bytes.len())]);
-            i = i.min(bytes.len());
-        } else if bytes[i] == b'\''
-            && (bytes.get(i + 2) == Some(&b'\'')
-                || (bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'')))
-        {
-            let end = i + if bytes[i + 1] == b'\\' { 4 } else { 3 };
-            out.extend_from_slice(&bytes[i..end.min(bytes.len())]);
-            i = end.min(bytes.len());
-        } else {
-            out.push(bytes[i]);
-            i += 1;
+            if matches!(&tokens[index], SourceToken::Ident(word) if word == "include")
+                && tokens.get(index + 1) == Some(&SourceToken::Punct('!'))
+                && let Some(SourceToken::Group {
+                    tokens: arguments, ..
+                }) = tokens.get(index + 2)
+            {
+                assert!(
+                    self.macro_depth == 0,
+                    "vendored package {} include! appears inside a macro_rules! definition body; the expansion site may be a different file, so the base directory cannot be determined statically; fail closed: {}",
+                    self.package,
+                    self.file.display()
+                );
+                self.include(arguments);
+                index += 3;
+                continue;
+            }
+            if matches!(&tokens[index], SourceToken::Ident(word) if word == "macro_rules")
+                && let Some(body) = macro_body(tokens, index)
+            {
+                if let SourceToken::Group {
+                    tokens: body_tokens,
+                    ..
+                } = &tokens[body]
+                {
+                    self.macro_depth += 1;
+                    self.walk(body_tokens, false);
+                    self.macro_depth -= 1;
+                }
+                index = body + 1;
+                continue;
+            }
+            // Any other group is a module body, function body, or macro
+            // argument list: its inner `#[path]` is not at file top level.
+            if let SourceToken::Group { tokens: inner, .. } = &tokens[index] {
+                self.walk(inner, false);
+            }
+            index += 1;
         }
     }
-    String::from_utf8(out).expect("comment stripping preserves UTF-8")
+
+    // `#[path = "..."]`, `#[r#path = "..."]` and the nested
+    // `cfg_attr(..., path|r#path = "...")` form. doc comments arrive as
+    // `#[doc = "..."]`; their text is a literal, never an edge.
+    fn attribute(&mut self, tokens: &[SourceToken], top_level: bool) {
+        if let Some(SourceToken::Ident(name)) = tokens.first()
+            && name == "doc"
+        {
+            return;
+        }
+        self.attribute_paths(tokens, top_level);
+    }
+
+    fn attribute_paths(&mut self, tokens: &[SourceToken], top_level: bool) {
+        for (index, token) in tokens.iter().enumerate() {
+            if matches!(token, SourceToken::Ident(word) if word == "path")
+                && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
+            {
+                assert!(
+                    top_level,
+                    "vendored package {} #[path] must appear at the file top level; a non-top-level #[path] (macro body, `mod $i {{ ... }}`, inline module, function body, or macro argument) has a base directory determined by the expansion context, so this scanner rejects it: {}",
+                    self.package,
+                    self.file.display()
+                );
+                let literal = match tokens.get(index + 2) {
+                    Some(SourceToken::Literal(literal)) => literal,
+                    _ => self.reject_literal("#[path]"),
+                };
+                let value =
+                    plain_string_value(literal).unwrap_or_else(|| self.reject_literal("#[path]"));
+                self.targets.push(assert_vendored_source_target(
+                    self.package,
+                    self.directory,
+                    self.file,
+                    "#[path]",
+                    &value,
+                ));
+            }
+            if let SourceToken::Group { tokens: inner, .. } = token {
+                self.attribute_paths(inner, top_level);
+            }
+        }
+    }
+
+    fn include(&mut self, arguments: &[SourceToken]) {
+        let [SourceToken::Literal(literal)] = arguments else {
+            self.reject_literal("include!");
+        };
+        let value = plain_string_value(literal).unwrap_or_else(|| self.reject_literal("include!"));
+        self.targets.push(assert_vendored_source_target(
+            self.package,
+            self.directory,
+            self.file,
+            "include!",
+            &value,
+        ));
+    }
+
+    fn reject_literal(&self, kind: &str) -> ! {
+        panic!(
+            "vendored package {} {kind} must be a plain string literal: {}",
+            self.package,
+            self.file.display()
+        )
+    }
+}
+
+// `macro_rules! name <body>` uses `{`, `(` or `[` for the body. Return the
+// group index; anything after the optional name that is not a group is not a
+// definition this scanner can attribute.
+fn macro_body(tokens: &[SourceToken], index: usize) -> Option<usize> {
+    if tokens.get(index + 1) != Some(&SourceToken::Punct('!')) {
+        return None;
+    }
+    let mut cursor = index + 2;
+    if matches!(tokens.get(cursor), Some(SourceToken::Ident(_))) {
+        cursor += 1;
+    }
+    match tokens.get(cursor) {
+        Some(SourceToken::Group { .. }) => Some(cursor),
+        _ => None,
+    }
 }
 
 // Scan every file that can name a source edge, not only `.rs`: `#[path]` and
-// `include!` compile targets with any extension or none. Strip comments first
-// (nested block and line comments), then whitespace, so `include/*c*/!(` and
-// `#/*c*/[/*c*/path = ...]` cannot hide a marker. Non-UTF-8 files are binary
-// payloads (e.g. the ICU collator blobs), which rustc cannot compile as Rust
-// source and which therefore cannot introduce an edge; skip them instead of
-// failing the whole guard on data files.
-fn vendored_source_mentions_edge(path: &Path) -> bool {
-    let Ok(text) = String::from_utf8(fs::read(path).unwrap()) else {
+// `include!` compile targets with any extension or none. A non-UTF-8 file is a
+// binary payload (e.g. the ICU collator blobs), which rustc cannot compile as
+// Rust source and which therefore cannot introduce an edge; skip it. A
+// non-`.rs` file that proc-macro2 cannot lex is ordinary text only when its
+// whitespace-stripped text contains no edge marker; otherwise fail closed.
+// The marker test must stay syntax-shaped: bare `path` / `include` substrings
+// appear in ordinary files (the real vendored `Cargo.toml` `path = ...`,
+// `LICENSE` "include", `README.md`, `encoder.json`, `vocab.bpe`), and rejecting
+// those would make the real positive control fail. `include!` / `#[path` /
+// `cfg_attr(...path=...)` are the only spellings that can name an edge.
+fn vendored_source_mentions_edge(package: &str, path: &Path) -> bool {
+    let bytes = fs::read(path).unwrap_or_else(|error| {
+        panic!(
+            "vendored package {package} source cannot be read: {} ({error})",
+            path.display()
+        )
+    });
+    let Ok(text) = String::from_utf8(bytes) else {
         return false;
     };
-    let uncommented = strip_comments(&text);
-    let compact: String = uncommented
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .collect();
-    ["#[path", "#[r#path", "path=", "include!", "r#include!"]
-        .iter()
-        .any(|marker| compact.contains(marker))
+    match lex_source(&text) {
+        Ok(tokens) => lexemes_name_edge(&tokens),
+        Err(_) => {
+            let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+            assert!(
+                !text_names_edge(&compact),
+                "vendored package {package} non-.rs file cannot be lexed as Rust but contains a `#[path]` / `include!` edge marker: {}",
+                path.display()
+            );
+            false
+        }
+    }
+}
+
+// The text fallback for an unlexable non-`.rs` file. Comments are irrelevant
+// here because `from_str` has already failed; a marker split by whitespace is
+// still caught after compaction. `cfg_attr` only counts together with a
+// `path =` / `r#path =` argument, so `Cargo.toml`-style `path = "..."` alone
+// does not reject a plain text file.
+fn text_names_edge(compact: &str) -> bool {
+    compact.contains("#[path")
+        || compact.contains("#[r#path")
+        || compact.contains("include!")
+        || compact.contains("r#include!")
+        || (compact.contains("cfg_attr")
+            && (compact.contains("path=") || compact.contains("r#path=")))
+}
+
+// Candidate test over the same token tree: `#` followed by a bracket group
+// whose tokens contain a `path` attribute key, or `include` followed by `!`.
+fn lexemes_name_edge(tokens: &[SourceToken]) -> bool {
+    let mut index = 0;
+    while index < tokens.len() {
+        if matches!(&tokens[index], SourceToken::Ident(word) if word == "include")
+            && tokens.get(index + 1) == Some(&SourceToken::Punct('!'))
+        {
+            return true;
+        }
+        if tokens[index] == SourceToken::Punct('#') {
+            let attribute = if tokens.get(index + 1) == Some(&SourceToken::Punct('!')) {
+                index + 2
+            } else {
+                index + 1
+            };
+            if let Some(SourceToken::Group {
+                delimiter: Delimiter::Bracket,
+                tokens: attribute_tokens,
+            }) = tokens.get(attribute)
+                && attribute_names_path(attribute_tokens)
+            {
+                return true;
+            }
+        }
+        if let SourceToken::Group { tokens: inner, .. } = &tokens[index]
+            && lexemes_name_edge(inner)
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn attribute_names_path(tokens: &[SourceToken]) -> bool {
+    if let Some(SourceToken::Ident(name)) = tokens.first()
+        && name == "doc"
+    {
+        return false;
+    }
+    for (index, token) in tokens.iter().enumerate() {
+        if matches!(token, SourceToken::Ident(word) if word == "path")
+            && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
+        {
+            return true;
+        }
+        if let SourceToken::Group { tokens: inner, .. } = token
+            && attribute_names_path(inner)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn collect_vendored_source_candidates(package: &str, directory: &Path, files: &mut Vec<PathBuf>) {
@@ -621,7 +581,7 @@ fn collect_vendored_source_candidates(package: &str, directory: &Path, files: &m
             collect_vendored_source_candidates(package, &path, files);
         } else if kind.is_file()
             && (path.extension().and_then(|extension| extension.to_str()) == Some("rs")
-                || vendored_source_mentions_edge(&path))
+                || vendored_source_mentions_edge(package, &path))
         {
             files.push(path);
         }
@@ -843,88 +803,50 @@ fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
     }
 }
 
-// Skip nested comments and ordinary/raw strings before counting Rust tokens.
-// Character literals are skipped too; lifetimes remain ordinary tokens.
+// Project the one proc-macro2 lexer to identifier/punctuation text for the
+// child-source pin. String/char/doc literals are dropped so their text does
+// not matter, but numeric literal text stays: the old byte lexer exposed the
+// digits of `32`, so dropping them would silently stop the pin from noticing
+// a changed signal range. Comments are already gone from the token stream, and
+// group delimiters stay punctuation.
 fn rust_tokens(source: &str) -> Vec<String> {
-    let bytes = source.as_bytes();
-    let mut i = 0;
-    let mut tokens = Vec::new();
-    while i < bytes.len() {
-        if bytes[i..].starts_with(b"//") {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
+    let tokens = lex_source(source).expect("child crate source is lexable Rust");
+    let mut projected = Vec::new();
+    project_tokens(&tokens, &mut projected);
+    projected
+}
+
+fn project_tokens(tokens: &[SourceToken], projected: &mut Vec<String>) {
+    for token in tokens {
+        match token {
+            SourceToken::Ident(word) => projected.push(word.clone()),
+            SourceToken::Punct(ch) => projected.push(ch.to_string()),
+            SourceToken::Literal(text) => {
+                if text.as_bytes().first().is_some_and(u8::is_ascii_digit) {
+                    projected.push(text.clone());
+                }
             }
-        } else if bytes[i..].starts_with(b"/*") {
-            i += 2;
-            let mut depth = 1;
-            while depth != 0 {
-                assert!(i < bytes.len(), "unclosed comment");
-                if bytes[i..].starts_with(b"/*") {
-                    depth += 1;
-                    i += 2;
-                } else if bytes[i..].starts_with(b"*/") {
-                    depth -= 1;
-                    i += 2;
+            SourceToken::Group { delimiter, tokens } => {
+                if let Some((open, close)) = delimiter_chars(*delimiter) {
+                    projected.push(open.to_string());
+                    project_tokens(tokens, projected);
+                    projected.push(close.to_string());
                 } else {
-                    i += 1;
+                    project_tokens(tokens, projected);
                 }
             }
-        } else if bytes[i] == b'r'
-            && bytes[i + 1..].iter().copied().find(|&b| b != b'#') == Some(b'"')
-        {
-            let hashes = bytes[i + 1..].iter().take_while(|&&b| b == b'#').count();
-            i += hashes + 2;
-            loop {
-                assert!(i < bytes.len(), "unclosed raw string");
-                if bytes[i] == b'"'
-                    && bytes
-                        .get(i + 1..i + 1 + hashes)
-                        .is_some_and(|suffix| suffix.iter().all(|&b| b == b'#'))
-                {
-                    i += hashes + 1;
-                    break;
-                }
-                i += 1;
-            }
-        } else if bytes[i] == b'"' {
-            i += 1;
-            loop {
-                assert!(i < bytes.len(), "unclosed string");
-                match bytes[i] {
-                    b'\\' => i += 2,
-                    b'"' => {
-                        i += 1;
-                        break;
-                    }
-                    _ => i += 1,
-                }
-            }
-        } else if bytes[i] == b'\''
-            && (bytes.get(i + 2) == Some(&b'\'')
-                || (bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'')))
-        {
-            i += if bytes[i + 1] == b'\\' { 4 } else { 3 };
-        } else if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
-            let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            tokens.push(source[start..i].to_owned());
-        } else {
-            if !bytes[i].is_ascii_whitespace() {
-                tokens.push(char::from(bytes[i]).to_string());
-            }
-            i += 1;
         }
     }
-    tokens
 }
 
 // The complete expected content of pilotdeck-child-signals/src/lib.rs
-// (comments stripped by `rust_tokens`, so comment-only edits pass; every
-// other change — imports, type aliases shadowing `libc`, helper items, a
-// moved or copied unsafe block — changes the token sequence). ANY change to
-// that file must update this copy in the same commit and re-extends the
+// (proc-macro2 strips line/block comments; the projection drops string, char
+// and doc literals but keeps numeric literal text, so comment text edits pass
+// while a changed number still fails. Adding or removing a doc attribute does
+// change the token sequence because its `#[doc = ...]` name/punctuation
+// remains. Every other change — imports, type aliases shadowing `libc`, helper
+// items, a moved or copied unsafe block — changes the token sequence). ANY
+// change to that file must update this copy in the same commit and re-extends
 // #386/#552 human-approved unsafe exception; do not edit either side alone.
 // Source order: the #386 signal reset, then the #552 setsid.
 const CHILD_SOURCE: &str = r#"
@@ -1789,16 +1711,39 @@ mod vendored_edge_negative_controls {
     #[test]
     fn non_rust_tokenizer_failure_is_fail_closed() {
         let fixture = Fixture::new();
-        // The marker makes the non-`.rs` file a candidate; a tokenizer failure
-        // must reject it instead of skipping the file.
+        // The edge marker makes the non-`.rs` file a candidate; a lexer
+        // failure must reject it instead of skipping the file.
         let source = fixture.source("data/broken.inc", "include!(\"x\");\n\"unclosed\n");
-        let mut files = Vec::new();
-        collect_vendored_source_candidates("fixture", &fixture.package, &mut files);
-        assert!(files.contains(&source), "{files:?}");
+        let message = rejection(|| {
+            let mut files = Vec::new();
+            collect_vendored_source_candidates("fixture", &fixture.package, &mut files);
+        });
+        assert!(message.contains("cannot be lexed as Rust"), "{message}");
         let message = rejection(|| {
             scan(&fixture.package, &source);
         });
-        assert!(message.contains("unclosed string"), "{message}");
+        assert!(message.contains("not lexable Rust"), "{message}");
+    }
+
+    #[test]
+    fn plain_text_without_edge_markers_is_not_collected() {
+        let fixture = Fixture::new();
+        // The real vendored tree has files like these: `Cargo.toml` has
+        // `path = "src/lib.rs"`, `LICENSE` contains the word "include", and
+        // both fail proc-macro2's Rust token parse. They are not Rust source
+        // and must not be collected or rejected.
+        fixture.source(
+            "data/Cargo.toml",
+            "[package]\nname = \"x\"\n[lib]\npath = \"src/lib.rs\"\n",
+        );
+        fixture.source(
+            "data/LICENSE",
+            "Permission is hereby granted to include this text \"without\nrestriction, including without limitation the rights\n",
+        );
+        fixture.source("data/README.md", "This README mentions include and path.\n");
+        let mut files = Vec::new();
+        collect_vendored_source_candidates("fixture", &fixture.package, &mut files);
+        assert!(files.is_empty(), "{files:?}");
     }
 
     #[test]
@@ -1850,5 +1795,328 @@ mod vendored_edge_negative_controls {
         files.sort();
         expected.sort();
         assert_eq!(files, expected);
+    }
+
+    // r5 P0 regression: `br"\"` / `cr"\"` are valid raw byte/C strings. A hand
+    // lexer read the `b` / `c` as an identifier and then treated `\"` as an
+    // escaped quote, swallowing the real `#[path]` / `include!` that follows.
+    #[test]
+    fn raw_byte_and_c_string_prefixes_do_not_hide_edges() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        for source in [
+            r#"const A: &[u8] = br"\"; #[path = "../../outside.rs"] mod m; const B: &str = "z";"#,
+            r#"const A: &str = cr"\"; #[path = "../../outside.rs"] mod m; const B: &str = "z";"#,
+        ] {
+            let file = fixture.source("raw_path.rs", source);
+            let message = rejection(|| {
+                scan(&fixture.package, &file);
+            });
+            assert!(
+                message.contains("escapes its package directory"),
+                "{source}: {message}"
+            );
+        }
+        for source in [
+            r#"const A: &[u8] = br"\"; include!("../../outside.rs"); const B: &str = "z";"#,
+            r#"const A: &str = cr"\"; include!("../../outside.rs"); const B: &str = "z";"#,
+        ] {
+            let file = fixture.source("raw_include.rs", source);
+            let message = rejection(|| {
+                scan(&fixture.package, &file);
+            });
+            assert!(
+                message.contains("escapes its package directory"),
+                "{source}: {message}"
+            );
+        }
+        // Positive pairing: the same raw-string prefix with an in-package
+        // target must still resolve, not be skipped or rejected.
+        let leaf = fixture.source("inside.rs", "// inside\n");
+        let valid_path = fixture.source(
+            "raw_valid_path.rs",
+            r#"const A: &[u8] = br"\"; #[path = "inside.rs"] mod m;"#,
+        );
+        assert_eq!(
+            scan(&fixture.package, &valid_path),
+            vec![leaf.canonicalize().unwrap()]
+        );
+        let data = fixture.source("inside.inc", "// inside include\n");
+        let valid_include = fixture.source(
+            "raw_valid_include.rs",
+            r#"const A: &str = cr"\"; include!("inside.inc");"#,
+        );
+        assert_eq!(
+            scan(&fixture.package, &valid_include),
+            vec![data.canonicalize().unwrap()]
+        );
+    }
+
+    // proc-macro2 turns `///` / `//!` into `#[doc = "..."]`. The doc text is a
+    // string literal, so a `#[path]` written inside documentation is not an
+    // edge; this is the positive control for the doc-name rule.
+    #[test]
+    fn doc_comment_text_is_not_an_edge() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        let source = fixture.source(
+            "documented.rs",
+            "//! #[path = \"../../outside.rs\"]\n\
+             /// #[path = \"../../outside.rs\"]\n\
+             #[doc = \"#[path = \\\"../../outside.rs\\\"]\"]\n\
+             fn f() {}\n",
+        );
+        assert!(scan(&fixture.package, &source).is_empty());
+    }
+
+    // Only a plain string without escapes or a raw string is a static path.
+    // Bytes, C strings, escaped strings and suffixed literals must fail closed
+    // instead of being read as a path with a prefix/suffix.
+    #[test]
+    fn non_plain_path_and_include_literals_are_rejected() {
+        let fixture = Fixture::new();
+        for literal in [
+            r#"b"../outside.rs""#,
+            r#"br"../outside.rs""#,
+            r#"c"../outside.rs""#,
+            r#"cr"../outside.rs""#,
+            r#""..\u{2f}outside.rs""#,
+            r#""x"suffix"#,
+        ] {
+            let source =
+                fixture.source("literal_path.rs", &format!("#[path = {literal}] mod m;\n"));
+            let message = rejection(|| {
+                scan(&fixture.package, &source);
+            });
+            assert!(
+                message.contains("#[path] must be a plain string literal"),
+                "{literal}: {message}"
+            );
+        }
+        for literal in [
+            r#"b"data.inc""#,
+            r#"br"data.inc""#,
+            r#"c"data.inc""#,
+            r#"cr"data.inc""#,
+            r#""data\u{2e}inc""#,
+            r#""x"suffix"#,
+        ] {
+            let source = fixture.source("literal_include.rs", &format!("include!({literal});\n"));
+            let message = rejection(|| {
+                scan(&fixture.package, &source);
+            });
+            assert!(
+                message.contains("include! must be a plain string literal"),
+                "{literal}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_string_path_and_include_are_accepted() {
+        let fixture = Fixture::new();
+        let raw_path = fixture.source("raw/leaf.rs", "// raw path target\n");
+        let raw_include = fixture.source("raw/data.inc", "// raw include target\n");
+        let source = fixture.source(
+            "raw_literals.rs",
+            "#[path = r\"raw/leaf.rs\"] mod leaf;\n\
+             include!(r#\"raw/data.inc\"#);\n",
+        );
+        let mut targets = scan(&fixture.package, &source);
+        let mut expected = vec![
+            raw_path.canonicalize().unwrap(),
+            raw_include.canonicalize().unwrap(),
+        ];
+        targets.sort();
+        expected.sort();
+        assert_eq!(targets, expected);
+    }
+
+    #[test]
+    fn unlexable_rust_source_is_fail_closed() {
+        let fixture = Fixture::new();
+        // `.rs` files are always candidates; a lexer failure must reject them
+        // instead of skipping or falling back to text.
+        let source = fixture.source("broken.rs", "\"unclosed\n");
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(message.contains("not lexable Rust"), "{message}");
+    }
+
+    #[test]
+    fn non_utf8_rust_source_is_fail_closed() {
+        let fixture = Fixture::new();
+        let source = fixture.package.join("src/broken.rs");
+        fs::write(&source, [0xff, 0xfe, b'f', b'n']).unwrap();
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(message.contains("not valid UTF-8"), "{message}");
+    }
+
+    fn vendored_metadata(targets: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "id": "fixture",
+            "dependencies": [],
+            "targets": targets,
+        })
+    }
+
+    fn vendored_boundary(package: &Path, metadata: &serde_json::Value) {
+        vendored_package_boundary("fixture", metadata, package, &BTreeSet::new());
+    }
+
+    #[test]
+    fn vendored_non_lib_targets_are_rejected() {
+        let fixture = Fixture::new();
+        let lib = fixture.source("lib.rs", "// lib\n");
+        let metadata = vendored_metadata(serde_json::json!([
+            {"kind": ["bin"], "src_path": lib}
+        ]));
+        let message = rejection(|| {
+            vendored_boundary(&fixture.package, &metadata);
+        });
+        assert!(
+            message.contains("must expose only a lib target"),
+            "{message}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vendored_symlinked_lib_source_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let fixture = Fixture::new();
+        let real = fixture.source("real_lib.rs", "// lib\n");
+        let link = fixture.package.join("src/link_lib.rs");
+        symlink(&real, &link).unwrap();
+        let metadata = vendored_metadata(serde_json::json!([
+            {"kind": ["lib"], "src_path": link}
+        ]));
+        let message = rejection(|| {
+            vendored_boundary(&fixture.package, &metadata);
+        });
+        assert!(message.contains("lib source is a symlink"), "{message}");
+    }
+
+    #[test]
+    fn vendored_lib_source_escape_is_rejected() {
+        let fixture = Fixture::new();
+        let outside = fixture.outside("outside.rs", "// outside the package\n");
+        let metadata = vendored_metadata(serde_json::json!([
+            {"kind": ["lib"], "src_path": outside}
+        ]));
+        let message = rejection(|| {
+            vendored_boundary(&fixture.package, &metadata);
+        });
+        assert!(
+            message.contains("lib source escapes its package directory"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn vendored_lib_source_that_is_not_a_file_is_rejected() {
+        let fixture = Fixture::new();
+        let directory = fixture.package.join("src");
+        let metadata = vendored_metadata(serde_json::json!([
+            {"kind": ["lib"], "src_path": directory}
+        ]));
+        let message = rejection(|| {
+            vendored_boundary(&fixture.package, &metadata);
+        });
+        assert!(message.contains("lib source is not a file"), "{message}");
+    }
+
+    #[test]
+    fn vendored_source_target_not_a_file_and_missing_are_rejected() {
+        let fixture = Fixture::new();
+        let source = fixture.source("lib.rs", "// lib\n");
+        let message = rejection(|| {
+            assert_vendored_source_target("fixture", &fixture.package, &source, "#[path]", ".");
+        });
+        assert!(message.contains("target is not a file"), "{message}");
+        let message = rejection(|| {
+            assert_vendored_source_target(
+                "fixture",
+                &fixture.package,
+                &source,
+                "#[path]",
+                "missing.rs",
+            );
+        });
+        assert!(message.contains("target cannot be resolved"), "{message}");
+    }
+
+    // The real vendored tree is the only positive control. This pins the
+    // candidate sweep's no-false-positive property: `.rs` files are always
+    // collected, but a plain text file that merely mentions `path` /
+    // `include` (Cargo.toml, LICENSE, README, JSON/BPE data) must not be.
+    #[test]
+    fn real_vendored_candidates_are_rust_sources_only() {
+        let gateway = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace = gateway.parent().unwrap();
+        let mut files = Vec::new();
+        for package in VENDORED_PACKAGES {
+            collect_vendored_source_candidates(package, &workspace.join(package), &mut files);
+        }
+        let mut non_rust: Vec<_> = files
+            .iter()
+            .filter(|file| file.extension().and_then(|extension| extension.to_str()) != Some("rs"))
+            .collect();
+        non_rust.sort();
+        println!(
+            "real vendored candidates: {} files, {} non-.rs",
+            files.len(),
+            non_rust.len()
+        );
+        let mut all: Vec<_> = files.iter().collect();
+        all.sort();
+        for file in &all {
+            println!("candidate: {}", file.display());
+        }
+        for file in &non_rust {
+            println!("non-.rs candidate: {}", file.display());
+        }
+        assert!(
+            non_rust.is_empty(),
+            "plain-text vendored files must not be candidates: {non_rust:?}"
+        );
+    }
+
+    #[test]
+    fn child_source_pin_rejects_a_changed_numeric_literal() {
+        // The old byte lexer exposed numeric digits as tokens; the projection
+        // keeps numeric literal text for the same reason. A changed signal
+        // range must still break the full-file pin.
+        let changed = CHILD_SOURCE.replacen("while signal < 32", "while signal < 31", 1);
+        assert_ne!(changed, CHILD_SOURCE);
+        let message = rejection(|| {
+            child_source_boundary(&changed);
+        });
+        assert!(
+            message.contains("pilotdeck-child-signals/src/lib.rs changed"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn vendored_compile_closure_follows_transitive_includes() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        let lib = fixture.source("lib.rs", "include!(\"a.inc\");\n");
+        fixture.source("a.inc", "include!(\"b.inc\");\n");
+        fixture.source("b.inc", "#[path = \"../../outside.rs\"] mod m;\n");
+        let metadata = vendored_metadata(serde_json::json!([
+            {"kind": ["lib"], "src_path": lib}
+        ]));
+        let message = rejection(|| {
+            vendored_boundary(&fixture.package, &metadata);
+        });
+        assert!(
+            message.contains("#[path] target escapes its package directory"),
+            "{message}"
+        );
     }
 }
