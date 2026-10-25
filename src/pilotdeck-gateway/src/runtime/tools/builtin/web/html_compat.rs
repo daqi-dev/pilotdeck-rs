@@ -46,6 +46,72 @@ struct Frame {
     saved_table_depth: usize,
 }
 
+/// The open frame stack plus a per-context frame count.
+///
+/// The old `in select` mode can emit arbitrarily many unmatched end tags. A
+/// linear existence scan over the whole stack on every such tag made a deep
+/// stack of `<template>` frames followed by `</select>` tags quadratic, so
+/// existence is answered from the counts instead. `pop_to` still pops every
+/// frame above the target, but each frame is pushed and popped at most once,
+/// so the total work stays linear in the token count.
+struct FrameStack {
+    frames: Vec<Frame>,
+    select_frames: usize,
+    template_frames: usize,
+}
+
+impl FrameStack {
+    fn new() -> Self {
+        Self {
+            frames: Vec::new(),
+            select_frames: 0,
+            template_frames: 0,
+        }
+    }
+
+    fn last(&self) -> Option<&Frame> {
+        self.frames.last()
+    }
+
+    fn contains(&self, context: Context) -> bool {
+        match context {
+            Context::Select => self.select_frames > 0,
+            Context::Template => self.template_frames > 0,
+        }
+    }
+
+    fn push(&mut self, frame: Frame) {
+        match frame.context {
+            Context::Select => self.select_frames += 1,
+            Context::Template => self.template_frames += 1,
+        }
+        self.frames.push(frame);
+    }
+
+    fn pop(&mut self) -> Option<Frame> {
+        let frame = self.frames.pop()?;
+        match frame.context {
+            Context::Select => self.select_frames -= 1,
+            Context::Template => self.template_frames -= 1,
+        }
+        Some(frame)
+    }
+
+    /// Pop through the nearest frame of `wanted`, restoring its saved table
+    /// depth. An unmatched end tag changes nothing in the old insertion modes.
+    fn pop_to(&mut self, wanted: Context, table_depth: &mut usize) {
+        if !self.contains(wanted) {
+            return;
+        }
+        while let Some(frame) = self.pop() {
+            if frame.context == wanted {
+                *table_depth = frame.saved_table_depth;
+                return;
+            }
+        }
+    }
+}
+
 /// Rewrite the two parser-version gaps to domino 2.2.0 behaviour.
 pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
     if !contains_ci(html.as_bytes(), b"<select") && !contains_ci(html.as_bytes(), b"<search") {
@@ -53,7 +119,7 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
     }
     let bytes = html.as_bytes();
     let mut out = String::with_capacity(html.len());
-    let mut frames: Vec<Frame> = Vec::new();
+    let mut frames = FrameStack::new();
     let mut table_depth = 0usize;
     let mut i = 0usize;
     while i < bytes.len() {
@@ -132,14 +198,14 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
             if is_end {
                 if eq(name, "select") {
                     out.push_str(tag);
-                    pop_frame(&mut frames, &mut table_depth, Context::Select);
+                    frames.pop_to(Context::Select, &mut table_depth);
                 } else if eq(name, "option") || eq(name, "optgroup") || eq(name, "script") {
                     // `</script>` must survive to terminate raw text; the
                     // other two are the only kept end tags in the old mode.
                     out.push_str(tag);
                 } else if eq(name, "template") {
                     out.push_str(tag);
-                    pop_frame(&mut frames, &mut table_depth, Context::Template);
+                    frames.pop_to(Context::Template, &mut table_depth);
                 } else if in_table && closes_select_in_table(name) {
                     // in select in table: close the select and reprocess.
                     close_select(&mut out, &mut frames, &mut table_depth);
@@ -204,7 +270,7 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
                     });
                     table_depth = 0;
                 } else if is_end && eq(name, "template") {
-                    pop_frame(&mut frames, &mut table_depth, Context::Template);
+                    frames.pop_to(Context::Template, &mut table_depth);
                 } else if in_table && is_end && eq(name, "table") {
                     leave_table_element(name, &mut table_depth);
                 } else if !is_end && eq(name, "table") {
@@ -221,22 +287,9 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-fn close_select(out: &mut String, frames: &mut Vec<Frame>, table_depth: &mut usize) {
+fn close_select(out: &mut String, frames: &mut FrameStack, table_depth: &mut usize) {
     out.push_str("</select>");
-    pop_frame(frames, table_depth, Context::Select);
-}
-
-fn pop_frame(frames: &mut Vec<Frame>, table_depth: &mut usize, wanted: Context) {
-    if !frames.iter().any(|frame| frame.context == wanted) {
-        // An unmatched end tag changes nothing in the old insertion modes.
-        return;
-    }
-    while let Some(frame) = frames.pop() {
-        if frame.context == wanted {
-            *table_depth = frame.saved_table_depth;
-            return;
-        }
-    }
+    frames.pop_to(Context::Select, table_depth);
 }
 
 /// True for the constructs whose tokenization or select context this scanner
@@ -797,6 +850,59 @@ mod tests {
         assert_eq!(
             rewritten("<select><template></template><hr>b</select>"),
             "<select><template></template>b</select>"
+        );
+    }
+
+    /// `templates` open `<template>` frames followed by `<select></select>`
+    /// pairs, tiled to exactly `bytes` bytes. Every `</select>` used to scan
+    /// the frame stack bottom-up for a select frame, so N templates × M
+    /// selects was quadratic.
+    fn deep_frame_select_fixture(bytes: usize, templates: usize) -> String {
+        const TEMPLATE: &str = "<template>";
+        const SELECT_PAIR: &str = "<select></select>";
+        let head = TEMPLATE.repeat(templates);
+        let pairs = (bytes - head.len()) / SELECT_PAIR.len();
+        let html = head + &SELECT_PAIR.repeat(pairs);
+        assert_eq!(html.len(), bytes, "fixture must tile exactly");
+        html
+    }
+
+    fn timed_rewrite(html: &str) -> std::time::Duration {
+        let started = std::time::Instant::now();
+        let output = domino_compatible(html);
+        let elapsed = started.elapsed();
+        assert!(
+            output.as_bytes() == html.as_bytes(),
+            "the deep-frame fixture must be rewritten byte-for-byte"
+        );
+        elapsed
+    }
+
+    #[test]
+    fn deep_frame_stack_select_end_tags_stay_within_linear_budget() {
+        // GLM r4's shape: 100,000 nested <template> frames and 434,624
+        // <select></select> pairs are exactly 8 MiB. Each `</select>` closes
+        // the select frame sitting on top of the 100,000 template frames.
+        let half = deep_frame_select_fixture(4 * 1024 * 1024, 50_000);
+        let full = deep_frame_select_fixture(8 * 1024 * 1024, 100_000);
+        let half_elapsed = timed_rewrite(&half);
+        let full_elapsed = timed_rewrite(&full);
+        eprintln!("deep-frame-select: 4 MiB in {half_elapsed:?}, 8 MiB in {full_elapsed:?}");
+        // Calibrated in a debug build (see fix-r4/RESULT.md): the fixed
+        // scanner needs well under 0.5 s for 8 MiB on the reference machine,
+        // so 2 s keeps >4x headroom for a slower CI host, while the quadratic
+        // implementation needs minutes.
+        const BUDGET: f64 = 2.0;
+        assert!(
+            full_elapsed.as_secs_f64() < BUDGET,
+            "8 MiB rewrite took {full_elapsed:?}, budget {BUDGET}s"
+        );
+        // Same shape at half size: linear work may double; allow 3x plus
+        // 150 ms for scheduler/allocator noise. A quadratic scan would need
+        // ~4x on this doubling and is already outside the band.
+        assert!(
+            full_elapsed.as_secs_f64() <= half_elapsed.as_secs_f64() * 3.0 + 0.15,
+            "8 MiB rewrite {full_elapsed:?} did not scale from 4 MiB {half_elapsed:?}"
         );
     }
 }
