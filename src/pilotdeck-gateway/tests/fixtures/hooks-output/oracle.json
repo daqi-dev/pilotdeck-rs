@@ -1,0 +1,152 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "maxStringLength": 536870888,
+  "sourceSha256": {
+    "src/extension/hooks/execution/CommandHookExecutor.ts": "d5867c7d45f82aaf26098b07d11801ce6522b6115f48f9098e9866284484f896",
+    "src/tool/execution-world/ShellPort.ts": "b616fe4e975a902bd4822c6f176f2fa646aa41df41d0ca4c1c202aed80b727b5",
+    "src/tool/execution-world/SubprocessPort.ts": "741522f149f6e01232777fbf5bf8269bff60886c46f81457dae0b9d6c7586d74",
+    "src/tool/builtin/bash/commandRunner.ts": "22f72ae28902b28f7b13675c26a7e6863eb39be4c10949ae224e1a7d6794f4cd"
+  },
+  "large": [
+    {
+      "stream": "stdout",
+      "bytes": 67108864,
+      "stdoutLength": 67108864,
+      "stderrLength": 0,
+      "sha256": "3b6a07d0d404fab4e23b6d34bc6696a6a312dd92821332385e5af7c01c421351",
+      "exitCode": 0,
+      "outcome": "success",
+      "output": {
+        "type": "sync"
+      },
+      "keys": [
+        "exitCode",
+        "outcome",
+        "output",
+        "stderr",
+        "stdout"
+      ]
+    },
+    {
+      "stream": "stderr",
+      "bytes": 67108864,
+      "stdoutLength": 0,
+      "stderrLength": 67108864,
+      "sha256": "3b6a07d0d404fab4e23b6d34bc6696a6a312dd92821332385e5af7c01c421351",
+      "exitCode": 0,
+      "outcome": "success",
+      "output": {
+        "type": "sync"
+      },
+      "keys": [
+        "exitCode",
+        "outcome",
+        "output",
+        "stderr",
+        "stdout"
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "stream": "stdout",
+      "failures": [
+        {
+          "name": "RangeError",
+          "message": "Invalid string length"
+        }
+      ],
+      "settledAfterOverflow": false,
+      "stdoutLength": 536870888,
+      "stderrLength": 2,
+      "exitCode": 0,
+      "timedOut": false,
+      "keys": [
+        "exitCode",
+        "stderr",
+        "stdout",
+        "timedOut"
+      ]
+    },
+    {
+      "stream": "stderr",
+      "failures": [
+        {
+          "name": "RangeError",
+          "message": "Invalid string length"
+        }
+      ],
+      "settledAfterOverflow": false,
+      "stdoutLength": 2,
+      "stderrLength": 536870888,
+      "exitCode": 0,
+      "timedOut": false,
+      "keys": [
+        "exitCode",
+        "stderr",
+        "stdout",
+        "timedOut"
+      ]
+    }
+  ],
+  "hookCatch": {
+    "stream": "stderr",
+    "failures": [
+      {
+        "name": "RangeError",
+        "message": "Invalid string length"
+      }
+    ],
+    "settledAfterOverflow": false,
+    "stdoutLength": 2,
+    "stderrLength": 536870888,
+    "exitCode": 0,
+    "outcome": "success",
+    "keys": [
+      "exitCode",
+      "outcome",
+      "output",
+      "stderr",
+      "stdout"
+    ]
+  },
+  "uncaught": [
+    {
+      "stream": "stdout",
+      "status": 1,
+      "signal": null,
+      "error": "RangeError: Invalid string length"
+    },
+    {
+      "stream": "stderr",
+      "status": 1,
+      "signal": null,
+      "error": "RangeError: Invalid string length"
+    }
+  ],
+  "decoding": [
+    {
+      "chunks": [
+        "efbb",
+        "bff09f",
+        "988061"
+      ],
+      "decoded": [
+        "",
+        "",
+        "😀a"
+      ],
+      "tail": ""
+    },
+    {
+      "chunks": [
+        "61f0"
+      ],
+      "decoded": [
+        "a"
+      ],
+      "tail": "�"
+    }
+  ]
+}
