@@ -206,10 +206,30 @@ impl GatewayToolResultArtifactStore {
 impl Default for GatewayToolResultArtifactStore {
     fn default() -> Self {
         Self::new(
-            std::env::temp_dir().join("pilotdeck-tool-results"),
+            default_artifact_root(|key| std::env::var_os(key)),
             DEFAULT_ARTIFACT_THRESHOLD_BYTES,
         )
     }
+}
+
+/// TS `resolve(tmpdir(), "pilotdeck-tool-results")`. `node_tmpdir` applies
+/// Node's `os.tmpdir()` fallbacks (TMPDIR -> TMP -> TEMP -> `/tmp`, skipping
+/// empty values), so a blank TMPDIR cannot turn the artifact root into a
+/// cwd-relative path; a relative tmpdir is resolved against the working
+/// directory like `path.resolve`, and `.`/`..` are normalized lexically.
+fn default_artifact_root(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    let tmp = PathBuf::from(crate::node_io::node_tmpdir(var));
+    // `path.resolve` absolutizes before normalizing, so a leading `..` in a
+    // relative TMPDIR must keep referring to the parent of the working
+    // directory rather than being dropped.
+    let root = if tmp.is_absolute() {
+        tmp
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(tmp)
+    };
+    resolve_lexically(root.join("pilotdeck-tool-results"))
 }
 
 impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {

@@ -1321,26 +1321,11 @@ pub(crate) fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path
     format!("{code}: {description}, {syscall} '{}'", path.display())
 }
 
-/// libuv's `uv_err_name` / `uv_strerror` for the errors a spawn or config
-/// read can plausibly hit.
+/// libuv's `uv_err_name` / `uv_strerror` from the shared Node v22 table.
+/// Errnos outside that table keep Node's synthetic `UNKNOWN: unknown error`
+/// text (libuv's `UV_UNKNOWN`), matching Node's `UVException` formatting.
 pub(crate) fn errno_text(error: &std::io::Error) -> (&'static str, &'static str) {
-    match error.raw_os_error() {
-        Some(libc::ENOENT) => ("ENOENT", "no such file or directory"),
-        Some(libc::EACCES) => ("EACCES", "permission denied"),
-        Some(libc::EPERM) => ("EPERM", "operation not permitted"),
-        Some(libc::ENOTDIR) => ("ENOTDIR", "not a directory"),
-        Some(libc::EISDIR) => ("EISDIR", "illegal operation on a directory"),
-        Some(libc::EEXIST) => ("EEXIST", "file already exists"),
-        Some(libc::ELOOP) => ("ELOOP", "too many symbolic links encountered"),
-        Some(libc::ENAMETOOLONG) => ("ENAMETOOLONG", "name too long"),
-        Some(libc::EROFS) => ("EROFS", "read-only file system"),
-        Some(libc::ENOEXEC) => ("ENOEXEC", "exec format error"),
-        Some(libc::E2BIG) => ("E2BIG", "argument list too long"),
-        Some(libc::EAGAIN) => ("EAGAIN", "resource temporarily unavailable"),
-        Some(libc::ENOMEM) => ("ENOMEM", "not enough memory"),
-        Some(libc::EMFILE) => ("EMFILE", "too many open files"),
-        _ => ("UNKNOWN", "unknown error"),
-    }
+    crate::node_io::lookup(error).unwrap_or(("UNKNOWN", "unknown error"))
 }
 
 #[cfg(test)]
@@ -1360,6 +1345,59 @@ mod tests {
         );
         assert_eq!(absolute(Path::new("")), cwd);
         assert_eq!(absolute(Path::new("/../")), Path::new("/"));
+    }
+
+    /// The shared libuv table must reproduce every row the old hand-written
+    /// table served, byte for byte.
+    #[test]
+    fn errno_text_keeps_the_old_hand_table_rows_byte_for_byte() {
+        for (errno, code, description) in [
+            (libc::ENOENT, "ENOENT", "no such file or directory"),
+            (libc::EACCES, "EACCES", "permission denied"),
+            (libc::EPERM, "EPERM", "operation not permitted"),
+            (libc::ENOTDIR, "ENOTDIR", "not a directory"),
+            (libc::EISDIR, "EISDIR", "illegal operation on a directory"),
+            (libc::EEXIST, "EEXIST", "file already exists"),
+            (libc::ELOOP, "ELOOP", "too many symbolic links encountered"),
+            (libc::ENAMETOOLONG, "ENAMETOOLONG", "name too long"),
+            (libc::EROFS, "EROFS", "read-only file system"),
+            (libc::ENOEXEC, "ENOEXEC", "exec format error"),
+            (libc::E2BIG, "E2BIG", "argument list too long"),
+            (libc::EAGAIN, "EAGAIN", "resource temporarily unavailable"),
+            (libc::ENOMEM, "ENOMEM", "not enough memory"),
+            (libc::EMFILE, "EMFILE", "too many open files"),
+        ] {
+            assert_eq!(
+                errno_text(&std::io::Error::from_raw_os_error(errno)),
+                (code, description),
+                "{code}"
+            );
+        }
+    }
+
+    /// EIO/ENOSPC were outside the old hand-written table and collapsed to
+    /// `UNKNOWN`; libuv knows both. An errno outside libuv's map still keeps
+    /// Node's synthetic `UNKNOWN: unknown error` text.
+    #[test]
+    fn errno_text_uses_the_shared_libuv_table_outside_the_old_hand_table() {
+        for (errno, code, description) in [
+            (libc::EIO, "EIO", "i/o error"),
+            (libc::ENOSPC, "ENOSPC", "no space left on device"),
+        ] {
+            assert_eq!(
+                errno_text(&std::io::Error::from_raw_os_error(errno)),
+                (code, description),
+                "{code}"
+            );
+        }
+        assert_eq!(
+            errno_text(&std::io::Error::from_raw_os_error(123456)),
+            ("UNKNOWN", "unknown error")
+        );
+        assert_eq!(
+            errno_text(&std::io::Error::other("not an errno")),
+            ("UNKNOWN", "unknown error")
+        );
     }
 
     /// Real SDK/zod probe values are recorded in the round-4 evidence.
