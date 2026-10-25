@@ -240,6 +240,29 @@ impl Recorder {
         result: JsValue,
     ) -> RecorderResult<()> {
         let mut inner = self.lock();
+        // TS reads result.turnId before deduplication, even for malformed values.
+        match &result {
+            JsValue::Null | JsValue::Undefined => {
+                let value = if matches!(result, JsValue::Null) {
+                    "null"
+                } else {
+                    "undefined"
+                };
+                return Err(RecorderError::Type(format!(
+                    "Cannot read properties of {value} (reading 'turnId')"
+                )));
+            }
+            JsValue::Object(_) => {}
+            _ => {
+                // Boxed JS primitives/arrays have no turnId. Undefined matches
+                // the initial dedup marker; after completion requireTurn fails.
+                return if inner.completed_turn_id.is_none() {
+                    Ok(())
+                } else {
+                    Err(state("Durable turn undefined has not started."))
+                };
+            }
+        }
         if inner.completed_turn_id.as_ref() == Some(turn_id) {
             return Ok(());
         }
