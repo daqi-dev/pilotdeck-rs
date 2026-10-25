@@ -20,13 +20,13 @@
 历史复算命令（第 2 轮已补显式池和登记锁；省略参考池不再可用）：
 
 ```sh
-python3 scripts/parity/score.py \
+python3 -I scripts/parity/score.py \
   --ts /Users/da/ws/pilotdeck-rs/_tmp/20261014-reg2/ts-r{1..5}.d \
   --rust /Users/da/ws/pilotdeck-rs/_tmp/20261014-reg2/rust-r{1..5}.d \
   --reference-pool /Users/da/ws/pilotdeck-rs/_tmp/20261014-flake35/ts-r{1..20}.d \
   --reference-registration _tmp/round2-ts-pool.json \
   --json _tmp/round2-reg2-score.json
-python3 scripts/parity/score.py \
+python3 -I scripts/parity/score.py \
   --ts /Users/da/ws/pilotdeck-rs/_tmp/20261014-reg3/ts-r{1..5}.d \
   --rust /Users/da/ws/pilotdeck-rs/_tmp/20261014-reg3/rust-r{1..5}.d \
   --reference-pool /Users/da/ws/pilotdeck-rs/_tmp/20261014-flake35/ts-r{1..20}.d \
@@ -123,11 +123,11 @@ TS-only 定标重新读取全部二十份参考，不读取 Rust：仍为 17/3 �
 
 ```sh
 python3 _tmp/round3-calibrate-pool.py
-python3 scripts/parity/score.py \
+python3 -I scripts/parity/score.py \
   --ts /Users/da/ws/pilotdeck-rs/_tmp/20261014-reg5/ts-r{1..5}.d \
   --rust /Users/da/ws/pilotdeck-rs/_tmp/20261014-reg5/rust-r{1..5}.d \
   --paired-only --json _tmp/round3-reg5-paired.json
-python3 scripts/parity/score.py \
+python3 -I scripts/parity/score.py \
   --ts /Users/da/ws/pilotdeck-rs/_tmp/20261014-reg5/ts-r{1..5}.d \
   --rust /Users/da/ws/pilotdeck-rs/_tmp/20261014-reg5/rust-r{1..5}.d \
   --reference-pool /Users/da/ws/pilotdeck-rs/_tmp/20261014-flake35/ts-r{1..20}.d \

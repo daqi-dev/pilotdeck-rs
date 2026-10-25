@@ -1,15 +1,43 @@
 #!/usr/bin/env python3
 """Offline adversarial controls; never invokes a sidecar or the parity runner."""
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution; without it, exit before loading any apparatus module.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-pyc-')
+sys.dont_write_bytecode = True
+
 import argparse
 from copy import deepcopy
+import importlib.util
 import json
 from pathlib import Path
 import shutil
-import sys
-import tempfile
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import g03_compare as G
+_HERE = Path(__file__).resolve().parent
+
+
+def _load(name, path):
+    """Load an apparatus module by explicit path; never resolve via sys.path."""
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+G = _load('g03_compare', _HERE.parent / 'g03_compare.py')
 
 DEFAULT_SOURCE = G.WORKTREE / '_tmp/20261014-exp001/parity-run1'
 
@@ -89,7 +117,7 @@ def verdict_summary(result):
 
 
 def run_controls(source):
-    from controls.multimodal import run_controls as multimodal_controls
+    multimodal_controls = _load('controls.multimodal', _HERE / 'multimodal.py').run_controls
 
     cases = {}
     for rule, (good, bad) in rule_pairs().items():

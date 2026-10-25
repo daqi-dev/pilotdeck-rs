@@ -9,13 +9,23 @@ Native/sidecar declared extensions do not apply to sidecar/sidecar pairs.
 """
 from __future__ import annotations
 
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution; without it, exit before loading any apparatus module.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-pyc-')
+sys.dont_write_bytecode = True
+
 import argparse
 import hashlib
 import importlib.util
 import json
 import os
 import subprocess
-import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
