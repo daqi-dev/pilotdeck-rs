@@ -3972,6 +3972,7 @@ async fn interaction_hooks_factory_binds_and_rolls_back_in_both_builder_orders()
         now: Arc::new(|| SystemTime::UNIX_EPOCH),
         config_version: None,
         runtime_profile_overrides: Default::default(),
+        telemetry: None,
         families,
     });
     let registry = ProjectRuntimeRegistry::new(scratch.0.clone(), Arc::new(factory));
