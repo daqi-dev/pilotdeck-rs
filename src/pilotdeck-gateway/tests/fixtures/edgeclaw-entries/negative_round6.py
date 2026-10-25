@@ -26,8 +26,11 @@ mutations = [
      'fn map_record(v: JsValue) -> Result<JsValue> { let _ = v.as_object().expect("file record");', 'malformed_global_record_returns_internal_error'),
     ('external-panic', a, 'fn external_record_path(record: &JsObject) -> Result<&JsString> {',
      'fn external_record_path(record: &JsObject) -> Result<&JsString> { let _ = record.get("relativePath").and_then(JsValue::as_string).unwrap();', 'malformed_external_record_returns_internal_error'),
-    ('file-scandir', f, 'fs::read_dir(&path).map_err(|e| crate::node_io::path_error(e, "scandir", &path))?',
-     'fs::read_dir(&path)?', 'file_scandir_matches_real_ts'),
+    # #597 moved the scandir behind `regular_files_at` on unix (the old
+    # read_dir anchor only compiled on non-unix, so it stopped killing the
+    # test); unwrap the live mutation_error mapping instead.
+    ('file-scandir', f, 'Err(e) => Err(self.mutation_error(dir, "scandir", e)),',
+     'Err(e) => Err(e.into()),', 'file_scandir_matches_real_ts'),
     # Exact reversion to the original unwrapped external read_dir / collection.
     ('external-scandir', a, '''fs::read_dir(root)
                 .map_err(|e| crate::node_io::path_error(e, "scandir", root))?
@@ -38,8 +41,14 @@ mutations = [
             .map_err(|e| crate::node_io::path_error(e, "scandir", p))?''', 'fs::read_dir(p)?', 'snapshot_scandir_matches_real_ts'),
     ('snapshot-read', s, 'fs::read(&p).map_err(|e| crate::node_io::path_error(e, "open", &p))?',
      'fs::read(&p)?', 'snapshot_read_matches_real_ts'),
-    ('metadata-read', s, 'fs::read(&path).map_err(|e| crate::node_io::path_error(e, "open", &path))?',
-     'fs::read(&path)?', 'metadata_read_matches_real_ts'),
+    # snapshots.rs reads metadata.json in two stages (#656); each stage keeps
+    # its own guard mutation.
+    ('metadata-read', s, 'fs::File::open(&path).map_err(|e| crate::node_io::path_error(e, "open", &path))?',
+     'fs::File::open(&path)?', 'metadata_read_matches_real_ts'),
+    ('metadata-read-stage', s, '.map_err(|e| crate::node_io::descriptor_error(e, "read"))?',
+     '.map_err(|e| crate::node_io::path_error(e, "open", &path))?',
+     # module-qualified: the bare name also matches upload's sibling test
+     'round6_tests::metadata_directory_reports_the_read_stage'),
     ('snapshot-mkdir', s, 'io_mkdir(p)?;', 'fs::create_dir_all(p)?;', 'snapshot_mkdir_matches_real_ts'),
     ('snapshot-write', s, 'io_write(p, content)?;', 'fs::write(p, content)?;', 'snapshot_write_matches_real_ts'),
     ('copy-unlink', s, 'fs::remove_file(dst).map_err(|e| crate::node_io::path_error(e, "unlink", dst))?',
