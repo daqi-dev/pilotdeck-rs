@@ -53,6 +53,10 @@ type TurnHostFactory = dyn Fn(ExecutionIdentity) -> HostFuture<PreparedHost> + S
 /// Host-acquired authority for one turn. Acquire the project lease with
 /// ProjectRuntimeRegistry::acquire when this factory is invoked, not when the
 /// LiveSessionAdapter is created. The sidecar cannot supply any of these ports.
+/// Assemble a fresh router from that lease and the factory's ExecutionIdentity
+/// every time: model/budget/context and capability's execution, context,
+/// observer and plan/todo ports retain per-turn state. InteractionTurn::bind
+/// only replaces the interaction handlers; it cannot sanitize these ports.
 pub struct InteractionHost {
     pub client: HostClient,
     pub lease: crate::runtime::project::RuntimeLease,
@@ -97,6 +101,9 @@ impl LiveSessionAdapter {
         }
     }
 
+    /// Invoke the factory once when executing each submitted turn. It must satisfy
+    /// InteractionHost's fresh-router contract, even across a project reload
+    /// that admits the same session/turn identity again.
     pub fn with_interaction(
         factory: impl Fn(ExecutionIdentity) -> HostFuture<InteractionHost> + Send + Sync + 'static,
     ) -> Self {

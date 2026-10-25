@@ -72,6 +72,14 @@ pub struct InteractionTurn {
     record_message: Option<Arc<dyn Fn(JsValue) -> HostFuture<()> + Send + Sync>>,
 }
 impl InteractionTurn {
+    /// Bind the four interaction resources from this lease. The caller must
+    /// freshly assemble model, budget, context and capability handlers for
+    /// this identity and leased generation on every call, including their
+    /// state, cancellation and execution/context/observer/plan port bindings.
+    /// Generation/session services (including recorders) may be shared only
+    /// through the current lease/session; their turn bindings must be fresh.
+    /// A new outer router containing cloned old handlers is not sufficient.
+    /// This binder cannot validate the provenance of those opaque host ports.
     pub async fn bind(
         lease: RuntimeLease,
         identity: &ExecutionIdentity,
@@ -93,8 +101,10 @@ impl InteractionTurn {
             .capability
             .catalog()
             .ok_or_else(|| ModuleError::new("Turn capability handler is missing."))?;
-        // Availability comes solely from this lease, even if the caller reused
-        // a router assembled for another generation.
+        // Only these interaction handlers are rebuilt here. Their availability
+        // comes solely from this lease; all other handlers obey the fresh-turn
+        // precondition above. Borrowing the catalog for permission/manifest
+        // does not exempt capability's execution port from that precondition.
         router.event = Default::default();
         router.permission = Default::default();
         router.lifecycle = Default::default();
