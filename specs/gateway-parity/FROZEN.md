@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-25 重登记（A5.4 冻结前置 · #170 / #165，PR 待填，AI 代批，待人复核）**：#170 补 Node 侧直接 oracle 对预注册标签的核对——`scripts/a5-19/observation_rules.mjs` 新增 `checkObservationLabels`，由 `checkObservation` 在按 id 取观察时按 `<cell>/<variant>/<phase>/<repetition>` 逐项核对 `repetition` / `phase` / `variant.name`，不一致以 `COVERAGE` 拒绝；语义对齐 `session_domain.py:validate_calibration` 的同名三项检查（Python 仍额外强制 72 例 × 5 次完整 ID 集合与 cell/registry 归属，Node 只拿 id 与标签，不能替代该分母检查）。`controls/session_domain.py` 增三条直接路径负控（observation-{repetition,phase,variant}-label）并把离线合成观察改为合法四段 id + 标签；未改任何判分/阈值/分母。**只变严，不改判分语义**。#165 把 `scripts/gateway-parity/fixtures/session-calibration.json` 与 `session_domain.py:FIXTURE_NAMES` 的全部 `scripts/a5-19/*`（run.py、six_cells.mts、observation_rules.mjs、append-observer.mjs、cleanup-observer.mjs）纳入白名单；`check_frozen.py` 无需改动即可逐字节校验（负控：改一字节即 FAIL，恢复即 PASS）。真实数据复算：E1 calibrate status PASS / 72 例 / frozen exit 0 与 controls 全过见 `_tmp/20261025-a54-pkg1/calibrate/report.json`、`_tmp/20261025-a54-pkg1/controls-source/results.json`；#170 三种标签直接路径负控与去掉核对后的接受对照见 `_tmp/20261025-a54-pkg1/negative-labels/`，FROZEN 负控见 `_tmp/20261025-a54-pkg1/frozen-negative.log`。本次新增上述 6 个文件的哈希（含改动的 `observation_rules.mjs`），并更新 `controls/session_domain.py` 哈希；`session_domain.py`、`session_observations.mjs` 未改，哈希行不变。两家非作者评审由协调者续办。
+
 > **2026-10-23 修复轮 2 重登记（#581 / PR #582，人批范围内）**：merge-base 等于 HEAD 且 base 解析提交不同于 HEAD 时拒绝无效的只追加对照；base 本身等于 HEAD 时保留工作树字节核验并注明（如空推送）。显式使用 UTF-8 读取文本及解码 Git 输出；仅更新 check_frozen.py 哈希。真实账本复算与回归、负控证据见 `_tmp/20261023-issue-581-ledger-split/RESULT.md`「修复轮 2」。
 
 > **2026-10-23 修复轮 1 重登记（#581 / PR #582，人批范围内）**：修补 gate1 boundary P1；--base 对照 merge-base 同时强制历史 accepted-diffs.md 逐字节一致（失败报告首个差异行）及其 FROZEN 哈希行原字节不变，既有 diffs/ 只追加保护继续生效。仅重登记 check_frozen.py 哈希，不改历史账本及其哈希行；真实 origin/main 账本复算、正负控原始输出见 `_tmp/20261023-issue-581-ledger-split/RESULT.md`「修复轮 1」。独立评审由协调者接续。
@@ -140,7 +142,13 @@ d3e99961f28d4fdbd8521be51b689e6f075bbc78412a41387b5dc2b46202efca  ../../scripts/
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 70f248715b6f3c3c20127df963999706e1432765340be411a0c98340089ba0bc  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-31d0fe7dd11da319bacd60cabff27053cc0d0e28d3c386adea4f931488099d16  ../../scripts/gateway-parity/controls/session_domain.py
+652a43462c3bed47b0f31e36ffbefd336e253e91306f87899e6fb6ebce48bc9a  ../../scripts/gateway-parity/controls/session_domain.py
+41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json
+1199685c1bc983537e681934f4a1dfbc368b04d519cddce86a0f7d9eab897bf2  ../../scripts/a5-19/observation_rules.mjs
+0248507e617648bd8e81e1a54ae8b448cd7b7a2f14f1542424adc3a83b398c84  ../../scripts/a5-19/run.py
+b7373b5838370c43f5b35217f95ce688a0183b5494eb276a25d868a0c18517dd  ../../scripts/a5-19/six_cells.mts
+8ebd5ebaf0a189f9bf6727eb51765858abfe0afc94698b09ee53d6b707b7ec64  ../../scripts/a5-19/append-observer.mjs
+c2f69c000b4dd6e5f2912b05dbc846641d5cb7bac82976a6b1a1cf0e16fdee84  ../../scripts/a5-19/cleanup-observer.mjs
 
 > **2026-10-22 修复轮 8 重登记（PR #406，透明披露补齐）**：按本轮明确授权，accepted-diffs.md 的「已知未对齐（未接受，待 pr9c）」表格只追加第三条（240 层格式化元素 + 宽 P 子树在真实 TS 抛 `Invalid array length`、Rust 成功返回 Markdown），保留原有条目原文，并追加适用范围说明；本条属 V8 数组上限运行时行为，与深度批准无关。真实 TS 重测 2 / 4 MiB 并二分至 256 KiB 区间，Rust 2 / 4 / 8 MiB 原值与输出 SHA256 见 `_tmp/20261021-a65-pr9b/RESULT.md`「修复轮 8」。状态为「未批准，非已接受差异」，不新增豁免、不改判分语义；只重登记 accepted-diffs.md 哈希，其余不变。两家评审见 PR。
 

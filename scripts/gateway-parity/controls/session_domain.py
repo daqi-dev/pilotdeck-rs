@@ -23,6 +23,12 @@ CALIBRATION_CASES = {
     'calibration-identity': 'IDENTITY',
 }
 
+LABEL_CASES = {
+    'observation-repetition-label': ('repetition', 2),
+    'observation-phase-label': ('phase', 'tool'),
+    'observation-variant-label': ('variant', {'name': 'unknown-first'}),
+}
+
 CASES = {
     'ts-gateway': 'TS_HOST',
     'hidden-helper': 'HIDDEN_HELPER',
@@ -42,6 +48,7 @@ CASES = {
     'calibration-missing-variant': 'COVERAGE',
     'calibration-unavailable': 'CAPABILITY',
     **CALIBRATION_CASES,
+    **{name: 'COVERAGE' for name in LABEL_CASES},
 }
 
 
@@ -91,7 +98,8 @@ def observation_fixture(source):
         return read(source / 'raw/no-registry-fast.json')['observations'][0]
     # Small healthy rule fixture for offline self-tests; never counted as TS data.
     frames = [{'type': 'turn_started'}, {'type': 'error', 'code': 'turn_timeout'}]
-    return {'id': 'SYNTHETIC_CONTROL_ONLY', 'frames': frames,
+    return {'id': 'synthetic-control-only/healthy/model/1',
+            'variant': {'name': 'healthy'}, 'phase': 'model', 'repetition': 1, 'frames': frames,
             'timeline': [{'kind': 'queue.enqueue', 'closed': False, 'event': copy.deepcopy(f)} for f in frames],
             'durableStatus': {'entries': [], 'rawText': ''},
             'registry': {'applicable': False, 'reason': 'runRegistry was not configured'}}
@@ -209,6 +217,9 @@ def check_case(name, output, source=None):
     elif name == 'empty-observer':
         evidence['observer']['rows'] = []
         evidence['observer']['connections'] = 0
+    elif name in LABEL_CASES:
+        field, value = LABEL_CASES[name]
+        observation[field] = value
     elif name == 'both-sides-bad':
         observation['frames'].pop()
     elif name == 'exec-identity-mismatch':
