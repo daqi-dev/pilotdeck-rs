@@ -70,6 +70,7 @@ impl Probe {
             now_ms: Arc::new(move || probe.0.now.load(Ordering::SeqCst)),
             idle_timeout_ms: 100,
             idle_sweep_interval_ms: 0,
+            on_session_idle_evict: None,
             on_evict: Some(Arc::new(move |key, reason| {
                 let reason = match reason {
                     EvictionReason::Idle => "idle",
@@ -1386,3 +1387,6 @@ async fn replacement_adapter_drains_real_owner_before_storage() {
     owner.end_turn(&"a".into(), Some(&run), Some(&reservation));
     owner.shutdown().await.unwrap();
 }
+
+#[path = "owner_hooks_tests.rs"]
+mod hooks;
