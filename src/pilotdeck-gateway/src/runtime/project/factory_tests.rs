@@ -775,15 +775,26 @@ fn stage_tools_and_execution_world(
     families.mcp.stage(context, sink).unwrap();
 }
 
+fn assert_no_interaction_resources(context: &StageContext) {
+    for resource in [
+        Resource::Interaction,
+        Resource::InteractionEvents,
+        Resource::InteractionPermission,
+    ] {
+        assert!(
+            context.resource(resource).is_none(),
+            "{resource:?} must not be published",
+        );
+    }
+}
+
 /// Forward order: interaction layered after the tools family keeps the
 /// execution-world resource/owner and the MCP family.
 #[tokio::test]
 async fn interaction_staging_publishes_resources() {
     let group = interaction_test_group();
     let context = group.context();
-    assert!(context.resource(Resource::Interaction).is_none());
-    assert!(context.resource(Resource::InteractionEvents).is_none());
-    assert!(context.resource(Resource::InteractionPermission).is_none());
+    assert_no_interaction_resources(&context);
     assert!(context.resource(Resource::ExecutionWorld).is_none());
 
     let families = Families::unwired().with_tools_mcp().with_interaction();
@@ -842,9 +853,7 @@ async fn tools_without_interaction_has_no_interaction_marker() {
     let families = Families::unwired().with_tools_mcp();
     stage_tools_and_execution_world(&families, &context, &mut group.sink());
 
-    assert!(context.resource(Resource::Interaction).is_none());
-    assert!(context.resource(Resource::InteractionEvents).is_none());
-    assert!(context.resource(Resource::InteractionPermission).is_none());
+    assert_no_interaction_resources(&context);
     assert!(context.resource(Resource::ExecutionWorld).is_some());
     assert!(context.owner(Family::McpProvider).is_some());
     bounded(group.dispose()).await.unwrap();
@@ -1260,12 +1269,7 @@ async fn interaction_staging_failure_propagates_without_marker() {
         RuntimeError::new("stage failed:executionWorld:1"),
         "the wrapper must forward the inner stage error unchanged"
     );
-    assert!(
-        context.resource(Resource::Interaction).is_none(),
-        "a failed stage must not publish the interaction marker"
-    );
-    assert!(context.resource(Resource::InteractionEvents).is_none());
-    assert!(context.resource(Resource::InteractionPermission).is_none());
+    assert_no_interaction_resources(&context);
     assert!(context.resource(Resource::ExecutionWorld).is_none());
     // The inner source registered its dispose owner before its stage threw; the
     // wrapper must neither replace that owner nor leak it past disposal.
@@ -1279,9 +1283,7 @@ async fn interaction_staging_failure_propagates_without_marker() {
             "dispose:executionWorld:1"
         ]
     );
-    assert!(context.resource(Resource::Interaction).is_none());
-    assert!(context.resource(Resource::InteractionEvents).is_none());
-    assert!(context.resource(Resource::InteractionPermission).is_none());
+    assert_no_interaction_resources(&context);
 }
 
 /// Negative control paired with the stage-phase failure above: an inner
@@ -1320,18 +1322,14 @@ async fn interaction_construct_failure_has_no_owner_or_marker() {
     );
     assert!(context.owner(Family::ExecutionWorld).is_none());
     assert!(context.resource(Resource::ExecutionWorld).is_none());
-    assert!(context.resource(Resource::Interaction).is_none());
-    assert!(context.resource(Resource::InteractionEvents).is_none());
-    assert!(context.resource(Resource::InteractionPermission).is_none());
+    assert_no_interaction_resources(&context);
     bounded(group.dispose()).await.unwrap();
     assert_eq!(
         probe.events(),
         ["construct:executionWorld:1"],
         "a construct-phase failure registers no owner, so disposal emits nothing"
     );
-    assert!(context.resource(Resource::Interaction).is_none());
-    assert!(context.resource(Resource::InteractionEvents).is_none());
-    assert!(context.resource(Resource::InteractionPermission).is_none());
+    assert_no_interaction_resources(&context);
 }
 
 /// Negative control: `with_interaction` over `Families::unwired` must still
@@ -1361,13 +1359,9 @@ async fn unwired_interaction_still_reports_execution_world_unsupported() {
     );
     assert!(context.owner(Family::ExecutionWorld).is_none());
     assert!(context.resource(Resource::ExecutionWorld).is_none());
-    assert!(context.resource(Resource::Interaction).is_none());
-    assert!(context.resource(Resource::InteractionEvents).is_none());
-    assert!(context.resource(Resource::InteractionPermission).is_none());
+    assert_no_interaction_resources(&context);
     bounded(group.dispose()).await.unwrap();
-    assert!(context.resource(Resource::Interaction).is_none());
-    assert!(context.resource(Resource::InteractionEvents).is_none());
-    assert!(context.resource(Resource::InteractionPermission).is_none());
+    assert_no_interaction_resources(&context);
 }
 
 /// The eight parallel-group disposals start together (`Promise.allSettled`,

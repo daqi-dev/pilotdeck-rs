@@ -1,0 +1,115 @@
+[
+  {
+    "mode": "allow",
+    "result": {
+      "type": "sync",
+      "specific": {
+        "hookEventName": "PermissionRequest",
+        "decision": {
+          "behavior": "allow"
+        }
+      }
+    },
+    "rules": [
+      {
+        "source": "session",
+        "behavior": "allow",
+        "toolName": "danger"
+      }
+    ]
+  },
+  {
+    "mode": "no-sink",
+    "result": {
+      "type": "sync",
+      "specific": {
+        "hookEventName": "PermissionRequest",
+        "decision": {
+          "behavior": "deny",
+          "message": "Permission prompt could not be delivered to the Web UI."
+        }
+      }
+    },
+    "rules": []
+  },
+  {
+    "mode": "cancel",
+    "result": {
+      "type": "sync",
+      "specific": {
+        "hookEventName": "PermissionRequest",
+        "decision": {
+          "behavior": "deny",
+          "message": "Permission prompt cancelled."
+        }
+      }
+    },
+    "rules": []
+  },
+  {
+    "mode": "throw-error",
+    "result": {
+      "type": "sync",
+      "specific": {
+        "hookEventName": "PermissionRequest",
+        "decision": {
+          "behavior": "deny",
+          "message": "Permission prompt delivery failed: sink failed"
+        }
+      }
+    },
+    "rules": []
+  },
+  {
+    "mode": "throw-string",
+    "result": {
+      "type": "sync",
+      "specific": {
+        "hookEventName": "PermissionRequest",
+        "decision": {
+          "behavior": "deny",
+          "message": "Permission prompt delivery failed: sink failed"
+        }
+      }
+    },
+    "rules": []
+  },
+  {
+    "mode": "answer-then-throw",
+    "result": {
+      "type": "sync",
+      "specific": {
+        "hookEventName": "PermissionRequest",
+        "decision": {
+          "behavior": "allow"
+        }
+      }
+    },
+    "rules": [
+      {
+        "source": "session",
+        "behavior": "allow",
+        "toolName": "danger"
+      }
+    ]
+  },
+  {
+    "mode": "answer-then-no-sink",
+    "result": {
+      "type": "sync",
+      "specific": {
+        "hookEventName": "PermissionRequest",
+        "decision": {
+          "behavior": "allow"
+        }
+      }
+    },
+    "rules": [
+      {
+        "source": "session",
+        "behavior": "allow",
+        "toolName": "danger"
+      }
+    ]
+  }
+]
