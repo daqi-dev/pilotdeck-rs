@@ -1,0 +1,468 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/session/AgentSession.ts": "1d1f929fb6f08a5f0957b900cd0a1bfb65ae14080d7f26e971c141d2c5f1d789",
+    "src/agent/session/SteerMailbox.ts": "2c8cfdd37728fac21c2b4839a549403f58c2e9c07b5108890c07e7fe409ee743",
+    "src/agent/turn/TurnRunner.ts": "8bf4dab4c8e40bba78781e6ad7352dda79e3fc52adf99b9504f1213e0157a5ac",
+    "src/agent/loop/AgentLoop.ts": "d9949a78b6396e58060f5b19d32d51ba15139bc9900de8bf9fe1c1231621aff2",
+    "src/agent/loop/AgentTurnCapabilities.ts": "573db659bdc8c26702b15d01ce8fc499d0505272fdcf5e482e9b8e895530ddcb",
+    "src/agent/protocol/events.ts": "d62ecf8a7c90a792ec07c52b78cb73d8492c4fd77338f4045158e4184adcf4ac"
+  },
+  "A1_running_mailbox": {
+    "trace": [
+      {
+        "accepted": true
+      },
+      {
+        "accepted": true
+      },
+      {
+        "accepted": false,
+        "reason": "turn_mismatch"
+      },
+      {
+        "cancelled": true
+      },
+      {
+        "accepted": false,
+        "reason": "cancelled"
+      },
+      {
+        "drained": [
+          "a"
+        ]
+      },
+      {
+        "cancelled": false,
+        "reason": "too_late"
+      },
+      {
+        "messages": [],
+        "closed": true
+      },
+      {
+        "accepted": false,
+        "reason": "turn_closing"
+      },
+      {
+        "finished": []
+      },
+      {
+        "accepted": false,
+        "reason": "no_active_turn"
+      }
+    ],
+    "mutations": [
+      {
+        "mutation": "insert",
+        "itemId": "a",
+        "message": {
+          "role": "user",
+          "content": [],
+          "metadata": {
+            "queueItemId": "a"
+          }
+        },
+        "allowedReadFiles": [
+          "/safe"
+        ]
+      },
+      {
+        "mutation": "cancel",
+        "itemId": "b"
+      },
+      {
+        "mutation": "claim",
+        "itemId": "a"
+      }
+    ]
+  },
+  "A2_abort_gate": {
+    "trace": [
+      {
+        "accepted": true
+      },
+      {
+        "accepted": false,
+        "reason": "turn_mismatch"
+      },
+      {
+        "accepted": false,
+        "reason": "no_active_turn"
+      },
+      {
+        "drained": [
+          "a"
+        ]
+      },
+      {
+        "claimed": true
+      }
+    ],
+    "mutations": [
+      {
+        "turn": "t",
+        "mutation": "insert",
+        "itemId": "a",
+        "message": {
+          "role": "user",
+          "content": [],
+          "metadata": {
+            "queueItemId": "a"
+          }
+        },
+        "allowedReadFiles": [
+          "/safe"
+        ]
+      },
+      {
+        "turn": "t",
+        "mutation": "claim",
+        "itemId": "a"
+      }
+    ]
+  },
+  "A2_apply_after_abort": {
+    "trace": [
+      [
+        "durable",
+        "a"
+      ],
+      [
+        "ack",
+        "a",
+        true
+      ]
+    ],
+    "events": [
+      "turn_started",
+      "input_accepted",
+      "user_prompt_submitted",
+      "steer_applied",
+      "agent_status",
+      "turn_failed",
+      "turn_completed"
+    ],
+    "mutations": [
+      {
+        "mutation": "insert",
+        "itemId": "a",
+        "message": {
+          "role": "user",
+          "content": [],
+          "metadata": {
+            "queueItemId": "a"
+          }
+        },
+        "allowedReadFiles": [
+          "/safe"
+        ]
+      },
+      {
+        "mutation": "claim",
+        "itemId": "a"
+      }
+    ],
+    "modelCalls": 0
+  },
+  "A3_barrier_race": {
+    "accepted": {
+      "accepted": true
+    },
+    "leaked": [
+      "a"
+    ]
+  },
+  "A4_sequential": {
+    "summary": [
+      {
+        "turn": "t1",
+        "steer": {
+          "accepted": true
+        }
+      },
+      {
+        "turn": "t2",
+        "steer": {
+          "accepted": true
+        }
+      },
+      {
+        "drained": [
+          "c"
+        ]
+      },
+      {
+        "accepted": false,
+        "reason": "turn_mismatch"
+      }
+    ],
+    "events": [
+      [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "steer_unapplied",
+        "steer_unapplied:a",
+        "turn_completed",
+        "session_ended"
+      ],
+      [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "steer_unapplied",
+        "steer_unapplied:c",
+        "turn_completed",
+        "session_ended"
+      ]
+    ],
+    "between": [
+      {
+        "accepted": false,
+        "reason": "no_active_turn"
+      },
+      {
+        "accepted": false,
+        "reason": "no_active_turn"
+      }
+    ],
+    "mutations": [
+      {
+        "turn": "t1",
+        "mutation": "insert",
+        "itemId": "a",
+        "message": {
+          "role": "user",
+          "content": [],
+          "metadata": {
+            "queueItemId": "a"
+          }
+        },
+        "allowedReadFiles": [
+          "/safe"
+        ]
+      },
+      {
+        "turn": "t1",
+        "mutation": "discard",
+        "itemId": "a",
+        "reason": "turn_ended"
+      },
+      {
+        "turn": "t2",
+        "mutation": "insert",
+        "itemId": "c",
+        "message": {
+          "role": "user",
+          "content": [],
+          "metadata": {
+            "queueItemId": "c"
+          }
+        },
+        "allowedReadFiles": [
+          "/safe"
+        ]
+      },
+      {
+        "turn": "t2",
+        "mutation": "discard",
+        "itemId": "c",
+        "reason": "turn_ended"
+      }
+    ]
+  },
+  "A6_consumer_break": {
+    "events": [
+      "turn_started",
+      "input_accepted",
+      "user_prompt_submitted",
+      "model_event"
+    ],
+    "mutations": [
+      {
+        "mutation": "insert",
+        "itemId": "a",
+        "message": {
+          "role": "user",
+          "content": [],
+          "metadata": {
+            "queueItemId": "a"
+          }
+        },
+        "allowedReadFiles": [
+          "/safe"
+        ]
+      },
+      {
+        "mutation": "insert",
+        "itemId": "b",
+        "message": {
+          "role": "user",
+          "content": [],
+          "metadata": {
+            "queueItemId": "b"
+          }
+        },
+        "allowedReadFiles": [
+          "/safe"
+        ]
+      },
+      {
+        "mutation": "discard",
+        "itemId": "a",
+        "reason": "turn_ended"
+      },
+      {
+        "mutation": "discard",
+        "itemId": "b",
+        "reason": "turn_ended"
+      }
+    ],
+    "closeCalls": [
+      [
+        "a",
+        "b"
+      ]
+    ]
+  },
+  "B2_event_buffer": {
+    "drained": [
+      {
+        "type": "e1",
+        "sessionId": "s",
+        "turnId": "t"
+      },
+      {
+        "type": "e2",
+        "sessionId": "s",
+        "turnId": "t"
+      },
+      {
+        "type": "e3",
+        "sessionId": "s",
+        "turnId": "t"
+      }
+    ],
+    "redrained": [],
+    "lateDrained": [
+      {
+        "type": "e4",
+        "sessionId": "s",
+        "turnId": "t"
+      }
+    ]
+  },
+  "B5_unapplied_order": {
+    "success": {
+      "events": [
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "steer_unapplied",
+        "steer_unapplied:a",
+        "steer_unapplied",
+        "steer_unapplied:b",
+        "turn_completed"
+      ],
+      "mutations": [
+        {
+          "mutation": "insert",
+          "itemId": "a",
+          "message": {
+            "role": "user",
+            "content": [],
+            "metadata": {
+              "queueItemId": "a"
+            }
+          },
+          "allowedReadFiles": [
+            "/safe"
+          ]
+        },
+        {
+          "mutation": "insert",
+          "itemId": "b",
+          "message": {
+            "role": "user",
+            "content": [],
+            "metadata": {
+              "queueItemId": "b"
+            }
+          },
+          "allowedReadFiles": [
+            "/safe"
+          ]
+        },
+        {
+          "mutation": "discard",
+          "itemId": "a",
+          "reason": "turn_ended"
+        },
+        {
+          "mutation": "discard",
+          "itemId": "b",
+          "reason": "turn_ended"
+        }
+      ]
+    },
+    "error": {
+      "events": [
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "agent_status",
+        "turn_failed",
+        "steer_unapplied",
+        "steer_unapplied:a",
+        "steer_unapplied",
+        "steer_unapplied:b",
+        "turn_completed"
+      ],
+      "mutations": [
+        {
+          "mutation": "insert",
+          "itemId": "a",
+          "message": {
+            "role": "user",
+            "content": [],
+            "metadata": {
+              "queueItemId": "a"
+            }
+          },
+          "allowedReadFiles": [
+            "/safe"
+          ]
+        },
+        {
+          "mutation": "insert",
+          "itemId": "b",
+          "message": {
+            "role": "user",
+            "content": [],
+            "metadata": {
+              "queueItemId": "b"
+            }
+          },
+          "allowedReadFiles": [
+            "/safe"
+          ]
+        },
+        {
+          "mutation": "discard",
+          "itemId": "a",
+          "reason": "turn_ended"
+        },
+        {
+          "mutation": "discard",
+          "itemId": "b",
+          "reason": "turn_ended"
+        }
+      ]
+    }
+  }
+}

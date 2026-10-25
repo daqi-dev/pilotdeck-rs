@@ -593,3 +593,133 @@ async fn closing_steer_without_unapplied_items_queues_no_notice() {
     assert!(turn.take_discard_notices().is_empty());
     resource.dispose().await.unwrap();
 }
+
+/// #708 matrix A-S1×E1 / A-S2×E1: while this session's current run is open
+/// (or cancelled but not yet cleaned up) a second `start_turn` is rejected and
+/// the existing run keeps its authority. TS has no session-level guard here
+/// (`AgentSession.submit` overwrites state; fixture turn-lifecycle-matrix
+/// `A3_barrier_race` shows the mailbox leaking across a same-ID restart), so
+/// this rejection is the registered A6.9-STEER-RUN-001 hardening.
+#[tokio::test]
+async fn interaction_steer_start_turn_while_run_open_or_cancelled_is_rejected() {
+    let resource = InteractionSteer::default();
+    let session = resource.bind_session("s".into(), None).unwrap();
+    let signal = Cancellation::new();
+    let mut router = ModuleRouter::default();
+    let turn = bind(&session, &mut router, signal.clone());
+    let restart = |router: &mut ModuleRouter| {
+        session.start_turn(
+            "t".into(),
+            "other-run".into(),
+            vec![],
+            Cancellation::new(),
+            router,
+        )
+    };
+    assert!(
+        restart(&mut ModuleRouter::default()).is_err(),
+        "open run was silently superseded"
+    );
+    assert!(turn.enqueue(item("a")).await.unwrap().accepted);
+    assert_eq!(
+        drain(&router, false).await.unwrap()["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // Cancelled but the run's close/finish has not drained yet. Current-thread
+    // runtime plus no await in between keeps the monitor close unpolled.
+    signal.cancel();
+    assert!(
+        restart(&mut ModuleRouter::default()).is_err(),
+        "cancelled-but-uncleaned run was superseded"
+    );
+    assert_eq!(turn.close().await.unwrap().len(), 1);
+    // Barrier passed: the replacement turn owns the reused mailbox.
+    let mut fresh = ModuleRouter::default();
+    let current = bind(&session, &mut fresh, Cancellation::new());
+    assert!(current.enqueue(item("new")).await.unwrap().accepted);
+    assert!(turn.enqueue(item("late")).await.is_err());
+    assert_eq!(
+        drain(&fresh, false).await.unwrap()["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    resource.dispose().await.unwrap();
+}
+
+/// #708 matrix A-S2×E4 (pre-durable half): after external cancellation but
+/// before the durable write, `persist_and_apply` refuses to claim, record,
+/// grant or append, and the item is later discarded with `turn_ended`. The
+/// contrast with `interaction_steer_failed_durable_never_acks_or_grants_...`
+/// (applying lock already entered -> durable success still grants) is the
+/// boundary. TS applies the drained message anyway (fixture
+/// turn-lifecycle-matrix `A2_apply_after_abort`: claim -> durable -> ack all
+/// complete after abort, `modelCalls=0`); divergence registered, not fixed here.
+#[tokio::test]
+async fn interaction_steer_persist_and_apply_after_cancel_rejects_and_discards() {
+    let resource = InteractionSteer::default();
+    let records = Arc::new(Records::default());
+    let session = resource
+        .bind_session("s".into(), Some(records.clone()))
+        .unwrap();
+    let checkpoint = HostToolCheckpoint::default();
+    let mut router = ModuleRouter::default();
+    router.turn.authorizations = Some(SteerAuthorizations::new(checkpoint.clone()));
+    let signal = Cancellation::new();
+    let turn = bind(&session, &mut router, signal.clone());
+    turn.enqueue(item("a")).await.unwrap();
+    drain(&router, false).await.unwrap();
+    // Spawn before cancelling: on the current-thread runtime the applying task
+    // is queued ahead of the cancel-woken monitor, so the pre-durable `check`
+    // (`interaction_steer.rs` persist_and_apply) observes external
+    // cancellation while the run is still open.
+    let applying = turn.persist_and_apply("a".into(), item("a").message, |_| {
+        Box::pin(async { Ok(()) })
+    });
+    signal.cancel();
+    assert!(applying.await.is_err());
+    assert!(turn.messages().is_empty());
+    assert!(grants(&checkpoint).is_empty());
+    assert!(
+        !records
+            .rows
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|row| row["mutation"] == "claim")
+    );
+    // The cancelled run still drains by mailbox state and discards on close.
+    assert_eq!(turn.close().await.unwrap().len(), 1);
+    assert!(
+        records
+            .rows
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|row| row["mutation"] == "discard" && row["itemId"] == "a")
+    );
+    assert!(turn.messages().is_empty());
+    assert!(grants(&checkpoint).is_empty());
+    // Cancel first, then spawn: the monitor close already executed, so the
+    // same pre-durable check rejects from the closed side of the boundary.
+    let mut fresh = ModuleRouter::default();
+    let signal = Cancellation::new();
+    let turn = bind(&session, &mut fresh, signal.clone());
+    turn.enqueue(item("b")).await.unwrap();
+    drain(&fresh, false).await.unwrap();
+    signal.cancel();
+    assert!(
+        turn.persist_and_apply("b".into(), item("b").message, |_| {
+            Box::pin(async { Ok(()) })
+        })
+        .await
+        .is_err()
+    );
+    assert!(turn.messages().is_empty());
+    assert_eq!(turn.close().await.unwrap().len(), 1);
+    resource.dispose().await.unwrap();
+}
