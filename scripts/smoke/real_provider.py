@@ -15,19 +15,22 @@ environment, redacted from every artifact, and never printed. The self-check
 reports hit/miss only. An empty key set fails the self-check instead of
 passing vacuously.
 
-Exit codes: 0 every model-runtime scenario PASS **and** the token caps were
-actually verified (usage observed, cap echoed) and the secret self-check
-verified; 1 any scenario FAIL; 2 secret self-check failed (including a partial
-artifact scan); 3 BLOCKED (no model-runtime scenario actually ran, a
-model-runtime scenario did not PASS, usage/cap accounting was incomplete, or
-another run owns the evidence lock). Missing usage is never a green run.
+Exit codes: 0 every model-runtime scenario PASS **and** every applicable token
+cap was actually verified (usage observed, cap echoed) and the secret
+self-check verified; 1 any scenario FAIL; 2 secret self-check failed
+(including a partial artifact scan); 3 BLOCKED (no model-runtime scenario
+actually ran, a model-runtime scenario did not PASS, usage/cap accounting was
+incomplete, or another run owns the evidence lock). Missing usage is never a
+green run, except for the documented `stream-cancel` not-applicable case
+(abort before the Anthropic usage block at end of stream).
 """
 
 import argparse
+import errno
+import fcntl
 import json
 import os
 import re
-import shutil
 import signal
 import socket
 import subprocess
@@ -54,12 +57,23 @@ PROBE_SCENARIO_TIMEOUT_SECONDS = 45
 PROBE_TIMEOUT_SECONDS = PROBE_SCENARIO_TIMEOUT_SECONDS + 15
 BUILD_TIMEOUT_SECONDS = 600
 CARGO_SLOTS_TIMEOUT_SECONDS = 30
-# A lock older than this is reclaimed even when its owner pid still looks
-# alive. That is the escape hatch for pid reuse and for `kill(pid, 0)` raising
-# PermissionError: one bounded smoke run is well under 15 minutes (build 600 s
-# + 3 x 60 s outer probe cap + scans), so a two-hour-old lock cannot be a
-# healthy run of this harness.
-LOCK_MAX_AGE_SECONDS = 2 * 60 * 60
+
+# `stream-cancel` aborts on the first content delta. In the Anthropic Messages
+# protocol the `usage` block is emitted at the end of the stream, so an abort
+# at the first delta structurally cannot observe it. The token cap for that
+# scenario is therefore *not applicable*, not *unknown*: no request was left
+# unverified by not reading the stream tail. Every other scenario with no
+# usage is still UNVERIFIED and keeps the run BLOCKED.
+USAGE_NOT_APPLICABLE = {
+    "model_runtime_stream_cancel": (
+        "the scenario aborts on the first stream delta; the Anthropic Messages "
+        "usage block arrives at the end of the stream, so it is structurally "
+        "absent. The output-token cap does not apply to this aborted request."
+    ),
+}
+
+# Fixed regular file inside the evidence root, guarded by `fcntl.flock`.
+LOCK_FILENAME = ".smoke.lock"
 
 # Exit codes (also documented in scripts/smoke/README.md).
 EXIT_OK = 0
@@ -203,105 +217,35 @@ def read_env_file(path: Path, names: set[str]) -> dict[str, str]:
     return found
 
 
-def pid_state(pid: object) -> str:
-    """Return "alive", "dead", or "unknown" for a recorded owner pid.
-
-    A PermissionError is "unknown", not "alive": the process may be a reused
-    pid owned by another uid. The lock-age escape hatch below decides those.
-    """
-    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
-        return "dead"
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return "dead"
-    except PermissionError:
-        return "unknown"
-    except OSError:
-        return "unknown"
-    return "alive"
-
-
 class EvidenceLock:
-    """One writer per evidence directory (atomic mkdir + verified owner).
+    """One writer per evidence directory, enforced by the kernel (`flock`).
 
-    Acquisition is one atomic `mkdir(.smoke.lock)`: the process that creates
-    the directory owns the lock. `owner.json` is written through a directory
-    file descriptor opened at mkdir time, so a concurrent reclaim that moves
-    the directory cannot make this process write its owner into somebody
-    else's lock. A lock directory without a readable `owner.json` is an
-    acquisition in progress (or a crash between mkdir and write), so it is
-    treated as **held**, never as stale.
+    The lock is the fixed regular file `.smoke.lock` in the evidence root.
+    Acquisition is `os.open(O_CREAT|O_RDWR)` followed by
+    `fcntl.flock(LOCK_EX|LOCK_NB)`; a second process gets `EWOULDBLOCK` and is
+    refused with exit 3. The kernel releases the lock when the owning process
+    exits or is killed, including SIGKILL. There is no stale-lock reclaim, no
+    rename, and no pid-liveness probe: those conditions cannot exist without a
+    directory-ownership protocol to maintain.
 
-    Reclaim inspects the owner pid and the directory identity, renames the
-    directory aside, immediately reserves the freed path with an empty
-    directory, and only then re-reads the moved owner and inode. If either
-    changed (a new lock took the path between the read and the rename), the
-    moved lock is put back over the empty reservation and the reclaim refuses;
-    it is never deleted and never left in a stale name while the path looks
-    free. A directory whose owner pid is alive is not reclaimed before
-    `LOCK_MAX_AGE_SECONDS`; that age cap is the escape hatch for pid reuse and
-    for `kill(pid, 0)` raising PermissionError.
+    The pid/start time/argv written into the file after acquisition are
+    diagnostics only. They are never read to decide who owns the lock; the
+    kernel's lock state is the only authority.
 
-    `release()` removes the directory only when `owner.json` still names this
-    process **and** the inode is the one this process created. Test hooks
-    (`after_mkdir`, `before_reclaim_rename`, `after_reclaim_rename`) make the
-    concurrency windows deterministic; they are None in production.
+    `--self-check-only` takes `LOCK_SH`: it excludes a normal (exclusive) run,
+    while concurrent read-only self-checks may proceed together. It never
+    rewrites the owner diagnostics.
     """
 
-    def __init__(self, evidence: Path):
-        self.evidence = evidence
-        self.path = evidence / ".smoke.lock"
+    def __init__(self, evidence: Path, shared: bool = False):
+        self.path = evidence / LOCK_FILENAME
+        self.shared = shared
         self.held = False
-        self.identity = None
-        self.created_identity = None
-        self.max_age_seconds = LOCK_MAX_AGE_SECONDS
-        self.reclaim_note = ""
-        self._dir_fd = None
-        self.after_mkdir = None
-        self.before_reclaim_rename = None
-        self.after_reclaim_rename = None
-
-    @staticmethod
-    def _read_owner(directory: Path) -> dict | None:
-        try:
-            owner = json.loads(
-                (directory / "owner.json").read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError):
-            return None
-        return owner if isinstance(owner, dict) else None
-
-    @staticmethod
-    def _identity_of(path: Path) -> tuple[int, int] | None:
-        """(device, inode) of the directory itself, never a followed symlink."""
-        try:
-            info = os.stat(path, follow_symlinks=False)
-        except OSError:
-            return None
-        return (info.st_dev, info.st_ino)
-
-    @staticmethod
-    def _owner_matches(moved: dict | None, owner: dict, pid: int) -> bool:
-        return (
-            moved is not None
-            and moved.get("pid") == pid
-            and moved.get("startedAt") == owner.get("startedAt")
-        )
-
-    def _open_dir(self) -> int:
-        return os.open(
-            self.path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-        )
+        self.note = ""
+        self.fd: int | None = None
 
     def _write_owner(self, fd: int) -> None:
-        """Write owner.json relative to `fd`, not by path name.
-
-        The directory may have been renamed by a reclaimer after our mkdir; a
-        path-based write would then land in whatever lock now occupies
-        `.smoke.lock` and make two processes believe they own it.
-        """
-        temporary = f"owner.json.{os.getpid()}.{time.time_ns()}.tmp"
+        """Best-effort diagnostics. Never part of the ownership decision."""
         payload = json.dumps(
             {
                 "pid": os.getpid(),
@@ -311,294 +255,85 @@ class EvidenceLock:
             ensure_ascii=False,
             indent=2,
         ).encode("utf-8")
-        opened = False
-        try:
-            handle = os.open(
-                temporary,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o644,
-                dir_fd=fd,
-            )
-            opened = True
-            with os.fdopen(handle, "wb") as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(
-                temporary, "owner.json", src_dir_fd=fd, dst_dir_fd=fd
-            )
-        except OSError:
-            if opened:
-                try:
-                    os.unlink(temporary, dir_fd=fd)
-                except OSError:
-                    pass
-            raise
-
-    @staticmethod
-    def _close_fd(fd: int | None) -> None:
-        if fd is None:
-            return
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-
-    def _commit_new_lock(self, fd: int) -> tuple[bool, str]:
-        try:
-            if self.after_mkdir is not None:
-                self.after_mkdir()
-            self._write_owner(fd)
-        except OSError as exc:
-            self._close_fd(fd)
-            return False, (
-                f"cannot write owner.json: {exc}; this attempt's lock "
-                "directory is left in place and is cleaned only if it is still "
-                f"this process's (otherwise inspect {self.path} manually)"
-            )
-        except BaseException:
-            self._close_fd(fd)
-            raise
-        info = os.fstat(fd)
-        self.identity = (info.st_dev, info.st_ino)
-        self._dir_fd = fd
-        self.held = True
-        return True, ""
-
-    def _age_seconds(self, owner: dict) -> float | None:
-        """Age from the newest trustworthy timestamp.
-
-        Using the newest of startedAt / owner.json mtime / directory mtime
-        makes the reclaim conservative: a lock is never considered older than
-        its most recently observed evidence.
-        """
-        stamps: list[float] = []
-        started = owner.get("startedAt")
-        if isinstance(started, str):
-            try:
-                parsed = datetime.fromisoformat(started.replace("Z", "+00:00"))
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                stamps.append(parsed.timestamp())
-            except ValueError:
-                pass
-        for candidate in (self.path / "owner.json", self.path):
-            try:
-                stamps.append(candidate.stat().st_mtime)
-            except OSError:
-                pass
-        if not stamps:
-            return None
-        return max(0.0, time.time() - max(stamps))
-
-    def _reclaim_or_refuse(self) -> tuple[bool, str, bool]:
-        """Return (acquired, reason, retry)."""
-        owner = self._read_owner(self.path)
-        if owner is None:
-            return False, (
-                f"{self.path} exists without a readable owner.json; treating it "
-                "as held (a run may be between mkdir and the owner write)"
-            ), False
-        pid = owner.get("pid")
-        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
-            return False, (
-                f"{self.path} has no valid owner pid; treating it as held"
-            ), False
-        before = self._identity_of(self.path)
-        if before is None:
-            return False, "", True  # vanished between read and stat
-        state = pid_state(pid)
-        age = self._age_seconds(owner)
-        too_old = age is not None and age > self.max_age_seconds
-        if state == "alive" and not too_old:
-            return False, f"another run holds {self.path} (pid {pid})", False
-        if state == "unknown" and not too_old:
-            age_text = "unknown" if age is None else f"{age:.0f}s"
-            return False, (
-                f"cannot verify owner pid {pid} of {self.path} "
-                f"(PermissionError) and the lock age is {age_text} "
-                f"(cap {self.max_age_seconds}s); refusing to reclaim"
-            ), False
-
-        stale = self.evidence / (
-            f".smoke.lock.stale-{os.getpid()}-{time.time_ns()}"
-        )
-        if self.before_reclaim_rename is not None:
-            self.before_reclaim_rename()
-        try:
-            os.rename(self.path, stale)
-        except FileNotFoundError:
-            return False, "", True  # another process moved/removed it first
-        except OSError as exc:
-            return False, f"cannot reclaim stale lock {self.path}: {exc}", False
-        if self.after_reclaim_rename is not None:
-            self.after_reclaim_rename(stale)
-
-        # Reserve the freed path immediately: a third process must not take it
-        # while the moved owner is being verified. Our empty directory is also
-        # the atomic target for putting a changed lock back.
-        try:
-            self.path.mkdir()
-            self.created_identity = self._identity_of(self.path)
-        except FileExistsError:
-            # Somebody won the path between rename and mkdir. Clean the moved
-            # directory only when it is still the dead lock we judged.
-            after = self._identity_of(stale)
-            moved = self._read_owner(stale)
-            if after == before and self._owner_matches(moved, owner, pid):
-                shutil.rmtree(stale, ignore_errors=True)
-            else:
-                self.reclaim_note = (
-                    f"left {stale} for manual recovery (path was taken by "
-                    "another run before the reservation)"
-                )
-            return False, f"another run holds {self.path}", False
-        except OSError as exc:
-            return False, f"cannot reserve {self.path} after reclaim: {exc}", False
-
-        after = self._identity_of(stale)
-        moved = self._read_owner(stale)
-        if after != before or not self._owner_matches(moved, owner, pid):
-            # We moved a different directory than the one judged: a new lock
-            # took the path between the owner read and the rename. Put it back
-            # over our own empty reservation; never delete it and never leave
-            # it in a stale name while the path looks free.
-            restored = False
-            try:
-                os.rename(stale, self.path)
-                restored = True
-                self.created_identity = None
-            except OSError:
-                pass
-            if restored:
-                return False, (
-                    "stale lock owner changed (or identity changed) during "
-                    f"reclaim; put the moved lock back at {self.path} and refused"
-                ), False
-            # Keep the empty reservation: removing it would make the path
-            # look free while the moved lock's owner may still believe it
-            # holds `.smoke.lock`. Leaving an ownerless lock is fail-closed
-            # and needs the manual step documented in the README.
-            self.created_identity = None
-            self.reclaim_note = (
-                f"moved lock identity changed; kept {stale} and the empty "
-                f"reservation {self.path} for manual recovery"
-            )
-            return False, (
-                "stale lock owner/identity changed during reclaim; refusing "
-                f"to reclaim (inspect {stale} and {self.path} manually)"
-            ), False
-
-        try:
-            fd = self._open_dir()
-        except OSError as exc:
-            shutil.rmtree(stale, ignore_errors=True)
-            return False, (
-                f"cannot open {self.path} after reclaim: {exc}"
-            ), False
-        acquired, reason = self._commit_new_lock(fd)
-        shutil.rmtree(stale, ignore_errors=True)
-        if too_old and state != "dead":
-            note = (
-                f"reclaimed owner pid {pid} after {age:.0f}s "
-                f"(age cap {self.max_age_seconds}s; pid may be reused or "
-                "unverifiable)"
-            )
-            self.reclaim_note = note
-            if acquired:
-                reason = note
-        return acquired, reason, False
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        written = 0
+        while written < len(payload):
+            written += os.write(fd, payload[written:])
+        os.fsync(fd)
 
     def acquire(self) -> tuple[bool, str]:
-        for _ in range(3):
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+        try:
+            fd = os.open(self.path, flags, 0o644)
+        except OSError as exc:
+            return False, f"cannot open {self.path}: {exc}"
+        mode = fcntl.LOCK_SH if self.shared else fcntl.LOCK_EX
+        try:
+            fcntl.flock(fd, mode | fcntl.LOCK_NB)
+        except OSError as exc:
             try:
-                self.path.mkdir()
-            except FileExistsError:
-                acquired, reason, retry = self._reclaim_or_refuse()
-                if retry:
-                    continue
-                return acquired, reason
-            except OSError as exc:
-                return False, f"cannot create {self.path}: {exc}"
-            self.created_identity = self._identity_of(self.path)
+                os.close(fd)
+            except OSError:
+                pass
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                kind = "shared" if self.shared else "exclusive"
+                return False, (
+                    f"another run holds {self.path} "
+                    f"({kind} flock is not available)"
+                )
+            return False, f"cannot lock {self.path}: {exc}"
+        self.fd = fd
+        self.held = True
+        if not self.shared:
             try:
-                fd = self._open_dir()
+                self._write_owner(fd)
             except OSError as exc:
-                return False, f"cannot open new lock {self.path}: {exc}"
-            return self._commit_new_lock(fd)
-        return False, f"lock acquisition raced three times: {self.path}"
-
-    def abandon(self) -> None:
-        """Release if held, otherwise remove only this attempt's partial lock.
-
-        Used from `finally`, so Ctrl-C between `mkdir` and the owner write
-        cannot leave an ownerless lock that every later run treats as held.
-        """
-        if self.held:
-            self.release()
-            return
-        if self.created_identity is None:
-            return
-        current = self._identity_of(self.path)
-        if current != self.created_identity:
-            self.created_identity = None
-            return
-        owner = self._read_owner(self.path)
-        if owner is not None and owner.get("pid") != os.getpid():
-            self.created_identity = None
-            return
-        shutil.rmtree(self.path, ignore_errors=True)
-        self.created_identity = None
+                # Diagnostics only: the kernel lock is still held.
+                self.note = f"owner diagnostics not written: {exc}"
+                print(
+                    f"WARNING: {self.note}; the flock is still held",
+                    file=sys.stderr,
+                )
+        return True, ""
 
     def release(self) -> None:
         if not self.held:
             return
         self.held = False
-        self._close_fd(self._dir_fd)
-        self._dir_fd = None
-        # Move the directory aside before checking/deleting it. A plain
-        # `stat(path)` followed by `rmtree(path)` can delete a replacement
-        # lock created in between; after this rename the deletion target is a
-        # name only this process can have created.
-        aside = self.evidence / (
-            f".smoke.lock.release-{os.getpid()}-{time.time_ns()}"
-        )
+        fd, self.fd = self.fd, None
+        if fd is None:
+            return
         try:
-            os.rename(self.path, aside)
-        except FileNotFoundError:
-            print(
-                f"WARNING: not releasing {self.path}: the directory is gone",
-                file=sys.stderr,
-            )
-            return
-        except OSError as exc:
-            print(
-                f"WARNING: not releasing {self.path}: {exc}",
-                file=sys.stderr,
-            )
-            return
-        current = self._identity_of(aside)
-        owner = self._read_owner(aside)
-        if (
-            current != self.identity
-            or owner is None
-            or owner.get("pid") != os.getpid()
-        ):
-            restored = False
-            try:
-                os.rename(aside, self.path)
-                restored = True
-            except OSError:
-                pass
-            print(
-                f"WARNING: not releasing {self.path}: owner.json is missing, "
-                "belongs to another process, or the inode changed"
-                + ("" if restored else f"; kept {aside} for manual recovery"),
-                file=sys.stderr,
-            )
-            return
-        shutil.rmtree(aside, ignore_errors=True)
-        self.created_identity = None
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    """Replace one small file atomically (used by concurrent self-checks)."""
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+
+
+def _read_lock_owner(path: Path) -> dict | None:
+    """Read the diagnostic owner block; never used for an ownership decision."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def make_run_dir(evidence: Path) -> Path:
@@ -616,13 +351,25 @@ def make_run_dir(evidence: Path) -> Path:
             counter += 1
 
 
+def caps_verified(limits: dict) -> bool:
+    """True when every *applicable* token cap was checked.
+
+    `usageNotApplicable` is deliberately not consulted: those scenarios have a
+    structural reason why usage cannot arrive (stream-cancel), so they neither
+    verify nor unverify the cap. Missing usage anywhere else, or a missing
+    `maxOutputTokens` echo, still leaves the cap unverified.
+    """
+    return not (limits.get("usageMissing") or limits.get("echoMissing"))
+
+
 def final_exit_code(report: dict, post_ok: bool, requests_sent: int) -> int:
     """Three-state outcome: PASS=0, FAIL=1, self-check=2, BLOCKED=3.
 
-    Exit 0 means *every* model-runtime scenario PASSed **and** the token caps
-    were verified, not merely "at least one PASS". A run with PASS + BLOCKED
-    (for example the request budget ran out before the tool scenario) is
-    partial and exits 3. Missing usage or a missing `maxOutputTokens` echo
+    Exit 0 means *every* model-runtime scenario PASSed **and** every
+    applicable token cap was verified, not merely "at least one PASS". A run
+    with PASS + BLOCKED (for example the request budget ran out before the
+    tool scenario) is partial and exits 3. Missing usage (outside the
+    documented not-applicable scenario) or a missing `maxOutputTokens` echo
     means the cap check never ran, so that is BLOCKED too: an unverified cap
     is never a green run.
     """
@@ -636,7 +383,7 @@ def final_exit_code(report: dict, post_ok: bool, requests_sent: int) -> int:
     if any(status != "PASS" for status in model):
         return EXIT_BLOCKED
     limits = report.get("limits") or {}
-    if limits.get("usageMissing") or limits.get("echoMissing"):
+    if not caps_verified(limits):
         return EXIT_BLOCKED
     return EXIT_OK
 
@@ -1070,11 +817,13 @@ def write_markdown(report: dict, path: Path) -> None:
         f"{report['limits']['outputTokensReported']}",
         f"- usage missing (unknown, not 0): "
         f"{report['limits'].get('usageMissing', []) or 'none'}",
+        f"- usage not applicable (structural, no cap check): "
+        f"{[item['scenario'] for item in report['limits'].get('usageNotApplicable', [])] or 'none'}",
         f"- maxOutputTokens echo missing: "
         f"{report['limits'].get('echoMissing', []) or 'none'}",
         f"- exit code: {report.get('exitCode', 'pending')}"
-        " (0 all model-runtime PASS with token caps verified, 1 FAIL, "
-        "2 self-check, 3 BLOCKED/partial/unverified)",
+        " (0 all model-runtime PASS with every applicable token cap verified, "
+        "1 FAIL, 2 self-check, 3 BLOCKED/partial/unverified)",
         f"- ports checked: {report['ports']}",
         "",
         "## Scenarios",
@@ -1099,6 +848,8 @@ def write_markdown(report: dict, path: Path) -> None:
         detail = str(detail).replace("|", "\\|").replace("\n", " ")
         if item.get("usageStatus") == "missing":
             detail = (detail + " usage=missing").strip()
+        elif item.get("usageStatus") == "not-applicable":
+            detail = (detail + " usage=not-applicable").strip()
         lines.append(
             f"| `{item['id']}` | {item['layer']} | **{item['status']}** | {detail[:300]} |"
         )
@@ -1111,6 +862,7 @@ def write_markdown(report: dict, path: Path) -> None:
         f" + {len(report['limits'].get('requestsUnknown', []))} unknown"
         " (each unknown is charged as one slot against the request budget)",
     ]
+    usage_not_applicable = report["limits"].get("usageNotApplicable", [])
     if usage_missing:
         lines.append(
             "- output tokens: **unknown** for "
@@ -1121,8 +873,15 @@ def write_markdown(report: dict, path: Path) -> None:
         )
     else:
         lines.append(
-            "- output tokens: reported for every model-runtime scenario; the "
-            "per-request and total token caps were checked."
+            "- output tokens: reported for every model-runtime scenario where "
+            "the cap applies; the per-request and total token caps were "
+            "checked."
+        )
+    for item in usage_not_applicable:
+        lines.append(
+            f"- output-token cap **not applicable** for `{item['scenario']}`: "
+            f"{item['reason']} This is neither a pass of the cap nor an "
+            "unverified request, so it does not block a green run."
         )
     echo_missing = report["limits"].get("echoMissing", [])
     if echo_missing:
@@ -1183,7 +942,8 @@ def write_markdown(report: dict, path: Path) -> None:
                 "bytes that were never read."
             )
     lines.append(
-        f"- token caps verified: {report.get('capsVerified', False)}"
+        f"- token caps verified (every applicable cap): "
+        f"{report.get('capsVerified', False)}"
     )
     lines.append(
         f"- overall pass (exit 0): {report.get('overallPass', False)}"
@@ -1264,10 +1024,10 @@ def collect_artifacts(evidence: Path) -> ArtifactScan:
     """List evidence files, skipping unreadable directories one at a time.
 
     `Path.rglob()` aborts the whole walk when a directory disappears midway
-    (a concurrent `--self-check-only` can race a lock reclaimer). That made the
-    secret scan fail open on a partial file list. `os.walk(onerror=...)` skips
-    only the directory that failed and reports it, so the rest is still
-    scanned and the caller can refuse to call a partial scan clean.
+    (a concurrent process can remove a run artifact). That made the secret
+    scan fail open on a partial file list. `os.walk(onerror=...)` skips only
+    the directory that failed and reports it, so the rest is still scanned and
+    the caller can refuse to call a partial scan clean.
     """
     files: list[Path] = []
     skipped_dirs: list[str] = []
@@ -1293,10 +1053,9 @@ def self_check(files: list[Path], secrets: dict[str, str]) -> dict:
         try:
             readable.append(path.read_bytes())
         except OSError:
-            # Another run (or a stale-lock reclaimer) removed the file after
-            # collect_artifacts() listed it. A vanished file cannot contain a
-            # leak, but the scan is still partial and `self_check_ok` refuses
-            # to call it clean.
+            # Another process removed the file after collect_artifacts()
+            # listed it. A vanished file cannot contain a leak, but the scan
+            # is still partial and `self_check_ok` refuses to call it clean.
             skipped += 1
     for alias, value in secrets.items():
         needle = value.encode()
@@ -1362,14 +1121,20 @@ def account_scenario(limits: dict, sid: str, payload: dict) -> list[str]:
     reported as a known request. Missing usage is recorded in
     `limits.usageMissing` and is not counted as 0 tokens; the per-request and
     total token checks are skipped for that scenario because there is no data
-    to compare, and `final_exit_code` returns BLOCKED instead of green. A
-    missing `maxOutputTokens` echo is recorded in `limits.echoMissing` for the
-    same reason: the cap cannot be shown to have been applied.
+    to compare, and `final_exit_code` returns BLOCKED instead of green. The one
+    exception is `USAGE_NOT_APPLICABLE` (stream-cancel): the aborted stream
+    structurally cannot carry a tail usage block, so its cap is recorded as
+    *not applicable* instead of *missing*. A missing `maxOutputTokens` echo is
+    recorded in `limits.echoMissing` for the same reason: the cap cannot be
+    shown to have been applied.
 
     The request budget is enforced after the fact as well as before the next
     scenario: a probe that retries can send more than one request per scenario
     and still report a plausible count, so the known+unknown total is checked
     here, after accounting, and a per-scenario count above one is a violation.
+    A scenario that reports PASS but a known count of 0 is also a violation:
+    "no request" is incomplete, not a verified green scenario, and the zero
+    case must be as strict as the retry case.
     """
     reported_requests = payload.get("requests")
     if payload.get("requestsUnknown") or not (
@@ -1384,12 +1149,36 @@ def account_scenario(limits: dict, sid: str, payload: dict) -> list[str]:
         limits["requestsSent"] += per_scenario_requests
     tokens = output_tokens(payload)
     if tokens is None:
-        payload["usageStatus"] = "missing"
-        limits["usageMissing"].append(sid)
+        reason = USAGE_NOT_APPLICABLE.get(sid)
+        if reason:
+            payload["usageStatus"] = "not-applicable"
+            entry = {"scenario": sid, "reason": reason}
+            if entry not in limits["usageNotApplicable"]:
+                limits["usageNotApplicable"].append(entry)
+        else:
+            payload["usageStatus"] = "missing"
+            limits["usageMissing"].append(sid)
     else:
         payload["usageStatus"] = "reported"
         limits["outputTokensReported"] += tokens
     violations = []
+    if payload.get("status") == "PASS" and per_scenario_requests is None:
+        # Symmetric with the known-0 case: a PASS that omits the counter is
+        # not allowed to evade the zero check by looking "unknown".
+        violations.append(
+            f"scenario {sid} reported PASS without a known request count; "
+            "a scenario that ran must report at least one request"
+        )
+    if (
+        per_scenario_requests is not None
+        and per_scenario_requests < 1
+        and payload.get("status") == "PASS"
+    ):
+        violations.append(
+            f"scenario {sid} reported {per_scenario_requests} requests but "
+            "PASS; a scenario that ran must send one request (0 is "
+            "incomplete)"
+        )
     if per_scenario_requests is not None and per_scenario_requests > 1:
         violations.append(
             f"scenario {sid} sent {per_scenario_requests} requests > 1 "
@@ -1483,43 +1272,55 @@ def main() -> int:
     key = secrets.get(key_alias, "")
 
     if args.self_check_only:
-        files = collect_artifacts(evidence)
-        check = self_check(files, secrets)
-        lines = [
-            f"env file: {env_path or 'none found'}",
-            f"keys loaded: {check['keysLoaded']}",
-            f"verifiable: {check['verifiable']}",
-            f"files: {check['files']}",
-            f"files skipped (vanished during scan): {check['filesSkipped']}",
-            f"directories skipped (walk error): {check['walkErrors']}",
-            f"scan truncated: {check['scanTruncated']}",
-            f"generic-pattern hits: {check['genericHits']}",
-        ]
-        for item in check["keys"]:
-            lines.append(f"{item['alias']}: {item['result']}")
-        (evidence / "self-check-final.txt").write_text(
-            "\n".join(lines) + "\n", encoding="utf-8"
-        )
-        post = self_check(collect_artifacts(evidence), secrets)
-        print("final secret self-check (all artifacts, cargo-target excluded):")
-        print(f"  env file: {env_path or 'none found'}")
-        print(f"  keys loaded: {post['keysLoaded']}")
-        for item in post["keys"]:
-            print(f"  {item['alias']}: {item['result']}")
-        print(f"  generic-pattern hits: {post['genericHits']}")
-        print(f"  files skipped (vanished during scan): {post['filesSkipped']}")
-        print(f"  directories skipped (walk error): {post['walkErrors']}")
-        print(f"  scan truncated: {post['scanTruncated']}")
-        if not post["verifiable"]:
-            print("  0 keys loaded, cannot verify key leakage")
-        if post["scanTruncated"]:
-            print("  partial scan: refused (a skipped file/directory is not a pass)")
-        ok = self_check_ok(post)
-        print(f"  finalPass: {ok}")
-        return EXIT_OK if ok else EXIT_SELF_CHECK_FAILED
+        # LOCK_SH: excludes a normal (LOCK_EX) run; concurrent read-only
+        # self-checks may run together. The report file is replaced atomically
+        # so two of them cannot interleave a partial write.
+        lock = EvidenceLock(evidence, shared=True)
+        acquired, reason = lock.acquire()
+        if not acquired:
+            print(f"BLOCKED: {reason}", file=sys.stderr)
+            return EXIT_BLOCKED
+        try:
+            files = collect_artifacts(evidence)
+            check = self_check(files, secrets)
+            lines = [
+                f"env file: {env_path or 'none found'}",
+                f"keys loaded: {check['keysLoaded']}",
+                f"verifiable: {check['verifiable']}",
+                f"files: {check['files']}",
+                f"files skipped (vanished during scan): {check['filesSkipped']}",
+                f"directories skipped (walk error): {check['walkErrors']}",
+                f"scan truncated: {check['scanTruncated']}",
+                f"generic-pattern hits: {check['genericHits']}",
+            ]
+            for item in check["keys"]:
+                lines.append(f"{item['alias']}: {item['result']}")
+            _write_text_atomic(
+                evidence / "self-check-final.txt", "\n".join(lines) + "\n"
+            )
+            post = self_check(collect_artifacts(evidence), secrets)
+            print("final secret self-check (all artifacts, cargo-target excluded):")
+            print(f"  env file: {env_path or 'none found'}")
+            print(f"  keys loaded: {post['keysLoaded']}")
+            for item in post["keys"]:
+                print(f"  {item['alias']}: {item['result']}")
+            print(f"  generic-pattern hits: {post['genericHits']}")
+            print(f"  files skipped (vanished during scan): {post['filesSkipped']}")
+            print(f"  directories skipped (walk error): {post['walkErrors']}")
+            print(f"  scan truncated: {post['scanTruncated']}")
+            if not post["verifiable"]:
+                print("  0 keys loaded, cannot verify key leakage")
+            if post["scanTruncated"]:
+                print("  partial scan: refused (a skipped file/directory is not a pass)")
+            ok = self_check_ok(post)
+            print(f"  finalPass: {ok}")
+            return EXIT_OK if ok else EXIT_SELF_CHECK_FAILED
+        finally:
+            lock.release()
 
-    # One writer per evidence directory. A second run refuses before touching
-    # any artifact; it never deletes the first run's raw records.
+    # One writer per evidence directory. A second run is refused by the kernel
+    # (`flock`) before touching any artifact; it never deletes the first run's
+    # raw records.
     lock = EvidenceLock(evidence)
     try:
         acquired, reason = lock.acquire()
@@ -1545,6 +1346,7 @@ def main() -> int:
             "requestsUnknown": [],
             "outputTokensReported": 0,
             "usageMissing": [],
+            "usageNotApplicable": [],
             "echoMissing": [],
             "violations": [],
         }
@@ -1640,8 +1442,11 @@ def main() -> int:
             "cargoSlots": slots,
             "build": build,
             "evidenceLock": {
-                "reclaimed": bool(lock.reclaim_note),
-                "note": lock.reclaim_note or None,
+                "mechanism": "fcntl.flock",
+                "file": str(lock.path),
+                "exclusive": not lock.shared,
+                "holder": _read_lock_owner(lock.path),
+                "note": lock.note or None,
             },
             "scenarios": scenarios,
             "notes": [
@@ -1653,10 +1458,14 @@ def main() -> int:
                 "counters. A probe with no result is recorded as 0/unknown, "
                 "not as one invented request; unknown request counts are "
                 "charged as one slot against the budget and listed in "
-                "limits.requestsUnknown. Missing usage is listed in "
-                "limits.usageMissing and is never counted as 0 tokens; a "
-                "missing maxOutputTokens echo is listed in limits.echoMissing. "
-                "Either one makes the run exit 3 (caps unverified), never 0.",
+                "limits.requestsUnknown. A PASS scenario must report at least "
+                "one known request; a known 0 is a limits.violations entry. "
+                "Missing usage is listed in limits.usageMissing and is never "
+                "counted as 0 tokens; a missing maxOutputTokens echo is listed "
+                "in limits.echoMissing. Either one makes the run exit 3 (caps "
+                "unverified), never 0, except for the per-scenario "
+                "limits.usageNotApplicable entry (stream-cancel aborts before "
+                "the Anthropic tail usage block).",
             ],
         }
 
@@ -1685,9 +1494,7 @@ def main() -> int:
         report["exitCode"] = final_exit_code(
             report, final["finalPass"], requests_accounted
         )
-        report["capsVerified"] = not (
-            limits["usageMissing"] or limits["echoMissing"]
-        )
+        report["capsVerified"] = caps_verified(limits)
         report["overallPass"] = report["exitCode"] == EXIT_OK
         write_limits(run_dir, limits)
         write_reports(report, [run_dir, evidence])
@@ -1700,9 +1507,7 @@ def main() -> int:
             report["secretSelfCheck"] = post
             report["finalPass"] = post_ok
             report["exitCode"] = code
-            report["capsVerified"] = not (
-                limits["usageMissing"] or limits["echoMissing"]
-            )
+            report["capsVerified"] = caps_verified(limits)
             report["overallPass"] = code == EXIT_OK
             write_reports(report, [run_dir, evidence])
 
@@ -1720,6 +1525,9 @@ def main() -> int:
                   + ", ".join(limits["usageMissing"]))
             print("token caps UNVERIFIED for scenarios with missing usage "
                   "(exit 3, not green)")
+        for item in limits["usageNotApplicable"]:
+            print(f"usage not applicable: {item['scenario']} "
+                  f"({item['reason']})")
         if limits["echoMissing"]:
             print("maxOutputTokens echo missing: "
                   + ", ".join(limits["echoMissing"]))
@@ -1749,7 +1557,7 @@ def main() -> int:
         print(f"exitCode: {code}")
         return code
     finally:
-        lock.abandon()
+        lock.release()
 
 
 if __name__ == "__main__":

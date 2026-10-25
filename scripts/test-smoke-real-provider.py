@@ -196,7 +196,7 @@ def test_self_check() -> None:
         generic_check = rp.self_check([clean, generic], {"K": secret})
         check("generic key pattern fails", rp.self_check_ok(generic_check) is False)
 
-        # A concurrent run (or stale-lock reclaimer) can delete a file after
+        # A concurrent process can delete a file after
         # collect_artifacts() listed it. That must not raise FileNotFoundError
         # and look like a scenario FAIL.
         vanished = directory / "vanished.txt"
@@ -263,6 +263,7 @@ def empty_limits() -> dict:
         "requestsUnknown": [],
         "outputTokensReported": 0,
         "usageMissing": [],
+        "usageNotApplicable": [],
         "echoMissing": [],
         "violations": [],
     }
@@ -282,6 +283,68 @@ def test_account_scenario() -> None:
     check("missing maxOutputTokens echo is recorded, not assumed",
           limits["echoMissing"] == ["model_runtime_text"], repr(limits))
 
+    # stream-cancel aborts before the Anthropic tail usage block: its cap is
+    # not-applicable, while every other scenario's missing usage stays missing.
+    limits = empty_limits()
+    payload = {"status": "PASS", "requests": 1, "maxOutputTokens": 128}
+    violations = rp.account_scenario(
+        limits, "model_runtime_stream_cancel", payload
+    )
+    check("stream-cancel missing usage is not-applicable, not missing",
+          payload.get("usageStatus") == "not-applicable"
+          and limits["usageMissing"] == []
+          and [item["scenario"] for item in limits["usageNotApplicable"]]
+          == ["model_runtime_stream_cancel"],
+          repr((payload, limits)))
+    check("not-applicable records the structural reason",
+          "end of the stream" in limits["usageNotApplicable"][0]["reason"],
+          repr(limits["usageNotApplicable"]))
+    check("not-applicable usage is not a limit violation",
+          violations == [], repr(violations))
+    check("not-applicable usage does not count as 0 tokens",
+          limits["outputTokensReported"] == 0, repr(limits))
+
+    # Negative control for the exemption: the same missing usage on any other
+    # scenario is still UNVERIFIED.
+    limits = empty_limits()
+    payload = {"status": "PASS", "requests": 1, "maxOutputTokens": 128}
+    rp.account_scenario(limits, "model_runtime_text", payload)
+    check("missing usage outside stream-cancel stays missing",
+          payload.get("usageStatus") == "missing"
+          and limits["usageMissing"] == ["model_runtime_text"]
+          and limits["usageNotApplicable"] == [],
+          repr((payload, limits)))
+
+    # A PASS scenario that reports 0 requests is incomplete, not green. This
+    # is the symmetric counterpart of the retry (>1) check.
+    limits = empty_limits()
+    payload = {"status": "PASS", "requests": 0, "maxOutputTokens": 128,
+               "usage": {"outputTokens": 1}}
+    violations = rp.account_scenario(limits, "model_runtime_text", payload)
+    check("PASS with 0 requests is a violation",
+          any("reported 0 requests" in item for item in violations),
+          repr(violations))
+    check("the zero-request violation is not counted as a sent request",
+          limits["requestsSent"] == 0, repr(limits))
+
+    # Negative control: exactly one request is not a zero-request violation.
+    limits = empty_limits()
+    payload = {"status": "PASS", "requests": 1, "maxOutputTokens": 128,
+               "usage": {"outputTokens": 1}}
+    violations = rp.account_scenario(limits, "model_runtime_text", payload)
+    check("PASS with one request is not a zero-request violation",
+          not any("reported 1 requests" in item for item in violations),
+          repr(violations))
+
+    # Scope negative control: a FAIL that sent 0 requests is already not green
+    # and must not be reclassified as a zero-request budget violation.
+    limits = empty_limits()
+    payload = {"status": "FAIL", "requests": 0, "maxOutputTokens": 128,
+               "usage": {"outputTokens": 1}}
+    violations = rp.account_scenario(limits, "model_runtime_text", payload)
+    check("FAIL with 0 requests is not reclassified by the zero check",
+          violations == [], repr(violations))
+
     limits = empty_limits()
     payload = {"requests": 1, "requestsUnknown": True,
                "usage": {"outputTokens": 5}}
@@ -290,6 +353,15 @@ def test_account_scenario() -> None:
           limits["requestsSent"] == 0
           and limits["requestsUnknown"] == ["model_runtime_text"],
           repr(limits))
+
+    # A PASS cannot evade the zero check by omitting the counter.
+    limits = empty_limits()
+    payload = {"status": "PASS", "requestsUnknown": True,
+               "maxOutputTokens": 128, "usage": {"outputTokens": 5}}
+    violations = rp.account_scenario(limits, "model_runtime_text", payload)
+    check("PASS without a known request count is a violation",
+          any("without a known request count" in item for item in violations),
+          repr(violations))
 
     limits = empty_limits()
     payload = {"requests": 1, "usage": {"outputTokens": 129}}
@@ -420,6 +492,21 @@ def test_exit_codes() -> None:
                   "echoMissing": ["model_runtime_text"]}}
     check("all PASS but maxOutputTokens echo missing is BLOCKED (exit 3)",
           rp.final_exit_code(echo_missing, True, 1) == rp.EXIT_BLOCKED)
+    not_applicable = {"scenarios": [
+        {"layer": "model-runtime", "status": "PASS"},
+    ], "limits": {"usageMissing": [],
+                  "usageNotApplicable": [
+                      {"scenario": "model_runtime_stream_cancel",
+                       "reason": "aborted before the tail usage block"}],
+                  "echoMissing": []}}
+    check("not-applicable usage does not block exit 0",
+          rp.final_exit_code(not_applicable, True, 1) == rp.EXIT_OK)
+    check("caps_verified ignores the not-applicable list",
+          rp.caps_verified(not_applicable["limits"]) is True)
+    check("caps_verified is false when usage is missing",
+          rp.caps_verified({"usageMissing": ["x"], "echoMissing": []}) is False)
+    check("caps_verified is false when the echo is missing",
+          rp.caps_verified({"usageMissing": [], "echoMissing": ["x"]}) is False)
     verified = {"scenarios": [
         {"layer": "model-runtime", "status": "PASS"},
     ], "limits": {"usageMissing": [], "echoMissing": []}}
@@ -433,401 +520,215 @@ def test_exit_codes() -> None:
           rp.final_exit_code(fail_and_unverified, True, 1) == rp.EXIT_FAIL)
 
 
-def test_lock() -> None:
+LOCK_WORKER = r"""
+import importlib.util
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+module_path = Path(sys.argv[1])
+evidence = Path(sys.argv[2])
+mode = sys.argv[3]
+start = None if sys.argv[4] == "-" else Path(sys.argv[4])
+marker = None if sys.argv[5] == "-" else Path(sys.argv[5])
+hold_seconds = float(sys.argv[6])
+no_flock = sys.argv[7] == "no-flock"
+
+spec = importlib.util.spec_from_file_location("real_provider", module_path)
+rp = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rp)
+if no_flock:
+    # Negative control: the same worker with the kernel lock removed.
+    rp.fcntl.flock = lambda fd, op: 0
+
+if start is not None:
+    deadline = time.time() + 10
+    while not start.exists():
+        if time.time() > deadline:
+            print("LOCK_RESULT " + json.dumps(
+                {"ok": False, "reason": "start barrier timeout"}), flush=True)
+            raise SystemExit(2)
+        time.sleep(0.002)
+
+lock = rp.EvidenceLock(evidence)
+ok, reason = lock.acquire()
+print("LOCK_RESULT " + json.dumps(
+    {"ok": ok, "reason": reason, "pid": os.getpid()}), flush=True)
+if ok and marker is not None:
+    marker.write_text(str(os.getpid()), encoding="utf-8")
+if ok:
+    time.sleep(hold_seconds)
+    lock.release()
+"""
+
+
+def lock_worker_command(evidence: Path, mode: str = "try",
+                        start: Path | None = None,
+                        marker: Path | None = None,
+                        hold: float = 0.0,
+                        no_flock: bool = False,
+                        module: Path | None = None) -> list[str]:
+    return [
+        sys.executable, "-I", "-c", LOCK_WORKER,
+        str(module or SCRIPT), str(evidence), mode,
+        str(start) if start is not None else "-",
+        str(marker) if marker is not None else "-",
+        str(hold),
+        "no-flock" if no_flock else "flock",
+    ]
+
+
+def lock_results(stdout: str) -> list[dict]:
+    return [
+        json.loads(line[len("LOCK_RESULT "):])
+        for line in stdout.splitlines()
+        if line.startswith("LOCK_RESULT ")
+    ]
+
+
+def test_lock_flock_single_writer() -> None:
+    """One exclusive flock per evidence root; the file is left in place."""
     with tempfile.TemporaryDirectory() as d:
         evidence = Path(d)
         first = rp.EvidenceLock(evidence)
-        ok, _ = first.acquire()
-        check("first lock acquire", ok)
+        ok, reason = first.acquire()
+        check("flock first acquire succeeds", ok, reason)
+        check("the lock is a regular file",
+              (evidence / ".smoke.lock").is_file())
+        owner = rp._read_lock_owner(evidence / ".smoke.lock")
+        check("owner diagnostics name this process",
+              owner is not None and owner.get("pid") == os.getpid(),
+              repr(owner))
         second = rp.EvidenceLock(evidence)
         ok, reason = second.acquire()
-        check("second lock refuses", not ok and "another run" in reason, reason)
+        check("second flock refuses while the first holds it",
+              not ok and "another run holds" in reason, reason)
+        shared = rp.EvidenceLock(evidence, shared=True)
+        ok, reason = shared.acquire()
+        check("a shared self-check lock also refuses while exclusive is held",
+              not ok and "another run holds" in reason, reason)
         first.release()
-        ok, _ = second.acquire()
-        check("lock can be reacquired after release", ok)
+        check("release does not delete the lock file",
+              (evidence / ".smoke.lock").is_file())
+        ok, reason = second.acquire()
+        check("flock can be reacquired after release", ok, reason)
         second.release()
 
     with tempfile.TemporaryDirectory() as d:
         evidence = Path(d)
-        stale = evidence / ".smoke.lock"
-        stale.mkdir()
-        (stale / "owner.json").write_text(
-            json.dumps({"pid": 999999, "startedAt": "2020-01-01T00:00:00+00:00"}),
-            encoding="utf-8",
-        )
-        lock = rp.EvidenceLock(evidence)
-        ok, reason = lock.acquire()
-        check("stale lock is reclaimed", ok, reason)
-        lock.release()
+        one = rp.EvidenceLock(evidence, shared=True)
+        ok, reason = one.acquire()
+        check("shared lock acquires on a free evidence root", ok, reason)
+        two = rp.EvidenceLock(evidence, shared=True)
+        ok, reason = two.acquire()
+        check("two shared locks coexist", ok, reason)
+        one.release()
+        two.release()
 
 
-def test_lock_ownerless_is_held() -> None:
-    """A fresh `.smoke.lock` with no owner.json is a run in progress."""
+def test_lock_two_processes_only_one_wins() -> None:
+    """Two real processes race for the same evidence root; exactly one wins."""
     with tempfile.TemporaryDirectory() as d:
         evidence = Path(d)
-        (evidence / ".smoke.lock").mkdir()
-        lock = rp.EvidenceLock(evidence)
-        ok, reason = lock.acquire()
-        check("ownerless lock is held, not reclaimed", not ok, reason)
-        check("ownerless lock is left in place",
-              (evidence / ".smoke.lock").is_dir(), reason)
-        shutil.rmtree(evidence / ".smoke.lock")
+        start = evidence / "start"
+        first = subprocess.Popen(
+            lock_worker_command(evidence, mode="hold", start=start, hold=2.0),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        second = subprocess.Popen(
+            lock_worker_command(evidence, mode="try", start=start),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        start.write_text("go", encoding="utf-8")
+        out_first, err_first = first.communicate(timeout=20)
+        out_second, err_second = second.communicate(timeout=20)
+        results = lock_results(out_first) + lock_results(out_second)
+        winners = [item for item in results if item.get("ok")]
+        check("both lock workers reported a result", len(results) == 2,
+              repr((out_first, err_first, out_second, err_second)))
+        check("exactly one of two concurrent processes gets the flock",
+              len(winners) == 1, repr(results))
+        check("the loser reports another run",
+              any("another run holds" in str(item.get("reason"))
+                  for item in results if not item.get("ok")),
+              repr(results))
 
+
+def test_lock_sigkill_releases_immediately() -> None:
+    """The kernel releases the flock on SIGKILL; no stale reclaim is needed."""
     with tempfile.TemporaryDirectory() as d:
         evidence = Path(d)
-        lock_path = evidence / ".smoke.lock"
-        lock_path.mkdir()
-        (lock_path / "owner.json").write_text(
-            json.dumps({"startedAt": "2020-01-01T00:00:00+00:00"}),
-            encoding="utf-8",
+        marker = evidence / "holder.pid"
+        holder = subprocess.Popen(
+            lock_worker_command(evidence, mode="hold", marker=marker,
+                                hold=30.0),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        lock = rp.EvidenceLock(evidence)
-        ok, reason = lock.acquire()
-        check("owner without a valid pid is held, not reclaimed", not ok, reason)
-        check("invalid-owner lock is left in place", lock_path.is_dir(), reason)
-        shutil.rmtree(lock_path)
+        pid = None
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if marker.is_file():
+                try:
+                    pid = int(marker.read_text(encoding="utf-8").strip())
+                except ValueError:
+                    pid = None
+                if pid:
+                    break
+            if holder.poll() is not None:
+                break
+            time.sleep(0.02)
+        check("SIGKILL test observed the holder acquire the lock", pid is not None,
+              f"holder exit={holder.poll()}")
+        if pid is None:
+            holder.kill()
+            holder.communicate()
+            return
+        os.kill(pid, signal.SIGKILL)
+        holder.wait(timeout=10)
+        started = time.monotonic()
+        probe = subprocess.run(
+            lock_worker_command(evidence, mode="try"),
+            capture_output=True, text=True, timeout=10,
+        )
+        elapsed = time.monotonic() - started
+        results = lock_results(probe.stdout)
+        check("another process acquires immediately after the holder is SIGKILLed",
+              len(results) == 1 and results[0].get("ok") is True,
+              repr((probe.stdout, probe.stderr, probe.returncode)))
+        check("the post-SIGKILL acquisition is fast (no stale-lock wait)",
+              elapsed < 5.0, f"elapsed={elapsed:.2f}s")
 
 
-def test_lock_concurrent_acquire_window() -> None:
-    """Hook between mkdir and the owner write: a second run must refuse.
+def test_lock_negative_control_without_flock() -> None:
+    """Negative control: with flock removed, both concurrent workers succeed.
 
-    This is the exact window the old code misread as a stale lock: A creates
-    the directory, B sees it without owner.json and renames it away. The
-    deterministic hook makes the race reproducible without killing a process.
+    This is the same two-process race as the positive test; only the kernel
+    lock call is a no-op. If the positive test could pass without flock, this
+    check would find two winners.
     """
     with tempfile.TemporaryDirectory() as d:
         evidence = Path(d)
-        entered = threading.Event()
-        release = threading.Event()
-        first = rp.EvidenceLock(evidence)
-
-        def pause_before_owner() -> None:
-            entered.set()
-            release.wait(10)
-
-        first.after_mkdir = pause_before_owner
-        result: dict = {}
-
-        def acquire_first() -> None:
-            result["first"] = first.acquire()
-
-        thread = threading.Thread(target=acquire_first)
-        thread.start()
-        try:
-            check("first run reached the mkdir/owner window", entered.wait(10))
-            second = rp.EvidenceLock(evidence)
-            ok, reason = second.acquire()
-            check("second run refuses inside the mkdir/owner window",
-                  not ok and "without a readable owner.json" in reason, reason)
-            check("first run's new lock directory survives",
-                  (evidence / ".smoke.lock").is_dir(), reason)
-        finally:
-            release.set()
-            thread.join(10)
-        check("first run still holds after the window",
-              result.get("first", (False, ""))[0] and first.held,
-              repr(result))
-        first.release()
-
-
-def test_lock_reclaim_verifies_owner() -> None:
-    """Reclaim re-reads the moved owner; a changed owner aborts the reclaim."""
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock_path = evidence / ".smoke.lock"
-        lock_path.mkdir()
-        dead_owner = {"pid": 999999, "startedAt": "2020-01-01T00:00:00+00:00"}
-        (lock_path / "owner.json").write_text(
-            json.dumps(dead_owner), encoding="utf-8"
+        start = evidence / "start"
+        first = subprocess.Popen(
+            lock_worker_command(evidence, mode="hold", start=start,
+                                hold=1.0, no_flock=True),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        lock = rp.EvidenceLock(evidence)
-
-        def replace_owner(stale: Path) -> None:
-            (stale / "owner.json").write_text(
-                json.dumps({"pid": os.getpid(), "startedAt": "2030-01-01T00:00:00+00:00"}),
-                encoding="utf-8",
-            )
-
-        lock.after_reclaim_rename = replace_owner
-        ok, reason = lock.acquire()
-        check("reclaim refuses when the owner changed after rename",
-              not ok and "owner changed" in reason, reason)
-        check("the changed lock is put back", lock_path.is_dir(), reason)
-        owner = json.loads((lock_path / "owner.json").read_text(encoding="utf-8"))
-        check("the put-back lock still belongs to the new owner",
-              owner.get("pid") == os.getpid(), repr(owner))
-        shutil.rmtree(lock_path)
-
-
-def test_lock_release_checks_owner() -> None:
-    """release() must not rmtree a lock that now belongs to another pid."""
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock = rp.EvidenceLock(evidence)
-        ok, reason = lock.acquire()
-        check("release-owner test acquired the lock", ok, reason)
-        (evidence / ".smoke.lock" / "owner.json").write_text(
-            json.dumps({"pid": 1, "startedAt": "2020-01-01T00:00:00+00:00"}),
-            encoding="utf-8",
+        second = subprocess.Popen(
+            lock_worker_command(evidence, mode="try", start=start,
+                                no_flock=True),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        lock.release()
-        check("release leaves a lock owned by another pid",
-              (evidence / ".smoke.lock").is_dir())
-        check("release does not claim to still hold", lock.held is False)
-        shutil.rmtree(evidence / ".smoke.lock")
-
-
-def test_lock_age_escape_hatch() -> None:
-    """A live-looking pid must not pin the lock forever.
-
-    The pid can be reused (or `kill(pid, 0)` can raise PermissionError for a
-    process owned by another uid). A lock older than the cap is reclaimed; a
-    young one with a live pid is still held.
-    """
-    old = time.time() - 10 * 365 * 24 * 3600
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock_path = evidence / ".smoke.lock"
-        lock_path.mkdir()
-        (lock_path / "owner.json").write_text(
-            json.dumps({"pid": os.getpid(),
-                        "startedAt": "2020-01-01T00:00:00+00:00"}),
-            encoding="utf-8",
-        )
-        os.utime(lock_path / "owner.json", (old, old))
-        os.utime(lock_path, (old, old))
-        lock = rp.EvidenceLock(evidence)
-        lock.max_age_seconds = 60
-        ok, reason = lock.acquire()
-        check("alive pid with an over-age lock is reclaimed", ok, reason)
-        check("age reclaim is recorded in the report note",
-              "age cap" in lock.reclaim_note, repr(lock.reclaim_note))
-        lock.release()
-
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock_path = evidence / ".smoke.lock"
-        lock_path.mkdir()
-        (lock_path / "owner.json").write_text(
-            json.dumps({"pid": os.getpid(), "startedAt": rp.iso_now()}),
-            encoding="utf-8",
-        )
-        lock = rp.EvidenceLock(evidence)
-        lock.max_age_seconds = 3600
-        ok, reason = lock.acquire()
-        check("alive pid with a young lock still refuses",
-              not ok and "another run holds" in reason, reason)
-        shutil.rmtree(lock_path)
-
-    # PermissionError is "unknown", not proof of life: a young lock refuses,
-    # an over-age lock uses the same age cap.
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock_path = evidence / ".smoke.lock"
-        lock_path.mkdir()
-        (lock_path / "owner.json").write_text(
-            json.dumps({"pid": 4711, "startedAt": rp.iso_now()}),
-            encoding="utf-8",
-        )
-        original_state = rp.pid_state
-        rp.pid_state = lambda pid: "unknown"
-        try:
-            lock = rp.EvidenceLock(evidence)
-            lock.max_age_seconds = 3600
-            ok, reason = lock.acquire()
-            check("unverifiable young pid refuses with an explanation",
-                  not ok and "cannot verify owner pid" in reason, reason)
-            (lock_path / "owner.json").write_text(
-                json.dumps({"pid": 4711,
-                            "startedAt": "2020-01-01T00:00:00+00:00"}),
-                encoding="utf-8",
-            )
-            os.utime(lock_path / "owner.json", (old, old))
-            os.utime(lock_path, (old, old))
-            lock = rp.EvidenceLock(evidence)
-            lock.max_age_seconds = 60
-            ok, reason = lock.acquire()
-            check("unverifiable over-age pid is reclaimed", ok, reason)
-            check("unverifiable reclaim is recorded",
-                  "unverifiable" in lock.reclaim_note,
-                  repr(lock.reclaim_note))
-            lock.release()
-        finally:
-            rp.pid_state = original_state
-
-
-def test_lock_reclaim_checks_inode() -> None:
-    """Same owner bytes but a different inode is a different lock."""
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock_path = evidence / ".smoke.lock"
-        lock_path.mkdir()
-        dead_owner = {"pid": 999999, "startedAt": "2020-01-01T00:00:00+00:00"}
-        (lock_path / "owner.json").write_text(
-            json.dumps(dead_owner), encoding="utf-8"
-        )
-        lock = rp.EvidenceLock(evidence)
-
-        def swap_directory() -> None:
-            # Same owner content, new inode: the path was re-created after the
-            # reclaim decided the old directory was stale.
-            shutil.rmtree(lock_path)
-            lock_path.mkdir()
-            (lock_path / "owner.json").write_text(
-                json.dumps(dead_owner), encoding="utf-8"
-            )
-
-        lock.before_reclaim_rename = swap_directory
-        ok, reason = lock.acquire()
-        check("reclaim refuses when the directory inode changed",
-              not ok and "identity changed" in reason, reason)
-        check("the moved lock is put back over the empty reservation",
-              lock_path.is_dir(), reason)
-        check("no stale lock is left behind",
-              not list(evidence.glob(".smoke.lock.stale-*")))
-        check("the refused claim does not report held", lock.held is False)
-        shutil.rmtree(lock_path)
-
-
-def test_lock_failed_restore_keeps_reservation() -> None:
-    """If the moved lock cannot be put back, keep the empty reservation.
-
-    Removing it would reopen `.smoke.lock` while the moved owner may still
-    believe it holds the lock. Fail-closed: leave an ownerless directory for
-    the documented manual recovery, and do not let `abandon()` delete it.
-    """
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock_path = evidence / ".smoke.lock"
-        lock_path.mkdir()
-        dead_owner = {"pid": 999999, "startedAt": "2020-01-01T00:00:00+00:00"}
-        (lock_path / "owner.json").write_text(
-            json.dumps(dead_owner), encoding="utf-8"
-        )
-        lock = rp.EvidenceLock(evidence)
-
-        def swap_directory() -> None:
-            shutil.rmtree(lock_path)
-            lock_path.mkdir()
-            (lock_path / "owner.json").write_text(
-                json.dumps(dead_owner), encoding="utf-8"
-            )
-
-        lock.before_reclaim_rename = swap_directory
-        real_rename = rp.os.rename
-        calls = {"n": 0}
-
-        def flaky_rename(src, dst):
-            calls["n"] += 1
-            if calls["n"] == 2:
-                raise OSError("simulated restore failure")
-            return real_rename(src, dst)
-
-        rp.os.rename = flaky_rename
-        try:
-            ok, reason = lock.acquire()
-        finally:
-            rp.os.rename = real_rename
-        check("failed restore still refuses the reclaim",
-              not ok and "manual" in reason, reason)
-        check("failed restore keeps the empty reservation",
-              lock_path.is_dir(), reason)
-        lock.abandon()
-        check("abandon does not remove a kept reservation",
-              lock_path.is_dir())
-        check("the moved lock is kept for manual recovery",
-              bool(list(evidence.glob(".smoke.lock.stale-*"))))
-        shutil.rmtree(lock_path)
-        for stale in evidence.glob(".smoke.lock.stale-*"):
-            shutil.rmtree(stale)
-
-
-def test_lock_release_checks_inode() -> None:
-    """release() must not rmtree a replacement directory with our pid."""
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock = rp.EvidenceLock(evidence)
-        ok, reason = lock.acquire()
-        check("release-inode test acquired the lock", ok, reason)
-        lock_path = evidence / ".smoke.lock"
-        aside = evidence / ".smoke.lock.aside"
-        os.rename(lock_path, aside)
-        lock_path.mkdir()
-        (lock_path / "owner.json").write_text(
-            json.dumps({"pid": os.getpid(), "startedAt": rp.iso_now()}),
-            encoding="utf-8",
-        )
-        lock.release()
-        check("release leaves a replacement inode in place", lock_path.is_dir())
-        check("release does not claim to hold", lock.held is False)
-        shutil.rmtree(lock_path)
-        shutil.rmtree(aside)
-
-
-def test_lock_owner_write_survives_directory_move() -> None:
-    """owner.json must be written relative to the fd, not the path name.
-
-    This is the deterministic form of the three-process race: after our mkdir,
-    a reclaimer moves our directory aside and a replacement lock appears at
-    `.smoke.lock`. A path-based owner write lands in the replacement and makes
-    two processes believe they own the same lock.
-    """
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock_path = evidence / ".smoke.lock"
-        moved = evidence / ".smoke.lock.moved"
-        foreign = {"pid": 1, "startedAt": "2020-01-01T00:00:00+00:00"}
-        lock = rp.EvidenceLock(evidence)
-
-        def move_and_replace() -> None:
-            os.rename(lock_path, moved)
-            lock_path.mkdir()
-            (lock_path / "owner.json").write_text(
-                json.dumps(foreign), encoding="utf-8"
-            )
-
-        lock.after_mkdir = move_and_replace
-        ok, reason = lock.acquire()
-        check("owner write survives a directory move", ok, reason)
-        moved_owner = json.loads(
-            (moved / "owner.json").read_text(encoding="utf-8")
-        )
-        check("owner.json is written into the directory this process created",
-              moved_owner.get("pid") == os.getpid(), repr(moved_owner))
-        replacement_owner = json.loads(
-            (lock_path / "owner.json").read_text(encoding="utf-8")
-        )
-        check("owner write does not overwrite a replacement lock",
-              replacement_owner == foreign, repr(replacement_owner))
-        lock.release()
-        check("release does not delete the replacement directory",
-              lock_path.is_dir())
-        shutil.rmtree(lock_path)
-        shutil.rmtree(moved)
-
-
-def test_lock_abandon_after_interrupt() -> None:
-    """Ctrl-C between mkdir and the owner write must not leave a stuck lock."""
-    with tempfile.TemporaryDirectory() as d:
-        evidence = Path(d)
-        lock = rp.EvidenceLock(evidence)
-
-        def interrupt() -> None:
-            raise KeyboardInterrupt
-
-        lock.after_mkdir = interrupt
-        raised = False
-        try:
-            lock.acquire()
-        except KeyboardInterrupt:
-            raised = True
-        check("interrupted acquisition re-raises", raised)
-        check("interrupted acquisition temporarily leaves its directory",
-              (evidence / ".smoke.lock").is_dir())
-        lock.abandon()
-        check("abandon removes this attempt's partial lock",
-              not (evidence / ".smoke.lock").exists())
-        check("abandon does not claim to hold", lock.held is False)
+        start.write_text("go", encoding="utf-8")
+        out_first, err_first = first.communicate(timeout=20)
+        out_second, err_second = second.communicate(timeout=20)
+        results = lock_results(out_first) + lock_results(out_second)
+        winners = [item for item in results if item.get("ok")]
+        check("negative control: both processes acquire without flock",
+              len(results) == 2 and len(winners) == 2,
+              repr((results, out_first, err_first, out_second, err_second)))
 
 
 def test_run_dirs() -> None:
@@ -1303,9 +1204,10 @@ def test_constants() -> None:
           == rp.MAX_REQUESTS * rp.MAX_OUTPUT_TOKENS_PER_REQUEST)
     check("outer probe timeout exceeds the inner scenario timeout",
           rp.PROBE_TIMEOUT_SECONDS > rp.PROBE_SCENARIO_TIMEOUT_SECONDS)
-    check("lock age cap exceeds one bounded run",
-          rp.LOCK_MAX_AGE_SECONDS
-          > rp.BUILD_TIMEOUT_SECONDS + rp.MAX_REQUESTS * rp.PROBE_TIMEOUT_SECONDS)
+    check("the kernel lock is a fixed file name",
+          rp.LOCK_FILENAME == ".smoke.lock")
+    check("stream-cancel is the documented not-applicable usage scenario",
+          set(rp.USAGE_NOT_APPLICABLE) == {"model_runtime_stream_cancel"})
 
 
 def main() -> int:
@@ -1316,17 +1218,10 @@ def main() -> int:
     test_output_tokens()
     test_account_scenario()
     test_exit_codes()
-    test_lock()
-    test_lock_ownerless_is_held()
-    test_lock_concurrent_acquire_window()
-    test_lock_reclaim_verifies_owner()
-    test_lock_release_checks_owner()
-    test_lock_age_escape_hatch()
-    test_lock_reclaim_checks_inode()
-    test_lock_failed_restore_keeps_reservation()
-    test_lock_release_checks_inode()
-    test_lock_owner_write_survives_directory_move()
-    test_lock_abandon_after_interrupt()
+    test_lock_flock_single_writer()
+    test_lock_two_processes_only_one_wins()
+    test_lock_sigkill_releases_immediately()
+    test_lock_negative_control_without_flock()
     test_run_dirs()
     test_run_bounded_timeout()
     test_run_bounded_keyboard_interrupt()

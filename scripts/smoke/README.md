@@ -44,13 +44,22 @@ Limits (constants in `real_provider.py`, echoed by the probe in
   `limits.usageMissing`, and the token caps are reported as **UNVERIFIED** for
   it; missing usage is never counted as 0 tokens. If the probe does not echo
   `maxOutputTokens`, the id is listed in `limits.echoMissing`. **Either one
-  makes the run exit 3 (BLOCKED/partial), never 0.** Exit 0 therefore means
-  every cap was actually checked, not merely that every scenario PASSed.
+  makes the run exit 3 (BLOCKED/partial), never 0.**
+
+  The one exception is `model_runtime_stream_cancel`: that scenario aborts on
+  the first content delta, while the Anthropic Messages `usage` block arrives
+  at the end of the stream. Its usage is therefore structurally absent, not
+  unobserved. The id is listed in `limits.usageNotApplicable` with the reason,
+  is not counted in `usageMissing`, and does not block a green run. Exit 0
+  therefore means every *applicable* cap was actually checked, not merely that
+  every scenario PASSed.
 - Request budget is checked before the next scenario *and* after accounting:
-  a probe that retries and reports more than one request for a scenario, or
-  whose known+unknown total exceeds `MAX_REQUESTS`, records a
-  `limits.violations` entry and the scenario FAILs (exit 1). The pre-check
-  alone could not see retries the probe already performed.
+  a probe that retries and reports more than one request for a scenario, a
+  scenario that reports PASS with a known request count of 0, or a
+  known+unknown total above `MAX_REQUESTS`, records a `limits.violations`
+  entry and the scenario FAILs (exit 1). The pre-check alone could not see
+  retries the probe already performed; the zero check closes the symmetric
+  "reported nothing, therefore green" hole.
 - 45 s per probe scenario (inner, passed to the probe); 60 s harness hard cap.
   On the hard cap the whole probe process group is killed and the scenario is
   classified `environment-or-provider (timeout)`, never product/protocol.
@@ -73,65 +82,50 @@ Outputs: `_tmp/<YYYYMMDD>-real-provider-smoke/` holds the latest
 `report.json`/`report.md` plus one exclusive `run-<UTC>-<pid>/` directory per
 invocation. The run directory is authoritative and never overwritten: it keeps
 `report.json`/`report.md`, `limits.json`, `probe-build.log`, and redacted raw
-stdout/stderr under `raw/`. The evidence root is guarded by an atomic
-`mkdir(.smoke.lock)` acquisition; `owner.json` is written immediately after
-through a directory file descriptor opened at mkdir time, so a concurrent
-reclaim that moves the directory cannot make this run write its owner into
-another lock. A lock directory without a readable `owner.json` is treated as
-held (a run may be between mkdir and the owner write), never as stale.
-Reclaim verifies the owner pid *and* the directory identity (device+inode)
-before and after renaming it aside, immediately reserves the freed path, and
-refuses if either changed. `release()` removes the directory only when both
-`owner.json` still names this process and the inode is the one this process
-created. A concurrent second run refuses with exit 3 instead of deleting the
-first run's records.
-
-A lock whose owner pid looks alive is still reclaimed once it is older than
-the two-hour age cap. That is the escape hatch for pid reuse and for
-`kill(pid, 0)` raising `PermissionError` (another uid); one bounded run is
-well under 15 minutes, so a two-hour-old lock cannot be healthy. If a run is
-intentionally suspended longer, use a different `--evidence-dir`.
-
-Manual recovery after a crash or a refused reclaim (exit 3, message names
-`.smoke.lock` / `.smoke.lock.stale-*`):
-
-```sh
-# Confirm no smoke run is active first (the run is bounded; check the pids in
-# owner.json and `ps`).
-rm -rf .smoke.lock .smoke.lock.stale-*   # only inside the evidence directory
-# or simply use a fresh --evidence-dir
-```
+stdout/stderr under `raw/`. The evidence root is guarded by the kernel: a
+fixed regular file `.smoke.lock` is opened with `O_CREAT|O_RDWR` and locked
+with `fcntl.flock(LOCK_EX|LOCK_NB)`. A second run fails to take the lock and
+exits 3 without touching the first run's records. When the holder exits or is
+killed (including `SIGKILL`), the kernel releases the lock; there is no
+separate stale-lock owner file, no pid-liveness probe, no rename, no age cap,
+and no manual recovery step. The pid, start time, and argv written into the
+lock file are diagnostics only and are never used to decide ownership. The
+lock file itself is left in place; do not delete it while a run may be active.
 
 Exit codes:
 
 | code | meaning |
 | --- | --- |
-| 0 | all model-runtime scenarios PASS, every token cap actually verified (usage observed and `maxOutputTokens` echoed), and the secret self-check verified |
-| 1 | at least one scenario FAIL, including a request-budget violation |
+| 0 | all model-runtime scenarios PASS, every applicable token cap actually verified (usage observed and `maxOutputTokens` echoed), and the secret self-check verified |
+| 1 | at least one scenario FAIL, including a request-budget violation or a PASS scenario that reported 0 requests |
 | 2 | secret self-check failed (leak, generic hit, 0 keys, or a partial artifact scan) |
-| 3 | BLOCKED/partial: no model-runtime scenario actually ran (missing key, full cargo slots, build failure/timeout), a model-runtime scenario did not PASS (e.g. PASS + BLOCKED after the request budget ran out), usage or `maxOutputTokens` echo is missing (caps UNVERIFIED), or another run holds the evidence lock |
+| 3 | BLOCKED/partial: no model-runtime scenario actually ran (missing key, full cargo slots, build failure/timeout), a model-runtime scenario did not PASS (e.g. PASS + BLOCKED after the request budget ran out), usage or `maxOutputTokens` echo is missing for a scenario where it is applicable (caps UNVERIFIED), or another run holds the evidence lock |
 
 `BLOCKED` is not a pass. With zero requests sent the script exits 3 even if the
 only reason is a missing key. Exit 0 requires **every** model-runtime scenario
-to be PASS **and** every token cap verified; a PASS + BLOCKED mix, missing
-usage, or a missing `maxOutputTokens` echo is partial and exits 3.
+to be PASS **and** every applicable token cap verified; a PASS + BLOCKED mix,
+missing usage (outside the documented not-applicable scenario), or a missing
+`maxOutputTokens` echo is partial and exits 3. A scenario that reports PASS
+with 0 requests is a request-budget violation (exit 1), not green.
 `report.json` carries `capsVerified` and `overallPass` (exit 0) as explicit
 machine-readable signals; `finalPass` is only the secret self-check, so do not
 read it as the run verdict.
 
-`stream-cancel` normally aborts before the provider's final `usage` event, so
-that scenario reports `usage: missing` and the run exits 3 even though the
-cancel assertion PASSed. That is the intended honest outcome of "unverified is
-not a pass", not a harness failure; a run that must be exit 0 has to verify the
-cap, which this scenario structurally cannot.
+`stream-cancel` aborts before the provider's final `usage` event. That
+scenario's token cap is recorded as `usageNotApplicable` (with the structural
+reason) and does not force exit 3; every other scenario with missing usage
+still does. This keeps the three-state outcome deterministic: the same
+scenario set can reach exit 0 when every applicable cap is verified, without
+depending on whether the gateway happened to forward an early usage event.
 
-`--self-check-only` with an unreadable or empty env file exits 2. It does not
-take the evidence lock: a concurrent normal run may remove a stale-lock
-directory or rewrite a report between listing and reading. The scanner walks
-with `os.walk(onerror=...)`, skips one unreadable/missing directory at a time,
-counts vanished files as `filesSkipped` and directories as `walkErrors`, and
-keeps scanning the rest. A partial scan (`scanTruncated`) is **not** a pass:
-`self_check_ok` returns false and the run exits 2 instead of reporting
+`--self-check-only` with an unreadable or empty env file exits 2. It takes the
+evidence lock in shared mode (`LOCK_SH`): it cannot run while a normal
+exclusive run holds the evidence root, but concurrent self-checks may run
+together, and the report it writes is replaced atomically. The scanner
+walks with `os.walk(onerror=...)`, skips one unreadable/missing directory at a
+time, counts vanished files as `filesSkipped` and directories as `walkErrors`,
+and keeps scanning the rest. A partial scan (`scanTruncated`) is **not** a
+pass: `self_check_ok` returns false and the run exits 2 instead of reporting
 "未命中" for bytes that were never read.
 
 Probe unit tests (the crate is a separate workspace, so the product
