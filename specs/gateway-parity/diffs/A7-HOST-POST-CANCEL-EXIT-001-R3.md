@@ -17,7 +17,7 @@ cc7c4e6 `src/agent/modules/transport/agentLoopSidecarClient.ts:931-958`：abort 
 
 ## 范围
 
-只在「用户已取消、消费方停顿超过 5 s，**且**出现「Rust 行为」所列四种情况之一」时与 TS 不同：TS 最终报 success（或按序交付 error），Rust 报错。这四种情况与 R2「覆盖不到」清单（及其补登的 `execution_deadline`、慢消费方用例同步点）一一对应，不扩大到其他情况。R2 已修复的情况（期限到点时已完成、只差收集的单步应用）仍按序交付、与 TS 一致，判据 `slow_consumer_does_not_spend_the_cancel_exit_grace` 即「已取消 + 停顿 6 s 仍得 success」。未取消、或消费方及时消费时行为一致。R1 的「唯一绝对期限，不重算、不额外武装」保持不变。四格矩阵（#590）中涉及「取消 + 慢消费方」的场景按本偏离判定。
+只涉及「取消已被观察到」之后：期限是从观察到取消起算的 5 s 墙钟（`host/execution.rs` 的 `POST_CANCEL_EXIT_TIMEOUT`，R1 的唯一绝对期限），与消费方停顿多久无关。期限到点时若仍有已收到、但尚未交付的合法 lifecycle，Rust 报错，TS 则无限等待并最终按序交付。造成「到点时仍未交付」的原因包括「Rust 行为」所列四种情况，也包括回调本身在等待锁或真实 I/O 超过期限；这些都是 R1 有界期限的直接后果，本更正把它们统一定性为已接受的已知偏离。R2 已修复的那一种情况（期限到点时应用已完成、只差收集）会先收集再退出，与 TS 一致，判据 `slow_consumer_does_not_spend_the_cancel_exit_grace`（已取消、停顿 6 s 仍得 success）。未取消的回合不受本条影响。四格矩阵（#590）中涉及取消的场景按本偏离判定。
 
 ## 机器判据
 
