@@ -7,7 +7,8 @@ use crate::host::{
     modules::context::{ContextInput, ContextRuntime},
 };
 use crate::runtime::context::memory::{
-    MemoryFuture, MemoryResolver, MemoryRetrieveInput, MemoryRetrieveResult,
+    MemoryCaptureFuture, MemoryCaptureTurnInput, MemoryFuture, MemoryResolver, MemoryRetrieveInput,
+    MemoryRetrieveResult,
 };
 use crate::runtime::memory::{
     MemoryBundleError, MemoryProviderError, NativeMemoryService, NativeProjectMemoryProvider,
@@ -83,6 +84,9 @@ impl Drop for DropFlag {
     }
 }
 impl MemoryResolver for RecordingMemory {
+    fn capture_turn(&self, _: MemoryCaptureTurnInput) -> MemoryCaptureFuture {
+        Box::pin(async { Ok(()) })
+    }
     fn retrieve(&self, input: MemoryRetrieveInput) -> MemoryFuture {
         self.inputs.lock().unwrap().push(input);
         let behavior = self.behavior;

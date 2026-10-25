@@ -3055,6 +3055,7 @@ mod memory_bundle_tests {
     use super::*;
     use crate::host::Cancellation;
     use crate::runtime::context::memory::{
+        MemoryCaptureFuture as ContextMemoryCaptureFuture, MemoryCaptureTurnInput,
         MemoryFuture as ContextMemoryFuture, MemoryResolver, MemoryRetrieveInput,
         MemoryRetrieveResult,
     };
@@ -3172,6 +3173,9 @@ mod memory_bundle_tests {
     }
 
     impl MemoryResolver for FakeMemory {
+        fn capture_turn(&self, _: MemoryCaptureTurnInput) -> ContextMemoryCaptureFuture {
+            Box::pin(async { Ok(()) })
+        }
         fn retrieve(&self, input: MemoryRetrieveInput) -> ContextMemoryFuture {
             self.retrieve_calls.fetch_add(1, Ordering::SeqCst);
             *self.retrieve_input.lock().unwrap() = Some((

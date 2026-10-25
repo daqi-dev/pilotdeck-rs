@@ -4,7 +4,10 @@
 mod baseline;
 
 use pilotdeck_gateway::runtime::{
-    context::memory::{MemoryFuture as RetrieveFuture, MemoryRetrieveInput, MemoryRetrieveResult},
+    context::memory::{
+        MemoryCaptureFuture, MemoryCaptureTurnInput, MemoryFuture as RetrieveFuture,
+        MemoryRetrieveInput, MemoryRetrieveResult,
+    },
     memory::{
         MemoryBundleError, MemoryCaptureStrategy, MemoryConfig, MemoryDisposeFn, MemoryFuture,
         MemoryListInput, MemoryMaintenanceService, MemoryManagementService, MemoryModelConfig,
@@ -49,6 +52,9 @@ struct FakeResolver;
 // The bundle replay only carries the handle; retrieval is the context
 // package's contract, so this stub is never invoked.
 impl MemoryResolver for FakeResolver {
+    fn capture_turn(&self, _input: MemoryCaptureTurnInput) -> MemoryCaptureFuture {
+        Box::pin(async { Ok(()) })
+    }
     fn retrieve(&self, _input: MemoryRetrieveInput) -> RetrieveFuture {
         Box::pin(async { Ok(MemoryRetrieveResult::default()) })
     }
