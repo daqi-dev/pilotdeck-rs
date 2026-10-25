@@ -51,6 +51,10 @@ LIB_CAP_BOUNDARY_TEST = (
     "runtime::model::http::tests::complete_shape_probe_cap_boundary_is_exact_across_frames"
 )
 LIB_DEFAULT_LIMIT_TEST = "runtime::model::http::tests::shape_string_limit_defaults_to_v8_max"
+LIB_RESPONSE_EOF_TEST = (
+    "runtime::model::http::tests::response_text_counts_eof_replacement_toward_the_cap"
+)
+LIB_RESPONSE_DRAIN_TEST = "runtime::model::http::tests::complete_response_text_overlong_body_reads_to_eof_then_throws_plain_error"
 
 CARGO_CAP = int(os.environ.get("NEGCTL_CARGO_CAP", "4"))
 SLOT_WAIT_SECONDS = float(os.environ.get("NEGCTL_SLOT_WAIT_SECONDS", "1800"))
@@ -250,15 +254,17 @@ CONTROLS = [
         TEST,
     ),
     (
-        # The main-loop cap boundary must reject exactly limit + 1 UTF-16
-        # units across frames. The target test also proves the over-limit
-        # prefix is discarded before a later body read error; widening the
-        # comparison keeps that prefix and fails the assertion.
-        "shape-probe-loop-cap-allows-limit-plus-one",
-        """                    units += text[start..].encode_utf16().count();
-                    if units > string_limit() {""",
-        """                    units += text[start..].encode_utf16().count();
-                    if units > string_limit() + 1 {""",
+        # The shared reader's in-loop cap boundary must reject exactly
+        # limit + 1 UTF-16 units across frames. The target test also proves
+        # the over-limit prefix is discarded before a later body read error;
+        # widening the comparison keeps that prefix and fails the assertion.
+        # The r7 anchor duplicated once #641 copied the loop into
+        # `response_text`; r8 moved both onto the shared `CappedText::push`.
+        "capped-text-cap-allows-limit-plus-one",
+        """        self.units += self.text[start..].encode_utf16().count();
+        if self.units > string_limit() {""",
+        """        self.units += self.text[start..].encode_utf16().count();
+        if self.units > string_limit() + 1 {""",
         LIB_CAP_BOUNDARY_TEST,
     ),
     (
@@ -286,13 +292,51 @@ CONTROLS = [
 }""",
         LIB_DEFAULT_LIMIT_TEST,
     ),
+    (
+        # `CappedText::finish` must count the EOF replacement unit: dropping
+        # the count lets the trailing incomplete UTF-8 sequence pass under the
+        # cap, and the target response_text test's limit+1 expectation fails.
+        "response-text-eof-replacement-not-counted",
+        """        let start = self.text.len();
+        self.decoder.finish(&mut self.text);
+        self.units += self.text[start..].encode_utf16().count();""",
+        """        let start = self.text.len();
+        self.decoder.finish(&mut self.text);
+        let _ = &self.text[start..];""",
+        LIB_RESPONSE_EOF_TEST,
+    ),
+    (
+        # The reader must keep draining an over-limit body to EOF: breaking
+        # out of the loop on the frame that crosses the cap raises the string
+        # error one 40ms frame early, below the target test's 70ms floor.
+        "response-text-returns-before-eof",
+        """                if let Some(data) = frame.data_ref() {
+                    // The string conversion has not run yet; `push` keeps
+                    // draining past the cap so EOF / the body idle timeout
+                    // still decide and a body failure keeps priority over
+                    // the string error.
+                    capped.push(data);
+                }""",
+        """                if let Some(data) = frame.data_ref() {
+                    // The string conversion has not run yet; `push` keeps
+                    // draining past the cap so EOF / the body idle timeout
+                    // still decide and a body failure keeps priority over
+                    // the string error.
+                    if !capped.push(data) {
+                        break;
+                    }
+                }""",
+        LIB_RESPONSE_DRAIN_TEST,
+    ),
 ]
 
 # These lib controls need a different cargo target than the integration
 # oracle controls. Keep the existing runner/recovery protocol unchanged.
 LIB_TESTS = {
-    "shape-probe-loop-cap-allows-limit-plus-one",
+    "capped-text-cap-allows-limit-plus-one",
     "shape-probe-string-limit-default-removed",
+    "response-text-eof-replacement-not-counted",
+    "response-text-returns-before-eof",
 }
 
 # These controls must fail on the newly pinned target case itself, not on some
@@ -302,8 +346,10 @@ LIB_TESTS = {
 TARGET_CASE = {
     "anthropic-shape-check-bypassed": "anthropic-200-empty-endpoint-fallback:",
     "responses-shape-check-bypassed": "responses-200-empty-endpoint-fallback:",
-    "shape-probe-loop-cap-allows-limit-plus-one": LIB_CAP_BOUNDARY_TEST,
+    "capped-text-cap-allows-limit-plus-one": LIB_CAP_BOUNDARY_TEST,
     "shape-probe-string-limit-default-removed": LIB_DEFAULT_LIMIT_TEST,
+    "response-text-eof-replacement-not-counted": LIB_RESPONSE_EOF_TEST,
+    "response-text-returns-before-eof": LIB_RESPONSE_DRAIN_TEST,
 }
 
 _active: dict | None = None

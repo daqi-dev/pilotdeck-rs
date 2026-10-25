@@ -411,8 +411,11 @@ where
     let text = bytes
         .map(|bytes| decode_text(&bytes))
         .map_err(|error| match error {
+            // The SDK awaits the same undici `response.text()` for this POST
+            // (sse.js:179); its byte→string conversion throws V8's plain
+            // `Error`, not `RangeError` (#641 real-TS probe).
             fetch_redirect::BodyError::TooLong => {
-                McpClientError::plain("RangeError", fetch_redirect::STRING_TOO_LONG)
+                McpClientError::plain("Error", fetch_redirect::STRING_TOO_LONG)
             }
             fetch_redirect::BodyError::Terminated | fetch_redirect::BodyError::Aborted => {
                 McpClientError::plain("TypeError", "terminated")
@@ -863,8 +866,12 @@ where
     .await
     .map(|bytes| decode_text(&bytes))
     .map_err(|error| match error {
+        // Both SDK call sites run undici's `Response.text()` /
+        // `Response.json()` (streamableHttp.js:317/398), and `json()` parses
+        // the same `utf8DecodeBytes` string, so the over-limit conversion
+        // throws V8's plain `Error`, not `RangeError` (#641 real-TS probe).
         fetch_redirect::BodyError::TooLong => {
-            McpClientError::plain("RangeError", fetch_redirect::STRING_TOO_LONG)
+            McpClientError::plain("Error", fetch_redirect::STRING_TOO_LONG)
         }
         fetch_redirect::BodyError::Terminated | fetch_redirect::BodyError::Aborted => {
             network_error("network_connection_reset", "terminated".into())
@@ -1740,10 +1747,10 @@ mod tests {
         let error = streamable_text(Full::new(Bytes::from_static(b"123456789")), &signal, false)
             .await
             .unwrap_err();
-        assert_eq!(error.name(), "RangeError");
+        assert_eq!(error.name(), "Error");
         assert_eq!(error.to_string(), fetch_redirect::STRING_TOO_LONG);
         // response.text() on an error POST uses the same bound and the SDK's
-        // null fallback, while response.json() propagates the RangeError.
+        // null fallback, while response.json() propagates the plain V8 Error.
         let error = streamable_error_response(
             hyper::Response::builder()
                 .status(400)
