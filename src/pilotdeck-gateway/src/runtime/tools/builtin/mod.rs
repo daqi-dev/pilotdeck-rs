@@ -593,7 +593,13 @@ pub(super) fn write_text_file(
     if let Some(parent) = os_path.parent() {
         fs::create_dir_all(parent).map_err(|error| failed(error, "mkdir", path))?;
     }
-    fs::write(&os_path, content.as_bytes()).map_err(|error| failed(error, "open", path))?;
+    // `fs::write` is `File::create` + `write_all`; keep the two stages apart so
+    // a descriptor write error (EFBIG, ENOSPC, ...) reads like Node's
+    // `writeFileSync`: `syscall: 'write'` and no path, unlike an open error.
+    let mut file = fs::File::create(&os_path).map_err(|error| failed(error, "open", path))?;
+    std::io::Write::write_all(&mut file, content.as_bytes())
+        .map_err(|error| failed(error, "write", path))?;
+    drop(file);
     let written = fs::metadata(&os_path).map_err(|error| failed(error, "stat", path))?;
     Ok(WriteResult {
         created: existing.is_none(),
@@ -1106,6 +1112,67 @@ mod containment_tests {
 mod errno_tests {
     use super::failed;
     use pilotdeck_protocol::JsString;
+
+    /// Child half of `write_tool_reports_the_write_stage_like_node`: runs under
+    /// `ulimit -f 1` with SIGXFSZ handled like the gateway binary does, and
+    /// prints the Write tool's error so the parent can judge it.
+    #[test]
+    #[ignore = "spawned by write_tool_reports_the_write_stage_like_node"]
+    fn write_tool_child_over_file_size_limit() {
+        let Ok(path) = std::env::var("PDRS_WRITE_STAGE_PATH") else {
+            return;
+        };
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async { crate::ensure_sigxfsz_ignored() });
+        let error = super::write_text_file(&JsString::from(path.as_str()), &"a".repeat(4096))
+            .err()
+            .expect("a write past RLIMIT_FSIZE must fail");
+        println!(
+            "WRITE_ERROR={}",
+            String::from_utf16_lossy(error.message.units())
+        );
+    }
+
+    /// A real descriptor write failure from the Write tool reads like Node's
+    /// `writeFileSync` (node v22.22.0 under `ulimit -f`: `EFBIG: file too
+    /// large, write`, no path; `_tmp/20261025-issue-621-takeover/xfsz-probe/`),
+    /// not like an open error.
+    #[cfg(unix)]
+    #[test]
+    fn write_tool_reports_the_write_stage_like_node() {
+        let dir = std::env::temp_dir().join(format!(
+            "pdrs-write-stage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let target = dir.join("big.txt");
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("ulimit -f 1; exec \"$0\" --exact runtime::tools::builtin::errno_tests::write_tool_child_over_file_size_limit --ignored --nocapture")
+            .arg(std::env::current_exe().unwrap())
+            .env("PDRS_WRITE_STAGE_PATH", &target)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "child killed or failed: {stdout}"
+        );
+        let line = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("WRITE_ERROR="))
+            .unwrap_or_else(|| panic!("no WRITE_ERROR line: {stdout}"));
+        assert_eq!(line, "EFBIG: file too large, write");
+    }
 
     fn message(error: std::io::Error, operation: &str) -> String {
         let error = failed(error, operation, &JsString::from("/tmp/errno"));
