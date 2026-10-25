@@ -9,6 +9,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -35,6 +36,9 @@ cases = [
     ('retry-message', web, 'Exchange::Aborted => Err(abort_error("Network retry aborted.")),',
      'Exchange::Aborted => Err(abort_error("wrong retry message")),',
      ['fetch_redirect_retry_error_fulfilled_parent_first', 'fetch_redirect_retry_status_fulfilled_parent_first']),
+    ('retry-outer-parent-message', web, 'if outer.parent {\n                abort_error("Network retry aborted.")',
+     'if outer.parent {\n                abort_error("wrong outer retry message")',
+     ['web_tools::web_fetch_hop_timeout_during_retry_uses_retry_abort_message']),
     ('retry-count', web, '&& attempt < retry.max_retries',
      '&& false && attempt < retry.max_retries',
      ['fetch_redirect_retry_status_fulfilled_continuation_first']),
@@ -68,11 +72,16 @@ def save(name, text):
     with (out / name).open('x') as stream:
         stream.write(text)
 
+test_source = (root / 'src/pilotdeck-gateway/tests/network_timing.rs').read_text()
+expected_passes = len(re.findall(r'^#\[(?:tokio::)?test(?:\([^\n]*\))?\]', test_source, re.M)) - len(re.findall(r'^#\[ignore(?: = [^\n]*)?\]', test_source, re.M))
+
 def run(name, test):
     slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
     save(name + '.slots.log', slot.stdout + slot.stderr)
-    command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--test', 'network_timing']
-    command += ['--', '--nocapture', '--test-threads=1'] if test == '*' else [test, '--', '--exact', '--nocapture', '--test-threads=1']
+    target, _, selection = test.partition('::')
+    target, selection = (target, selection) if selection else ('network_timing', test)
+    command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--test', target]
+    command += ['--', '--nocapture', '--test-threads=1'] if test == '*' else [selection, '--', '--exact', '--nocapture', '--test-threads=1']
     result = run_owned(command, cwd=root, env=env, timeout=300)
     log = result.stdout + result.stderr
     save(name + '.log', 'command: ' + repr(command) + '\n' + log + f'\nexit: {result.returncode}\n')
@@ -82,7 +91,7 @@ summary = []
 for name, path, old, new, tests in cases:
     for index, test in enumerate(tests):
         code, log = run(f'{name}-{index}-positive', test)
-        assert code == 0 and ('68 passed; 0 failed' if test == '*' else '1 passed; 0 failed') in log, (name, 'positive', code)
+        assert code == 0 and (f'{expected_passes} passed; 0 failed' if test == '*' else '1 passed; 0 failed') in log, (name, 'positive', code)
     killed_cells = set()
     with mutating_sources(root, [path]) as originals:
         original = originals[path].decode()
@@ -92,7 +101,7 @@ for name, path, old, new, tests in cases:
         path.write_text(changed)
         for index, test in enumerate(tests):
             code, log = run(f'{name}-{index}-negative', test)
-            assert code == 101 and ('test result: FAILED.' in log if test == '*' else f'{test} ...' in log and 'test result: FAILED. 0 passed; 1 failed' in log) and 'assertion `left == right` failed: network timing cell:' in log, (name, 'not an oracle assertion failure', code)
+            assert code == 101 and ('test result: FAILED.' in log if test == '*' else f"{test.split('::')[-1]} ..." in log and 'test result: FAILED. 0 passed; 1 failed' in log) and (f'left: Other({list(map(ord, "wrong outer retry message"))})' in log and f'right: Other({list(map(ord, "Network retry aborted."))})' in log and 'assertion `left == right` failed' in log if test.startswith('web_tools::') else 'assertion `left == right` failed: network timing cell:' in log), (name, 'not an oracle assertion failure', code)
             for line in log.splitlines():
                 if '{"id":' in line:
                     row = json.loads(line[line.index('{"id":'):])
@@ -101,7 +110,7 @@ for name, path, old, new, tests in cases:
 
     for index, test in enumerate(tests):
         code, log = run(f'{name}-{index}-restored', test)
-        assert code == 0 and ('68 passed; 0 failed' if test == '*' else '1 passed; 0 failed') in log, (name, 'restored', code)
+        assert code == 0 and (f'{expected_passes} passed; 0 failed' if test == '*' else '1 passed; 0 failed') in log, (name, 'restored', code)
     summary.append({'name': name, 'tests': tests, 'killed': True, 'restoredPass': True, 'sourceSha256': hashlib.sha256(original.encode()).hexdigest(), 'killedCells': sorted(killed_cells)})
     print(f'{name}: {len(tests)} test selections rejected, restored PASS', flush=True)
 save('summary.json', json.dumps(summary, indent=2) + '\n')

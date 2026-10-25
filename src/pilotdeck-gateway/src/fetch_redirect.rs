@@ -63,6 +63,7 @@ where
     let mut body = Box::pin(body);
     let mut buffer = Vec::new();
     loop {
+        // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-PARENT-TIE-001.md
         let frame = match body_frame(&mut body, idle, signal, &mut continuation_before_abort).await
         {
             Exchange::Response(frame, _) => frame,
@@ -121,6 +122,7 @@ where
     let mut buffer = Vec::new();
     let mut too_long = false;
     loop {
+        // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-PARENT-TIE-001.md
         let frame = match body_frame(&mut body, idle, signal, &mut continuation_before_abort).await
         {
             Exchange::Response(frame, _) => frame,

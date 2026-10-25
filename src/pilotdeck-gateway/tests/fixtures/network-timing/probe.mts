@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import {sources, matrix, dependencyFingerprint} from './observations.mts';
+import {sources, matrix, dependencyFingerprint, expectedTiming} from './observations.mts';
 
 assert.equal(process.version, 'v22.22.0');
 const root = process.env.PDRS_BASELINE;
@@ -111,6 +111,8 @@ try {
             else reject();
           };
           if (armed) { overdue(); return; } // web headers idle: real hop watchdog
+          // Custom dispatcher bypasses Undici Client timers, including web body.
+          // This watchdog is injected, not an intercepted 600000ms baseline timer.
           armTarget(event === 'idle' ? 'watchdog' : 'completion', event === 'idle' ? 600000 : 20, settle);
         });
         return true;
@@ -149,7 +151,7 @@ try {
       const row = {...spec, id, timers, timeline, requests,
         observable: {...result, retries: attempts - 1, calls: requests.length},
         timing: {target: targetTimer.kind, requested: targetTimer.requested, effective: targetTimer.delay,
-          parentGap: wantedGap, parentRegisteredFirst: parentFirst}};
+          parentGap: wantedGap, parentRegisteredFirst: parentFirst, source: expectedTiming(spec).source}};
       console.log(JSON.stringify(row)); captured = true; break;
     }
     assert.ok(captured, `${id}: exhausted same-deadline candidates`);

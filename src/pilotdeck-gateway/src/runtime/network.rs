@@ -219,6 +219,7 @@ pub(crate) async fn delay(
             return Poll::Ready(Exchange::Aborted);
         }
         initial = false;
+        // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-RETRY-TIE-001.md
         let timer_first =
             !aborted || parent_event_at().is_some_and(|at| timer_precedes_parent(next, at, false));
         if timer_first && timer.as_mut().poll(cx).is_ready() {
@@ -302,6 +303,7 @@ pub(crate) async fn exchange_continuing<T: Send + 'static>(
             scheduled_at,
             microtask,
             continuation_before_abort,
+            // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-PARENT-TIE-001.md
             parent_first: false,
         },
     )
@@ -339,6 +341,7 @@ pub(crate) async fn body_frame_with_abort<B: hyper::body::Body + Unpin>(
     parent_event_at: impl Fn() -> Option<Instant>,
     continuation: &mut bool,
 ) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
+    // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-PARENT-TIE-001.md
     body_frame_ordered(body, idle, abort, parent_event_at, continuation, false).await
 }
 

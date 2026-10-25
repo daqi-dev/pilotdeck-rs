@@ -112,6 +112,7 @@ async fn read_body_inner(
 ) -> Result<Vec<u8>, BodyError> {
     let mut out = Vec::new();
     loop {
+        // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-POST-HEADERS-PARENT-001.md
         match crate::runtime::network::body_frame_with_abort(
             body,
             Some(BODY_TIMEOUT),
@@ -302,6 +303,7 @@ fn timeout_error(timeout_ms: f64) -> NetworkFetchError {
     )
 }
 
+// Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-RETRY-TIE-001.md
 /// Map the shared retry wait's event ordering to the web/provider errors.
 async fn retry_wait(
     ms: f64,
