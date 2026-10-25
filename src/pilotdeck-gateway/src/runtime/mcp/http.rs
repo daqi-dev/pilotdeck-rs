@@ -50,6 +50,7 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use pilotdeck_protocol::{JsValue, json_syntax, parse_json};
 use std::{
+    net::SocketAddr,
     sync::{Arc, Mutex, Weak},
     time::Duration,
 };
@@ -225,43 +226,174 @@ async fn fetch_once(
         // that routes through the proxy must not carry caller credentials.
         reject_proxy_authorization(proxy, &request)?;
         let target = request.uri().clone();
-        client
-            .request(request)
-            .await
-            .map_err(|error| match failure_cause(&target, &error) {
-                Some(cause) => {
-                    let code = if cause.starts_with("connect ECONNREFUSED") {
-                        "network_connection_refused"
-                    } else {
-                        "network_fetch_failed"
-                    };
-                    network_error(code, format!("fetch failed\u{0}{cause}"))
-                }
-                None => network_error("network_fetch_failed", "fetch failed".into()),
-            })
+        let response = client.request(request).await;
+        let error = match response {
+            Ok(response) => return Ok(response),
+            Err(error) => error,
+        };
+        let cause = match classify_failure(&error) {
+            // A proxy CONNECT rejection already carries the cause text the TS
+            // fetch / EventSource stack reports; its socket error (if any)
+            // would otherwise be attributed to the MCP target instead of the
+            // proxy.
+            FailureCause::Proxy(proxy) => Some(proxy.cause.clone()),
+            // Node's address texts name the resolved addresses, never the
+            // URL hostname, so the resolver is only consulted for these two
+            // shapes; the other causes carry no address.
+            FailureCause::Refused => Some(refused_cause(
+                &target,
+                resolved_attempts(&target).await.as_deref(),
+            )),
+            FailureCause::ConnectTimeout => Some(timeout_cause(
+                &target,
+                resolved_attempts(&target).await.as_deref(),
+            )),
+            FailureCause::Tls(tls) => tls_cause(tls),
+        };
+        let code = if cause
+            .as_deref()
+            .is_some_and(|cause| cause.starts_with("connect ECONNREFUSED"))
+        {
+            "network_connection_refused"
+        } else {
+            "network_fetch_failed"
+        };
+        match cause {
+            Some(cause) => Err(network_error(code, format!("fetch failed\u{0}{cause}"))),
+            None => Err(network_error("network_fetch_failed", "fetch failed".into())),
+        }
     })
     .await
 }
 
-/// The scheme's default port (undici's `port = port || 443` / `|| 80`) and the
-/// peer address in the form Node prints. `http::Uri::host()` keeps IPv6
-/// brackets (`[::1]`), but Node v22 renders the bare address in both
-/// `connect ECONNREFUSED ::1:443` (net) and
-/// `Connect Timeout Error (attempted address: ::1:443, …)` (undici), so the
-/// brackets are stripped. Both forms were measured against the fixed TS
-/// baseline; `https-sse-refused-ipv6` pins the refused one.
-fn target_address(target: &hyper::Uri) -> String {
+/// The URL's port, with the scheme's default (undici's `port = port || 443` /
+/// `|| 80`) filled in.
+fn effective_port(target: &hyper::Uri) -> u16 {
     let default_port = match target.scheme_str() {
         Some("https") => 443,
         _ => 80,
     };
-    let port = target.port_u16().unwrap_or(default_port);
+    target.port_u16().unwrap_or(default_port)
+}
+
+/// The URL's own peer address in the form Node prints. `http::Uri::host()`
+/// keeps IPv6 brackets (`[::1]`), but Node v22 renders the bare address in
+/// both `connect ECONNREFUSED ::1:443` (net) and
+/// `Connect Timeout Error (attempted address: ::1:443, …)` (undici), so the
+/// brackets are stripped. Both forms were measured against the fixed TS
+/// baseline; `https-sse-refused-ipv6` pins the refused one.
+fn target_address(target: &hyper::Uri) -> String {
     let host = target.host().unwrap_or_default();
     let host = host
         .strip_prefix('[')
         .and_then(|rest| rest.strip_suffix(']'))
         .unwrap_or(host);
-    format!("{host}:{port}")
+    format!("{host}:{}", effective_port(target))
+}
+
+/// The addresses a hostname URL resolves to, in the platform's `getaddrinfo`
+/// order — the list Node's `dns.lookup(host, { all: true })` feeds to its
+/// connect attempts (`lookupAndConnectMultiple`, node v22.22.0
+/// `lib/net.js:1442-1541`). IP-literal targets skip the lookup: Node never
+/// resolves those, and their address text is the URL's own host.
+async fn resolved_attempts(target: &hyper::Uri) -> Option<Vec<SocketAddr>> {
+    let host = target.host()?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(host);
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return None;
+    }
+    tokio::net::lookup_host((host.to_owned(), effective_port(target)))
+        .await
+        .ok()
+        .map(|resolved| resolved.collect::<Vec<_>>())
+}
+
+/// Node's per-attempt address order (`lookupAndConnectMultiple`, node v22.22.0
+/// `lib/net.js:1470-1541`): duplicates dropped, the first address's family
+/// preferred, and the two families interleaved. Measured for `localhost`
+/// (resolves `::1, 127.0.0.1` here, attempted in that order).
+fn node_attempt_order(resolved: &[SocketAddr]) -> Vec<SocketAddr> {
+    let prefer_v6 = resolved.first().is_some_and(SocketAddr::is_ipv6);
+    let mut preferred: Vec<SocketAddr> = Vec::new();
+    let mut fallback: Vec<SocketAddr> = Vec::new();
+    for address in resolved {
+        let group = if address.is_ipv6() == prefer_v6 {
+            &mut preferred
+        } else {
+            &mut fallback
+        };
+        if !group.iter().any(|seen| seen.ip() == address.ip()) {
+            group.push(*address);
+        }
+    }
+    let mut out = Vec::with_capacity(preferred.len() + fallback.len());
+    for index in 0..preferred.len().max(fallback.len()) {
+        if let Some(address) = preferred.get(index) {
+            out.push(*address);
+        }
+        if let Some(address) = fallback.get(index) {
+            out.push(*address);
+        }
+    }
+    out
+}
+
+/// The bare `ip:port` form Node prints for an attempted address — no IPv6
+/// brackets (`connect ECONNREFUSED ::1:443`,
+/// `attempted addresses: ::1:443, …`).
+fn node_address(address: &SocketAddr) -> String {
+    format!("{}:{}", address.ip(), address.port())
+}
+
+/// undici's refused-connection cause. A hostname URL connects through Node's
+/// happy-eyeballs `net.connect`, whose failure is an `AggregateError` of one
+/// `connect ECONNREFUSED ip:port` per attempted address; the legacy SSE
+/// transport's `flattenError` joins them with `", "`. Measured 2026-10-25
+/// (#681, legacy SSE to a closed `http://localhost:<port>/sse`):
+/// `connect ECONNREFUSED ::1:60169, connect ECONNREFUSED 127.0.0.1:60169`.
+/// An IP-literal URL (no resolution) keeps the single URL address the
+/// `https-sse-refused` / `https-sse-refused-ipv6` goldens pin.
+fn refused_cause(target: &hyper::Uri, resolved: Option<&[SocketAddr]>) -> String {
+    let Some(resolved) = resolved.filter(|resolved| !resolved.is_empty()) else {
+        return format!("connect ECONNREFUSED {}", target_address(target));
+    };
+    node_attempt_order(resolved)
+        .iter()
+        .map(|address| format!("connect ECONNREFUSED {}", node_address(address)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// undici's `ConnectTimeoutError` text. With several attempted addresses Node
+/// lists them all (plural). Otherwise it names the URL's own host: an IP
+/// literal, or a hostname whose lookup returned a single address — that path
+/// switches back to the plain single connect (`toAttempt.length === 1`, node
+/// v22.22.0 `lib/net.js:1536-1547`), never records the resolution, and
+/// undici's `onConnectTimeout` falls back to the connector's URL hostname
+/// (读码推断，未实测；the multi-address form was measured 2026-10-25, #681:
+/// a stalled `https://localhost:<port>/sse` TLS handshake reports
+/// `Connect Timeout Error (attempted addresses: ::1:60217, 127.0.0.1:60217,
+/// timeout: 10000ms)`).
+fn timeout_cause(target: &hyper::Uri, resolved: Option<&[SocketAddr]>) -> String {
+    let Some(resolved) = resolved.filter(|resolved| resolved.len() > 1) else {
+        return format!(
+            "Connect Timeout Error (attempted address: {}, timeout: {}ms)",
+            target_address(target),
+            MCP_CONNECT_TIMEOUT.as_millis()
+        );
+    };
+    let addresses = node_attempt_order(resolved)
+        .iter()
+        .map(node_address)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Connect Timeout Error (attempted addresses: {addresses}, timeout: {}ms)",
+        MCP_CONNECT_TIMEOUT.as_millis()
+    )
 }
 
 /// Every error reachable from `root`, following both `source()` and the
@@ -299,17 +431,24 @@ fn error_chain<'a>(
 /// carries the socket error. The legacy SSE transport's `EventSource` flattens
 /// that cause into the rejection (`eventsource@3` `flattenError`), so the text
 /// must match Node's for the observable cases.
-fn failure_cause(target: &hyper::Uri, error: &hyper_util::client::legacy::Error) -> Option<String> {
+enum FailureCause<'a> {
+    /// The proxy's own `CONNECT` failure; its cause text is already the one
+    /// the TS fetch / EventSource stack reports, and its socket error (if
+    /// any) must not be attributed to the MCP target.
+    Proxy(&'a ProxyError),
+    Refused,
+    ConnectTimeout,
+    Tls(Option<&'a rustls::Error>),
+}
+
+fn classify_failure(error: &hyper_util::client::legacy::Error) -> FailureCause<'_> {
     let source = error as &(dyn std::error::Error + 'static);
     let chain = error_chain(source);
-    // A proxy CONNECT rejection already carries the cause text the TS fetch /
-    // EventSource stack reports; its socket error (if any) would otherwise be
-    // attributed to the MCP target instead of the proxy.
     if let Some(proxy) = chain
         .iter()
         .find_map(|source| source.downcast_ref::<ProxyError>())
     {
-        return Some(proxy.cause.clone());
+        return FailureCause::Proxy(proxy);
     }
     let refused = chain.iter().any(|source| {
         source
@@ -317,7 +456,7 @@ fn failure_cause(target: &hyper::Uri, error: &hyper_util::client::legacy::Error)
             .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
     }) || format!("{error:?}").contains("ConnectionRefused");
     if refused {
-        return Some(format!("connect ECONNREFUSED {}", target_address(target)));
+        return FailureCause::Refused;
     }
     // Both the MCP-local whole-connect deadline and the connector's own TCP
     // timer express undici's single `connectTimeout`; whichever fires first is
@@ -328,15 +467,16 @@ fn failure_cause(target: &hyper::Uri, error: &hyper_util::client::legacy::Error)
             .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut)
     });
     if timed_out {
-        return Some(format!(
-            "Connect Timeout Error (attempted address: {}, timeout: {}ms)",
-            target_address(target),
-            MCP_CONNECT_TIMEOUT.as_millis()
-        ));
+        return FailureCause::ConnectTimeout;
     }
-    let tls = chain
-        .iter()
-        .find_map(|source| source.downcast_ref::<rustls::Error>());
+    FailureCause::Tls(
+        chain
+            .iter()
+            .find_map(|source| source.downcast_ref::<rustls::Error>()),
+    )
+}
+
+fn tls_cause(tls: Option<&rustls::Error>) -> Option<String> {
     match tls {
         // rustls reports every unverifiable chain as `UnknownIssuer`; Node
         // distinguishes `self-signed certificate` (DEPTH_ZERO_SELF_SIGNED_CERT)
@@ -2835,14 +2975,103 @@ mod tests {
             "127.0.0.1:443"
         );
         assert_eq!(target_address(&uri("http://127.0.0.1/sse")), "127.0.0.1:80");
-        assert_eq!(
-            target_address(&uri("https://example.com:8443/sse")),
-            "example.com:8443"
-        );
         // Node prints the bare address (no IPv6 brackets) in both the
         // ECONNREFUSED and the connect-timeout texts.
         assert_eq!(target_address(&uri("https://[::1]/sse")), "::1:443");
         assert_eq!(target_address(&uri("http://[::1]:8080/sse")), "::1:8080");
+    }
+
+    fn sock(host: &str, port: u16) -> SocketAddr {
+        SocketAddr::new(host.parse().unwrap(), port)
+    }
+
+    /// TS 金样（#681，2026-10-25 实测，证据
+    /// `_tmp/20261025-issue-681/ts-probe.out`）：legacy SSE 连
+    /// `http://localhost:<closed>/sse` 的拒连文案是
+    /// `SSE error: TypeError: fetch failed: connect ECONNREFUSED ::1:60169,
+    /// connect ECONNREFUSED 127.0.0.1:60169` — 解析出的每个地址一条，按
+    /// Node 的尝试顺序逗号拼接，而不是 URL 主机名。
+    #[test]
+    fn hostname_refusals_list_every_resolved_address() {
+        let uri = |raw: &str| -> hyper::Uri { raw.parse().unwrap() };
+        let localhost = [sock("::1", 60169), sock("127.0.0.1", 60169)];
+        assert_eq!(
+            refused_cause(&uri("http://localhost:60169/sse"), Some(&localhost)),
+            "connect ECONNREFUSED ::1:60169, connect ECONNREFUSED 127.0.0.1:60169"
+        );
+        // 单地址主机名：拒连同样显示解析地址，而非主机名。
+        let single = [sock("127.0.0.1", 60169)];
+        assert_eq!(
+            refused_cause(&uri("http://localhost:60169/sse"), Some(&single)),
+            "connect ECONNREFUSED 127.0.0.1:60169"
+        );
+        // IP 字面量（无解析）：`https-sse-refused` / `https-sse-refused-ipv6`
+        // 金样钉住的形状不变。
+        assert_eq!(
+            refused_cause(&uri("https://127.0.0.1/sse"), None),
+            "connect ECONNREFUSED 127.0.0.1:443"
+        );
+        assert_eq!(
+            refused_cause(&uri("https://[::1]/sse"), None),
+            "connect ECONNREFUSED ::1:443"
+        );
+    }
+
+    /// Node 的尝试顺序（`lookupAndConnectMultiple`，node v22.22.0
+    /// `lib/net.js:1470-1541`）：去重，首地址的地址族优先，两族交错。
+    #[test]
+    fn node_attempt_order_dedupes_and_interleaves_families() {
+        assert_eq!(
+            node_attempt_order(&[
+                sock("192.0.2.1", 443),
+                sock("192.0.2.1", 443),
+                sock("2001:db8::1", 443)
+            ]),
+            vec![sock("192.0.2.1", 443), sock("2001:db8::1", 443)]
+        );
+        assert_eq!(
+            node_attempt_order(&[
+                sock("192.0.2.1", 443),
+                sock("192.0.2.2", 443),
+                sock("2001:db8::1", 443)
+            ]),
+            vec![
+                sock("192.0.2.1", 443),
+                sock("2001:db8::1", 443),
+                sock("192.0.2.2", 443)
+            ]
+        );
+        assert_eq!(
+            node_attempt_order(&[sock("::1", 443), sock("127.0.0.1", 443)]),
+            vec![sock("::1", 443), sock("127.0.0.1", 443)]
+        );
+    }
+
+    /// TS 金样（#681，同上证据）：legacy SSE 连
+    /// `https://localhost:<stall>/sse`（TCP 通、TLS 停滞）10 s 后是
+    /// `Connect Timeout Error (attempted addresses: ::1:60217,
+    /// 127.0.0.1:60217, timeout: 10000ms)` — 复数、解析地址列表。
+    /// 单地址主机名的超时仍显示 URL 主机名（读码推断，未实测：单地址查找
+    /// 走普通单连接路径，`autoSelectFamilyAttemptedAddresses` 不设置，
+    /// undici 的 `onConnectTimeout` 回退到连接器收到的 URL 主机名）。
+    #[test]
+    fn hostname_connect_timeouts_list_attempted_addresses() {
+        let uri = |raw: &str| -> hyper::Uri { raw.parse().unwrap() };
+        let localhost = [sock("::1", 60217), sock("127.0.0.1", 60217)];
+        assert_eq!(
+            timeout_cause(&uri("https://localhost:60217/sse"), Some(&localhost)),
+            "Connect Timeout Error (attempted addresses: ::1:60217, 127.0.0.1:60217, timeout: 10000ms)"
+        );
+        let single = [sock("192.0.2.1", 8443)];
+        assert_eq!(
+            timeout_cause(&uri("https://example.com:8443/sse"), Some(&single)),
+            "Connect Timeout Error (attempted address: example.com:8443, timeout: 10000ms)"
+        );
+        // IP 字面量：`https-sse-handshake-stall` 金样钉住的形状不变。
+        assert_eq!(
+            timeout_cause(&uri("https://127.0.0.1:9443/sse"), None),
+            "Connect Timeout Error (attempted address: 127.0.0.1:9443, timeout: 10000ms)"
+        );
     }
 
     #[test]
