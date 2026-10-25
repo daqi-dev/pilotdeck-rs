@@ -9,3 +9,4 @@ pub mod publish;
 pub mod read;
 pub mod replay;
 pub mod submit;
+pub mod submit_host;
