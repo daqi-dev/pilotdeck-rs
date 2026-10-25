@@ -1451,6 +1451,9 @@ mod tests {
             ),
             "EISDIR: illegal operation on a directory, open '/c/mcp.json'"
         );
+        // 123456 stays outside libuv's table on both supported targets
+        // (macOS, Linux), so every use below exercises the `UV_UNKNOWN`
+        // fallback rather than a table row.
         assert_eq!(
             node_fs_message(
                 &std::io::Error::from_raw_os_error(123456),

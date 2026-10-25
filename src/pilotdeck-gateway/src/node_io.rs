@@ -135,6 +135,16 @@ pub(crate) fn diagnostic(
 /// rules, formatted by the same code — so a staged error renders the same
 /// through either entry point, and callers cannot get an `UNKNOWN` message
 /// the shared formatter would never produce.
+///
+/// The `Stage` override (and the `MkdirError` recursion) is unreachable
+/// through this fallback at every current production call point: each caller
+/// of `node_fs_message_or_unknown` — CLI `skills::fs_failure`, MCP
+/// `read_mcp_config`'s open/read, the MCP client's `create_dir_all` and
+/// mkdtemp — feeds an error straight from its own `std::fs` call, which never
+/// carries a `Stage` or a `MkdirError`, and the gateway's staged errors reach
+/// `diagnostic`/`read_file` callers instead. The override keeps the two entry
+/// points from drifting apart for a staged error; the staged case in its test
+/// below is defensive, not reachable behavior.
 pub(crate) fn diagnostic_or_unknown(
     error: &io::Error,
     syscall: &str,
@@ -398,6 +408,8 @@ mod tests {
     }
     #[test]
     fn uv_unknown_fallback_shares_the_stage_and_path_rules() {
+        // 123456 stays outside libuv's table on both supported targets
+        // (macOS, Linux), so every use below exercises the fallback.
         let e = io::Error::from_raw_os_error(123456);
         // A known path stays appended — even an empty one, like the C++
         // binding formatter real fs errors report through — and no path
@@ -416,7 +428,9 @@ mod tests {
         );
         // A Stage overrides the caller's labels in the fallback too, so a
         // `descriptor_error(e, "write")` keeps reporting `write` with no path
-        // even when the caller labels it open.
+        // even when the caller labels it open — unreachable through today's
+        // production call points (see `diagnostic_or_unknown`); the case
+        // keeps the fallback from drifting from `diagnostic`.
         let staged = descriptor_error(e, "write");
         assert_eq!(
             diagnostic_or_unknown(&staged, "open", Some("/file")).1,

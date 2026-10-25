@@ -27,22 +27,28 @@ pub(crate) fn ignore_sigxfsz_like_gateway() {
 /// 512-byte blocks, so `1` fails any 4 KiB write and `0` fails every write.
 pub(crate) fn child_write_error(child: &str, limit_blocks: u32, path: &std::path::Path) -> String {
     let output = std::process::Command::new("/bin/sh")
-        // The child name and the limit ride positional parameters, never
-        // string interpolation into the script, so a child name containing
-        // spaces, quotes or `$` stays one argument.
+        // The limit stays a numeric literal interpolated from a `u32` — the
+        // type guarantees `ulimit` only ever sees digits — and it must apply:
+        // a failed `ulimit` exits instead of exec'ing the child unbounded,
+        // where the write would not produce EFBIG at all. The child name
+        // rides a positional parameter, never string interpolation into the
+        // script, so a name containing spaces, quotes or `$` stays one
+        // argument.
         .arg("-c")
-        .arg("ulimit -f \"$1\"; exec \"$0\" --exact \"$2\" --ignored --nocapture")
+        .arg(format!(
+            "ulimit -f {limit_blocks} || exit 1; exec \"$0\" --exact \"$1\" --ignored --nocapture"
+        ))
         .arg(std::env::current_exe().unwrap())
-        .arg(limit_blocks.to_string())
         .arg(child)
         .env(CHILD_PATH_ENV, path)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         output.status.code(),
         Some(0),
-        "child killed or failed: {stdout}"
+        "child killed or failed: {stdout}{stderr}"
     );
     stdout
         .lines()

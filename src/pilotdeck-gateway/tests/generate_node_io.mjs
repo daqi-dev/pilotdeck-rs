@@ -5,7 +5,7 @@ import {execFileSync} from 'node:child_process';
 import {getSystemErrorMap} from 'node:util';
 import {constants} from 'node:os';
 import {createRequire} from 'node:module';
-import {openSync,readFileSync,readdirSync,statSync,writeFileSync} from 'node:fs';
+import {chmodSync,mkdirSync,openSync,readFileSync,readdirSync,statSync,writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 const require=createRequire(import.meta.url);
 const {UVException}=require('internal/errors');
@@ -21,15 +21,32 @@ for(const e of entries)lines.push(`    ${guard(e)}`,`    (libc::${e.code}, ${JSO
 lines.push('];','');
 // Real fs errors report through the C++ binding formatter, which appends a
 // provided path verbatim, empty included; the JS `UVException` class used
-// below truthiness-drops an empty path (`if (ctx.path)`). Measure the binding
-// rule through real fs calls before recording it for the '' rows, so the
-// goldens match what openSync/statSync/readdirSync actually print.
-for(const [syscall,probe] of [['open',() => openSync('')],['stat',() => statSync('')],['scandir',() => readdirSync('')]]){
+// below truthiness-drops an empty path (`if (ctx.path)` — node v22.22.0
+// `lib/internal/errors.js:645`, inside `class UVException`). Measure the
+// binding rule through real fs calls before recording it for the '' rows,
+// so the goldens match what the syscalls actually print.
+for(const [syscall,probe] of [['open',() => openSync('')],['stat',() => statSync('')],['scandir',() => readdirSync('')],['mkdir',() => mkdirSync('')],['chmod',() => chmodSync('',0o644)]]){
  try{probe();}catch(error){
   if(error?.code==='ENOENT'&&error.message.endsWith(` ${syscall} ''`))continue;
   throw Error('binding empty-path rule changed: '+error?.message);
  }
  throw Error('empty-path fs call unexpectedly succeeded');
+}
+// An empty pathname only ever yields ENOENT, so the probes above cannot
+// witness another errno carrying an empty path; the '' rows for the other
+// errnos rest on the binding formatter appending a provided path independent
+// of the errno. Node v22.22.0 `src/api/exceptions.cc` `UVException` appends
+// ` 'path'` whenever `path != nullptr` and uses the errno only for the code
+// and description, and `src/node_file.cc` `FSReqAfterScope::Reject` passes
+// `req->path`, non-null whenever the call carried a path, `''` included.
+// Witness that errno independence through real non-ENOENT errors.
+const longPath='/tmp/'+'x'.repeat(300);
+for(const [code,syscall,path,probe] of [['ENOTDIR','scandir','/etc/hosts',() => readdirSync('/etc/hosts')],['ENOTDIR','stat','/etc/hosts/x',() => statSync('/etc/hosts/x')],['ENAMETOOLONG','stat',longPath,() => statSync(longPath)]]){
+ try{probe();}catch(error){
+  if(error?.code===code&&error.message.endsWith(` ${syscall} '${path}'`))continue;
+  throw Error('binding path-append rule changed: '+error?.message);
+ }
+ throw Error('non-ENOENT fs call unexpectedly succeeded');
 }
 const formatting=[];
 for(const e of entries)for(const syscall of ['stat','open','read','fstat','scandir','realpath'])for(const path of [undefined,'',"/fixture/quote' and\nline"]){
