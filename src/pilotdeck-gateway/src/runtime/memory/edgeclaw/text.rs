@@ -566,7 +566,7 @@ pub fn parse_raw_recall_sections(value: &JsString) -> CleanedRecallSections {
             current = Some(section);
             continue;
         }
-        if !matches!(current, Some(_)) {
+        if current.is_none() {
             continue;
         }
         if line.is_empty() {
