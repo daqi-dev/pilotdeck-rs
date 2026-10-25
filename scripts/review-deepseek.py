@@ -311,6 +311,10 @@ def main() -> int:
         say(f"review-deepseek: 未知通道 {a.channel}")
         return 2
     api, key_name, model = CHANNELS[a.channel]
+    # --api 只给测试假服务用：只许本机地址，防止把某个通道的密钥发到别的主机
+    if a.api and not re.match(r"https?://(127\.0\.0\.1|localhost)(:\d+)?/", a.api):
+        say("review-deepseek: --api 只接受本机测试地址（http://127.0.0.1:<端口>/）")
+        return 2
     a.api = a.api or api
     a.model = a.model or model
 
