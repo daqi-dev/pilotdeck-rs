@@ -28,7 +28,7 @@ cases = [
     ('mode', source, '        &self.repository.mode\n', '        "single"\n', replay),
     ('catalog-order', helpers, '            crate::project_files::node_compare_utf16(&collator, &a, &b)', '            a.units().cmp(b.units())', replay),
     ('newest-first', helpers, '            crate::project_files::node_compare_utf16(\n                &collator,\n                &JsString::from(bt),\n                &JsString::from(at),\n            )', '            crate::project_files::node_compare_utf16(\n                &collator,\n                &JsString::from(at),\n                &JsString::from(bt),\n            )', replay),
-    ('external-path', source, '"external:{}:{path}"', '"wrong:{}:{path}"', replay),
+    ('external-path', source, '"{EXTERNAL_RECORD_PREFIX}{}:{path}"', '"wrong:{}:{path}"', replay),
     ('include-external', source, '        Some(value) => js_truthy(value),', '        Some(_) => true,', replay),
     ('global-filter', source, '        if text(options, "scope") == "project" {', '        if false {', replay),
     ('global-prefix', helpers, 'format!("global/{path}")', 'path', replay),
