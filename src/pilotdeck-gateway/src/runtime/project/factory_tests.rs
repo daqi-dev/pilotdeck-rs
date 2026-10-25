@@ -793,6 +793,42 @@ fn assert_no_interaction_resources(context: &StageContext) {
     }
 }
 
+fn assert_interaction_resources(context: &StageContext) {
+    for resource in [
+        Resource::Interaction,
+        Resource::InteractionEvents,
+        Resource::InteractionPermission,
+        Resource::InteractionHooks,
+        Resource::InteractionSteer,
+    ] {
+        assert!(
+            context.resource(resource).is_some(),
+            "{resource:?} must be published by the interaction staging pass",
+        );
+    }
+}
+
+/// Transparently delegates staging while deliberately keeping the trait's
+/// default `layers_interaction() == false`. It counts its own `stage` calls so
+/// a test can distinguish "the builders discarded this decorator" (zero) from
+/// "the builders rewrapped it and it ran once" without trusting only the final
+/// resource table.
+struct NonForwardingDecorator {
+    inner: Arc<dyn ResourceFamilySource>,
+    staged: Arc<AtomicUsize>,
+}
+
+impl ResourceFamilySource for NonForwardingDecorator {
+    fn family(&self) -> Family {
+        self.inner.family()
+    }
+
+    fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+        self.staged.fetch_add(1, Ordering::SeqCst);
+        self.inner.stage(context, sink)
+    }
+}
+
 /// Forward order: interaction layered after the tools family keeps the
 /// execution-world resource/owner and the MCP family.
 #[tokio::test]
@@ -1069,38 +1105,42 @@ async fn forwarding_decorator_keeps_interaction_layering() {
     );
 }
 
-/// Paired with forwarding_decorator_keeps_interaction_layering: the default
-/// false declaration deliberately hides an inner interaction selection.
+/// Paired with forwarding_decorator_keeps_interaction_layering: a decorator
+/// that keeps the trait's default false declaration treats the
+/// interaction-wrapped source it hides as an ordinary source.
 #[tokio::test]
 async fn nonforwarding_decorator_is_replaced_or_rewrapped() {
-    struct NonForwarding(Arc<dyn ResourceFamilySource>);
-    impl ResourceFamilySource for NonForwarding {
-        fn family(&self) -> Family {
-            self.0.family()
-        }
-        fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
-            self.0.stage(context, sink)
-        }
-    }
     let probe = Arc::new(Probe::default());
+    let decorator_stages = Arc::new(AtomicUsize::new(0));
     let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
-        probe: probe.clone(),
+        probe: Arc::clone(&probe),
         family: Family::ExecutionWorld,
         extra: no_extra,
         registers_owner: true,
         stages: true,
         publishes: &[Resource::ExecutionWorld],
     });
-    let decorated: Arc<dyn ResourceFamilySource> = Arc::new(NonForwarding(Arc::new(
-        crate::runtime::project::interaction::InteractionFamilySource::new(custom),
-    )));
-    assert!(!decorated.layers_interaction());
+    let decorated: Arc<dyn ResourceFamilySource> = Arc::new(NonForwardingDecorator {
+        inner: Arc::new(crate::runtime::project::interaction::InteractionFamilySource::new(custom)),
+        staged: Arc::clone(&decorator_stages),
+    });
+    assert!(
+        !decorated.layers_interaction(),
+        "the test decorator must use the trait's default false"
+    );
+
+    // Ordinary-source branch: with_tools_mcp replaces the decorated custom
+    // chain wholesale. The bare false declaration therefore drops the marker
+    // selection; there is no silent "keep the marker" behavior to rely on.
     let replaced = Families {
-        execution_world: decorated.clone(),
+        execution_world: Arc::clone(&decorated),
         ..Families::unwired()
     }
     .with_tools_mcp();
-    assert!(!Arc::ptr_eq(&decorated, &replaced.execution_world));
+    assert!(
+        !Arc::ptr_eq(&decorated, &replaced.execution_world),
+        "with_tools_mcp must replace a source that answers false"
+    );
     assert!(!replaced.execution_world.layers_interaction());
     let group = interaction_test_group();
     let context = group.context();
@@ -1114,30 +1154,41 @@ async fn nonforwarding_decorator_is_replaced_or_rewrapped() {
             .resource(Resource::ExecutionWorld)
             .unwrap()
             .as_any()
-            .is::<FakeHandle>()
+            .is::<FakeHandle>(),
+        "with_tools_mcp must stage the native execution world"
     );
     bounded(group.dispose()).await.unwrap();
+    assert_eq!(
+        decorator_stages.load(Ordering::SeqCst),
+        0,
+        "the replaced decorator must never stage"
+    );
     assert!(
         probe.events().is_empty(),
-        "replaced custom must never stage"
+        "the replaced custom kernel must never stage"
     );
 
+    // with_interaction sees the same false declaration and must add exactly
+    // one new layer around it. Arc identity on the repeated builder call is
+    // the anti-stacking guard: the final `is_some` alone cannot distinguish
+    // one wrapper from several.
     let wrapped = Families {
-        execution_world: decorated.clone(),
+        execution_world: Arc::clone(&decorated),
         ..Families::unwired()
     }
     .with_interaction();
     assert!(
         !Arc::ptr_eq(&decorated, &wrapped.execution_world),
-        "false must force a new layer"
+        "a false declaration must force a new interaction layer"
     );
     assert!(wrapped.execution_world.layers_interaction());
-    let outer = wrapped.execution_world.clone();
+    let outer = Arc::clone(&wrapped.execution_world);
     let wrapped = wrapped.with_interaction();
     assert!(
         Arc::ptr_eq(&outer, &wrapped.execution_world),
-        "declared outer layer must not stack again"
+        "the freshly published true declaration must not be wrapped again"
     );
+
     let group = interaction_test_group();
     let context = group.context();
     assert_no_interaction_resources(&context);
@@ -1145,15 +1196,23 @@ async fn nonforwarding_decorator_is_replaced_or_rewrapped() {
         .execution_world
         .stage(&context, &mut group.sink())
         .unwrap();
-    assert!(context.resource(Resource::Interaction).is_some());
+    assert_interaction_resources(&context);
+    let interaction = context.resource(Resource::Interaction).unwrap();
+    let execution_world = context.resource(Resource::ExecutionWorld).unwrap();
+    assert!(!Arc::ptr_eq(&interaction, &execution_world));
     let owner = context.owner(Family::ExecutionWorld).unwrap();
     assert!(owner.as_any().is::<FakeHandle>());
     assert_eq!(
         handle_id(Some(owner)),
-        handle_id(context.resource(Resource::ExecutionWorld)),
+        handle_id(Some(execution_world)),
         "owner and resource must come from the same custom stage"
     );
     bounded(group.dispose()).await.unwrap();
+    assert_eq!(
+        decorator_stages.load(Ordering::SeqCst),
+        1,
+        "the rewrapped decorator must stage exactly once"
+    );
     assert_eq!(
         probe.events(),
         [
@@ -1161,6 +1220,71 @@ async fn nonforwarding_decorator_is_replaced_or_rewrapped() {
             "stage:executionWorld:1",
             "dispose:executionWorld:1"
         ]
+    );
+}
+
+/// The review's "with_tools_mcp keeps the marker" expectation holds only after
+/// `with_interaction` has explicitly layered the marker: the outer wrapper
+/// then answers true, so `with_tools_mcp` rebuilds marker layering around the
+/// native kernel while discarding the decorated custom chain. Starting from
+/// the bare non-forwarding decorator answers false and drops the marker (the
+/// previous test). Both halves pin the declared contract without changing the
+/// production builders.
+#[tokio::test]
+async fn marker_added_by_with_interaction_survives_tools_replacement() {
+    let probe = Arc::new(Probe::default());
+    let decorator_stages = Arc::new(AtomicUsize::new(0));
+    let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
+        probe: Arc::clone(&probe),
+        family: Family::ExecutionWorld,
+        extra: no_extra,
+        registers_owner: true,
+        stages: true,
+        publishes: &[Resource::ExecutionWorld],
+    });
+    let decorated: Arc<dyn ResourceFamilySource> = Arc::new(NonForwardingDecorator {
+        inner: Arc::new(crate::runtime::project::interaction::InteractionFamilySource::new(custom)),
+        staged: Arc::clone(&decorator_stages),
+    });
+    let layered = Families {
+        execution_world: decorated,
+        ..Families::unwired()
+    }
+    .with_interaction();
+    let layered_wrapper = Arc::clone(&layered.execution_world);
+    assert!(layered.execution_world.layers_interaction());
+
+    let replaced = layered.with_tools_mcp();
+    assert!(
+        !Arc::ptr_eq(&layered_wrapper, &replaced.execution_world),
+        "with_tools_mcp must replace the explicit wrapper and its decorated kernel"
+    );
+    assert!(
+        replaced.execution_world.layers_interaction(),
+        "the marker selection introduced by with_interaction must survive"
+    );
+
+    let group = interaction_test_group();
+    let context = group.context();
+    stage_tools_and_execution_world(&replaced, &context, &mut group.sink());
+    assert_interaction_resources(&context);
+    assert!(
+        !context
+            .resource(Resource::ExecutionWorld)
+            .unwrap()
+            .as_any()
+            .is::<FakeHandle>(),
+        "the replacement must stage the native execution world"
+    );
+    bounded(group.dispose()).await.unwrap();
+    assert_eq!(
+        decorator_stages.load(Ordering::SeqCst),
+        0,
+        "the discarded decorator must never stage"
+    );
+    assert!(
+        probe.events().is_empty(),
+        "the discarded custom kernel must never stage or dispose"
     );
 }
 
