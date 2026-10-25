@@ -2,8 +2,12 @@
 use super::*;
 use std::sync::Mutex;
 
+const REAP_TIMEOUT: Duration = Duration::from_secs(10);
+const MARKER_POLL: Duration = Duration::from_millis(5);
+
 fn cancel_peer(mode: &str) -> (Command, Receipt) {
     let (_, receipt) = peer(mode);
+    let marker = peer_marker(&receipt);
     let mut command = Command::new("python3");
     command
         .arg(concat!(
@@ -11,7 +15,11 @@ fn cancel_peer(mode: &str) -> (Command, Receipt) {
             "/tests/fixtures/host-cancel-timeout/peer.py"
         ))
         .arg(mode)
-        .arg(&receipt.0);
+        .arg(&receipt.0)
+        // `peer.py` ignores extra argv. The marker lets the reaping assertion
+        // prove absence when the pid file is missing/unparsable, exactly like
+        // the host-factory peer added in fix-r2.
+        .arg(marker);
     (command, receipt)
 }
 fn release(receipt: &Receipt, name: &str) {
@@ -20,13 +28,112 @@ fn release(receipt: &Receipt, name: &str) {
 async fn marker(receipt: &Receipt, name: &str) {
     wait_for_event(name, || receipt.0.with_extension(name).exists()).await;
 }
-async fn assert_peer_reaped(receipt: &Receipt) {
-    for generation in 1..=2 {
-        if let Ok(pid) =
-            std::fs::read_to_string(receipt.0.with_extension(format!("pid-{generation}")))
-        {
-            assert_reaped(pid.parse().unwrap()).await;
+/// Regex-safe argv token unique to one test's receipt path. The cancel peer
+/// appends it so absence is observable without a published pid.
+fn peer_marker(receipt: &Receipt) -> String {
+    let mut marker = String::from("pdrs_cancel_peer_");
+    marker.extend(receipt.0.to_string_lossy().bytes().map(|byte| {
+        if byte.is_ascii_alphanumeric() {
+            byte as char
+        } else {
+            '_'
         }
+    }));
+    marker
+}
+fn published_pid(receipt: &Receipt, generation: u32) -> Option<u32> {
+    std::fs::read_to_string(receipt.0.with_extension(format!("pid-{generation}")))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+async fn assert_peer_reaped(receipt: &Receipt) {
+    assert_peer_reaped_within(receipt, REAP_TIMEOUT).await;
+}
+/// A missing or unparsable pid file is not evidence that the peer was reaped:
+/// it is the state a child killed before publication leaves behind. Fall back
+/// to proving no process carries this test's unique argv marker.
+async fn assert_peer_reaped_within(receipt: &Receipt, limit: Duration) {
+    let mut missing_pid = false;
+    for generation in 1..=2 {
+        match published_pid(receipt, generation) {
+            Some(pid) => assert_reaped(pid).await,
+            None => missing_pid = true,
+        }
+    }
+    if missing_pid {
+        assert_no_peer_process_within(&peer_marker(receipt), limit).await;
+    }
+}
+async fn peer_process_running(marker: &str) -> bool {
+    let output = Command::new("pgrep")
+        .arg("-f")
+        .arg(marker)
+        .output()
+        .await
+        .unwrap_or_else(|error| panic!("cannot run pgrep -f {marker}: {error}"));
+    match output.status.code() {
+        Some(0) => true,
+        Some(1) => false,
+        _ => panic!(
+            "pgrep -f {marker} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    }
+}
+async fn assert_no_peer_process(marker: &str) {
+    assert_no_peer_process_within(marker, REAP_TIMEOUT).await;
+}
+async fn assert_no_peer_process_within(marker: &str, limit: Duration) {
+    timeout(limit, async {
+        while peer_process_running(marker).await {
+            tokio::time::sleep(MARKER_POLL).await;
+        }
+    })
+    .await
+    .expect("owned sidecar left a process carrying the test marker");
+}
+
+/// Negative control for the marker fallback: a live process with this test's
+/// marker and no usable pid file must make the assertion fail, not skip it.
+/// The short limit keeps the controlled failure cheap; the production path
+/// keeps the full ten-second anti-hang bound.
+#[tokio::test]
+async fn peer_reaping_assertion_rejects_a_live_marker_without_a_pid() {
+    for pid_text in [None, Some("not-a-pid\n")] {
+        let (_, receipt) = peer("unused");
+        if let Some(pid_text) = pid_text {
+            std::fs::write(receipt.0.with_extension("pid-1"), pid_text).unwrap();
+        }
+        let marker = peer_marker(&receipt);
+        let mut child = Command::new("python3")
+            .arg("-c")
+            .arg("import time; time.sleep(30)")
+            .arg(&marker)
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !peer_process_running(&marker).await {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "marker process did not start"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let failure = tokio::spawn(async move {
+            assert_peer_reaped_within(&receipt, Duration::from_millis(200)).await;
+        })
+        .await;
+        assert!(
+            failure.is_err(),
+            "missing/unparsable pid {pid_text:?} silently skipped the reaping assertion"
+        );
+        child.kill().await.unwrap();
+        child.wait().await.unwrap();
+        // Positive control: once the marker process is gone the same branch
+        // must pass, so the failure above was not a permanently broken helper.
+        assert_no_peer_process(&marker).await;
     }
 }
 // Retained host observations stay visible even when published before the wait.
