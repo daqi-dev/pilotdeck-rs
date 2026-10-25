@@ -246,6 +246,65 @@ mutants = [
         "",
         "artifact_session_parent_dir_escape_keeps_projection_without_a_path",
     ),
+    # Fix round 3 (#654 P2): the unix hardening branch used to have no
+    # persistent control; its red evidence lived only in uncommitted logs.
+    # One mutant per guard, each named after the test that must catch it.
+    (
+        "drop-artifact-owner-check",
+        "projector.rs",
+        "        verify_private_directory(&current, &opened.metadata()?, expected_uid)?;\n",
+        "",
+        "artifact_owner_check_is_wired_through_the_real_writer",
+    ),
+    (
+        "drop-artifact-anchor-nofollow",
+        "projector.rs",
+        "    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW;",
+        "    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;",
+        "artifact_root_parent_symlink_is_refused",
+    ),
+    (
+        "drop-artifact-hardlink-guard",
+        "projector.rs",
+        " || metadata.nlink() != 1",
+        "",
+        "artifact_file_hardlink_is_not_truncated",
+    ),
+    (
+        "loosen-artifact-directory-mode",
+        "projector.rs",
+        "        fchmod(&opened, Mode::from_raw_mode(0o700))?;",
+        "        fchmod(&opened, Mode::from_raw_mode(0o777))?;",
+        "artifact_directories_are_0700_and_the_file_is_0600",
+    ),
+    (
+        "drop-artifact-file-nofollow",
+        "projector.rs",
+        """                | OFlags::NONBLOCK
+                | OFlags::NOFOLLOW,""",
+        "                | OFlags::NONBLOCK,",
+        "artifact_file_symlink_is_not_followed_or_truncated",
+    ),
+    (
+        "drop-artifact-writer-root-boundary",
+        "projector.rs",
+        '''    if path.strip_prefix(root).is_err() {
+        return Err(refused_artifact_path(path, root));
+    }
+''',
+        "",
+        "artifact_writer_refuses_a_path_beside_the_root",
+    ),
+    (
+        "drop-artifact-parentless-root-guard",
+        "projector.rs",
+        '''        if root.parent().is_none() {
+            return Ok(None);
+        }
+''',
+        "",
+        "artifact_root_without_a_parent_is_refused",
+    ),
     # Fix round 2: one control per P1 (silent path fields, queue overflow,
     # detached advisory writer, deep-array `String()` clamp).
     (
@@ -626,9 +685,30 @@ pub(crate) fn node_tmpdir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> S
 //! Minimal stand-in for the gateway's `project_files::create_directories_at`
 //! (project_files.rs) used by the projector's advisory writer. The real module
 //! imports the `metadata` tree (icu/base64), so the negative-control crate
-//! carries just this no-follow mkdir walk; keep it in step with production.
+//! carries just this no-follow mkdir walk. `directory_flags` and the symlink
+//! error mapping mirror production as of #654; this is still a copy, so a
+//! change to the real walk must be reflected here (see `_tmp` RESULT for why a
+//! shared leaf module is deferred while project_files.rs is being rewritten).
 #![allow(dead_code)]
 use std::{fs::File, io, path::{Component, Path}};
+
+// Only a NOFOLLOW open failure denotes the deliberate security divergence
+// (same marker as `project_files::NoFollowLoop`).
+#[derive(Debug)]
+struct NoFollowLoop;
+impl std::fmt::Display for NoFollowLoop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("symlink replaced during checked open")
+    }
+}
+impl std::error::Error for NoFollowLoop {}
+fn checked_open_error(error: io::Error) -> io::Error {
+    if error.raw_os_error() == Some(libc::ELOOP) {
+        io::Error::new(error.kind(), NoFollowLoop)
+    } else {
+        error
+    }
+}
 
 #[cfg(unix)]
 pub(crate) fn create_directories_at(
@@ -661,13 +741,13 @@ pub(crate) fn create_directories_at(
             {
                 let kind = FileType::from_raw_mode(stat.st_mode);
                 if kind == FileType::Symlink {
-                    return io::Error::from_raw_os_error(libc::ELOOP);
+                    return io::Error::new(io::ErrorKind::PermissionDenied, NoFollowLoop);
                 }
                 if kind != FileType::Directory && index + 1 == components.len() {
                     return io::Error::from_raw_os_error(libc::EEXIST);
                 }
             }
-            error.into()
+            checked_open_error(error.into())
         })?);
     }
     Ok(())
@@ -676,7 +756,13 @@ pub(crate) fn create_directories_at(
 #[cfg(unix)]
 fn directory_flags() -> rustix::fs::OFlags {
     use rustix::fs::OFlags;
-    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
+    #[cfg(target_os = "linux")]
+    let access = OFlags::PATH;
+    #[cfg(target_vendor = "apple")]
+    let access = OFlags::from_bits_retain(libc::O_SEARCH as u32);
+    #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+    let access = OFlags::RDONLY;
+    access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
 }
 """
     )
