@@ -1301,11 +1301,18 @@ async fn http_10_requests_close_like_node() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
-/// `server.close()` during an in-flight request used to produce
-/// `connection: close` (hyper's `graceful_shutdown`) next to our stale
-/// `Keep-Alive: timeout=5` (`.../probe/rust-shutdown.log`). The response must
-/// be one coherent close.
-#[tokio::test]
+/// Node v22.22.0 S1: `server.close()` inside the handler, before the
+/// response head is decided, still advertises keep-alive and the same socket
+/// serves the next request; the connection then closes at the idle deadline
+/// (`lifecycle-matrix/node-lifecycle-matrix.json`,
+/// `s1_close_in_handler_before_head`; fix-r1 probe
+/// `_tmp/20261026-issue-702/fix-r1/node-s1-probe.out.txt`).
+///
+/// The test name is historical and is referenced by
+/// `A7.4-HTTPSTORE-KEEPALIVE-001-R2/R3`, so it is kept; fix-r1 corrected the
+/// assertion from the old Rust-only `connection: close` deviation to Node's
+/// bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
     let directory = temp_dir("shutdown-advertisement");
     let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1316,11 +1323,16 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
         condvar: Condvar::new(),
         entered_tx,
     });
-    let (server, port) = start_limited(
-        store.clone() as Arc<dyn LiveGatewayUserDialogStore>,
-        ServeLimits::default(),
-    )
-    .await;
+    let limits = ServeLimits {
+        // The observable Node idle deadline is keepAliveTimeout + buffer;
+        // shorten both so the post-close idle close is asserted, not waited
+        // out. The advertisement uses keepAliveTimeout itself (timeout=1).
+        keep_alive_timeout: Duration::from_secs(1),
+        keep_alive_timeout_buffer: Duration::ZERO,
+        ..ServeLimits::default()
+    };
+    let (server, port) =
+        start_limited(store.clone() as Arc<dyn LiveGatewayUserDialogStore>, limits).await;
     let body = put_body();
     let request = http_request(
         "POST",
@@ -1341,8 +1353,9 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
         .expect("entered channel closed");
     let close_task = tokio::spawn(async move { server.close().await });
     // The connection future is parked on `spawn_blocking`, so the shutdown
-    // branch is polled while the request is still in flight. This is an
-    // ordering yield, not a deadline assertion.
+    // branch is polled while the request is still in flight and the response
+    // head has not been decided yet. This is an ordering yield, not a deadline
+    // assertion.
     tokio::time::sleep(Duration::from_millis(100)).await;
     store.released.store(true, Ordering::SeqCst);
     store.condvar.notify_all();
@@ -1353,26 +1366,58 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
     assert_eq!(status(&response), 200, "{response:?}");
     let head = String::from_utf8_lossy(&response).to_ascii_lowercase();
     assert!(
-        head.contains("connection: close"),
-        "hyper disables keep-alive on shutdown, so the response must say close: {head}"
+        head.contains("connection: keep-alive") && head.contains("keep-alive: timeout=1"),
+        "Node keeps the in-flight advertisement even after close(): {head}"
     );
     assert!(
-        !head.contains("keep-alive:"),
-        "a close response must not keep the stale Keep-Alive advertisement: {head}"
+        !head.contains("connection: close"),
+        "close() must not turn the in-flight advertisement into a close: {head}"
     );
-    let mut byte = [0u8; 1];
-    let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut byte))
+
+    // The same socket must still serve the next request, exactly like Node's
+    // `s1_close_in_handler_before_head` second request.
+    let second_request = http_request(
+        "POST",
+        &format!("{STORE_PATH_PREFIX}list"),
+        &[
+            ("Authorization", &format!("Bearer {TOKEN}")),
+            ("Content-Type", "application/json"),
+        ],
+        &list_body(),
+    );
+    stream.write_all(&second_request).await.unwrap();
+    let second = tokio::time::timeout(Duration::from_secs(5), read_response(&mut stream))
         .await
-        .expect("the shutdown connection stayed open");
-    assert_eq!(
-        read.unwrap(),
-        0,
-        "expected EOF after the in-flight response"
+        .expect("the follow-up request was not served after close()");
+    assert_eq!(status(&second), 200, "{second:?}");
+    let second_head = String::from_utf8_lossy(&second).to_ascii_lowercase();
+    assert!(
+        second_head.contains("connection: keep-alive")
+            && second_head.contains("keep-alive: timeout=1"),
+        "the post-close request is still on the advertised keep-alive connection: {second_head}"
+    );
+
+    // Node keeps the connection until the idle deadline and only then ends it;
+    // close() resolves with that EOF.
+    let started = Instant::now();
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut byte))
+        .await
+        .expect("the post-close keep-alive connection did not reach its idle deadline");
+    assert_eq!(read.unwrap(), 0, "expected EOF at the idle deadline");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "the idle timer did not fire promptly: {:?}",
+        started.elapsed()
     );
     tokio::time::timeout(Duration::from_secs(5), close_task)
         .await
         .expect("close() hung after the in-flight request")
         .unwrap();
+    assert!(
+        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
+        "the listener still accepts after close()"
+    );
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -1690,6 +1735,30 @@ fn keep_alive_close_race_uses_wire_bytes_not_body_completion() {
     assert!(
         timer.close_raced_with_advertised_keep_alive(),
         "a body-complete event before the bytes leave must still defer the close"
+    );
+    // S1: close() while a request is in flight, before the head is decided.
+    // No advertisement exists yet, so the "advertised && !flushed" test is
+    // false; `request_in_flight` alone must defer graceful_shutdown.
+    {
+        let mut lifecycle = timer.lifecycle.lock().unwrap();
+        *lifecycle = ConnectionLifecycle::default();
+    }
+    timer.request_started();
+    assert!(
+        timer.close_raced_with_advertised_keep_alive(),
+        "an in-flight request must defer close even before its head is decided"
+    );
+    timer.response_finished();
+    assert!(
+        !timer.close_raced_with_advertised_keep_alive(),
+        "after the response ends, close() is an idle-connection close"
+    );
+    // close() found the connection idle: the service closure must see this
+    // decision and answer close instead of advertising keep-alive.
+    timer.mark_graceful_shutdown();
+    assert!(
+        timer.lifecycle.lock().unwrap().graceful_shutdown_started,
+        "the graceful-shutdown decision must be visible to the service closure"
     );
 }
 
@@ -2997,7 +3066,7 @@ async fn shutdown_during_large_response_reuses_advertised_keep_alive() {
             .await
             .unwrap_or_else(|error| panic!("{note}: follow-up write failed: {error}"));
         let follow_note = format!("{note}: follow-up request");
-        let (follow_head, _) = read_response_head(&mut stream, &follow_note).await;
+        let (follow_head, follow_leftover) = read_response_head(&mut stream, &follow_note).await;
         assert_eq!(
             status(&follow_head),
             405,
@@ -3005,9 +3074,25 @@ async fn shutdown_during_large_response_reuses_advertised_keep_alive() {
         );
         let follow_text = String::from_utf8_lossy(&follow_head).to_ascii_lowercase();
         assert!(
-            follow_text.contains("connection: close"),
-            "{note}: the follow-up response runs during shutdown and must close: {follow_text}"
+            follow_text.contains("connection: keep-alive"),
+            "{note}: Node keeps advertising keep-alive on the in-flight socket: {follow_text}"
         );
+        // Node's probe reaches the deadline with the connection still open:
+        // close() waits for the keep-alive idle deadline (2 s here), then the
+        // socket ends. Consume the 405 body first so the idle timer is armed
+        // by the response finish, not by unread bytes.
+        let follow_body = read_exact_body(
+            &mut stream,
+            follow_leftover,
+            response_content_length(&follow_head),
+            &format!("{note}: follow-up body"),
+        )
+        .await;
+        assert!(!follow_body.is_empty(), "{note}: follow-up body missing");
+        // Node's probe ends with the connection still open at the client
+        // deadline; this 40x case only asserts the advertisement survives the
+        // close. The idle-close timing is covered once by the S1 test.
+        drop(stream);
         tokio::time::timeout(Duration::from_secs(5), close_task)
             .await
             .unwrap_or_else(|_| panic!("{note}: close() hung"))
