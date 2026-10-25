@@ -47,7 +47,18 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 type TurnHost = (HostClient, Arc<dyn HostHandler>);
-type TurnHostFactory = dyn Fn() -> HostFuture<TurnHost> + Send + Sync;
+type PreparedHost = (HostClient, Arc<dyn HostHandler>, Option<JsObject>);
+type TurnHostFactory = dyn Fn(ExecutionIdentity) -> HostFuture<PreparedHost> + Send + Sync;
+
+/// Host-acquired authority for one turn. Acquire the project lease with
+/// ProjectRuntimeRegistry::acquire when this factory is invoked, not when the
+/// LiveSessionAdapter is created. The sidecar cannot supply any of these ports.
+pub struct InteractionHost {
+    pub client: HostClient,
+    pub lease: crate::runtime::project::RuntimeLease,
+    pub router: crate::host::modules::ModuleRouter,
+    pub input: super::interaction::InteractionTurnInput,
+}
 
 /// Production LiveSession backed by a fresh HostClient and handler for each turn.
 /// HostClient closes its process and disposes its handler after each execution.
@@ -75,7 +86,40 @@ impl LiveSessionAdapter {
     /// when its dispose implementation releases module resources.
     pub fn new(host_factory: impl Fn() -> HostFuture<TurnHost> + Send + Sync + 'static) -> Self {
         Self {
-            host_factory: Arc::new(host_factory),
+            host_factory: Arc::new(move |_| {
+                let host = host_factory();
+                Box::pin(async move {
+                    let (client, handler) = host.await?;
+                    Ok((client, handler, None))
+                })
+            }),
+            state: Arc::default(),
+        }
+    }
+
+    pub fn with_interaction(
+        factory: impl Fn(ExecutionIdentity) -> HostFuture<InteractionHost> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            host_factory: Arc::new(move |identity| {
+                let host = factory(identity.clone());
+                Box::pin(async move {
+                    let host = host.await?;
+                    let handler = super::interaction::InteractionTurn::bind(
+                        host.lease,
+                        &identity,
+                        host.router,
+                        host.input,
+                    )
+                    .await?;
+                    let manifest = handler.manifest().clone();
+                    Ok((
+                        host.client,
+                        Arc::new(handler) as Arc<dyn HostHandler>,
+                        Some(manifest),
+                    ))
+                })
+            }),
             state: Arc::default(),
         }
     }
@@ -84,7 +128,7 @@ impl LiveSessionAdapter {
 impl LiveSession for LiveSessionAdapter {
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         // Invalid requests must not occupy the session's active turn slot.
-        let request = parse_execute_request(&input, &options)?;
+        let mut request = parse_execute_request(&input, &options)?;
         let cancellation = Cancellation::default();
         {
             let mut state = self.state.lock().unwrap();
@@ -109,17 +153,23 @@ impl LiveSession for LiveSessionAdapter {
         let (events, receiver) = mpsc::channel(1);
         Ok(Box::new(LiveTurnStream {
             execution: Some(Box::pin(async move {
-                let (client, inner) = tokio::select! {
+                let (client, inner, manifest) = tokio::select! {
                     biased;
-                    host = host_factory() => host?,
+                    host = host_factory(request.identity.clone()) => host?,
                     _ = cancellation.cancelled() => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
                     }
                 };
+                if let Some(manifest) = manifest {
+                    for (key, value) in manifest.entries() {
+                        request.payload.insert(key.clone(), value.clone());
+                    }
+                }
                 let handler = Arc::new(StreamHandler {
                     inner,
                     events,
                     integrity: hook_integrity,
+                    forwarding: Mutex::default(),
                 });
                 client
                     .execute_cancellable(request, handler, cancellation)
@@ -356,11 +406,75 @@ struct StreamHandler {
     inner: Arc<dyn HostHandler>,
     events: mpsc::Sender<JsValue>,
     integrity: Arc<StreamIntegrity>,
+    forwarding: Mutex<Forwarding>,
+}
+
+type Delivery = (
+    Option<tokio::sync::oneshot::Receiver<()>>,
+    tokio::sync::oneshot::Sender<()>,
+);
+#[derive(Default)]
+struct Forwarding {
+    tail: Option<tokio::sync::oneshot::Receiver<()>>,
+    wire: std::collections::VecDeque<Delivery>,
+}
+impl Forwarding {
+    fn reserve(&mut self) -> Delivery {
+        let (done, next) = tokio::sync::oneshot::channel();
+        (self.tail.replace(next), done)
+    }
+}
+impl StreamHandler {
+    fn forward<T: Send + 'static>(
+        &self,
+        applied: HostFuture<T>,
+        payload: Option<JsValue>,
+        delivery: Option<Delivery>,
+    ) -> HostFuture<T> {
+        // Capture and validate synchronously at callback invocation. Even a
+        // subsequently dropped callback must leave contradiction evidence.
+        let buffered = self
+            .inner
+            .drain_events()
+            .and_then(|events| {
+                for event in &events {
+                    self.integrity
+                        .observe_event(&JsValue::Object(event.clone()))
+                        .map_err(|e| HostError::new(HostErrorKind::Protocol, e.message))?;
+                }
+                Ok(events)
+            })
+            .inspect_err(|error| {
+                *self.integrity.host_error.lock().unwrap() = Some(error.message.clone());
+            });
+        if buffered.as_ref().is_ok_and(Vec::is_empty) && payload.is_none() && delivery.is_none() {
+            return applied; // pending model/tool calls must not stall wire events
+        }
+        // One send chain across module and wire callbacks: concurrent futures
+        // cannot interleave batches or overtake an earlier callback's payload.
+        let (previous, done) =
+            delivery.unwrap_or_else(|| self.forwarding.lock().unwrap().reserve());
+        let events = self.events.clone();
+        Box::pin(async move {
+            let _done = done; // drop wakes the next sender on every exit
+            let buffered = buffered?;
+            let result = applied.await?;
+            if let Some(previous) = previous {
+                let _ = previous.await;
+            }
+            for event in buffered.into_iter().map(JsValue::Object).chain(payload) {
+                events.send(event).await.map_err(|_| {
+                    HostError::new(HostErrorKind::Callback, "LiveTurn event receiver closed.")
+                })?;
+            }
+            Ok(result)
+        })
+    }
 }
 
 impl HostHandler for StreamHandler {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
-        self.inner.module_call(call)
+        self.forward(self.inner.module_call(call), None, None)
     }
 
     fn validate_event(&self, payload: &JsValue) -> Result<(), HostError> {
@@ -371,27 +485,33 @@ impl HostHandler for StreamHandler {
         self.integrity
             .observe_event(payload)
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
-        self.inner.validate_event(payload)
+        self.inner.validate_event(payload)?;
+        let mut forwarding = self.forwarding.lock().unwrap();
+        let slot = forwarding.reserve();
+        forwarding.wire.push_back(slot);
+        Ok(())
     }
 
     fn event(&self, event: JsValue) -> HostFuture<()> {
         let final_event = event.get("final").and_then(JsValue::as_bool) == Some(true);
         let payload = event.get("payload").cloned();
         let applied = self.inner.event(event);
-        let events = self.events.clone();
-        Box::pin(async move {
-            applied.await?;
-            // The authoritative final is projected once from ExecuteResult.
-            if !final_event {
-                let payload = payload.ok_or_else(|| {
-                    HostError::new(HostErrorKind::Protocol, "AgentEvent payload is missing.")
-                })?;
-                events.send(payload).await.map_err(|_| {
-                    HostError::new(HostErrorKind::Callback, "LiveTurn event receiver closed.")
-                })?;
+        let delivery = {
+            let mut forwarding = self.forwarding.lock().unwrap();
+            if final_event {
+                forwarding.reserve()
+            } else {
+                forwarding
+                    .wire
+                    .pop_front()
+                    .unwrap_or_else(|| forwarding.reserve())
             }
-            Ok(())
-        })
+        };
+        self.forward(
+            applied,
+            if final_event { None } else { payload },
+            Some(delivery),
+        )
     }
 
     fn dispose(&self) -> HostFuture<()> {
@@ -414,6 +534,7 @@ impl HostHandler for StreamHandler {
 /// (client:879-893) owns that.
 struct StreamIntegrity {
     state: Mutex<IntegrityState>,
+    host_error: Mutex<Option<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,6 +557,7 @@ impl StreamIntegrity {
     fn new() -> Self {
         Self {
             state: Mutex::new(IntegrityState::Initial),
+            host_error: Mutex::default(),
         }
     }
 
@@ -529,6 +651,9 @@ impl StreamIntegrity {
     /// delivery. A cancellation request alone never rescues either. The final
     /// itself was already validated by the host layer.
     fn observe_terminal(&self, outcome: Option<&JsString>) -> Result<(), RuntimeError> {
+        if let Some(error) = self.host_error.lock().unwrap().as_ref() {
+            return Err(RuntimeError::new(error));
+        }
         let outcome = outcome.map(|outcome| String::from_utf16_lossy(outcome.units()));
         let mut state = self.state.lock().unwrap();
         let current = *state;
@@ -558,6 +683,9 @@ impl StreamIntegrity {
     }
 
     fn observe_aborted(&self) -> Result<(), RuntimeError> {
+        if let Some(error) = self.host_error.lock().unwrap().as_ref() {
+            return Err(RuntimeError::new(error));
+        }
         // Aborted turns may stop before any lifecycle event was observed,
         // including an input cancelled before execute was sent.
         *self.state.lock().unwrap() = IntegrityState::Completed;

@@ -1,0 +1,377 @@
+//! Per-turn assembly from an actual generation lease, never the marker.
+//! The caller supplies trusted session services and bounded, cooperative
+//! recorders. This does not implement the gateway's SubmitHost/WS assembly.
+use crate::{
+    hooks::protocol::HooksSettings,
+    host::{
+        HostError, HostFuture, HostHandler, ModuleError,
+        modules::{
+            CompositionSwitches, ModuleRouter, capability::serialize_tool_descriptor, event,
+            lifecycle, manifest::PermissionSnapshot,
+        },
+    },
+    runtime::{
+        hooks::Cancellation,
+        plugins::PluginSessionContributionLease,
+        project::{
+            ProjectResources, Resource, RuntimeLease, StageContext,
+            interaction_events::{InteractionEvents, TurnEvents},
+            interaction_hooks::{InteractionHooks, TurnHooks},
+            interaction_permission::{
+                InteractionPermission, PermissionTurnOptions, TurnPermission,
+            },
+            interaction_steer::{InteractionSteer, SessionSteer, TurnSteer},
+        },
+        steer::MutationRecorder,
+    },
+};
+use pilotdeck_protocol::{JsObject, JsValue, admission::ExecutionIdentity};
+use std::sync::{Arc, Mutex};
+use tokio::{runtime::Handle, sync::watch};
+
+/// Session authority; none of these fields are read from the sidecar payload.
+pub struct InteractionTurnInput {
+    /// profile is overwritten with the leased generation's actual profile.
+    pub permission: PermissionTurnOptions,
+    /// Host-merged SDK/session contribution hooks, plus their owning lease.
+    pub hooks: HooksSettings,
+    pub contribution: Option<PluginSessionContributionLease>,
+    pub base_env: Option<JsObject>,
+    pub signal: Cancellation,
+    /// Required when the generation publishes steer. The implementation must
+    /// bound its actual I/O, including detached writes; a timeout around the
+    /// returned future alone is insufficient. No volatile fallback is installed.
+    pub steer_recorder: Option<Arc<dyn MutationRecorder>>,
+    /// Same bounded-I/O requirement, for durable steer message application.
+    pub record_message: Option<Arc<dyn Fn(JsValue) -> HostFuture<()> + Send + Sync>>,
+    pub messages: Vec<JsValue>,
+    pub switches: CompositionSwitches,
+}
+#[derive(Clone, Default)]
+pub struct InteractionPorts {
+    pub events: Option<TurnEvents>,
+    pub permission: Option<TurnPermission>,
+    pub hooks: Option<TurnHooks>,
+    pub steer: Option<TurnSteer>,
+}
+struct Owned {
+    lease: RuntimeLease,
+    contribution: Option<PluginSessionContributionLease>,
+    session_steer: Option<SessionSteer>,
+}
+
+/// One execute owns this handler. Cleanup survives HostClient's disposer
+/// timeout and a dropped factory/execute future; leases are released last.
+pub struct InteractionTurn {
+    router: Arc<ModuleRouter>,
+    manifest: JsObject,
+    ports: InteractionPorts,
+    owned: Mutex<Option<Owned>>,
+    executor: Handle,
+    done: watch::Sender<Option<Result<(), HostError>>>,
+    record_message: Option<Arc<dyn Fn(JsValue) -> HostFuture<()> + Send + Sync>>,
+}
+impl InteractionTurn {
+    pub async fn bind(
+        lease: RuntimeLease,
+        identity: &ExecutionIdentity,
+        mut router: ModuleRouter,
+        mut input: InteractionTurnInput,
+    ) -> Result<Self, HostError> {
+        let executor = Handle::try_current()
+            .map_err(|_| ModuleError::new("Turn binding requires a Tokio runtime."))?;
+        let context = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .ok_or_else(|| ModuleError::new("Leased project resources are missing."))?
+            .context();
+        input.permission.profile = context.profile().interaction;
+        input.permission.context.rules = input.permission.rules.snapshot();
+        let permission_context = input.permission.context.clone();
+        let catalog = router
+            .capability
+            .catalog()
+            .ok_or_else(|| ModuleError::new("Turn capability handler is missing."))?;
+        // Availability comes solely from this lease, even if the caller reused
+        // a router assembled for another generation.
+        router.event = Default::default();
+        router.permission = Default::default();
+        router.lifecycle = Default::default();
+        router.turn.ports.drain_steer = None;
+        router.turn.ports.drain_or_close_steer = None;
+        let mut turn = Self {
+            router: Arc::new(router),
+            manifest: JsObject::new(),
+            ports: Default::default(),
+            owned: Mutex::new(Some(Owned {
+                lease,
+                contribution: input.contribution,
+                session_steer: None,
+            })),
+            executor,
+            done: watch::channel(None).0,
+            record_message: input.record_message,
+        };
+        let router = Arc::get_mut(&mut turn.router).expect("unpublished turn router");
+        if let Some(resource) =
+            resource::<InteractionEvents>(&context, Resource::InteractionEvents)?
+        {
+            turn.ports.events = Some(resource.bind_turn(
+                event::TurnIdentity::new(identity.session_id.clone(), identity.turn_id.clone()),
+                identity.run_id.clone(),
+                router,
+            )?);
+        }
+        if let Some(resource) =
+            resource::<InteractionPermission>(&context, Resource::InteractionPermission)?
+        {
+            turn.ports.permission = Some(resource.bind_turn(
+                identity.session_id.clone(),
+                identity.run_id.clone(),
+                input.permission,
+                catalog.clone(),
+                router,
+            )?);
+        }
+        if let Some(resource) = resource::<InteractionHooks>(&context, Resource::InteractionHooks)?
+        {
+            turn.ports.hooks = Some(resource.bind_turn(
+                lifecycle::Binding {
+                    session_id: identity.session_id.clone(),
+                    turn_id: identity.turn_id.clone(),
+                    cwd: permission_context.cwd.clone(),
+                    permission_mode: Some(permission_context.mode.as_js_string().clone()),
+                    base_env: input.base_env,
+                    signal: Some(input.signal.clone()),
+                },
+                identity.run_id.clone(),
+                input.hooks,
+                turn.ports.permission.clone(),
+                router,
+            )?);
+        }
+        if let Some(resource) = resource::<InteractionSteer>(&context, Resource::InteractionSteer)?
+        {
+            if turn.record_message.is_none() {
+                return Err(
+                    ModuleError::new("Steer requires a bounded durable message recorder.").into(),
+                );
+            }
+            let recorder = input.steer_recorder.ok_or_else(|| {
+                ModuleError::new("Steer requires a host recorder with bounded I/O.")
+            })?;
+            let session = resource.bind_session(identity.session_id.clone(), Some(recorder))?;
+            // Retain even if start_turn fails so rollback disposes the session.
+            turn.owned
+                .get_mut()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .session_steer = Some(session.clone());
+            turn.ports.steer = Some(session.start_turn(
+                identity.turn_id.clone(),
+                identity.run_id.clone(),
+                input.messages,
+                input.signal,
+                router,
+            )?);
+        }
+        let tools = catalog.list().await?;
+        // No question/elicitation port is supplied by these four resources.
+        input.switches.elicitation_available = None;
+        turn.manifest = turn
+            .router
+            .turn_manifest(
+                vec![],
+                PermissionSnapshot {
+                    cwd: JsValue::String(permission_context.cwd.clone()),
+                    permission_mode: JsValue::String(
+                        permission_context.mode.as_js_string().clone(),
+                    ),
+                    permission_context: permission_context.to_value().as_object().unwrap().clone(),
+                    turn_can_prompt: None,
+                },
+                &input.switches,
+            )
+            .map_err(|missing| {
+                ModuleError::new(format!("Turn handlers missing: {}", missing.join(", ")))
+            })?;
+        turn.manifest.insert(
+            "tools".into(),
+            JsValue::Array(
+                tools
+                    .iter()
+                    .map(|tool| JsValue::Object(serialize_tool_descriptor(tool.as_ref())))
+                    .collect(),
+            ),
+        );
+        Ok(turn)
+    }
+    pub fn manifest(&self) -> &JsObject {
+        &self.manifest
+    }
+    pub fn ports(&self) -> InteractionPorts {
+        self.ports.clone()
+    }
+    fn close(&self) {
+        let Some(mut owned) = self.owned.lock().unwrap().take() else {
+            return;
+        };
+        let ports = self.ports.clone();
+        let router = self.router.clone();
+        // Revoke steer synchronously, before any unrelated disposer can stall.
+        let steer_close = ports.steer.as_ref().map(TurnSteer::close);
+        let session_close = owned.session_steer.as_ref().map(SessionSteer::dispose);
+        crate::runtime::cleanup_task::spawn_after(
+            &self.executor,
+            self.done.clone(),
+            || {
+                if let Some(events) = &self.ports.events {
+                    events.close();
+                }
+                if let Some(permission) = &self.ports.permission {
+                    permission.close();
+                }
+                if let Some(hooks) = &self.ports.hooks {
+                    hooks.close();
+                }
+            },
+            async move {
+                // Start every cleanup even if an earlier one rejects.
+                let mut errors = Vec::new();
+                let (router, hooks, steer, session) = tokio::join!(
+                    router.dispose(),
+                    async {
+                        if let Some(hooks) = ports.hooks {
+                            hooks.wait_closed().await
+                        } else {
+                            Ok(())
+                        }
+                    },
+                    async {
+                        if let Some(close) = steer_close {
+                            close.await.map(|_| ())
+                        } else {
+                            Ok(())
+                        }
+                    },
+                    async {
+                        if let Some(close) = session_close {
+                            close.await
+                        } else {
+                            Ok(())
+                        }
+                    }
+                );
+                for result in [router, hooks, steer, session] {
+                    if let Err(error) = result {
+                        errors.push(error.to_string());
+                    }
+                }
+                // A retired project's plugin disposer may wait for this lease.
+                if let Some(contribution) = &mut owned.contribution
+                    && let Err(error) = contribution.release().await
+                {
+                    errors.push(error.to_string());
+                }
+                if let Err(error) = owned.lease.release().await {
+                    errors.push(error.to_string());
+                }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(ModuleError::new(errors.join("; ")).into())
+                }
+            },
+        );
+    }
+    pub fn wait_closed(&self) -> HostFuture<()> {
+        let mut done = self.done.subscribe();
+        Box::pin(async move {
+            loop {
+                if let Some(result) = done.borrow_and_update().clone() {
+                    return result;
+                }
+                done.changed()
+                    .await
+                    .map_err(|_| ModuleError::new("Turn cleanup completion lost."))?;
+            }
+        })
+    }
+}
+impl HostHandler for InteractionTurn {
+    fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        self.ports
+            .events
+            .as_ref()
+            .map(TurnEvents::drain)
+            .unwrap_or_else(|| Ok(Vec::new()))
+    }
+    fn event(&self, event: JsValue) -> HostFuture<()> {
+        let result = (|| {
+            let Some(payload) = event.get("payload") else {
+                return Ok(None);
+            };
+            if payload.get("type") != Some(&"steer_applied".into()) {
+                return Ok(None);
+            }
+            let steer = self
+                .ports
+                .steer
+                .clone()
+                .ok_or_else(|| ModuleError::new("Steer is not bound."))?;
+            let record = self
+                .record_message
+                .clone()
+                .ok_or_else(|| ModuleError::new("Steer recorder is missing."))?;
+            let id = payload
+                .get("itemId")
+                .and_then(JsValue::as_string)
+                .cloned()
+                .ok_or_else(|| ModuleError::new("Steer itemId is missing."))?;
+            let message = payload
+                .get("message")
+                .cloned()
+                .ok_or_else(|| ModuleError::new("Steer message is missing."))?;
+            Ok::<_, HostError>(Some(
+                steer.persist_and_apply(id, message, move |message| record(message)),
+            ))
+        })();
+        Box::pin(async move {
+            if let Some(write) = result? {
+                write.await?;
+            }
+            Ok(())
+        })
+    }
+    fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
+        self.router.module_call(call)
+    }
+    fn dispose(&self) -> HostFuture<()> {
+        self.close();
+        self.wait_closed()
+    }
+}
+impl Drop for InteractionTurn {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+fn resource<T: Clone + 'static>(
+    context: &StageContext,
+    key: Resource,
+) -> Result<Option<T>, HostError> {
+    context
+        .resource(key)
+        .map(|resource| {
+            resource
+                .as_any()
+                .downcast_ref::<T>()
+                .cloned()
+                .ok_or_else(|| {
+                    ModuleError::new(format!("Invalid leased {} resource.", key.as_str())).into()
+                })
+        })
+        .transpose()
+}

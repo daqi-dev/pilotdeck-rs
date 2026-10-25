@@ -290,6 +290,10 @@ pub type HostFuture<T> = Pin<Box<dyn Future<Output = Result<T, HostError>> + Sen
 /// Events arrive in sequence and are ACKed only after `event` succeeds. A pending
 /// module callback never prevents an event callback or input validation progressing.
 pub trait HostHandler: Send + Sync + 'static {
+    /// Host-generated events buffered by module callbacks, in emission order.
+    fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        Ok(Vec::new())
+    }
     /// Called on the driver task in the sidecar's arrival order; work done
     /// before returning the future is ordered, the future itself runs
     /// concurrently with other callbacks. Do not block in either part.

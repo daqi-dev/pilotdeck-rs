@@ -69,6 +69,28 @@ if mode == "live-payload":
     send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn,
                       receivedPayload=execute["payload"]))
     send(success_final(2))
+elif mode == "live-interaction":
+    send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
+    send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))
+
+    def call(module, payload):
+        send(dict(kind="request", messageId="call-" + module, method="module_call",
+                  module=module, runId=execute["runId"], operationId=execute["operationId"],
+                  requestId="callback", payload=payload))
+        reply = read()
+        assert reply["ok"], reply
+        return reply["payload"]
+
+    call("event", dict(operation="emit", event=dict(type="agent_status", sessionId=session,
+         turnId=turn, event="host-probe", kind="status", text="host callback")))
+    decision = call("permission", dict(operation="decide", tool=dict(name="bash"),
+                    input=dict(command="rm -rf /"), toolCallId="call", context=dict(mode="bypassPermissions")))
+    assert decision["decision"]["type"] == "deny", decision
+    call("lifecycle", dict(operation="dispatch", event="PreToolUse", input={}))
+    drained = call("turn", dict(operation="drain_or_close_steer"))
+    send_event(2, dict(type="agent_status", sessionId=session, turnId=turn,
+                      event="ports-tested", kind="status", text="all four", observed=drained))
+    send(success_final(3))
 elif mode == "live-normal":
     # Full legal lifecycle, including the sidecar's own turn_completed
     # (suppressed by the host; the module final is the authoritative terminal).
