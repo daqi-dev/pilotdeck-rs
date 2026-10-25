@@ -39,6 +39,6 @@ node src/pilotdeck-gateway/tests/fixtures/hooks-config/generate-identifiers.mjs 
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/hooks-config/probe-resources.mts
 ```
 
-探针直接运行真实 `HookRuntime.run → runActive → matchHooks`，执行器均为无 IO stub；同时运行真实 matcher/condition 和裸 RegExp。外部同步栈额外加 0/32 帧。11 类正则体的 22 个预算内样本全部成功；约 4000 万单位的 22 个远端样本全部抛 RangeError，TS matcher/runtime 均为 false。JSON 三类形状在两种栈深度的 6500 层样本都成功，7000/10000 层都以同文 RangeError 拒绝真实 run。4000 的选择留有余量。原始命令与输出见工作树 `_tmp/20261018-a67-pr3/RESULT.md` 的「第二轮」。
+探针直接运行真实 `HookRuntime.run → runActive → matchHooks`，执行器均为无 IO stub；同时运行真实 matcher/condition 和裸 RegExp。外部同步栈额外加 0/32 帧。11 类正则体的 22 个预算内样本全部成功；约 4000 万单位的 22 个远端样本全部抛 RangeError，TS matcher/runtime 均为 false。JSON 三类形状在两种栈深度的 6500 层样本都成功，7000/10000 层都以同文 RangeError 拒绝真实 run。再测（#345 B4，`_tmp/20261026-issue-335-345/depth-probe.out`）显示精确首个失败在 6580–6620 间随调用栈抖动，故 Rust 常量取可稳定成功的 6500，6501 首拒；该不确定带仍按 A6.7-HOOK-RESOURCE-001 登记。原始命令与输出见工作树 `_tmp/20261018-a67-pr3/RESULT.md` 的「第二轮」。
 
-回放严格断言五类数量为 **104 / 9800 / 194 / 8 / 32**。设置 `PDRS_BASELINE` 时，另逐一核对 7 个固定路径的 `sourceSha256` 与当前文件内容；路径集合、commit、Node 和 Unicode 版本始终检查。深值以 `["json", rawJson]` 标签传输，两端各自解析，避免 oracle 的编码器先触发栈溢出。异常期望直接由真实 TS catch 录得，没有手填为布尔值。另一个独立测试锁定已接受策略的 2M/2M+1 与 4000/4001 边界，不把 Rust 策略结果写成 TS oracle。
+回放严格断言五类数量为 **104 / 9800 / 194 / 8 / 32**。设置 `PDRS_BASELINE` 时，另逐一核对 7 个固定路径的 `sourceSha256` 与当前文件内容；路径集合、commit、Node 和 Unicode 版本始终检查。深值以 `["json", rawJson]` 标签传输，两端各自解析，避免 oracle 的编码器先触发栈溢出。异常期望直接由真实 TS catch 录得，没有手填为布尔值。另一个独立测试锁定已接受策略的 2M/2M+1 与 6500/6501 边界，不把 Rust 策略结果写成 TS oracle。

@@ -252,11 +252,18 @@ async fn permission_oracle_replays_in_order() {
         let tool_name = string(scenario.get("toolName").expect("toolName"), "toolName");
         let input = input_of(scenario);
         let context = scenario.get("context").map(parse_context);
+        let process_cwd = JsString::from(
+            std::env::current_dir()
+                .expect("process cwd")
+                .to_string_lossy()
+                .as_ref(),
+        );
         let actual = JsValue::Bool(match_permission_rule(
             &rule,
             &tool_name,
             &input,
             context.as_ref(),
+            &process_cwd,
         ));
         assert_eq!(
             text(&actual),
@@ -409,13 +416,20 @@ async fn negative_controls_reject_case_folding_and_swapped_rule_priority() {
             .expect("name"),
         "name",
     );
+    let process_cwd = JsString::from(
+        std::env::current_dir()
+            .expect("process cwd")
+            .to_string_lossy()
+            .as_ref(),
+    );
     for rules in [&context.rules.allow, &context.rules.deny] {
         assert!(
             rules.iter().any(|rule| match_permission_rule(
                 rule,
                 &tool_name,
                 &input,
-                Some(&context)
+                Some(&context),
+                &process_cwd
             )),
             "the negative control needs both an allow and a deny match"
         );
@@ -434,6 +448,7 @@ async fn empty_cwd_is_skipped_instead_of_becoming_root() {
         std::path::Path::new("/"),
         "cwd-empty expectations assume a non-root process cwd"
     );
+    let process_cwd = JsString::from(process_cwd.to_string_lossy().as_ref());
     let context = create_default_permission_context(DefaultPermissionContextOptions {
         cwd: JsString::from(""),
         ..Default::default()
@@ -451,13 +466,15 @@ async fn empty_cwd_is_skipped_instead_of_becoming_root() {
         &relative_rule,
         &read_file,
         &input,
-        Some(&context)
+        Some(&context),
+        &process_cwd
     ));
     assert!(!match_permission_rule(
         &root_rule,
         &read_file,
         &input,
-        Some(&context)
+        Some(&context),
+        &process_cwd
     ));
 
     // The same pair at the decision layer: `/*/secret.env` denies, while the
@@ -623,4 +640,57 @@ fn regenerate_twice_identically() {
         "refusing to delete an unowned scratch directory"
     );
     std::fs::remove_dir_all(&directory).expect("remove scratch");
+}
+
+/// #335 ②: a cold Node process whose cwd was deleted throws
+/// `ENOENT: no such file or directory, uv_cwd` from `process.cwd()` and the
+/// whole `decide` fails. Delete the cwd in an owned child process because the
+/// test harness shares one process and other tests resolve relative paths.
+#[tokio::test]
+async fn deleted_process_cwd_fails_the_decision() {
+    if std::env::var_os("PDRS_DELETED_CWD_CHILD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "deleted_process_cwd_fails_the_decision",
+                "--nocapture",
+            ])
+            .env("PDRS_DELETED_CWD_CHILD", "1")
+            .output()
+            .expect("run deleted-cwd child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
+        assert!(
+            stdout.contains("PD_CWD_ERROR=ENOENT: no such file or directory, uv_cwd"),
+            "missing Node-shaped error in: {stdout}\n{stderr}"
+        );
+        return;
+    }
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("pdrs-deleted-cwd-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("create cwd");
+    std::env::set_current_dir(&directory).expect("enter cwd");
+    std::fs::remove_dir_all(&directory).expect("delete cwd");
+
+    let context = create_default_permission_context(DefaultPermissionContextOptions {
+        cwd: JsString::from("relative/project"),
+        ..Default::default()
+    });
+    let tool = FakeTool {
+        name: JsString::from("Read"),
+        kind: None,
+        read_only: JsValue::Bool(true),
+        checks: Mutex::new(Vec::new()),
+        calls: AtomicUsize::new(0),
+    };
+    let error = decide(&context, &tool, &JsValue::Null, &JsString::from("call"))
+        .await
+        .expect_err("a deleted process cwd must fail decide");
+    println!("PD_CWD_ERROR={}", error.message);
 }

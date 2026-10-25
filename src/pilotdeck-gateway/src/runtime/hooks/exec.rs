@@ -1214,7 +1214,16 @@ impl HttpHookExecutor {
         executor.timeout = timeout;
         executor
     }
+    /// Test hook: shorten the whole-connect deadline (TCP + TLS handshake)
+    /// so the 10 s undici default does not have to elapse in a test.
+    #[doc(hidden)]
+    pub fn with_connect_timeout(timeout: Duration) -> Self {
+        Self::with_config_timeout(crate::runtime::model::http::webpki_client_config(), timeout)
+    }
     fn with_config(config: rustls::ClientConfig) -> Self {
+        Self::with_config_timeout(config, HOOK_CONNECT_TIMEOUT)
+    }
+    fn with_config_timeout(config: rustls::ClientConfig, connect_timeout: Duration) -> Self {
         // The model connector's TCP-only 10 s connect timeout stays as is;
         // this hook-local wrapper adds undici's whole-connect deadline
         // (TCP + TLS handshake) without changing the shared transport.
@@ -1223,7 +1232,7 @@ impl HttpHookExecutor {
                 config,
                 crate::runtime::model::http::ProxyConfig::from_settings(None),
             ),
-            HOOK_CONNECT_TIMEOUT,
+            connect_timeout,
         );
         let client =
             hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())

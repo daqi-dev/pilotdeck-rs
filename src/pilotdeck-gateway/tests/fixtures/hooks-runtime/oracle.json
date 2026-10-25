@@ -3118,6 +3118,56 @@
         "sessionId": "",
         "turnId": "",
         "expected": "{\"PILOTDECK_SESSION_ID\":\"\",\"PILOTDECK_TURN_ID\":\"\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/unknown/unknown\"}"
+      },
+      {
+        "name": "nfkc-ligatures",
+        "base": {
+          "A": "1"
+        },
+        "cwd": "<dir>",
+        "sessionId": "ﬁle",
+        "turnId": "ﬂow",
+        "expected": "{\"A\":\"1\",\"PILOTDECK_SESSION_ID\":\"ﬁle\",\"PILOTDECK_TURN_ID\":\"ﬂow\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/file/flow\"}"
+      },
+      {
+        "name": "nfkc-enclosed",
+        "base": {},
+        "cwd": "<dir>",
+        "sessionId": "①",
+        "turnId": "⑩",
+        "expected": "{\"PILOTDECK_SESSION_ID\":\"①\",\"PILOTDECK_TURN_ID\":\"⑩\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/1/10\"}"
+      },
+      {
+        "name": "nfkc-units",
+        "base": {},
+        "cwd": "<dir>",
+        "sessionId": "㎏",
+        "turnId": "Ⅳ",
+        "expected": "{\"PILOTDECK_SESSION_ID\":\"㎏\",\"PILOTDECK_TURN_ID\":\"Ⅳ\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/kg/IV\"}"
+      },
+      {
+        "name": "nfkc-halfwidth-katakana",
+        "base": {},
+        "cwd": "<dir>",
+        "sessionId": "ｶﾀｶﾅ",
+        "turnId": "AｶB",
+        "expected": "{\"PILOTDECK_SESSION_ID\":\"ｶﾀｶﾅ\",\"PILOTDECK_TURN_ID\":\"AｶB\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/unknown/A-B\"}"
+      },
+      {
+        "name": "nfkc-mixed",
+        "base": {},
+        "cwd": "<dir>",
+        "sessionId": "ﬁ①㎏",
+        "turnId": "℡½",
+        "expected": "{\"PILOTDECK_SESSION_ID\":\"ﬁ①㎏\",\"PILOTDECK_TURN_ID\":\"℡½\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/fi1kg/TEL1-2\"}"
+      },
+      {
+        "name": "nfkc-non-ascii",
+        "base": {},
+        "cwd": "<dir>",
+        "sessionId": "ß㍿",
+        "turnId": "㌀Å",
+        "expected": "{\"PILOTDECK_SESSION_ID\":\"ß㍿\",\"PILOTDECK_TURN_ID\":\"㌀Å\",\"PILOTDECK_WORK_DIR\":\"<dir>/.pilotdeck/work/unknown/unknown\"}"
       }
     ]
   }

@@ -260,10 +260,12 @@ pub struct HookConditionInput<'a> {
 }
 
 // Node 22.22.0: real HookRuntime.run, with 0/32 extra synchronous frames,
-// serializes 6500 nested arrays/objects but throws at 7000. Stay at 4000.
+// serializes 6500 nested arrays/objects but throws at 7000; the exact first
+// failure wanders in ~6580..6620 because V8's remaining stack depends on the
+// caller. 6500 is the largest depth measured stable across the real entry.
 // Fixed-budget gap, not human-approved: specs/gateway-parity/accepted-diffs.md
-// A6.7-HOOK-RESOURCE-001; see the fixture README for measurements.
-const MAX_STRINGIFY_DEPTH: usize = 4000;
+// A6.7-HOOK-RESOURCE-001 (its 4000 value is now stale; follow-up correction).
+const MAX_STRINGIFY_DEPTH: usize = 6500;
 
 /// Unlike matcher regex errors, TS does not catch condition serialization errors.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1073,6 +1073,13 @@ envCase('relative', { A: '1' }, 'rel/dir', 's', 't');
 envCase('normalized', { A: '1' }, '<dir>/sub/../.', 's', 't');
 envCase('long', {}, '<dir>', 'a'.repeat(120), '-.-');
 envCase('empty', {}, '<dir>', '', '');
+// #345 B6: full NFKC compatibility folds beyond fullwidth ASCII/U+3000.
+envCase('nfkc-ligatures', { A: '1' }, '<dir>', 'ﬁle', 'ﬂow');
+envCase('nfkc-enclosed', {}, '<dir>', '①', '⑩');
+envCase('nfkc-units', {}, '<dir>', '㎏', 'Ⅳ');
+envCase('nfkc-halfwidth-katakana', {}, '<dir>', 'ｶﾀｶﾅ', 'AｶB');
+envCase('nfkc-mixed', {}, '<dir>', 'ﬁ①㎏', '℡½');
+envCase('nfkc-non-ascii', {}, '<dir>', 'ß㍿', '㌀Å');
 
 const oracle = {
   sourceCommit,

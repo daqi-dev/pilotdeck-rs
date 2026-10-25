@@ -217,24 +217,17 @@ fn normalize(path: &Path) -> PathBuf {
     output
 }
 
-/// TS `safeWorkPathSegment`. NFKC is approximated for the compatibility folds
-/// that become ASCII (fullwidth forms and U+3000); other compatibility
-/// characters remain a documented gap because adding a normalizer crate is
-/// outside this change's dependency budget. Every other non-ASCII run becomes
-/// `-`, so the result stays inside `[a-zA-Z0-9._-]`.
-/// Ledger: specs/gateway-parity/accepted-diffs.md A7-LIFECYCLE-NFKC-001 (unapproved).
+/// TS `safeWorkPathSegment`: full `String.prototype.normalize("NFKC")`, then
+/// the ASCII allowlist/`-` fold, trim and 96-unit truncation. `normalize_utf16`
+/// is used so unpaired surrogates keep their UTF-16 identity before the fold;
+/// every non-ASCII result becomes `-`, so the segment stays inside
+/// `[a-zA-Z0-9._-]`.
 fn path_segment(value: &JsString) -> String {
-    let mut folded = Vec::with_capacity(value.units().len());
-    for &unit in value.units() {
-        folded.push(match unit {
-            0xFF01..=0xFF5E => unit - 0xFEE0,
-            0x3000 => u16::from(b' '),
-            other => other,
-        });
-    }
+    let normalized =
+        icu_normalizer::ComposingNormalizerBorrowed::new_nfkc().normalize_utf16(value.units());
     let mut output = String::new();
     let mut dash = false;
-    for &unit in &folded {
+    for &unit in normalized.iter() {
         let allowed = matches!(unit, 48..=57 | 65..=90 | 97..=122 | 46 | 95 | 45);
         if allowed {
             if dash {

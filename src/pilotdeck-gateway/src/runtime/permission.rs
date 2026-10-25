@@ -158,12 +158,15 @@ pub trait PermissionTool: Send + Sync {
     }
 }
 
-/// `matchPermissionRule`.
+/// `matchPermissionRule`. `process_cwd` is the caller's already-resolved
+/// `process.cwd()`; resolving it here would let each helper silently fall back
+/// when the process cwd is gone, which is what #335 ② fixed at `decide`.
 pub fn match_permission_rule(
     rule: &PermissionRule,
     tool_name: &JsString,
     input: &JsValue,
     context: Option<&PermissionContext>,
+    process_cwd: &JsString,
 ) -> bool {
     if !matches_tool_name(&rule.tool_name, tool_name) {
         return false;
@@ -174,10 +177,10 @@ pub fn match_permission_rule(
         .any(|name| tool_name.equals_str(name))
         && pattern.is_none()
     {
-        return is_file_input_inside_workspace(input, context);
+        return is_file_input_inside_workspace(input, context, process_cwd);
     }
     match pattern {
-        Some(pattern) => match_rule_pattern(pattern, tool_name, input, context),
+        Some(pattern) => match_rule_pattern(pattern, tool_name, input, context, process_cwd),
         None => true,
     }
 }
@@ -190,7 +193,7 @@ pub async fn decide(
     input: &JsValue,
     tool_call_id: &JsString,
 ) -> Result<JsValue, HostError> {
-    let process_cwd = process_cwd_units();
+    let process_cwd = process_cwd_units()?;
     let tool_name = tool.name().clone();
     let session_allow_rule = find_matching_rule(
         context
@@ -201,8 +204,15 @@ pub async fn decide(
         &tool_name,
         input,
         context,
+        &process_cwd,
     );
-    let deny_rule = find_matching_rule(context.rules.deny.iter(), &tool_name, input, context);
+    let deny_rule = find_matching_rule(
+        context.rules.deny.iter(),
+        &tool_name,
+        input,
+        context,
+        &process_cwd,
+    );
     if let Some(deny_rule) = deny_rule {
         if let Some(session_allow_rule) = session_allow_rule
             && deny_rule.source.equals_str("user")
@@ -213,7 +223,13 @@ pub async fn decide(
         return Ok(deny_from_rule(deny_rule));
     }
 
-    let ask_rule = find_matching_rule(context.rules.ask.iter(), &tool_name, input, context);
+    let ask_rule = find_matching_rule(
+        context.rules.ask.iter(),
+        &tool_name,
+        input,
+        context,
+        &process_cwd,
+    );
     if let Some(ask_rule) = ask_rule {
         return finalize_ask(
             ask_from_rule(&tool_name, input, tool_call_id, ask_rule),
@@ -238,9 +254,13 @@ pub async fn decide(
         )));
     }
 
-    if let Some(allow_rule) =
-        find_matching_rule(context.rules.allow.iter(), &tool_name, input, context)
-    {
+    if let Some(allow_rule) = find_matching_rule(
+        context.rules.allow.iter(),
+        &tool_name,
+        input,
+        context,
+        &process_cwd,
+    ) {
         if is_mode(&context.mode, "plan")
             && !truthy(&tool.is_read_only(input)?)
             && !is_plan_directory_write(tool, input, context, &process_cwd)
@@ -420,13 +440,14 @@ fn find_matching_rule<'a, I>(
     tool_name: &JsString,
     input: &JsValue,
     context: &PermissionContext,
+    process_cwd: &JsString,
 ) -> Option<&'a PermissionRule>
 where
     I: IntoIterator<Item = &'a PermissionRule>,
 {
     rules
         .into_iter()
-        .find(|rule| match_permission_rule(rule, tool_name, input, Some(context)))
+        .find(|rule| match_permission_rule(rule, tool_name, input, Some(context), process_cwd))
 }
 
 fn finalize_ask(decision: JsValue, context: &PermissionContext) -> Result<JsValue, HostError> {
@@ -811,6 +832,7 @@ fn match_rule_pattern(
     tool_name: &JsString,
     input: &JsValue,
     context: Option<&PermissionContext>,
+    process_cwd: &JsString,
 ) -> bool {
     if pattern.is_empty() {
         return true;
@@ -822,7 +844,7 @@ fn match_rule_pattern(
         .iter()
         .any(|name| tool_name.equals_str(name))
     {
-        return match_file_path_pattern(pattern, input, context);
+        return match_file_path_pattern(pattern, input, context, process_cwd);
     }
     true
 }
@@ -855,8 +877,9 @@ fn match_file_path_pattern(
     pattern: &JsString,
     input: &JsValue,
     context: Option<&PermissionContext>,
+    process_cwd: &JsString,
 ) -> bool {
-    let Some(path) = resolve_input_file_path(input, context) else {
+    let Some(path) = resolve_input_file_path(input, context, process_cwd) else {
         return false;
     };
     wildcard_match(
@@ -865,37 +888,40 @@ fn match_file_path_pattern(
     )
 }
 
-fn is_file_input_inside_workspace(input: &JsValue, context: Option<&PermissionContext>) -> bool {
+fn is_file_input_inside_workspace(
+    input: &JsValue,
+    context: Option<&PermissionContext>,
+    process_cwd: &JsString,
+) -> bool {
     let Some(context) = context else {
         return false;
     };
-    let Some(path) = resolve_input_file_path(input, Some(context)) else {
+    let Some(path) = resolve_input_file_path(input, Some(context), process_cwd) else {
         return false;
     };
-    let process_cwd = process_cwd_units();
-    let mut roots = vec![resolve_one(&process_cwd, context.cwd.units())];
+    let mut roots = vec![resolve_one(process_cwd, context.cwd.units())];
     roots.extend(
         context
             .additional_working_directories
             .iter()
-            .map(|root| resolve_one(&process_cwd, root.units())),
+            .map(|root| resolve_one(process_cwd, root.units())),
     );
     roots
         .iter()
-        .any(|root| is_path_within_root(&path, root, &process_cwd))
+        .any(|root| is_path_within_root(&path, root, process_cwd))
 }
 
 fn resolve_input_file_path(
     input: &JsValue,
     context: Option<&PermissionContext>,
+    process_cwd: &JsString,
 ) -> Option<JsString> {
     let context = context?;
     let file_path = read_file_path(input)?;
     if file_path.units().contains(&0) {
         return None;
     }
-    let process_cwd = process_cwd_units();
-    Some(resolve_input(&process_cwd, &context.cwd, &file_path))
+    Some(resolve_input(process_cwd, &context.cwd, &file_path))
 }
 
 fn read_file_path(input: &JsValue) -> Option<JsString> {
@@ -1313,10 +1339,25 @@ fn is_path_within_root(candidate: &JsString, root: &JsString, process_cwd: &JsSt
         || (!is_absolute_units(relative.units()) && !starts_with(relative.units(), &[DOT, DOT]))
 }
 
-fn process_cwd_units() -> JsString {
+/// Node's `process.cwd()` on the cold path (`uv_cwd` real syscall). A missing
+/// cwd throws `ENOENT ... uv_cwd`; TS never substitutes an empty string. The
+/// warm path is Node's process-wide cache and is intentionally not modelled
+/// here: failing closed on a deleted cwd is stricter than returning the stale
+/// cached path (#335 ②).
+fn process_cwd_units() -> Result<JsString, HostError> {
     std::env::current_dir()
         .map(|path| JsString::from(path.to_string_lossy().as_ref()))
-        .unwrap_or_default()
+        .map_err(|error| HostError::new(HostErrorKind::Io, process_cwd_error(&error)))
+}
+
+fn process_cwd_error(error: &std::io::Error) -> String {
+    let detail = match error.raw_os_error() {
+        Some(2) => "ENOENT: no such file or directory",
+        Some(13) => "EACCES: permission denied",
+        Some(1) => "EPERM: operation not permitted",
+        _ => return error.to_string(),
+    };
+    format!("{detail}, uv_cwd")
 }
 
 #[cfg(test)]
@@ -1390,26 +1431,30 @@ mod tests {
     #[test]
     fn write_and_edit_rules_without_pattern_require_workspace_membership() {
         let context = context();
+        let process_cwd = literal("/ws/project");
         let input = JsValue::Object(object([("file_path", JsValue::from("src/a.rs"))]));
         assert!(match_permission_rule(
             &rule("user", "allow", "write_file", None),
             &literal("write_file"),
             &input,
-            Some(&context)
+            Some(&context),
+            &process_cwd
         ));
         let outside = JsValue::Object(object([("file_path", JsValue::from("../a.rs"))]));
         assert!(!match_permission_rule(
             &rule("user", "allow", "write_file", None),
             &literal("write_file"),
             &outside,
-            Some(&context)
+            Some(&context),
+            &process_cwd
         ));
         let read = JsValue::Object(object([("file_path", JsValue::from("../a.rs"))]));
         assert!(match_permission_rule(
             &rule("user", "allow", "read_file", None),
             &literal("read_file"),
             &read,
-            Some(&context)
+            Some(&context),
+            &process_cwd
         ));
     }
 
