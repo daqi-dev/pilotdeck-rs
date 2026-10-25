@@ -28,7 +28,7 @@ function writerFor(name: string, fault = '', failures = 0) {
   const path = join(output, `${name}.jsonl`);
   writeFileSync(path, '', {flag:'wx'});
   let ids = 0, attempts = 0;
-  const runtime = new SessionRuntime({now, uuid:() => `id-${++ids}`});
+  const runtime = new SessionRuntime({now, uuid:() => `id-${++ids === 2 && name === 'accepted-duplicate' ? 1 : ids}`});
   const persistence = new JsonlSessionPersistence({path});
   runtime.subscribe(entry => {if (entry.type === fault && ++attempts <= failures) throw new Error('injected write failure');
     return persistence.append(entry);}, {failureMode:'propagate', flush:() => persistence.flush()});
@@ -39,12 +39,17 @@ const result = (type = 'success', turnId = 't') => ({type,sessionId:'s',turnId,s
   usage:{},permissionDenials:[],turns:1,startedAt:now().toISOString(),completedAt:now().toISOString()});
 const matrix:any[] = [];
 for (const name of ['success','start-fails','accepted-fails','abort-before-execute','abort-after-accepted',
-  'loop-fails-twice','loop-throws','early-completed','consumer-drop','complete-once','complete-always']) {
-  const fault = name === 'start-fails' ? 'turn_started' : name === 'accepted-fails' ? 'accepted_input'
+  'loop-fails-twice','loop-throws','early-completed','consumer-drop','complete-once','complete-always','input-text','input-blocks','accepted-duplicate','loop-aborted-error','status-fails','loop-null-hint']) {
+  const fault = name === 'status-fails' ? 'agent_status_message' : name === 'start-fails' ? 'turn_started' : name === 'accepted-fails' ? 'accepted_input'
     : name.startsWith('complete-') ? 'turn_result' : '';
   const ctx = writerFor(name, fault, name === 'complete-once' ? 1 : 99);
   const controller = new AbortController();
   let loopCalls=0, modelCalls=0, returns=0, completes=0, closes=0;
+  let loopMessages:any[]=[];
+  const inputCase=name.startsWith('input-');
+  const history=inputCase?[{role:'assistant',content:[{type:'text',text:'history'}]}]:[];
+  const synthetic=inputCase?[{role:'user',content:[{type:'text',text:'synthetic'}],metadata:{synthetic:true}}]:[];
+  const rawInput=name==='input-blocks'?{type:'blocks',content:[{type:'text',text:'raw\ud800'},{type:'text',text:'second'}]}:{type:'text',text:'probe'};
   const recorder = new AgentSessionEventRecorder(ctx.writer);
   const complete = recorder.completeTurn.bind(recorder);
   recorder.completeTurn = async (value:any) => {completes++; await complete(value);};
@@ -53,12 +58,13 @@ for (const name of ['success','start-fails','accepted-fails','abort-before-execu
   const native = new AgentLoop(config, createSidecarAgentTurnCapabilities(config,
     {ports:{model,toolExecution:{list:()=>[],executeAll:async()=>[]}},now}));
   const loop={snapshotFileState:()=>({}), async *run(input:any) {
-    loopCalls++;
+    loopCalls++;loopMessages=input.messages;
     try {
       if(name.startsWith('abort-')) return yield* native.run(input);
+      if(name==='loop-aborted-error') {const {AgentRuntimeError}=await load('agent/protocol/errors.ts');throw new AgentRuntimeError('agent_aborted','injected abort');}
       if(name==='loop-throws') throw new Error('injected loop failure');
-      if(name==='loop-fails-twice') for(let i=0;i<2;i++) yield {type:'turn_failed',sessionId:'s',turnId:'t',error:{code:'agent_invalid_state',message:'loop failed'}};
-      const r=result(name==='loop-fails-twice'?'error':'success');
+      if(['loop-fails-twice','status-fails','loop-null-hint'].includes(name)) for(let i=0;i<2;i++) yield {type:'turn_failed',sessionId:'s',turnId:'t',error:{code:'agent_invalid_state',message:'loop failed',...(name==='loop-null-hint'?{userHint:null}:{})}};
+      const r=result(['loop-fails-twice','status-fails','loop-null-hint'].includes(name)?'error':'success');
       if(name==='early-completed') yield {type:'turn_completed',sessionId:'s',turnId:'t',result:r};
       yield {type:'model_event',sessionId:'s',turnId:'t',event:{type:'message_start',role:'assistant'}};
       yield {type:'turn_completed',sessionId:'s',turnId:'t',result:r};
@@ -70,13 +76,14 @@ for (const name of ['success','start-fails','accepted-fails','abort-before-execu
   const events:any[]=[];
   let error: string | null=null;
   if(name==='abort-before-execute')controller.abort('probe');
-  try {for await(const e of runner.run({sessionId:'s',turnId:'t',messages:[],input:{type:'text',text:'probe'},
+  try {for await(const e of runner.run({sessionId:'s',turnId:'t',messages:history,input:rawInput,syntheticMessages:synthetic,
+    ...(inputCase?{allowPlanModeTools:false}:{}),
     abortSignal:controller.signal,closeSteerMailbox:()=>{closes++;return [];}})) {
       events.push(e);
       if(name==='abort-after-accepted' && e.type==='input_accepted')controller.abort('probe');
       if(name==='consumer-drop' && e.type==='model_event')break;
   }}catch(e:any){error=e.message;}
-  matrix.push({name,events,error,loopCalls,modelCalls,returns,completes,closes,writeAttempts:ctx.attempts(),transcript:ctx.bytes()});
+  matrix.push({name,events,error,loopCalls,modelCalls,returns,completes,closes,writeAttempts:ctx.attempts(),transcript:ctx.bytes(),...(inputCase?{rawInput,history,synthetic,loopMessages}: {})});
 }
 // Recorder completion is independently replayable in Rust, including retry state.
 const recorderCases:any[]=[];

@@ -520,6 +520,8 @@ pub struct TranscriptWriter {
     path: PathBuf,
     layout: SubagentLayout,
     inner: Mutex<WriterInner>,
+    #[cfg(test)]
+    pub(crate) test_sources: Mutex<Option<(RecorderClock, RecorderUuid)>>,
 }
 pub struct SubagentHandle {
     pub subagent_id: JsString,
@@ -532,6 +534,8 @@ impl TranscriptWriter {
             base,
             path,
             layout,
+            #[cfg(test)]
+            test_sources: Mutex::new(None),
             inner: Mutex::new(WriterInner {
                 sequence: 0,
                 last_entry_id: None,
@@ -763,6 +767,10 @@ impl TranscriptWriter {
         )
     }
     fn sources(&self) -> AdapterResult<(String, String)> {
+        #[cfg(test)]
+        if let Some((clock, uuid)) = self.test_sources.lock().unwrap().as_ref() {
+            return Ok((clock()?, uuid()?));
+        }
         let now = (self.base.now)();
         Ok((now, uuid().map_err(|e| AdapterError::Store(e.into()))?))
     }
