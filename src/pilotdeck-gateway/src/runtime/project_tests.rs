@@ -598,3 +598,53 @@ fn project_runtime_fixtures_regenerate_identically_from_ts() {
         "oracle.json"
     );
 }
+
+#[test]
+fn cleanup_completion_survives_stopped_executor() {
+    for release_before_shutdown in [false, true] {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let probe = Arc::new(Probe::default());
+        let scratch = Scratch::new();
+        let (registry, lease) = {
+            let _entered = executor.enter();
+            let registry = probe.registry(&scratch.0);
+            let lease = registry.acquire(None).unwrap();
+            registry.invalidate(None);
+            (registry, lease)
+        };
+        let runtime = lease.runtime().clone();
+        let mut lease = Some(lease);
+        if release_before_shutdown {
+            drop(lease.take());
+        }
+        drop(executor); // queued task is never polled, or later spawn is rejected
+        drop(lease);
+        let observer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        observer.block_on(async {
+            for _ in 0..2 {
+                let error = tokio::time::timeout(Duration::from_secs(1), runtime.wait_disposed())
+                    .await
+                    .expect("cleanup completion must survive stopped executor")
+                    .unwrap_err();
+                assert_eq!(
+                    error.message,
+                    "Project runtime cleanup task was dropped or panicked before completion."
+                );
+                println!(
+                    "release_before_shutdown={release_before_shutdown}: {}",
+                    error.message
+                );
+            }
+        });
+        assert_eq!(runtime.lease_count(), 0);
+        assert_eq!(runtime.state(), RuntimeState::Retired); // cleanup never ran
+        assert_eq!(probe.events(), vec!["stage:1"]);
+        drop(registry);
+    }
+}

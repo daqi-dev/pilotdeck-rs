@@ -1538,7 +1538,7 @@ impl HostHandler for RecordingHook {
         self.applied.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok(()) })
     }
-    fn validate_event(&self, payload: &JsValue) -> Result<(), HostError> {
+    fn validate_event(&self, payload: &JsValue) -> Result<EventGuard, HostError> {
         let name = String::from_utf16_lossy(
             payload
                 .get("type")
@@ -1550,7 +1550,7 @@ impl HostHandler for RecordingHook {
         if self.fail_on == Some(name.as_str()) {
             return Err(HostError::protocol(format!("test hook rejected {name}")));
         }
-        Ok(())
+        Ok(EventGuard::default())
     }
 }
 async fn run_with(mode: &str, handler: Arc<dyn HostHandler>) -> Result<ExecuteResult, HostError> {

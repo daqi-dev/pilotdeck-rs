@@ -648,3 +648,60 @@ async fn skill_contributions_keep_ts_map_order() {
     legacy.release().await.unwrap();
     runtime.dispose().await.unwrap();
 }
+
+#[test]
+fn plugin_single_flight_completion_survives_runtime_shutdown() {
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+        time::Duration,
+    };
+    for disposal in [false, true] {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let runtime = empty_runtime();
+        // Poll only the caller: it schedules the detached task but does not
+        // drive the executor, so shutdown deterministically drops that task.
+        let mut pending: std::pin::Pin<Box<dyn Future<Output = Result<(), PluginRuntimeError>>>> =
+            if disposal {
+                Box::pin(runtime.dispose())
+            } else {
+                Box::pin(async { runtime.refresh().await.map(|_| ()) })
+            };
+        {
+            let _entered = executor.enter();
+            assert!(matches!(
+                pending
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Pending
+            ));
+        }
+        drop(executor);
+        let observer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        observer.block_on(async {
+            let error = tokio::time::timeout(Duration::from_secs(1), pending)
+                .await
+                .expect("plugin single-flight completion must survive shutdown")
+                .unwrap_err();
+            let expected = if disposal {
+                "Plugin disposal task"
+            } else {
+                "Plugin refresh task"
+            };
+            assert!(error.message.starts_with(expected), "{error:?}");
+            let repeated = if disposal {
+                runtime.dispose().await.unwrap_err()
+            } else {
+                runtime.refresh().await.err().unwrap()
+            };
+            assert_eq!(repeated.message, error.message);
+            println!("{error:?}");
+        });
+    }
+}

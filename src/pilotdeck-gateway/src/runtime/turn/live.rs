@@ -33,8 +33,8 @@
 
 use crate::{
     host::{
-        Cancellation, ExecuteRequest, ExecuteResult, HostClient, HostError, HostErrorKind,
-        HostFuture, HostHandler, ReconnectObservation,
+        Cancellation, EventGuard, ExecuteRequest, ExecuteResult, HostClient, HostError,
+        HostErrorKind, HostFuture, HostHandler, ReconnectObservation,
     },
     runtime::{
         project::{DisposeFuture, RuntimeError, RuntimeResult},
@@ -176,7 +176,7 @@ impl LiveSession for LiveSessionAdapter {
                     inner,
                     events,
                     integrity: hook_integrity,
-                    forwarding: Mutex::default(),
+                    forwarding: Arc::default(),
                 });
                 client
                     .execute_cancellable(request, handler, cancellation)
@@ -413,7 +413,7 @@ struct StreamHandler {
     inner: Arc<dyn HostHandler>,
     events: mpsc::Sender<JsValue>,
     integrity: Arc<StreamIntegrity>,
-    forwarding: Mutex<Forwarding>,
+    forwarding: Arc<Mutex<Forwarding>>,
 }
 
 type Delivery = (
@@ -423,7 +423,7 @@ type Delivery = (
 #[derive(Default)]
 struct Forwarding {
     tail: Option<tokio::sync::oneshot::Receiver<()>>,
-    wire: std::collections::VecDeque<Delivery>,
+    wire: std::collections::VecDeque<(Arc<()>, Delivery)>,
 }
 impl Forwarding {
     fn reserve(&mut self) -> Delivery {
@@ -497,7 +497,7 @@ impl HostHandler for StreamHandler {
         self.forward(self.inner.module_call(call), None, None)
     }
 
-    fn validate_event(&self, payload: &JsValue) -> Result<(), HostError> {
+    fn validate_event(&self, payload: &JsValue) -> Result<EventGuard, HostError> {
         // Own lifecycle check first: an invalid event is cut off before the
         // inner contract sees it, exactly like it is cut off before
         // application. Then forward the inner handler's validation so wrapping
@@ -505,15 +505,28 @@ impl HostHandler for StreamHandler {
         self.integrity
             .observe_event(payload)
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
-        self.inner.validate_event(payload)?;
-        let mut forwarding = self.forwarding.lock().unwrap();
-        let slot = forwarding.reserve();
-        forwarding.wire.push_back(slot);
-        Ok(())
+        let inner = self.inner.validate_event(payload)?;
+        let key = Arc::new(());
+        {
+            let mut forwarding = self.forwarding.lock().unwrap();
+            let slot = forwarding.reserve();
+            forwarding.wire.push_back((key.clone(), slot));
+        }
+        let forwarding = self.forwarding.clone();
+        Ok(EventGuard::new(move || {
+            // event() normally consumes this slot. Abandoning the queue or an
+            // unpolled callback must release it too, without retaining handler.
+            let mut forwarding = forwarding.lock().unwrap();
+            forwarding.wire.retain(|(id, _)| !Arc::ptr_eq(id, &key));
+            drop(forwarding);
+            drop(inner);
+        }))
     }
 
     fn event(&self, event: JsValue) -> HostFuture<()> {
-        let final_event = event.get("final").and_then(JsValue::as_bool) == Some(true);
+        // TS client:662 uses truthiness; the wire decoder separately enforces
+        // a boolean final. Embedded callbacks reach this boundary directly.
+        let final_event = event.get("final").is_some_and(super::submit::truthy);
         let payload = event.get("payload").cloned();
         // TS agentLoopSidecarClient.ts:1310-1317,1739-1743 rejects missing or
         // non-object AgentEvent payloads with this message. Wire shape/type
@@ -537,6 +550,7 @@ impl HostHandler for StreamHandler {
                 forwarding
                     .wire
                     .pop_front()
+                    .map(|(_, slot)| slot)
                     .unwrap_or_else(|| forwarding.reserve())
             }
         };
