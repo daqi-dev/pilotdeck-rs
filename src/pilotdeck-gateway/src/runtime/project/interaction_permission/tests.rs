@@ -54,9 +54,7 @@ fn bind(
     (turn, router)
 }
 fn tool() -> Arc<dyn ToolDefinition> {
-    Arc::new(PermissionDefinition(Arc::new(
-        crate::runtime::tools::builtin::bash::BashTool::new(),
-    )))
+    Arc::new(crate::runtime::tools::builtin::bash::BashTool::new())
 }
 fn behavior(value: &JsValue, field: &str, expected: &str) {
     assert!(
@@ -295,5 +293,160 @@ async fn park(request: &mut HostFuture<JsValue>) {
     assert!(
         std::future::poll_fn(|cx| std::task::Poll::Ready(request.as_mut().poll(cx).is_pending()))
             .await
+    );
+}
+
+fn oracle_decision(index: usize) -> JsValue {
+    let golden = pilotdeck_protocol::parse_json(include_str!(
+        "../../../../tests/fixtures/interaction-permission/oracle.json"
+    ))
+    .unwrap();
+    let JsValue::Array(ref rows) = golden else {
+        panic!("array oracle")
+    };
+    rows[index]
+        .get("result")
+        .unwrap()
+        .get("specific")
+        .unwrap()
+        .get("decision")
+        .unwrap()
+        .clone()
+}
+#[tokio::test]
+async fn oracle_no_sink_and_pre_cancel_match_entire_decision() {
+    for (index, cancelled) in [(1, false), (2, true)] {
+        let coordinator = Arc::new(GatewayInteractionCoordinator::default());
+        let resource = InteractionPermission::default();
+        let (turn, _) = bind(
+            &resource,
+            InteractionProfileName::Interactive,
+            "s",
+            coordinator.clone(),
+            Arc::new(move |_| {
+                assert!(!cancelled, "pre-cancel must not register or emit");
+                false
+            }),
+        );
+        let cancel = Cancellation::new();
+        if cancelled {
+            cancel.cancel();
+        }
+        assert_eq!(prompt(&turn, cancel).await.unwrap(), oracle_decision(index));
+        assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 0);
+        assert!(turn.run.options.rules.snapshot().allow.is_empty());
+    }
+}
+#[tokio::test]
+async fn deny_nullish_reason_uses_ts_nullish_fallback() {
+    for reason in [
+        None,
+        Some(JsValue::Null),
+        Some("specific reason".into()),
+        Some("".into()),
+    ] {
+        let coordinator = Arc::new(GatewayInteractionCoordinator::default());
+        let answerer = coordinator.clone();
+        let expected = reason
+            .clone()
+            .filter(|v| !matches!(v, JsValue::Null))
+            .unwrap_or("Permission prompt denied.".into());
+        let resource = InteractionPermission::default();
+        let (turn, _) = bind(
+            &resource,
+            InteractionProfileName::Interactive,
+            "s",
+            coordinator,
+            Arc::new(move |event| {
+                answerer.decide_permission(
+                    &"s".into(),
+                    crate::runtime::interaction::PermissionDecision {
+                        request_id: event.get("requestId").unwrap().as_string().unwrap().clone(),
+                        decision: "deny".into(),
+                        remember: None,
+                        reason: reason.clone(),
+                    },
+                    None,
+                )
+            }),
+        );
+        assert_eq!(
+            prompt(&turn, Cancellation::new()).await.unwrap(),
+            object([("behavior", "deny".into()), ("message", expected)])
+        );
+    }
+}
+#[tokio::test]
+async fn production_bash_catalog_keeps_native_permission_checks() {
+    use crate::runtime::tools::{
+        registry::ToolRegistry,
+        scheduler::{SchedulerMode, ToolRuntime},
+    };
+    let resource = InteractionPermission::default();
+    let (turn, _) = bind(
+        &resource,
+        InteractionProfileName::Interactive,
+        "s",
+        Arc::default(),
+        Arc::new(|_| false),
+    );
+    let registry = ToolRegistry::default();
+    let _registration = registry
+        .register(Arc::new(
+            crate::runtime::tools::builtin::bash::BashTool::new(),
+        ))
+        .unwrap();
+    let runtime = ToolRuntime::new(registry, Arc::new(turn.clone()), SchedulerMode::Sequential);
+    let tools = runtime.list().await.unwrap();
+    for (command, expected) in [
+        ("pwd", "allow"),
+        ("sudo echo x", "ask"),
+        ("rm -rf /", "deny"),
+    ] {
+        let context = turn.prepare(JsValue::Null).await.unwrap();
+        let decision = turn
+            .decide(
+                tools[0].clone(),
+                object([("command", command.into())]),
+                context,
+                "call".into(),
+            )
+            .await
+            .unwrap();
+        behavior(&decision, "type", expected);
+    }
+}
+
+#[tokio::test]
+async fn zero_timeout_is_an_immediate_deny_policy() {
+    let resource = InteractionPermission::default();
+    let (turn, _) = bind(
+        &resource,
+        InteractionProfileName::Interactive,
+        "s",
+        Arc::default(),
+        Arc::new(|_| true),
+    );
+    let mut options = PermissionTurnOptions {
+        profile: profile(InteractionProfileName::Interactive),
+        context: turn.run.options.context.clone(),
+        rules: RuleSetHandle::empty(),
+        coordinator: Arc::default(),
+        emit: Arc::new(|_| true),
+        timeout: Duration::ZERO,
+    };
+    options.context.can_prompt = true;
+    let turn = resource
+        .bind_turn(
+            "s".into(),
+            "zero".into(),
+            options,
+            Arc::new(Catalog),
+            &mut ModuleRouter::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        prompt(&turn, Cancellation::new()).await.unwrap(),
+        denied("Permission prompt timed out.")
     );
 }
