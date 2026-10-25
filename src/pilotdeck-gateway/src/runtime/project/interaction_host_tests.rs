@@ -779,3 +779,108 @@ async fn host_interaction_child_cleanup_failure_is_aggregated_and_releases_lease
     println!("child cleanup: propagated {error}; sibling hooks and lease released");
     assert!(bounded(registry.dispose()).await.is_err());
 }
+
+fn command_hook_settings(command: &str) -> crate::hooks::protocol::HooksSettings {
+    let mut hook = JsObject::new();
+    hook.insert("type".into(), "command".into());
+    hook.insert("command".into(), JsValue::String(command.into()));
+    let mut matcher = JsObject::new();
+    matcher.insert("hooks".into(), JsValue::Array(vec![JsValue::Object(hook)]));
+    let mut config = JsObject::new();
+    config.insert(
+        "PreToolUse".into(),
+        JsValue::Array(vec![JsValue::Object(matcher)]),
+    );
+    crate::hooks::config::parse_hooks_config(&JsValue::Object(config)).settings
+}
+
+#[tokio::test]
+async fn host_bind_waits_for_old_hook_cleanup_before_returning_replacement() {
+    use crate::host::modules::lifecycle;
+
+    let scratch = Scratch::new();
+    let registry = Arc::new(interaction_registry(&scratch));
+    let lease = registry.acquire(None).unwrap();
+    let context = lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .unwrap()
+        .context();
+    let hooks = context
+        .resource(Resource::InteractionHooks)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<crate::runtime::project::interaction_hooks::InteractionHooks>()
+        .unwrap()
+        .clone();
+    drop(lease);
+    let root = std::env::temp_dir().join(format!("pdrs-693-hooks-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let command = format!(
+        "trap '' TERM; printf started > {0}/started; while [ ! -f {0}/release ]; do sleep 0.01; done; printf done > {0}/done",
+        root.display()
+    );
+    let mut old_router = ModuleRouter::default();
+    let _old = hooks
+        .bind_turn(
+            lifecycle::Binding {
+                session_id: "session".into(),
+                turn_id: "turn".into(),
+                cwd: root.to_string_lossy().to_string().into(),
+                permission_mode: Some("default".into()),
+                base_env: Some(
+                    parse_json(r#"{"PATH":"/usr/bin:/bin"}"#)
+                        .unwrap()
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+                signal: None,
+            },
+            "old-run".into(),
+            command_hook_settings(&command),
+            None,
+            &mut old_router,
+        )
+        .unwrap();
+    let old_call = tokio::spawn(old_router.module_call(parse_json(
+        r#"{"module":"lifecycle","payload":{"operation":"dispatch","event":"PreToolUse","payload":{}}}"#,
+    ).unwrap()));
+    bounded(async {
+        while !root.join("started").exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    let identity = identity();
+    let mut bind = Box::pin(InteractionTurn::bind(
+        registry.acquire(None).unwrap(),
+        &identity,
+        router(&identity),
+        options(),
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), &mut bind)
+            .await
+            .is_err(),
+        "InteractionTurn::bind returned before the old hook cleanup barrier"
+    );
+    assert!(!root.join("done").exists());
+    std::fs::write(root.join("release"), b"1").unwrap();
+    let turn = tokio::time::timeout(Duration::from_secs(10), bind)
+        .await
+        .expect("replacement bind did not pass the hook cleanup barrier")
+        .unwrap();
+    assert!(root.join("done").exists());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), old_call)
+            .await
+            .expect("old dispatch did not unwind")
+            .unwrap()
+            .is_err()
+    );
+    bounded(turn.dispose()).await.unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    bounded(registry.dispose()).await.unwrap();
+}

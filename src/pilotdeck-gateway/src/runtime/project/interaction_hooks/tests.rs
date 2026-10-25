@@ -1,4 +1,6 @@
 use super::*;
+use crate::host::modules::lifecycle::LifecyclePort as _;
+use crate::runtime::hooks::exec::{ShellFuture, ShellPort, ShellRequest, ShellResult};
 use crate::{
     config::permission::RuleSetHandle,
     hooks::config::parse_hooks_config,
@@ -197,6 +199,59 @@ fn bind(resource: &InteractionHooks) -> (TurnHooks, ModuleRouter) {
         .unwrap();
     (turn, router)
 }
+
+struct BlockingHookShell {
+    log: Arc<std::sync::Mutex<Vec<String>>>,
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    honor_cancel: bool,
+}
+impl ShellPort for BlockingHookShell {
+    fn execute(&self, request: ShellRequest) -> ShellFuture {
+        let log = self.log.clone();
+        let started = self.started.clone();
+        let release = self.release.clone();
+        let honor_cancel = self.honor_cancel;
+        Box::pin(async move {
+            let input = parse_json(&String::from_utf16_lossy(request.stdin.units())).unwrap();
+            let tag = input
+                .get("tag")
+                .and_then(JsValue::as_string)
+                .unwrap()
+                .to_utf8()
+                .unwrap();
+            log.lock().unwrap().push(format!("start:{tag}"));
+            if tag == "old" {
+                started.notify_one();
+                if honor_cancel {
+                    if let Some(signal) = request.signal {
+                        signal.cancelled().await;
+                        log.lock().unwrap().push("cancelled:old".into());
+                    }
+                } else {
+                    // Deliberately ignore cancellation: this models a hook
+                    // process that has already started and will finish on its
+                    // own schedule. The barrier, not this gate, orders it.
+                    release.notified().await;
+                }
+            }
+            log.lock().unwrap().push(format!("end:{tag}"));
+            Ok(ShellResult {
+                exit_code: Some(0),
+                stdout: vec![],
+                stderr: vec![],
+                timed_out: false,
+            })
+        })
+    }
+}
+fn gate_options(shell: Arc<BlockingHookShell>) -> HookRuntimeOptions {
+    HookRuntimeOptions {
+        shell: Some(shell),
+        ..Default::default()
+    }
+}
+
 async fn pending(turn: &TurnHooks, router: &ModuleRouter) -> HookReceipt {
     router
         .module_call(call("PreToolUse", json("{}")))
@@ -334,6 +389,44 @@ async fn configured_hooks_and_permission_callback_match_real_ts() {
         resource.dispose().await.unwrap();
         assert_eq!(turn.release_count(), 1);
     }
+}
+
+#[test]
+fn replacement_ts_oracle_records_unserialized_same_key_overlap() {
+    // This is the measured cc7c4e6 fact the port-only barrier deliberately
+    // strengthens: the TS host reuses one session runtime, so a second hook
+    // item may overlap the first, and a replacement runtime starts before the
+    // old runtime has drained. The Rust barrier is not claimed to be TS.
+    let oracle = json(include_str!(
+        "../../../../tests/fixtures/interaction-hooks/replacement-oracle.json"
+    ));
+    assert_eq!(
+        oracle.get("commit").and_then(JsValue::as_string),
+        Some(&"cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85".into())
+    );
+    let observations = oracle.get("observations").unwrap();
+    let same = observations.get("same_session_runtime").unwrap();
+    assert_eq!(
+        same.get("same_session_key_reused"),
+        Some(&JsValue::Bool(true))
+    );
+    assert_eq!(
+        same.get("second_started_before_first_end"),
+        Some(&JsValue::Bool(true))
+    );
+    let replacement = observations.get("replacement").unwrap();
+    assert_eq!(
+        replacement.get("old_state_while_inflight"),
+        Some(&"draining".into())
+    );
+    assert_eq!(
+        replacement.get("replacement_started_before_old_drain"),
+        Some(&JsValue::Bool(true))
+    );
+    assert_eq!(
+        replacement.get("after_cleanup_old_rejected"),
+        Some(&"Cannot run hooks; hook runtime is disposed.".into())
+    );
 }
 
 #[tokio::test]
@@ -549,8 +642,494 @@ async fn profiles_do_not_install_gateway_callback_and_handler_dispose_revokes_ru
 }
 
 #[tokio::test]
+async fn same_key_rebind_waits_for_old_cleanup_before_new_hook_runs() {
+    struct GateShell {
+        log: Arc<std::sync::Mutex<Vec<String>>>,
+        old_started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        new_started: Arc<tokio::sync::Notify>,
+    }
+    impl ShellPort for GateShell {
+        fn execute(&self, request: ShellRequest) -> ShellFuture {
+            let log = self.log.clone();
+            let old_started = self.old_started.clone();
+            let release = self.release.clone();
+            let new_started = self.new_started.clone();
+            Box::pin(async move {
+                let input = parse_json(&String::from_utf16_lossy(request.stdin.units())).unwrap();
+                let tag = input
+                    .get("tag")
+                    .and_then(JsValue::as_string)
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap();
+                log.lock().unwrap().push(format!("start:{tag}"));
+                if tag == "old" {
+                    old_started.notify_one();
+                    // Deliberately ignore cancellation: this models a hook
+                    // process that has already started and will finish on its
+                    // own schedule. The barrier, not this gate, must order it.
+                    release.notified().await;
+                } else {
+                    new_started.notify_one();
+                }
+                log.lock().unwrap().push(format!("end:{tag}"));
+                Ok(crate::runtime::hooks::exec::ShellResult {
+                    exit_code: Some(0),
+                    stdout: vec![],
+                    stderr: vec![],
+                    timed_out: false,
+                })
+            })
+        }
+    }
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let old_started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let new_started = Arc::new(tokio::sync::Notify::new());
+    let options = || HookRuntimeOptions {
+        shell: Some(Arc::new(GateShell {
+            log: log.clone(),
+            old_started: old_started.clone(),
+            release: release.clone(),
+            new_started: new_started.clone(),
+        })),
+        ..Default::default()
+    };
+    let mut old_router = ModuleRouter::default();
+    let _old = resource
+        .bind_with_options(
+            binding(),
+            "old-run".into(),
+            async_settings(),
+            None,
+            &mut old_router,
+            options(),
+        )
+        .unwrap();
+    let old_call =
+        tokio::spawn(old_router.module_call(call("PreToolUse", json(r#"{"tag":"old"}"#))));
+    tokio::time::timeout(Duration::from_secs(2), old_started.notified())
+        .await
+        .expect("old hook did not start");
+    let mut new_router = ModuleRouter::default();
+    let new = resource
+        .bind_with_options(
+            binding(),
+            "new-run".into(),
+            async_settings(),
+            None,
+            &mut new_router,
+            options(),
+        )
+        .unwrap();
+    assert_eq!(lock(&resource.state).draining.len(), 1);
+    let mut new_call =
+        Box::pin(new_router.module_call(call("PreToolUse", json(r#"{"tag":"new"}"#))));
+    std::future::poll_fn(|cx| {
+        assert!(
+            std::future::Future::poll(new_call.as_mut(), cx).is_pending(),
+            "new hook dispatch completed before old cleanup"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), new_started.notified())
+            .await
+            .is_err(),
+        "new hook started before the old run cleanup barrier"
+    );
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(2), new_call)
+        .await
+        .expect("new hook did not finish after the barrier")
+        .unwrap();
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["start:old", "end:old", "start:new", "end:new"]
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), old_call)
+            .await
+            .expect("old dispatch did not return")
+            .unwrap()
+            .is_err()
+    );
+    assert!(lock(&resource.state).draining.is_empty());
+    assert!(lock(&resource.state).turns.contains_key(&"s".into()));
+    drop(new);
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn dropped_stream_then_same_key_rebind_waits_for_old_cleanup() {
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let shell = Arc::new(BlockingHookShell {
+        log: log.clone(),
+        started: started.clone(),
+        release: release.clone(),
+        honor_cancel: false,
+    });
+    let mut old_router = ModuleRouter::default();
+    let old = resource
+        .bind_with_options(
+            binding(),
+            "old-run".into(),
+            async_settings(),
+            None,
+            &mut old_router,
+            gate_options(shell.clone()),
+        )
+        .unwrap();
+    let old_call =
+        tokio::spawn(old_router.module_call(call("PreToolUse", json(r#"{"tag":"old"}"#))));
+    tokio::time::timeout(Duration::from_secs(2), started.notified())
+        .await
+        .expect("old hook did not start");
+    // Dropping the consumer stream closes this turn's hooks identity; the
+    // detached cleanup is still waiting for the started hook job.
+    old.close();
+    let mut new_router = ModuleRouter::default();
+    let new = resource
+        .bind_with_options(
+            binding(),
+            "new-run".into(),
+            async_settings(),
+            None,
+            &mut new_router,
+            gate_options(shell),
+        )
+        .unwrap();
+    assert_eq!(lock(&resource.state).draining.len(), 1);
+    let mut ready = Box::pin(new.wait_ready());
+    std::future::poll_fn(|cx| {
+        assert!(
+            std::future::Future::poll(ready.as_mut(), cx).is_pending(),
+            "replacement became ready while old hook cleanup was pending"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(2), ready)
+        .await
+        .expect("replacement did not pass the cleanup barrier")
+        .unwrap();
+    new_router
+        .module_call(call("PreToolUse", json(r#"{"tag":"new"}"#)))
+        .await
+        .unwrap();
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["start:old", "end:old", "start:new", "end:new"]
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), old_call)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn same_key_rebind_after_cleanup_dispatches_immediately() {
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let shell = Arc::new(BlockingHookShell {
+        log: log.clone(),
+        started: started.clone(),
+        release: release.clone(),
+        honor_cancel: false,
+    });
+    let mut old_router = ModuleRouter::default();
+    let old = resource
+        .bind_with_options(
+            binding(),
+            "old-run".into(),
+            async_settings(),
+            None,
+            &mut old_router,
+            gate_options(shell.clone()),
+        )
+        .unwrap();
+    let old_call =
+        tokio::spawn(old_router.module_call(call("PreToolUse", json(r#"{"tag":"old"}"#))));
+    tokio::time::timeout(Duration::from_secs(2), started.notified())
+        .await
+        .expect("old hook did not start");
+    release.notify_one();
+    old.close();
+    tokio::time::timeout(Duration::from_secs(2), old.wait_closed())
+        .await
+        .expect("old cleanup did not finish")
+        .unwrap();
+    let mut new_router = ModuleRouter::default();
+    let new = resource
+        .bind_with_options(
+            binding(),
+            "new-run".into(),
+            async_settings(),
+            None,
+            &mut new_router,
+            gate_options(shell),
+        )
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), new.wait_ready())
+        .await
+        .expect("a cleaned predecessor must not block the replacement")
+        .unwrap();
+    new_router
+        .module_call(call("PreToolUse", json(r#"{"tag":"new"}"#)))
+        .await
+        .unwrap();
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["start:old", "end:old", "start:new", "end:new"]
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), old_call)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn canceled_predecessor_releases_same_key_barrier() {
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let shell = Arc::new(BlockingHookShell {
+        log: log.clone(),
+        started: started.clone(),
+        release: Arc::new(tokio::sync::Notify::new()),
+        honor_cancel: true,
+    });
+    let mut old_router = ModuleRouter::default();
+    let _old = resource
+        .bind_with_options(
+            binding(),
+            "old-run".into(),
+            async_settings(),
+            None,
+            &mut old_router,
+            gate_options(shell.clone()),
+        )
+        .unwrap();
+    let old_call =
+        tokio::spawn(old_router.module_call(call("PreToolUse", json(r#"{"tag":"old"}"#))));
+    tokio::time::timeout(Duration::from_secs(2), started.notified())
+        .await
+        .expect("old hook did not start");
+    let mut new_router = ModuleRouter::default();
+    let new = resource
+        .bind_with_options(
+            binding(),
+            "new-run".into(),
+            async_settings(),
+            None,
+            &mut new_router,
+            gate_options(shell),
+        )
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), new.wait_ready())
+        .await
+        .expect("canceled predecessor did not release the barrier")
+        .unwrap();
+    new_router
+        .module_call(call("PreToolUse", json(r#"{"tag":"new"}"#)))
+        .await
+        .unwrap();
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "start:old",
+            "cancelled:old",
+            "end:old",
+            "start:new",
+            "end:new"
+        ]
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), old_call)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn superseded_replacement_cancel_terminates_never_finishing_predecessor() {
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let shell = Arc::new(BlockingHookShell {
+        log: log.clone(),
+        started: started.clone(),
+        release: release.clone(),
+        honor_cancel: false,
+    });
+    let mut old_router = ModuleRouter::default();
+    let old = resource
+        .bind_with_options(
+            binding(),
+            "old-run".into(),
+            async_settings(),
+            None,
+            &mut old_router,
+            gate_options(shell.clone()),
+        )
+        .unwrap();
+    let old_call =
+        tokio::spawn(old_router.module_call(call("PreToolUse", json(r#"{"tag":"old"}"#))));
+    tokio::time::timeout(Duration::from_secs(2), started.notified())
+        .await
+        .expect("old hook did not start");
+    let signal = Cancellation::new();
+    let mut bound = binding();
+    bound.signal = Some(signal.clone());
+    let mut new_router = ModuleRouter::default();
+    let new = resource
+        .bind_with_options(
+            bound,
+            "new-run".into(),
+            async_settings(),
+            None,
+            &mut new_router,
+            gate_options(shell),
+        )
+        .unwrap();
+    let mut ready = Box::pin(new.wait_ready());
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(ready.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    signal.cancel();
+    let error = tokio::time::timeout(Duration::from_secs(2), ready)
+        .await
+        .expect("cancelled replacement waited on a never-finishing predecessor")
+        .unwrap_err();
+    assert!(error.to_string().contains("superseded"));
+    assert!(
+        lock(&resource.state)
+            .draining
+            .iter()
+            .any(|(_, run)| Arc::ptr_eq(run, &old.run))
+    );
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(2), old_call)
+        .await
+        .expect("old dispatch did not unwind")
+        .unwrap()
+        .unwrap_err();
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn failed_cleanup_blocks_same_key_only() {
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let started = Arc::new(tokio::sync::Notify::new());
+    let shell = Arc::new(BlockingHookShell {
+        log: log.clone(),
+        started,
+        release: Arc::new(tokio::sync::Notify::new()),
+        honor_cancel: false,
+    });
+    let old = resource
+        .bind_with_options(
+            binding(),
+            "old-run".into(),
+            async_settings(),
+            None,
+            &mut ModuleRouter::default(),
+            gate_options(shell.clone()),
+        )
+        .unwrap();
+    old.run.runtime.hooks().poison_cleanup_bus_for_test();
+    let replacement = resource
+        .bind_with_options(
+            binding(),
+            "new-run".into(),
+            async_settings(),
+            None,
+            &mut ModuleRouter::default(),
+            gate_options(shell.clone()),
+        )
+        .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), replacement.wait_ready())
+            .await
+            .expect("failed cleanup did not settle")
+            .is_err(),
+        "failed predecessor cleanup granted a fresh hook barrier"
+    );
+    assert!(
+        replacement
+            .dispatch(LifecycleDispatchInput {
+                event: "PreToolUse".into(),
+                base_input: JsObject::new(),
+                payload: None,
+                match_query: None,
+                cwd: "".into(),
+                env: None,
+                signal: None,
+            })
+            .await
+            .is_err()
+    );
+    let latest = resource
+        .bind_with_options(
+            binding(),
+            "latest-run".into(),
+            async_settings(),
+            None,
+            &mut ModuleRouter::default(),
+            gate_options(shell.clone()),
+        )
+        .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), latest.wait_ready())
+            .await
+            .expect("failed cleanup was forgotten on rebind")
+            .is_err()
+    );
+    let mut other = binding();
+    other.session_id = "other".into();
+    let independent = resource
+        .bind_with_options(
+            other,
+            "other-run".into(),
+            async_settings(),
+            None,
+            &mut ModuleRouter::default(),
+            gate_options(shell),
+        )
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), independent.wait_ready())
+        .await
+        .expect("another session key must not wait on this barrier")
+        .unwrap();
+    assert!(resource.dispose().await.is_err());
+}
+
+#[tokio::test]
 async fn dropped_dispatch_drains_and_keeps_host_environment() {
-    use crate::runtime::hooks::exec::{ShellFuture, ShellPort, ShellRequest};
     struct BlockingShell(Arc<tokio::sync::Notify>, Arc<AtomicUsize>);
     impl ShellPort for BlockingShell {
         fn execute(&self, request: ShellRequest) -> ShellFuture {
