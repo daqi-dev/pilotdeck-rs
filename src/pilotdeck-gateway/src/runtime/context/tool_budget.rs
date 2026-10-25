@@ -20,11 +20,24 @@ use std::{
     io::{Read, Write},
     path::PathBuf,
     sync::{Condvar, Mutex},
+    time::{Duration, Instant},
 };
 
 pub const DEFAULT_MAX_RESULT_SIZE_TOKENS: usize = 10_000;
 pub const DEFAULT_MAX_RESULT_SIZE_CHARS: usize = 200_000;
 pub const PREVIEW_SIZE_BYTES: usize = 12_000;
+
+/// #637 fix-r3 (DeepSeek P2-1): bound on a retry's wait for an in-flight
+/// spill ticket. Without it, an in-flight attempt whose underlying I/O never
+/// returns parks every retry on the same spill path forever. Same magnitude
+/// as the host's other bounded wait on a concurrent file writer —
+/// `storage/run_registry.rs`'s `FILE_LOCK_TIMEOUT` (30 s, TS
+/// `RunRegistry.ts:43-44`) — and far above any real spill write (a few MB of
+/// local disk, the heartbeat tests' 500 ms controlled stall included), so
+/// only a genuinely stuck writer ever reaches it. On expiry the retry gets
+/// the explicit `spill_wait_timeout_error` instead of adopting the half-
+/// written file or hanging.
+const SPILL_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 const EXACT_TOKEN_COUNT_MAX_BYTES: usize = 40_000;
 const TOKEN_ESTIMATE_SAMPLE_BYTES: usize = 6_000;
@@ -114,12 +127,48 @@ impl InFlightSpill {
         self.completed.notify_all();
     }
 
-    fn wait(&self) {
+    /// #637 fix-r3 (DeepSeek P2-1): park on the ticket for at most `bound`.
+    /// Returns whether the leader resolved it; on expiry the caller surfaces
+    /// `spill_wait_timeout_error` instead of adopting the leader's
+    /// half-written file. The wait runs inside the caller's `spawn_blocking`
+    /// task, so the blocking-pool thread itself wakes at the deadline — no
+    /// thread stays parked behind an abandoned future.
+    fn wait_for(&self, bound: Duration) -> bool {
         let mut done = self.done.lock().unwrap();
+        let deadline = Instant::now() + bound;
         while !*done {
-            done = self.completed.wait(done).unwrap();
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            let (guard, _timed_out) = self.completed.wait_timeout(done, deadline - now).unwrap();
+            done = guard;
         }
+        true
     }
+}
+
+/// The effective in-flight spill wait bound: `SPILL_WAIT_TIMEOUT`, or the
+/// test-only override (the timeout tests shrink it instead of sleeping out
+/// the production 30 s).
+fn spill_wait_timeout() -> Duration {
+    #[cfg(all(test, unix))]
+    if let Some(timeout) = *SPILL_WAIT_TIMEOUT_OVERRIDE.lock().unwrap() {
+        return timeout;
+    }
+    SPILL_WAIT_TIMEOUT
+}
+
+/// #637 fix-r3 (DeepSeek P2-1): the retry's explicit answer when the running
+/// spill attempt outlives the wait bound. The wording must make the state
+/// clear — the same tool result is still being written to disk — and what was
+/// NOT done: no half-written file adopted, no reference pointing at it.
+fn spill_wait_timeout_error(waited: Duration) -> ToolBudgetError {
+    ToolBudgetError::new(format!(
+        "timed out waiting for the in-flight spill after {waited:?}: \
+the same tool result is still being written to disk; no reference to the \
+partially written spill was returned; retry this request"
+    ))
 }
 
 enum SpillClaim {
@@ -477,16 +526,23 @@ impl ToolResultBudget {
     /// let the caller re-check the slot: a succeeded leader has registered the
     /// replacement (or, for media artifacts, finished the file), a failed one
     /// leaves the path free for this caller's own attempt (#637 fix-r2).
+    /// #637 fix-r3 (DeepSeek P2-1): the park is bounded by `spill_wait_timeout`
+    /// — a leader whose I/O never returns surfaces as this caller's explicit
+    /// error instead of hanging every retry on the same spill path.
     async fn wait_for_spill(
         &self,
         ticket: std::sync::Arc<InFlightSpill>,
     ) -> Result<(), ToolBudgetError> {
         #[cfg(all(test, unix))]
         let _counted = CountedSpillWaiter::new();
-        tokio::task::spawn_blocking(move || ticket.wait())
+        let bound = spill_wait_timeout();
+        let resolved = tokio::task::spawn_blocking(move || ticket.wait_for(bound))
             .await
             .map_err(|error| ToolBudgetError::new(error.to_string()))?;
-        Ok(())
+        if resolved {
+            return Ok(());
+        }
+        Err(spill_wait_timeout_error(bound))
     }
 
     fn read_file_alias_location(&self) -> (JsString, JsString) {
@@ -1224,6 +1280,32 @@ static SPILL_HOOK_ORDER: Mutex<()> = Mutex::new(());
 /// sleep there would be a timing assumption.
 #[cfg(all(test, unix))]
 static SPILL_WAITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// #637 fix-r3: test-only override of `SPILL_WAIT_TIMEOUT` so the timeout
+/// tests exercise the real bounded wait in milliseconds instead of sleeping
+/// out the production 30 s. Held under `SPILL_HOOK_ORDER` like every other
+/// process-global test installation, so it cannot shorten another test's
+/// legitimate wait.
+#[cfg(all(test, unix))]
+static SPILL_WAIT_TIMEOUT_OVERRIDE: Mutex<Option<Duration>> = Mutex::new(None);
+
+/// #637 fix-r3: RAII guard restoring `SPILL_WAIT_TIMEOUT_OVERRIDE`.
+#[cfg(all(test, unix))]
+struct SpillWaitTimeoutOverride;
+
+#[cfg(all(test, unix))]
+impl SpillWaitTimeoutOverride {
+    fn new(timeout: Duration) -> Self {
+        *SPILL_WAIT_TIMEOUT_OVERRIDE.lock().unwrap() = Some(timeout);
+        Self
+    }
+}
+
+#[cfg(all(test, unix))]
+impl Drop for SpillWaitTimeoutOverride {
+    fn drop(&mut self) {
+        *SPILL_WAIT_TIMEOUT_OVERRIDE.lock().unwrap() = None;
+    }
+}
 
 /// #637 fix-r2: RAII counter for `SPILL_WAITERS`; see the static above.
 #[cfg(all(test, unix))]
@@ -2169,6 +2251,133 @@ mod tests {
             })
             .count();
         assert_eq!(aliases, 1, "the retry must not create a second alias");
+    }
+
+    /// #637 fix-r3 (DeepSeek P2-1): an in-flight spill attempt whose
+    /// underlying I/O never returns must not park a retry on the same spill
+    /// path forever. After the (overridden) wait bound the retry surfaces
+    /// the explicit still-writing error — it neither adopts the half-written
+    /// spill through the EEXIST branch nor returns a reference pointing at
+    /// it. The outer watchdog is the negative-control anchor: with the bound
+    /// removed the retry hangs and the test fails inside that watchdog.
+    #[cfg(unix)]
+    #[tokio::test]
+    // The order guard spans the awaits: this test's process-global hook
+    // installation and wait-bound override stay exclusive for its whole body
+    // (same pattern as the fix-r2 race tests above).
+    #[allow(clippy::await_holding_lock)]
+    async fn spill_retry_times_out_when_inflight_writer_never_finishes() {
+        use crate::test_scratch::Scratch;
+        use std::{
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
+            time::Duration,
+        };
+
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
+        // 200 ms bound inside a 5 s watchdog: 25x headroom, so scheduling
+        // noise cannot turn a working bound into a watchdog miss — only a
+        // genuinely unbounded wait falls out of the watchdog.
+        let _bound = SpillWaitTimeoutOverride::new(Duration::from_millis(200));
+        let scratch = Scratch::new("spill-wait-timeout");
+        let project = scratch.path().join("proj/.pilotdeck/tool-results");
+        let spill_file = project.join("session/call-1.txt");
+        fs::create_dir_all(scratch.path().join("proj")).unwrap();
+        let spill_target = spill_file.to_string_lossy().into_owned();
+        // A parks between its write legs and stays parked until the test
+        // scope ends (ReleaseSpillGate also covers a failing unwind, so the
+        // runtime's blocking pool can always shut down).
+        let parked = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let (parked_hook, gate_hook) = (parked.clone(), gate.clone());
+        MID_SPILL_WRITE
+            .lock()
+            .unwrap()
+            .replace(std::sync::Arc::new(move |path: &JsString| {
+                if String::from_utf16_lossy(path.units()) != spill_target {
+                    return None;
+                }
+                parked_hook.store(true, Ordering::SeqCst);
+                let (lock, cvar) = &*gate_hook;
+                let mut open = lock.lock().unwrap();
+                while !*open {
+                    open = cvar.wait(open).unwrap();
+                }
+                Some(io::Error::from_raw_os_error(libc::ENOSPC))
+            }));
+        let _reset = ResetSpillHook;
+        let _release_gate = ReleaseSpillGate(gate.clone());
+
+        let text = "x".repeat(200_001);
+        let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: project.join("session"),
+            max_result_size_chars: Some(1),
+            max_result_size_tokens: Some(100),
+            preview_bytes: None,
+        });
+        let message = object([
+            ("role", "user".into()),
+            (
+                "content",
+                JsValue::Array(vec![object([
+                    ("type", "tool_result".into()),
+                    ("toolCallId", "call-1".into()),
+                    (
+                        "content",
+                        JsValue::Array(vec![object([
+                            ("type", "text".into()),
+                            ("text", JsValue::String(JsString::from(text.clone()))),
+                        ])]),
+                    ),
+                ])]),
+            ),
+        ]);
+
+        // A: park between the write legs (the head leg is already on disk),
+        // then abandon the caller exactly at the combined task's single await.
+        {
+            let spilled = budget.apply_to_message(&message, None);
+            tokio::pin!(spilled);
+            tokio::select! {
+                result = &mut spilled => panic!("spill completed before the mid-write gate: {result:?}"),
+                _ = tokio::time::timeout(Duration::from_secs(10), async {
+                    while !parked.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                }) => {}
+            }
+            assert!(spill_file.exists(), "the gate parks after the head leg");
+        }
+        // B: the retry on the same spill path must return the explicit
+        // still-writing error inside the watchdog, not a reference and not a
+        // hang.
+        let retried = tokio::time::timeout(
+            Duration::from_secs(5),
+            budget.apply_to_message(&message, None),
+        )
+        .await
+        .expect("the bounded wait must return before the test watchdog");
+        let error = retried.unwrap_err();
+        assert_eq!(
+            error.message,
+            "timed out waiting for the in-flight spill after 200ms: the same tool \
+result is still being written to disk; no reference to the partially written spill \
+was returned; retry this request",
+            "the timed-out retry must surface the explicit still-writing error"
+        );
+        // B never adopted A's half-written file: it stays exactly A's head
+        // leg (100_000 of 200_001 bytes) and no alias was created for it.
+        assert_eq!(
+            fs::metadata(&spill_file).unwrap().len(),
+            100_000,
+            "the retry must not have written the missing tail into the half-written spill"
+        );
+        assert!(
+            !project.join("refs").exists(),
+            "the retry must not create an alias for the half-written spill"
+        );
     }
 
     /// #637 fix-r2: the media artifact write gets the same in-flight
