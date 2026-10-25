@@ -386,6 +386,30 @@ async fn read_response(stream: &mut TcpStream) -> Vec<u8> {
     response
 }
 
+/// Reads only the response head, leaving any body bytes unread. HEAD
+/// responses declare `Content-Length` but never send the body.
+async fn read_head<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> String {
+    let mut response = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        let read = stream.read(&mut byte).await.expect("response head");
+        if read == 0 {
+            panic!(
+                "EOF before the response head completed: {:?}",
+                String::from_utf8_lossy(&response)
+            );
+        }
+        response.push(byte[0]);
+        if response.ends_with(b"\r\n\r\n") {
+            return String::from_utf8_lossy(&response).into_owned();
+        }
+    }
+}
+
+fn http_head() -> Vec<u8> {
+    format!("HEAD {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").into_bytes()
+}
+
 /// Equal-length tokens must still be compared byte by byte. Last-byte and
 /// middle-byte substitutions both have the same length as the real token.
 #[test]
@@ -688,6 +712,308 @@ async fn keep_alive_timeout_does_not_close_active_request() {
     assert_eq!(status(&response), 200, "{response:?}");
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Node v22.22.0 advertises `Connection: keep-alive` plus
+/// `Keep-Alive: timeout=<floor(keepAliveTimeout / 1000)>` on persistent HTTP/1.1
+/// responses, omits `Keep-Alive` when the property is 0, and sends neither for
+/// `Connection: close` or HTTP/1.0 (probe:
+/// `_tmp/20261025-issue-679/fix-r1/node-keepalive/probe.out.txt`).
+#[test]
+fn keep_alive_advertisement_matches_node_v22() {
+    let plain = HeaderMap::new();
+    let advertised =
+        |version, headers: &HeaderMap, timeout| keep_alive_advertisement(version, headers, timeout);
+    assert_eq!(
+        advertised(Version::HTTP_11, &plain, Duration::from_secs(5)),
+        Some(KeepAliveHeader {
+            timeout_seconds: Some(5)
+        })
+    );
+    assert_eq!(
+        advertised(Version::HTTP_11, &plain, Duration::from_millis(1_500)),
+        Some(KeepAliveHeader {
+            timeout_seconds: Some(1)
+        }),
+        "Node floors 1500 ms to timeout=1"
+    );
+    assert_eq!(
+        advertised(Version::HTTP_11, &plain, Duration::from_millis(200)),
+        Some(KeepAliveHeader {
+            timeout_seconds: Some(0)
+        }),
+        "Node advertises timeout=0 for a positive sub-second value"
+    );
+    assert_eq!(
+        advertised(Version::HTTP_11, &plain, Duration::ZERO),
+        Some(KeepAliveHeader {
+            timeout_seconds: None
+        }),
+        "keepAliveTimeout=0 keeps the connection but omits Keep-Alive"
+    );
+    assert_eq!(
+        advertised(Version::HTTP_10, &plain, Duration::from_secs(5)),
+        None,
+        "Node answers HTTP/1.0 with Connection: close"
+    );
+    let mut close = HeaderMap::new();
+    close.insert(
+        header::CONNECTION,
+        header::HeaderValue::from_static("keep-alive, CLOSE"),
+    );
+    assert_eq!(
+        advertised(Version::HTTP_11, &close, Duration::from_secs(5)),
+        None
+    );
+
+    // Explicit close responses (431/408) must keep their close pair.
+    let mut response = empty_response(StatusCode::REQUEST_TIMEOUT);
+    add_keep_alive_headers(
+        &mut response,
+        Some(KeepAliveHeader {
+            timeout_seconds: Some(5),
+        }),
+    );
+    assert_eq!(response.headers().get(header::CONNECTION).unwrap(), "close");
+    assert!(response.headers().get("keep-alive").is_none());
+}
+
+/// End-to-end advertisement: the persistent 405 response and HEAD response
+/// carry Node's pair, while `Connection: close` keeps the close response clean.
+#[tokio::test]
+async fn persistent_responses_advertise_keep_alive_like_node() {
+    let (store, directory) = file_store("keep-alive-header");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+
+    let mut persistent = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    persistent.write_all(&http_get(false)).await.unwrap();
+    let head = read_head(&mut persistent).await.to_ascii_lowercase();
+    assert!(head.starts_with("http/1.1 405"), "{head}");
+    assert!(head.contains("connection: keep-alive"), "{head}");
+    assert!(head.contains("keep-alive: timeout=5"), "{head}");
+
+    let mut closing = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    closing.write_all(&http_get(true)).await.unwrap();
+    let head = read_head(&mut closing).await.to_ascii_lowercase();
+    assert!(head.starts_with("http/1.1 405"), "{head}");
+    assert!(head.contains("connection: close"), "{head}");
+    assert!(
+        !head.contains("keep-alive:"),
+        "a close response must not advertise keep-alive: {head}"
+    );
+
+    let mut head_request = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    head_request.write_all(&http_head()).await.unwrap();
+    let head = read_head(&mut head_request).await.to_ascii_lowercase();
+    assert!(head.starts_with("http/1.1 405"), "{head}");
+    assert!(head.contains("connection: keep-alive"), "{head}");
+    assert!(head.contains("keep-alive: timeout=5"), "{head}");
+
+    drop((persistent, closing, head_request));
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// HEAD responses are written as `Encoder::length(0)` and hyper drops the
+/// (non-empty) `KeepAliveBody` without polling it, so only the body's `Drop`
+/// can arm the idle timer. Without it both connections stay in
+/// `TimeoutPhase::Request` with no deadline and pin their permits forever.
+#[tokio::test]
+async fn head_requests_arm_idle_timer_and_release_permits() {
+    let (store, directory) = file_store("head-idle");
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_secs(5),
+        keep_alive_timeout: Duration::from_millis(200),
+        keep_alive_timeout_buffer: Duration::ZERO,
+        max_connections: 2,
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let mut heads = Vec::new();
+    for _ in 0..2 {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stream.write_all(&http_head()).await.unwrap();
+        let head = read_head(&mut stream).await;
+        assert!(
+            head.starts_with("HTTP/1.1 405"),
+            "HEAD must reach precheck: {head:?}"
+        );
+        assert!(
+            head.to_ascii_lowercase().contains("content-length:"),
+            "HEAD keeps the entity length in the head: {head:?}"
+        );
+        heads.push(stream);
+    }
+    // Both permits are held even though neither response has a body on the wire.
+    let overflow = exchange(port, &http_get(true)).await.unwrap();
+    assert_eq!(
+        status(&overflow),
+        503,
+        "the two HEAD connections should hold every permit"
+    );
+
+    for stream in &mut heads {
+        let mut byte = [0u8; 1];
+        let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut byte))
+            .await
+            .expect("a HEAD keep-alive connection outlived the idle timer");
+        assert_eq!(read.unwrap(), 0, "expected EOF on the idle HEAD connection");
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let response = exchange(port, &http_get(true)).await.unwrap();
+        if status(&response) == 405 {
+            break;
+        }
+        assert_eq!(status(&response), 503);
+        assert!(
+            Instant::now() < deadline,
+            "HEAD connections never released their permits"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// An empty body (`is_end_stream()` true when the response is built) is never
+/// stored by hyper's dispatcher, so `poll_frame` is not called on that path
+/// either. This serves a 204 over the production `TimeoutStream` + timer and
+/// asserts the idle deadline both closes the socket and releases the permit.
+#[tokio::test]
+async fn empty_response_body_arms_idle_timer_without_a_body_poll() {
+    let timer = Arc::new(KeepAliveTimer::new(
+        Duration::from_secs(5),
+        Duration::from_millis(200),
+    ));
+    let (client, server_io) = tokio::io::duplex(8 * 1024);
+    let service_timer = timer.clone();
+    let service = service_fn(move |_request: Request<Incoming>| {
+        let timer = service_timer.clone();
+        async move {
+            timer.request_started();
+            Ok::<_, Infallible>(
+                Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(KeepAliveBody::new(Full::new(Bytes::new()), timer))
+                    .expect("static response"),
+            )
+        }
+    });
+    let connection = http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(None::<Duration>)
+        .serve_connection(TokioIo::new(TimeoutStream::new(server_io, timer)), service);
+    let permits = Arc::new(Semaphore::new(1));
+    let permit = permits.clone().try_acquire_owned().unwrap();
+    let task = tokio::spawn(async move {
+        let _permit = permit;
+        connection
+            .await
+            .expect("connection ended after the idle timeout");
+    });
+
+    let mut client = client;
+    client
+        .write_all(b"GET / HTTP/1.1\r\nHost: h\r\n\r\n")
+        .await
+        .unwrap();
+    let head = read_head(&mut client).await;
+    assert!(head.starts_with("HTTP/1.1 204"), "{head:?}");
+    let started = Instant::now();
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(2), client.read(&mut byte))
+        .await
+        .expect("an empty-body keep-alive connection outlived the idle timer");
+    assert_eq!(read.unwrap(), 0, "expected EOF after the idle timeout");
+    assert!(
+        started.elapsed() >= Duration::from_millis(150),
+        "the connection closed before the advertised idle deadline: {:?}",
+        started.elapsed()
+    );
+    tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .expect("the connection task did not end after the idle timeout")
+        .unwrap();
+    assert!(
+        permits.try_acquire().is_ok(),
+        "the connection permit was not released"
+    );
+}
+
+/// A peer that has already shut down its read half cannot observe the EOF; the
+/// permit is the only observable proof that the idle timer still closed the
+/// HEAD connection. Without the `Drop` arm this connection would pin the only
+/// permit forever.
+#[tokio::test]
+async fn client_read_shutdown_still_releases_head_connection_permit() {
+    let (store, directory) = file_store("head-client-read-shutdown");
+    let limits = ServeLimits {
+        headers_timeout: Duration::from_secs(5),
+        keep_alive_timeout: Duration::from_millis(200),
+        keep_alive_timeout_buffer: Duration::ZERO,
+        max_connections: 1,
+        ..ServeLimits::default()
+    };
+    let (server, port) = start_limited(store, limits).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(&http_head()).await.unwrap();
+    let head = read_head(&mut stream).await;
+    assert!(head.starts_with("HTTP/1.1 405"), "{head:?}");
+    let stream = stream.into_std().expect("into_std");
+    stream
+        .shutdown(std::net::Shutdown::Read)
+        .expect("shutdown read half");
+    assert_eq!(
+        status(&exchange(port, &http_get(true)).await.unwrap()),
+        503,
+        "the idle HEAD connection should hold the only permit"
+    );
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let response = exchange(port, &http_get(true)).await.unwrap();
+        if status(&response) == 405 {
+            break;
+        }
+        assert_eq!(status(&response), 503);
+        assert!(
+            Instant::now() < deadline,
+            "a read-shutdown HEAD connection never released its permit"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    drop(stream);
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// `finished` must keep `response_finished` exactly once per response body: a
+/// fully polled body that is dropped later must not postpone the deadline.
+#[tokio::test]
+async fn dropping_a_fully_polled_body_does_not_rearm_the_idle_deadline() {
+    let timer = Arc::new(KeepAliveTimer::new(
+        Duration::from_secs(5),
+        Duration::from_secs(1),
+    ));
+    timer.request_started();
+    let mut body = KeepAliveBody::new(Full::new(Bytes::from_static(b"x")), timer.clone());
+    loop {
+        let frame = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await;
+        if frame.is_none() {
+            break;
+        }
+    }
+    let deadline = timer.nearest_deadline().expect("idle deadline");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(body);
+    assert_eq!(
+        timer.nearest_deadline(),
+        Some(deadline),
+        "Drop re-armed the idle timer after a fully polled body"
+    );
 }
 
 /// Pin the measured Node v22.22.0 defaults: 5 s keepAliveTimeout plus the 1 s

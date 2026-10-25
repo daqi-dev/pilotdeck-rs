@@ -19,7 +19,7 @@ use super::{
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
-    HeaderMap, Method, Request, Response, StatusCode,
+    HeaderMap, Method, Request, Response, StatusCode, Version,
     body::{Body, Frame, Incoming, SizeHint},
     header,
     server::conn::http1,
@@ -60,8 +60,15 @@ const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const DEFAULT_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Node `server.keepAliveTimeoutBuffer` default (v22.22.0: 1000 ms). Node arms
 /// the idle socket timeout with `keepAliveTimeout + keepAliveTimeoutBuffer`, so
-/// an idle keep-alive connection actually closes after 6 s; the advertised
-/// `Keep-Alive: timeout=` value is still `keepAliveTimeout`.
+/// an idle keep-alive connection actually closes after 6 s.
+///
+/// The response header is separate: Node v22.22.0 sends
+/// `Connection: keep-alive` plus `Keep-Alive: timeout=<floor(keepAliveTimeout
+/// / 1000)>` on every persistent HTTP/1.1 response, and omits `Keep-Alive`
+/// when the property is 0 (probe in
+/// `_tmp/20261025-issue-679/fix-r1/node-keepalive/`). The server adds the same
+/// headers after [`serve`] builds the response, so the advertised value is still
+/// the bare `keepAliveTimeout` (5), not this 6 s effective deadline.
 const DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER: Duration = Duration::from_secs(1);
 /// Node `http.maxHeaderSize` default (v22.22.0: 16384 bytes). hyper's
 /// `max_buf_size` is also its read-buffer cap and replays Node's 431.
@@ -2019,6 +2026,22 @@ impl Body for KeepAliveBody {
         self.inner.size_hint()
     }
 }
+impl Drop for KeepAliveBody {
+    fn drop(&mut self) {
+        // hyper does not always poll the response body: a HEAD response is
+        // written with `Encoder::length(0)` and the body is discarded
+        // (`!can_write_body()` in `dispatch.rs`), and a body whose
+        // `is_end_stream()` is already true is never stored at all. Both paths
+        // drop this wrapper without a final `poll_frame`, so without this Drop
+        // the connection stays in `TimeoutPhase::Request` with no deadline and
+        // pins its permit forever. `finished` keeps the transition to exactly
+        // one `response_finished` per response body.
+        if !self.finished {
+            self.finished = true;
+            self.timer.response_finished();
+        }
+    }
+}
 
 pub async fn start_gateway_user_dialog_store_http_server(
     store: Arc<dyn LiveGatewayUserDialogStore>,
@@ -2091,8 +2114,14 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                             async move {
                                 // The complete request head is in; only
                                 // `requestTimeout` may bound the body now.
+                                let keep_alive = keep_alive_advertisement(
+                                    request.version(),
+                                    request.headers(),
+                                    limits.keep_alive_timeout,
+                                );
                                 timer.request_started();
-                                let response = serve(handler, request, limits).await;
+                                let mut response = serve(handler, request, limits).await;
+                                add_keep_alive_headers(&mut response, keep_alive);
                                 Ok::<_, Infallible>(
                                     response.map(|body| KeepAliveBody::new(body, timer)),
                                 )
@@ -2317,6 +2346,66 @@ async fn serve(
     match tokio::task::spawn_blocking(move || handler.dispatch_request(operation, request)).await {
         Ok(response) => build(response),
         Err(error) => build(error_response(500, "server_failure", &error.to_string())),
+    }
+}
+
+/// Node's HTTP/1.1 keep-alive advertisement, measured on v22.22.0
+/// (`_tmp/20261025-issue-679/fix-r1/node-keepalive/probe.out.txt`): every
+/// persistent response carries `Connection: keep-alive`, and
+/// `Keep-Alive: timeout=` is the floor of `keepAliveTimeout` in seconds. Node
+/// omits `Keep-Alive` when that property is 0, and HTTP/1.0 or
+/// `Connection: close` requests get neither header (Node answers HTTP/1.0 with
+/// `Connection: close`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct KeepAliveHeader {
+    timeout_seconds: Option<u64>,
+}
+
+fn keep_alive_advertisement(
+    version: Version,
+    headers: &HeaderMap,
+    keep_alive_timeout: Duration,
+) -> Option<KeepAliveHeader> {
+    if version != Version::HTTP_11 {
+        return None;
+    }
+    let wants_close = headers
+        .get_all(header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case("close"));
+    if wants_close {
+        return None;
+    }
+    Some(KeepAliveHeader {
+        timeout_seconds: (keep_alive_timeout > Duration::ZERO)
+            .then_some((keep_alive_timeout.as_millis() / 1000) as u64),
+    })
+}
+
+fn add_keep_alive_headers(
+    response: &mut Response<Full<Bytes>>,
+    keep_alive: Option<KeepAliveHeader>,
+) {
+    let Some(keep_alive) = keep_alive else {
+        return;
+    };
+    // 431/408 close responses carry their own `Connection: close`; never
+    // overwrite an explicit close with an advertisement.
+    if response.headers().contains_key(header::CONNECTION) {
+        return;
+    }
+    response.headers_mut().insert(
+        header::CONNECTION,
+        header::HeaderValue::from_static("keep-alive"),
+    );
+    if let Some(seconds) = keep_alive.timeout_seconds {
+        let value = header::HeaderValue::from_str(&format!("timeout={seconds}"))
+            .expect("a decimal timeout is a valid header value");
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("keep-alive"), value);
     }
 }
 
