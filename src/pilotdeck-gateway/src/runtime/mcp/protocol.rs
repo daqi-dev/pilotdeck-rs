@@ -1280,8 +1280,21 @@ fn read_mcp_config(
     if std::fs::metadata(path).is_err() {
         return Ok(None);
     }
-    let text = match std::fs::read(path) {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+    // `readFileSync` reports an open error with its path and a descriptor
+    // read error without one (node v22.22.0: reading a directory is
+    // `EISDIR: illegal operation on a directory, read`), so keep the two
+    // stages apart like the shared `readFile` ports.
+    let text = match std::fs::File::open(path) {
+        Ok(mut file) => {
+            let mut bytes = Vec::new();
+            match std::io::Read::read_to_end(&mut file, &mut bytes) {
+                Ok(_) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(error) => {
+                    push(node_fs_message(&error, "read", path));
+                    return Ok(None);
+                }
+            }
+        }
         Err(error) => {
             push(node_fs_message(&error, "open", path));
             return Ok(None);
@@ -1311,14 +1324,16 @@ fn read_mcp_config(
     }
 }
 
-/// Node's `fs` error message: `CODE: description, syscall 'path'`. A
-/// directory read fails at `read` (no path), as in `readFileSync`.
+/// Node's `fs` error message: `CODE: description, syscall 'path'`, through the
+/// shared `pilotdeck_gateway::node_fs_message`. Callers keep the open and
+/// read stages apart (a directory read is `read` without a path, as in
+/// `readFileSync`); an errno outside the shared table keeps Node's synthetic
+/// `UNKNOWN: unknown error` text (libuv's `UV_UNKNOWN`).
 pub(crate) fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> String {
-    let (code, description) = errno_text(error);
-    if code == "EISDIR" {
-        return format!("{code}: {description}, read");
-    }
-    format!("{code}: {description}, {syscall} '{}'", path.display())
+    crate::node_fs_message(error, syscall, Some(&path.to_string_lossy())).unwrap_or_else(|| {
+        let (code, description) = errno_text(error);
+        format!("{code}: {description}, {syscall} '{}'", path.display())
+    })
 }
 
 /// libuv's `uv_err_name` / `uv_strerror` from the shared Node v22 table.
@@ -1397,6 +1412,81 @@ mod tests {
         assert_eq!(
             errno_text(&std::io::Error::other("not an errno")),
             ("UNKNOWN", "unknown error")
+        );
+    }
+
+    /// The shared stage rules through the MCP wrapper: an open error keeps the
+    /// path, a descriptor read error does not, and an errno outside the table
+    /// keeps Node's synthetic text (node v22.22.0, `_tmp/20261025-issue-651/
+    /// node-probe.out`).
+    #[test]
+    fn node_fs_message_routes_the_shared_stage_rules() {
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(libc::EACCES),
+                "open",
+                Path::new("/c/mcp.json")
+            ),
+            "EACCES: permission denied, open '/c/mcp.json'"
+        );
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(libc::EIO),
+                "read",
+                Path::new("/c/mcp.json")
+            ),
+            "EIO: i/o error, read"
+        );
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(libc::EISDIR),
+                "open",
+                Path::new("/c/mcp.json")
+            ),
+            "EISDIR: illegal operation on a directory, open '/c/mcp.json'"
+        );
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(123456),
+                "mkdir",
+                Path::new("/c")
+            ),
+            "UNKNOWN: unknown error, mkdir '/c'"
+        );
+    }
+
+    /// A directory at the config path is the one reachable read-stage failure
+    /// (`existsSync` passes, the open succeeds, the descriptor read fails):
+    /// like `readFileSync` it must read `read` without the path, never the
+    /// caller-supplied `open` label with it.
+    #[test]
+    fn read_mcp_config_reports_a_directory_at_the_read_stage() {
+        struct Env;
+        impl McpEnvironment for Env {
+            fn env(&self, _name: &JsString) -> Option<JsString> {
+                None
+            }
+            fn home(&self) -> JsString {
+                JsString::from("/home/u")
+            }
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "pdrs-mcp-eisdir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let mut diagnostics = Vec::new();
+        let result = read_mcp_config(&dir, &mut diagnostics, &Env).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(result, None);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].message,
+            "EISDIR: illegal operation on a directory, read"
         );
     }
 

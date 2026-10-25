@@ -449,3 +449,49 @@ fn when(text: &str, _env: &Env) -> String {
         if parts.hour() < 12 { "AM" } else { "PM" }
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A directory named like a session file is the reachable read-stage
+    /// failure: `list` filters only the `.jsonl` suffix, and the whole-file
+    /// read behind `read_session_bytes` already stages its errors. The TS
+    /// provider reads the same entry through `createReadStream`
+    /// (NodeSessionSearchPort.ts:189), whose directory error is
+    /// `EISDIR: illegal operation on a directory, read` with no path (node
+    /// v22.22.0, `_tmp/20261025-issue-651/node-probe-stream.out`); the CLI
+    /// must not report the caller's `open` label with the path.
+    #[test]
+    fn a_directory_named_like_a_session_reports_the_read_stage() {
+        let home = std::env::temp_dir().join(format!(
+            "pdrs-chat-eisdir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let chats = home.join("projects/p/chats");
+        std::fs::create_dir_all(&chats).unwrap();
+        std::fs::create_dir(chats.join("dir.jsonl")).unwrap();
+        let env = crate::paths::Env::from_pairs(&[("PILOT_HOME", home.to_string_lossy().as_ref())]);
+        let error = run(
+            &[
+                "search".to_string(),
+                "needle".to_string(),
+                "--all-projects".to_string(),
+            ],
+            &env,
+            &chats,
+        )
+        .expect_err("a directory entry must fail the search");
+        let _ = std::fs::remove_dir_all(&home);
+        match error {
+            Failure::Error(message) => {
+                assert_eq!(message, "EISDIR: illegal operation on a directory, read")
+            }
+            other => panic!("expected Failure::Error, got {other:?}"),
+        }
+    }
+}

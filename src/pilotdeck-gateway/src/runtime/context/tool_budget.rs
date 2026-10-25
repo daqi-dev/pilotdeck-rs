@@ -1005,8 +1005,10 @@ fn write_text_if_absent(
     let bytes = utf8_bytes(content);
     match create_spill_file(&checked, path) {
         Ok(mut file) => {
+            // The TS spill writes `writeFile(path, content, { flag: "wx" })`:
+            // a descriptor write error has no path, unlike an open error.
             file.write_all(&bytes)
-                .map_err(|error| io_error(error, "write", Some(&path_text(path))))?;
+                .map_err(|error| io_error(error, "write", None))?;
             Ok(true)
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),

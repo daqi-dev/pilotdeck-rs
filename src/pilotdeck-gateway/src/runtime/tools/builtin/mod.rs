@@ -336,8 +336,9 @@ pub(super) fn failed(
     // Node's fs errors carry the libuv code/description pair. An `ErrorKind`
     // alone conflates EACCES with EPERM and cannot name errnos such as EISDIR
     // or ENOSPC, so prefer the generated table whenever the OS supplied errno.
-    // `node_fs_message` also drops the path for a read-stage error, matching
-    // Node's descriptor diagnostics (EISDIR from reading a directory).
+    // `node_fs_message` also drops the path for descriptor-stage (read/write)
+    // errors, matching Node's diagnostics (EISDIR from reading a directory,
+    // EFBIG from writing past RLIMIT_FSIZE).
     if error.raw_os_error().is_some()
         && let Some(message) = crate::node_fs_message(&error, operation, Some(&text(path)))
     {
@@ -538,6 +539,20 @@ const WRITE_DENY_DIRECTORIES: &[&str] = &[".git", "node_modules", "dist"];
 const NOT_READ: &str = "File has not been read yet. Read it first before writing to it.";
 const CHANGED: &str = "File has changed since the last read. Read it again before writing to it.";
 
+/// Whole-file read with the two stages apart, like the `fs.readFile` behind
+/// `readTextFile` and `readFileFull`: an open error names its path, while a
+/// descriptor read error (EISDIR after a raced directory swap, EIO, ...) is
+/// `read` with no path, as in Node.
+pub(super) fn read_file_bytes(
+    path: &JsString,
+) -> Result<Vec<u8>, crate::runtime::tools::ToolError> {
+    let mut file = fs::File::open(os_path(path)).map_err(|error| failed(error, "open", path))?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes)
+        .map_err(|error| failed(error, "read", path))?;
+    Ok(bytes)
+}
+
 pub(super) fn read_text_file(path: &JsString) -> Result<String, crate::runtime::tools::ToolError> {
     let metadata = fs::metadata(os_path(path)).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -555,7 +570,7 @@ pub(super) fn read_text_file(path: &JsString) -> Result<String, crate::runtime::
             format!("{} is not a regular file.", text(path)),
         ));
     }
-    let bytes = fs::read(os_path(path)).map_err(|error| failed(error, "open", path))?;
+    let bytes = read_file_bytes(path)?;
     if bytes.contains(&0) {
         return Err(tool_error(
             "invalid_tool_input",
@@ -1118,9 +1133,12 @@ mod errno_tests {
     /// prints the Write tool's error so the parent can judge it.
     #[test]
     #[ignore = "spawned by write_tool_reports_the_write_stage_like_node"]
+    #[cfg(unix)]
     fn write_tool_child_over_file_size_limit() {
         let Ok(path) = std::env::var("PDRS_WRITE_STAGE_PATH") else {
-            return;
+            panic!(
+                "PDRS_WRITE_STAGE_PATH not set; spawn via write_tool_reports_the_write_stage_like_node"
+            );
         };
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1257,6 +1275,32 @@ mod errno_tests {
         assert_eq!(
             message(std::io::Error::other("synthetic"), "stat"),
             "synthetic"
+        );
+    }
+
+    /// A directory read through the shared whole-file helper reports the
+    /// descriptor read stage like Node's `readFile` (node v22.22.0:
+    /// `readFileSync('/tmp')` -> `EISDIR: illegal operation on a directory,
+    /// read`), never the open label with the path. Both `read_text_file` and
+    /// the no-limit Read path go through the helper; their own `is_file`
+    /// guards make a directory unreachable there, so the helper is the seam.
+    #[test]
+    fn read_stage_errors_omit_the_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "pdrs-read-stage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let error = super::read_file_bytes(&JsString::from(dir.to_string_lossy().as_ref()))
+            .expect_err("reading a directory must fail");
+        let _ = std::fs::remove_dir(&dir);
+        assert_eq!(
+            String::from_utf16_lossy(error.message.units()),
+            "EISDIR: illegal operation on a directory, read"
         );
     }
 

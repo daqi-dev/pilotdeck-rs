@@ -51,8 +51,9 @@ pub type HttpClient = Client<HttpConnector, Incoming>;
 /// a directory, read`; node v22.22.0 under `ulimit -f` gives
 /// `EFBIG: file too large, write` with `syscall: 'write'` and no path,
 /// `_tmp/20261025-issue-621-takeover/xfsz-probe/`), while an
-/// open/stat/mkdir/... error names its path. The CLI shares this formatter and
-/// the libuv table instead of keeping its own copies.
+/// open/stat/mkdir/... error names its path. The CLI and the MCP runtime
+/// share this formatter and the libuv table instead of keeping their own
+/// copies.
 pub fn node_fs_message(
     error: &std::io::Error,
     syscall: &str,

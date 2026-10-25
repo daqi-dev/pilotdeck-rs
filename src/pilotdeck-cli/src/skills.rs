@@ -120,10 +120,18 @@ pub fn migrate_legacy_bundled_skill_copies(
         ));
     }
     if report.warnings.is_empty() {
+        // The marker is `writeFileSync(completionMarker, "completed\n", "utf8")`
+        // (migrateLegacyBundledSkills.ts:126): an open error names the marker,
+        // a descriptor write error is `write` without it.
         let written = fs::create_dir_all(pilot_home)
             .map_err(|error| (error, "mkdir", pilot_home.to_path_buf()))
             .and_then(|()| {
-                fs::write(&marker, "completed\n").map_err(|error| (error, "open", marker.clone()))
+                fs::File::create(&marker)
+                    .map_err(|error| (error, "open", marker.clone()))
+                    .and_then(|mut file| {
+                        std::io::Write::write_all(&mut file, b"completed\n")
+                            .map_err(|error| (error, "write", marker.clone()))
+                    })
             });
         if let Err((error, syscall, path)) = written {
             match fs_failure(error, syscall, &path) {
@@ -255,7 +263,14 @@ fn hash_directory_tree_with_collator(
             let target = fs::read_link(&path).map_err(|e| fs_failure(e, "readlink", &path))?;
             hash.update(target.to_string_lossy().as_bytes());
         } else {
-            hash.update(fs::read(&path).map_err(|e| fs_failure(e, "open", &path))?);
+            // `readFileSync(join(resolvedRoot, entry.path))`
+            // (migrateLegacyBundledSkills.ts:163): an open error names the
+            // path, a descriptor read error is `read` without it.
+            let mut file = fs::File::open(&path).map_err(|e| fs_failure(e, "open", &path))?;
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut file, &mut bytes)
+                .map_err(|e| fs_failure(e, "read", &path))?;
+            hash.update(bytes);
         }
         hash.update([0]);
     }
