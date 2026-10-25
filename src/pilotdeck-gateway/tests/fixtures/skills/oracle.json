@@ -24951,6 +24951,369 @@
       ]
     },
     {
+      "name": "import-unknown-type",
+      "options": {},
+      "setup": [
+        {
+          "path": "src/unknown/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Unknown\ndescription: Regular file classification masked only inside cp\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/unknown/odd",
+          "kind": "file",
+          "text": "ordinary file before the lstat hook"
+        }
+      ],
+      "steps": [
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/unknown"
+          },
+          "unknownType": "src/unknown/odd",
+          "outcome": {
+            "error": {
+              "name": "SystemError",
+              "code": "ERR_FS_CP_UNKNOWN",
+              "message": "Cannot copy an unknown file type: cp returned EINVAL (cannot copy an unknown file type: <dir>/home/skills/unknown/odd) <dir>/home/skills/unknown/odd"
+            }
+          }
+        },
+        {
+          "op": "delete",
+          "input": {
+            "scope": "user",
+            "slug": "unknown"
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "scope": "user",
+              "slug": "unknown"
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/unknown"
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "mode": "copy",
+              "scope": "user",
+              "slug": "unknown",
+              "sourcePath": "<dir>/src/unknown",
+              "skillPath": "<dir>/home/skills/unknown",
+              "skill": {
+                "slug": "unknown",
+                "name": "Unknown",
+                "description": "Regular file classification masked only inside cp",
+                "version": null,
+                "skillFile": "<dir>/home/skills/unknown/SKILL.md",
+                "skillDir": "<dir>/home/skills/unknown",
+                "scope": "user",
+                "readonly": false,
+                "mtime": "<mtime>"
+              },
+              "validation": {
+                "ok": true,
+                "hardFails": [],
+                "warnings": [],
+                "stats": {
+                  "fileCount": 2,
+                  "totalBytes": 127
+                },
+                "frontmatter": {
+                  "name": "Unknown",
+                  "description": "Regular file classification masked only inside cp"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "tree": [
+        {
+          "path": "home",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills/unknown",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills/unknown/SKILL.md",
+          "kind": "file",
+          "size": 92,
+          "sha256": "079937b7dcb1968130716dc0489b394abadcaf5d17b6fba0cec293eb45aefdce",
+          "text": "---\nname: Unknown\ndescription: Regular file classification masked only inside cp\n---\n\nBody.\n"
+        },
+        {
+          "path": "home/skills/unknown/odd",
+          "kind": "file",
+          "size": 35,
+          "sha256": "d81087e0ca554d7cef709c05fe550e15f947b17133e45455636ede8daa191248",
+          "text": "ordinary file before the lstat hook"
+        },
+        {
+          "path": "src",
+          "kind": "dir"
+        },
+        {
+          "path": "src/unknown",
+          "kind": "dir"
+        },
+        {
+          "path": "src/unknown/SKILL.md",
+          "kind": "file",
+          "size": 92,
+          "sha256": "079937b7dcb1968130716dc0489b394abadcaf5d17b6fba0cec293eb45aefdce",
+          "text": "---\nname: Unknown\ndescription: Regular file classification masked only inside cp\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/unknown/odd",
+          "kind": "file",
+          "size": 35,
+          "sha256": "d81087e0ca554d7cef709c05fe550e15f947b17133e45455636ede8daa191248",
+          "text": "ordinary file before the lstat hook"
+        }
+      ]
+    },
+    {
+      "name": "import-symlink-to-subdirectory",
+      "options": {},
+      "setup": [
+        {
+          "path": "src/real/nested/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Nested\ndescription: Symlink source with a dangling destination\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/linkroot",
+          "kind": "symlink",
+          "target": "real/nested"
+        },
+        {
+          "path": "home/skills/dest",
+          "kind": "symlink",
+          "target": "../../missing/../src/real"
+        }
+      ],
+      "steps": [
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/linkroot",
+            "slug": "dest"
+          },
+          "outcome": {
+            "error": {
+              "name": "SystemError",
+              "code": "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
+              "message": "Cannot overwrite symlink in subdirectory of self: cp returned EINVAL (cannot overwrite <dir>/src/real with <dir>/src/real/nested) <dir>/home/skills/dest"
+            }
+          }
+        }
+      ],
+      "tree": [
+        {
+          "path": "home",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills/dest",
+          "kind": "symlink",
+          "target": "../../missing/../src/real"
+        },
+        {
+          "path": "src",
+          "kind": "dir"
+        },
+        {
+          "path": "src/linkroot",
+          "kind": "symlink",
+          "target": "real/nested"
+        },
+        {
+          "path": "src/real",
+          "kind": "dir"
+        },
+        {
+          "path": "src/real/nested",
+          "kind": "dir"
+        },
+        {
+          "path": "src/real/nested/SKILL.md",
+          "kind": "file",
+          "size": 84,
+          "sha256": "0aa85cf70fa405e655bdcecd19765091b1754f37fecea94945b2900e7e965629",
+          "text": "---\nname: Nested\ndescription: Symlink source with a dangling destination\n---\n\nBody.\n"
+        }
+      ]
+    },
+    {
+      "name": "scan-unreadable-child",
+      "options": {},
+      "setup": [
+        {
+          "path": "bundle/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Readable\ndescription: Unreadable descendants erase the whole recursive count\n---\n\nBody.\n"
+        },
+        {
+          "path": "bundle/visible.txt",
+          "kind": "file",
+          "text": "visible"
+        },
+        {
+          "path": "bundle/blocked/data.txt",
+          "kind": "file",
+          "text": "hidden"
+        }
+      ],
+      "steps": [
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/bundle"
+          },
+          "outcome": {
+            "result": {
+              "parentPath": "<dir>/bundle",
+              "folders": [
+                {
+                  "folderName": "bundle",
+                  "hasSkillMd": true,
+                  "name": "Readable",
+                  "description": "Unreadable descendants erase the whole recursive count",
+                  "sourcePath": "<dir>/bundle",
+                  "fileCount": 3,
+                  "totalSize": 111
+                },
+                {
+                  "folderName": "blocked",
+                  "hasSkillMd": false,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/bundle/blocked",
+                  "fileCount": 0,
+                  "totalSize": 0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/bundle"
+          },
+          "denyReadDir": "bundle/blocked",
+          "outcome": {
+            "result": {
+              "parentPath": "<dir>/bundle",
+              "folders": [
+                {
+                  "folderName": "bundle",
+                  "hasSkillMd": true,
+                  "name": "Readable",
+                  "description": "Unreadable descendants erase the whole recursive count",
+                  "sourcePath": "<dir>/bundle",
+                  "fileCount": 0,
+                  "totalSize": 0
+                },
+                {
+                  "folderName": "blocked",
+                  "hasSkillMd": false,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/bundle/blocked",
+                  "fileCount": 0,
+                  "totalSize": 0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/bundle"
+          },
+          "outcome": {
+            "result": {
+              "parentPath": "<dir>/bundle",
+              "folders": [
+                {
+                  "folderName": "bundle",
+                  "hasSkillMd": true,
+                  "name": "Readable",
+                  "description": "Unreadable descendants erase the whole recursive count",
+                  "sourcePath": "<dir>/bundle",
+                  "fileCount": 3,
+                  "totalSize": 111
+                },
+                {
+                  "folderName": "blocked",
+                  "hasSkillMd": false,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/bundle/blocked",
+                  "fileCount": 0,
+                  "totalSize": 0
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "tree": [
+        {
+          "path": "bundle",
+          "kind": "dir"
+        },
+        {
+          "path": "bundle/SKILL.md",
+          "kind": "file",
+          "size": 98,
+          "sha256": "567d347082ca23d578e2631f676b0fba6e7b7417a08e7b2e0c9411ecdaa061b2",
+          "text": "---\nname: Readable\ndescription: Unreadable descendants erase the whole recursive count\n---\n\nBody.\n"
+        },
+        {
+          "path": "bundle/blocked",
+          "kind": "dir"
+        },
+        {
+          "path": "bundle/blocked/data.txt",
+          "kind": "file",
+          "size": 6,
+          "sha256": "e564b4081d7a9ea4b00dada53bdae70c99b87b6fce869f0c3dd4d2bfa1e53e1c",
+          "text": "hidden"
+        },
+        {
+          "path": "bundle/visible.txt",
+          "kind": "file",
+          "size": 7,
+          "sha256": "d42ef1497900bc6e542c641a896c88694d15069b8a11247f66ba7342b6c21cd9",
+          "text": "visible"
+        }
+      ]
+    },
+    {
       "name": "scan",
       "options": {},
       "setup": [

@@ -6,6 +6,23 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+
+// cp lazily captures fs.promises.lstat on its first call. Install the forwarding
+// wrapper before any import; only the explicitly named step masks one regular
+// file's classification. Node's real cp code constructs and throws the error.
+const nativeLstat = fs.lstat;
+let unknownTypePath: string | undefined;
+let unknownTypeHits = 0;
+fs.lstat = (async (...args: Parameters<typeof fs.lstat>) => {
+  const stats = await nativeLstat(...args);
+  if (unknownTypePath !== undefined && args[0] === unknownTypePath) {
+    assert.equal(stats.isFile(), true, 'unknown-type probe must start with a real regular file');
+    Object.defineProperty(stats, 'isFile', { value: () => false });
+    unknownTypeHits++;
+  }
+  return stats;
+}) as typeof fs.lstat;
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory or the Rust scratch root');
@@ -162,7 +179,33 @@ async function runSteps(manager: any, steps: any[], root: string, keepMtime = fa
   const savedHome = process.env.HOME;
   process.env.HOME = root; // os.homedir() for "~"; Rust passes home_dir = root.
   try {
-    for (const step of steps) out.push({ ...step, outcome: await runStep(manager, step, root, cursors, keepMtime) });
+    for (const step of steps) {
+      const denied = step.denyReadDir ? join(root, step.denyReadDir) : undefined;
+      try {
+        if (denied) {
+          await fs.chmod(denied, 0);
+          let code: string | undefined;
+          try { await readdir(denied); } catch (error: any) { code = error.code; }
+          if (code === undefined) {
+            const reason = 'NOT_RUN: chmod 000 did not deny native readdir (root or filesystem permissions); refusing to replace the complete oracle';
+            console.error(reason);
+            assert.fail(reason);
+          }
+          assert.equal(code, 'EACCES', 'unexpected native permission probe error');
+          console.log(`native readdir ${step.denyReadDir}: EACCES`);
+        }
+        unknownTypePath = step.unknownType ? join(root, step.unknownType) : undefined;
+        unknownTypeHits = 0;
+        out.push({ ...step, outcome: await runStep(manager, step, root, cursors, keepMtime) });
+        if (step.unknownType) {
+          assert.ok(unknownTypeHits > 0, 'unknown-type lstat hook was not reached');
+          console.log(`unknown-type lstat ${step.unknownType}: hits=${unknownTypeHits}`);
+        }
+      } finally {
+        unknownTypePath = undefined;
+        if (denied) await fs.chmod(denied, 0o755);
+      }
+    }
   } finally { process.env.HOME = savedHome; }
   // Mangled cursors record as literals, like portable nextCursor.raw values; the
   // probes keep projectKey null so no machine path can survive here. The literal
@@ -762,6 +805,52 @@ try {
     assert.deepEqual(o[18].error.validation.hardFails.map((i: any) => i.code), ['frontmatter_missing']);
   }
 
+  // #241 / #251: cp diagnostics and a real unreadable recursive scan child.
+  await scenario('import-unknown-type', {
+    setup: [
+      skill('src/unknown', 'Unknown', 'Regular file classification masked only inside cp'),
+      file('src/unknown/odd', 'ordinary file before the lstat hook'),
+    ],
+    steps: [
+      { ...imp('<dir>/src/unknown'), unknownType: 'src/unknown/odd' },
+      // Remove partial copies: native directory order is platform dependent.
+      op('delete', user('unknown')),
+      imp('<dir>/src/unknown'), // proves classification was restored
+    ],
+  });
+  expectKinds(['ERR_FS_CP_UNKNOWN', 'deleted', 'import:copy:unknown:Unknown']);
+
+  await scenario('import-symlink-to-subdirectory', {
+    setup: [
+      skill('src/real/nested', 'Nested', 'Symlink source with a dangling destination'),
+      { path: 'src/linkroot', kind: 'symlink', target: 'real/nested' },
+      // access follows missing/.. and fails; cp resolves readlink lexically.
+      { path: 'home/skills/dest', kind: 'symlink', target: '../../missing/../src/real' },
+    ],
+    steps: [imp('<dir>/src/linkroot', { slug: 'dest' })],
+  });
+  expectKinds(['ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY']);
+
+  await scenario('scan-unreadable-child', {
+    setup: [
+      skill('bundle', 'Readable', 'Unreadable descendants erase the whole recursive count'),
+      file('bundle/visible.txt', 'visible'),
+      file('bundle/blocked/data.txt', 'hidden'),
+    ],
+    steps: [
+      op('scan', { parentPath: '<dir>/bundle' }),
+      { ...op('scan', { parentPath: '<dir>/bundle' }), denyReadDir: 'bundle/blocked' },
+      op('scan', { parentPath: '<dir>/bundle' }),
+    ],
+  });
+  {
+    const o = expectKinds(Array(3).fill('scan:bundle*,blocked'));
+    assert.equal(o[0].result.folders[0].fileCount, 3);
+    assert.ok(o[0].result.folders[0].totalSize > 0);
+    assert.deepEqual([o[1].result.folders[0].fileCount, o[1].result.folders[0].totalSize], [0, 0]);
+    assert.deepEqual(o[2], o[0], 'chmod restoration must restore the entire scan result');
+  }
+
   // scan: child folders, sort order, symlinks, recursive file counts, error branches.
   await scenario('scan', {
     setup: [
@@ -854,6 +943,7 @@ try {
     'file_too_large', 'file_large', 'risky_extension', 'contains_symlink', 'unsafe_path',
     'self_import', 'source_missing', 'source_not_directory', 'validation_failed', 'not_directory',
     'ERR_FS_CP_EINVAL', 'ERR_FS_CP_DIR_TO_NON_DIR', 'ERR_FS_CP_FIFO_PIPE',
+    'ERR_FS_CP_UNKNOWN', 'ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY',
   ];
   assert.deepEqual(required.filter(c => !seen.has(c)), [], 'uncovered branches');
 
@@ -862,4 +952,7 @@ try {
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
   await writeFile(join(output, 'oracle.json'), oracle);
   console.log(`PASS: generated ${scenarios.length} real TS SkillManager scenarios (${scenarios.reduce((n, s) => n + s.steps.length, 0)} steps)`);
-} finally { await rm(scratch, { recursive: true, force: true }); }
+} finally {
+  fs.lstat = nativeLstat;
+  await rm(scratch, { recursive: true, force: true });
+}

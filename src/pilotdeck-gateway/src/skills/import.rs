@@ -405,6 +405,9 @@ fn copy_non_directory(
     dest: &str,
 ) -> Result<()> {
     let kind = src_stat.file_type();
+    // Test-only classification of a real file; production keeps native FileType.
+    #[cfg(test)]
+    let kind = super::tests::cp_file_type(kind, src);
     if kind.is_file() || kind.is_char_device() || kind.is_block_device() {
         // onFile; force: true unlinks an existing dest first.
         if dest_stat.is_some() {
