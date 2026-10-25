@@ -449,6 +449,199 @@ fn default_store_only_persists_above_the_byte_threshold() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Per-test scratch tree for the private-artifact tests. Mirrors
+/// `tests/common/scratch.rs`: a fresh UUID name, creation refuses an existing
+/// path, an owner token is written inside, and `Drop` deletes the tree only
+/// while this value's token is still there.
+#[cfg(unix)]
+struct ArtifactScratch {
+    path: PathBuf,
+    token: String,
+}
+
+#[cfg(unix)]
+impl ArtifactScratch {
+    fn new(prefix: &str) -> Self {
+        let token = uuid::Uuid::new_v4().to_string();
+        let path = std::env::temp_dir().join(format!("pdrs-{prefix}-{token}"));
+        std::fs::create_dir(&path).expect("scratch directory must be new");
+        std::fs::write(path.join(".pdrs-scratch-owner"), &token).expect("write owner token");
+        Self { path, token }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ArtifactScratch {
+    fn drop(&mut self) {
+        let owned = std::fs::read_to_string(self.path.join(".pdrs-scratch-owner"))
+            .is_ok_and(|token| token == self.token);
+        if owned {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn private_artifact_store(root: &Path) -> GatewayToolResultArtifactStore {
+    GatewayToolResultArtifactStore::new(root, 4)
+}
+
+#[cfg(unix)]
+fn long_artifact_input() -> GatewayToolResultArtifactInput {
+    GatewayToolResultArtifactInput {
+        session_id: text("s"),
+        turn_id: text("t"),
+        tool_call_id: text("c"),
+        text: JsString::from("abcde"),
+    }
+}
+
+/// A pre-planted symlink at the artifact root (the shared `/tmp` shape) must
+/// abort the directory walk; nothing may appear in the link target. The
+/// advisory `persist` still returns its path (TS fire-and-forget contract).
+#[cfg(unix)]
+#[test]
+fn artifact_root_symlink_is_refused_without_touching_its_target() {
+    let scratch = ArtifactScratch::new("artifact-root-symlink");
+    let target = scratch.path().join("target");
+    std::fs::create_dir(&target).expect("target dir");
+    let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
+    std::os::unix::fs::symlink(&target, &root).expect("plant root symlink");
+
+    let store = private_artifact_store(&root);
+    let path = store
+        .persist(&long_artifact_input())
+        .expect("advisory persist never throws")
+        .expect("above threshold");
+    store.wait_for_pending();
+
+    assert!(
+        !Path::new(&path).exists(),
+        "the refused write must not have created {path}"
+    );
+    assert_eq!(
+        std::fs::read_dir(&target).expect("target dir").count(),
+        0,
+        "nothing may be written through the root symlink"
+    );
+    assert!(!target.join("s").exists());
+}
+
+/// A pre-planted symlink at the final file path must not be followed, and its
+/// target must not be truncated or overwritten (`O_NOFOLLOW`).
+#[cfg(unix)]
+#[test]
+fn artifact_file_symlink_is_not_followed_or_truncated() {
+    let scratch = ArtifactScratch::new("artifact-file-symlink");
+    let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
+    std::fs::create_dir_all(root.join("s").join("t")).expect("artifact dirs");
+    let victim = scratch.path().join("victim.txt");
+    std::fs::write(&victim, "keep").expect("victim content");
+    let link = root.join("s").join("t").join("c.txt");
+    std::os::unix::fs::symlink(&victim, &link).expect("plant file symlink");
+
+    let store = private_artifact_store(&root);
+    store
+        .persist(&long_artifact_input())
+        .expect("advisory persist never throws")
+        .expect("above threshold");
+    store.wait_for_pending();
+
+    assert_eq!(
+        std::fs::read_to_string(&victim).expect("victim readable"),
+        "keep",
+        "the symlink target must stay unchanged"
+    );
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .expect("link still there")
+            .file_type()
+            .is_symlink(),
+        "the planted link itself must not be replaced"
+    );
+}
+
+/// Ownership is checked by a pure function over `(metadata, expected uid)`.
+/// Creating a directory owned by another user needs root (and `chown` on
+/// macOS/Linux is privileged), so the test passes a synthetic euid instead of
+/// mutating real ownership; the same function runs in production with
+/// `rustix::process::geteuid()`.
+#[cfg(unix)]
+#[test]
+fn artifact_directory_owner_check_rejects_a_foreign_uid() {
+    use std::os::unix::fs::MetadataExt;
+
+    let scratch = ArtifactScratch::new("artifact-owner");
+    let directory = scratch.path().join("owned");
+    std::fs::create_dir(&directory).expect("owned dir");
+    let metadata = std::fs::symlink_metadata(&directory).expect("dir metadata");
+    let euid = rustix::process::geteuid().as_raw();
+    assert_eq!(
+        metadata.uid(),
+        euid,
+        "the scratch dir belongs to the test user"
+    );
+    verify_private_directory(&directory, &metadata, euid).expect("current owner is accepted");
+
+    let error = verify_private_directory(&directory, &metadata, euid.wrapping_add(1))
+        .expect_err("a foreign uid must be refused");
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+
+    // A regular file is not a directory, and a symlink is refused even when
+    // it points at a directory we own.
+    let file = scratch.path().join("file");
+    std::fs::write(&file, "x").expect("file");
+    let file_metadata = std::fs::symlink_metadata(&file).expect("file metadata");
+    verify_private_directory(&file, &file_metadata, euid).expect_err("files are refused");
+    let link = scratch.path().join("link");
+    std::os::unix::fs::symlink(&directory, &link).expect("dir symlink");
+    let link_metadata = std::fs::symlink_metadata(&link).expect("link metadata");
+    verify_private_directory(&link, &link_metadata, euid)
+        .expect_err("directory symlinks are refused");
+}
+
+/// Normal writes keep working: the directory name, file name and content are
+/// unchanged; every created level is 0700 and the file is 0600.
+#[cfg(unix)]
+#[test]
+fn artifact_directories_are_0700_and_the_file_is_0600() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = ArtifactScratch::new("artifact-mode");
+    let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
+    let store = private_artifact_store(&root);
+    let path = store
+        .persist(&long_artifact_input())
+        .expect("persisted")
+        .expect("above threshold");
+    store.wait_for_pending();
+
+    assert_eq!(std::fs::read_to_string(&path).expect("artifact"), "abcde");
+    assert_eq!(
+        Path::new(&path),
+        root.join("s").join("t").join("c.txt"),
+        "the path shape is unchanged"
+    );
+    for directory in [root.clone(), root.join("s"), root.join("s").join("t")] {
+        let mode = std::fs::symlink_metadata(&directory)
+            .expect("dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "{} must be 0700", directory.display());
+    }
+    let mode = std::fs::symlink_metadata(&path)
+        .expect("file metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "the artifact file must be 0600");
+}
+
 /// Fix round 3: `persist` passes the path fields through unchanged below the
 /// threshold, but `safePathPart(...).trim()` throws above it for a non-string
 /// `sessionId`/`turnId`/`toolCallId` (TS evaluates them in that order).

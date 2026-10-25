@@ -22,6 +22,11 @@ pub const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS: usize = 20_000;
 /// `MAX_GATEWAY_TOOL_DATA_STRING_CHARS` (UTF-16 code units).
 pub const MAX_GATEWAY_TOOL_DATA_STRING_CHARS: usize = 4_000;
 const DEFAULT_ARTIFACT_THRESHOLD_BYTES: usize = 4_096;
+/// Default artifact root directory name. The security checks start at this
+/// component: the parent (the OS temp directory) is shared and is not
+/// ownership-checked, while every level from here down must be a real
+/// directory owned by the current euid.
+const TOOL_RESULT_DIR_NAME: &str = "pilotdeck-tool-results";
 
 /// A projection failure that TS expresses as a thrown `TypeError`/`RangeError`.
 ///
@@ -229,7 +234,7 @@ fn default_artifact_root(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Pa
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(tmp)
     };
-    resolve_lexically(root.join("pilotdeck-tool-results"))
+    resolve_lexically(root.join(TOOL_RESULT_DIR_NAME))
 }
 
 impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
@@ -279,6 +284,99 @@ fn resolve_lexically(path: PathBuf) -> PathBuf {
     normalized
 }
 
+/// Create the artifact directory tree one level at a time with mode 0700.
+///
+/// The default root lives under the OS temp directory, which is shared on
+/// Linux (`/tmp`). A predictable `<root>/<session>/<turn>/<call>.txt` path lets
+/// another local user pre-create a symlink or a directory they own, redirecting
+/// the advisory write elsewhere. From the `pilotdeck-tool-results` component
+/// down, every existing level is therefore required to be a real directory
+/// (never a symlink) owned by the current euid; a violation aborts before any
+/// file is written. The temp directory above that component is intentionally
+/// not ownership-checked (it is normally root-owned).
+#[cfg(unix)]
+fn create_directory_private(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    let euid = rustix::process::geteuid().as_raw();
+    let mut current = PathBuf::new();
+    let mut guarded = false;
+    for component in path.components() {
+        current.push(component.as_os_str());
+        if matches!(component, Component::Normal(name) if name == std::ffi::OsStr::new(TOOL_RESULT_DIR_NAME))
+        {
+            guarded = true;
+        }
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if guarded {
+                    verify_private_directory(&current, &metadata, euid)?;
+                }
+                continue;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        // `create_dir` (not `create_dir_all`): this level is missing, and the
+        // parent was just verified or created above.
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder.create(&current)?;
+        // The process umask also masks the mode passed to mkdir; set it
+        // explicitly so a permissive/odd umask cannot weaken a new level.
+        fs::set_permissions(&current, fs::Permissions::from_mode(0o700))?;
+        if guarded {
+            let metadata = fs::symlink_metadata(&current)?;
+            verify_private_directory(&current, &metadata, euid)?;
+        }
+    }
+    Ok(())
+}
+
+/// Check one artifact-directory level: a real directory, not a symbolic link,
+/// owned by `expected_uid`. Split out from the filesystem walk so tests can
+/// exercise the ownership branch with a synthetic expected uid (putting a
+/// directory under another real owner needs root).
+#[cfg(unix)]
+fn verify_private_directory(
+    path: &Path,
+    metadata: &fs::Metadata,
+    expected_uid: u32,
+) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    if metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing tool-result directory {}: it is a symbolic link",
+                path.display()
+            ),
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            format!(
+                "refusing tool-result directory {}: not a directory",
+                path.display()
+            ),
+        ));
+    }
+    let owner = metadata.uid();
+    if owner != expected_uid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing tool-result directory {}: owned by uid {owner}, expected euid {expected_uid}",
+                path.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
 fn create_directory_private(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)
 }
@@ -292,6 +390,9 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .create(true)
         .truncate(true)
         .mode(0o600)
+        // A pre-planted final-component symlink must not redirect the write
+        // (and its truncation) to another file.
+        .custom_flags(libc::O_NOFOLLOW)
         .open(path)?;
     file.write_all(bytes)
 }
