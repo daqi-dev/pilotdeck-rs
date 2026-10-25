@@ -110,20 +110,78 @@ export const cases = [
   ['non-bmp', '<p>中文 😀 𝄞</p><a href="😀">🌍</a>'],
 ].map(([name, html]) => ({ name, html }));
 
-// Newer HTML5 tree-building rules differ from domino 2.2.0. Keep their TS
-// outputs visible and replayable without calling them accepted differences.
+// Parser compatibility cases: domino 2.2.0 (the fixed TS baseline) against the
+// current HTML tree-building rules used by html5ever. The Rust parser rewrites
+// the two moved constructs (old `in select` mode, `<search>` inline) at the
+// token boundary; these are their real recorded TS outputs plus controls that
+// keep the rewrite from over-reaching (raw text, templates, table context,
+// foreign content). Kept under the historical `parserGaps` key so existing
+// readers keep working.
 export const parserGaps = [
+  // Original ledger rows: select/hr, search, select inner-tag family.
   ['select-hr', '<select><hr></select>'],
   ['search-element', '<p>a<search>b</search>c</p>'],
-  ["select-div-in-p", "<p>a<select><div>b</div></select>c</p>"],
-  ["select-p", "<select><p>x</p></select>tail"],
-  ["select-li", "<div>a<select><li>b</li></select>c</div>"],
-  ["select-table", "<div>a<select><table><tr><td>b</td></tr></table></select>c</div>"],
-  ["select-h1", "<div>a<select><h1>b</h1></select>c</div>"],
-  ["select-ul", "<div>a<select><ul><li>b</li></ul></select>c</div>"],
-  ["select-img", "<div>a<select><img src=\"x\" alt=\"b\"></select>c</div>"],
-  ["select-br", "<div>a<select>b<br>d</select>c</div>"],
-  ["select-option-div", "<div>a<select><option><div>b</div></option></select>c</div>"],
+  ['select-div-in-p', '<p>a<select><div>b</div></select>c</p>'],
+  ['select-p', '<select><p>x</p></select>tail'],
+  ['select-li', '<div>a<select><li>b</li></select>c</div>'],
+  ['select-table', '<div>a<select><table><tr><td>b</td></tr></table></select>c</div>'],
+  ['select-h1', '<div>a<select><h1>b</h1></select>c</div>'],
+  ['select-ul', '<div>a<select><ul><li>b</li></ul></select>c</div>'],
+  ['select-img', '<div>a<select><img src="x" alt="b"></select>c</div>'],
+  ['select-br', '<div>a<select>b<br>d</select>c</div>'],
+  ['select-option-div', '<div>a<select><option><div>b</div></option></select>c</div>'],
+  // More select/hr and search shapes.
+  ['select-hr-text', '<select>a<hr>b</select>'],
+  ['select-hr-option', '<select><option>a</option><hr><option>b</option></select>'],
+  ['search-empty', '<p>a<search></search>c</p>'],
+  ['search-block', '<div>a<search><p>b</p></search>c</div>'],
+  ['search-top', '<search>a</search>tail'],
+  ['search-nested-p', '<p>a<search>b<p>c</p>d</search>e</p>'],
+  ['search-selfclose', '<p>a<search/>b</p>'],
+  ['search-in-attribute', '<p title="<search>">a</p>'],
+  // Old in-select mode keeps only option/optgroup/script/template and closes on
+  // input/keygen/textarea or a nested select.
+  ['control-select-options', '<select><option>a</option><option>b</option></select>'],
+  ['control-select-text', '<div>a<select>bc</select>d</div>'],
+  ['control-select-optgroup', '<select><optgroup label="g"><option>a</option></optgroup></select>'],
+  ['control-select-script', '<div>a<select><script>var x = 1;</script>b</select>c</div>'],
+  ['control-select-template', '<div>a<select><template><div>x</div></template>b</select>c</div>'],
+  ['template-in-select', '<div>a<select><template><div>x</div></template>b</select>c</div>'],
+  ['select-in-template', '<template><select><div>b</div></select></template><p>c</p>'],
+  ['control-select-textarea', '<div>a<select>b<textarea>c</textarea>d</select>e</div>'],
+  ['control-select-input', '<div>a<select>b<input value="x">d</select>e</div>'],
+  ['control-nested-select', '<div>a<select>b<select>c</select>d</select>e</div>'],
+  ['control-select-comment', '<div>a<select><!-- <div>x</div> -->b</select>c</div>'],
+  ['control-search-in-select', '<div>a<select><search>b</search></select>c</div>'],
+  ['control-select-script-markup', '<div>a<select><script>var s = "<select><hr>";</script>b</select>c</div>'],
+  ['control-search-literal-script', '<script>var s = "<search>x</search><select><hr>";</script><p>y</p>'],
+  ['control-plain-select', '<div><select><option>x</option></select></div>'],
+  // Raw-text tags that old in-select drops are not inserted, so domino's
+  // tokenizer never switches to RAWTEXT/RCDATA; their content is ordinary
+  // tokens. These stay distinguishable from select's kept SCRIPT.
+  ['select-style-b', '<div>a<select><style>a<b>bold</b></style>x</select>c</div>'],
+  ['select-style-search', '<div>a<select><style>a<search>s</search></style>x</select>c</div>'],
+  ['select-title-markup', '<div>a<select><title>a<div>b</title>x</select>c</div>'],
+  ['select-xmp-b', '<div>a<select><xmp>a<b>bold</b></xmp>x</select>c</div>'],
+  ['select-plaintext', '<div>a<select><plaintext>a<div>b</select>c</div>'],
+  // Token scanning: casing, quoted `>`, comments, unquoted slash.
+  ['select-uppercase', '<SELECT><DIV>b</DIV></SELECT>'],
+  ['search-uppercase', '<p>a<SEARCH>b</SEARCH>c</p>'],
+  ['select-quoted-gt', '<select><div title="a>b">c</div>d</select>'],
+  ['select-comment-hr', '<select><!-- <hr> -->b</select>'],
+  ['select-unquoted-slash', '<select><div a=b/c>d</select>'],
+  // Domino's in-select-in-table closes the select before table structure.
+  ['select-in-table-row', '<table><tr><td>a<select><tr><td>b</td></tr></select>c</td></tr></table>'],
+  ['select-in-table-div', '<table><tr><td>a<select><div>b</div></select>c</td></tr></table>'],
+  ['select-in-table-table', '<table><tr><td><select><table><tr><td>x</td></tr></table></select>y</td></tr></table>'],
+  // Foreign content must stay on its own parser rules.
+  ['svg-select', '<svg><select><div>b</div></select></svg>'],
+  ['svg-search', '<svg><search><div>b</div></search></svg>'],
+  ['math-select', '<math><select><div>b</div></select></math>'],
+  ['svg-foreignObject-select', '<svg><foreignObject><select><div>b</div></select></foreignObject></svg>'],
+  ['svg-foreignObject-search', '<svg><foreignObject><search>b</search></foreignObject></svg>'],
+  // Negative control for the search rewrite: ordinary blocks still close P.
+  ['control-dialog', '<p>a<dialog>b</dialog>c</p>'],
 ].map(([name, html]) => ({ name, html }));
 
 export const fetchHtml = '<h1>😀 title</h1><p>Read <a href="/doc">docs</a> &amp; <strong>code</strong>.</p><pre><code>x_*\n</code></pre>';

@@ -479,6 +479,8 @@ pub const DOM_LIMIT_ERROR: &str = "Maximum call stack size exceeded";
 /// of parser work: adoption agency can move existing subtrees. Height checks
 /// update only ancestor paths, never traverse those subtrees or their siblings.
 pub(crate) fn parse_document(html: &str) -> Result<Dom, String> {
+    let html = super::html_compat::domino_compatible(html);
+    let html = html.as_ref();
     let mut options = ParseOpts::default();
     options.tree_builder.scripting_enabled = false;
     let mut parser = html5ever::parse_document(Sink::new(), options);

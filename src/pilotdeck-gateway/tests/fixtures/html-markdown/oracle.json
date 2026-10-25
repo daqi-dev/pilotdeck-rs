@@ -1326,6 +1326,216 @@
    "name": "select-option-div",
    "html": "<div>a<select><option><div>b</div></option></select>c</div>",
    "markdown": "abc"
+  },
+  {
+   "name": "select-hr-text",
+   "html": "<select>a<hr>b</select>",
+   "markdown": "ab"
+  },
+  {
+   "name": "select-hr-option",
+   "html": "<select><option>a</option><hr><option>b</option></select>",
+   "markdown": "ab"
+  },
+  {
+   "name": "search-empty",
+   "html": "<p>a<search></search>c</p>",
+   "markdown": "ac"
+  },
+  {
+   "name": "search-block",
+   "html": "<div>a<search><p>b</p></search>c</div>",
+   "markdown": "a\n\nb\n\nc"
+  },
+  {
+   "name": "search-top",
+   "html": "<search>a</search>tail",
+   "markdown": "atail"
+  },
+  {
+   "name": "search-nested-p",
+   "html": "<p>a<search>b<p>c</p>d</search>e</p>",
+   "markdown": "ab\n\nc\n\nde"
+  },
+  {
+   "name": "search-selfclose",
+   "html": "<p>a<search/>b</p>",
+   "markdown": "ab"
+  },
+  {
+   "name": "search-in-attribute",
+   "html": "<p title=\"<search>\">a</p>",
+   "markdown": "a"
+  },
+  {
+   "name": "control-select-options",
+   "html": "<select><option>a</option><option>b</option></select>",
+   "markdown": "ab"
+  },
+  {
+   "name": "control-select-text",
+   "html": "<div>a<select>bc</select>d</div>",
+   "markdown": "abcd"
+  },
+  {
+   "name": "control-select-optgroup",
+   "html": "<select><optgroup label=\"g\"><option>a</option></optgroup></select>",
+   "markdown": "a"
+  },
+  {
+   "name": "control-select-script",
+   "html": "<div>a<select><script>var x = 1;</script>b</select>c</div>",
+   "markdown": "avar x = 1;bc"
+  },
+  {
+   "name": "control-select-template",
+   "html": "<div>a<select><template><div>x</div></template>b</select>c</div>",
+   "markdown": "abc"
+  },
+  {
+   "name": "template-in-select",
+   "html": "<div>a<select><template><div>x</div></template>b</select>c</div>",
+   "markdown": "abc"
+  },
+  {
+   "name": "select-in-template",
+   "html": "<template><select><div>b</div></select></template><p>c</p>",
+   "markdown": "c"
+  },
+  {
+   "name": "control-select-textarea",
+   "html": "<div>a<select>b<textarea>c</textarea>d</select>e</div>",
+   "markdown": "abcde"
+  },
+  {
+   "name": "control-select-input",
+   "html": "<div>a<select>b<input value=\"x\">d</select>e</div>",
+   "markdown": "abde"
+  },
+  {
+   "name": "control-nested-select",
+   "html": "<div>a<select>b<select>c</select>d</select>e</div>",
+   "markdown": "abcde"
+  },
+  {
+   "name": "control-select-comment",
+   "html": "<div>a<select><!-- <div>x</div> -->b</select>c</div>",
+   "markdown": "abc"
+  },
+  {
+   "name": "control-search-in-select",
+   "html": "<div>a<select><search>b</search></select>c</div>",
+   "markdown": "abc"
+  },
+  {
+   "name": "control-select-script-markup",
+   "html": "<div>a<select><script>var s = \"<select><hr>\";</script>b</select>c</div>",
+   "markdown": "avar s = \"<select><hr>\";bc"
+  },
+  {
+   "name": "control-search-literal-script",
+   "html": "<script>var s = \"<search>x</search><select><hr>\";</script><p>y</p>",
+   "markdown": "var s = \"<search>x</search><select><hr>\";\n\ny"
+  },
+  {
+   "name": "control-plain-select",
+   "html": "<div><select><option>x</option></select></div>",
+   "markdown": "x"
+  },
+  {
+   "name": "select-style-b",
+   "html": "<div>a<select><style>a<b>bold</b></style>x</select>c</div>",
+   "markdown": "aaboldxc"
+  },
+  {
+   "name": "select-style-search",
+   "html": "<div>a<select><style>a<search>s</search></style>x</select>c</div>",
+   "markdown": "aasxc"
+  },
+  {
+   "name": "select-title-markup",
+   "html": "<div>a<select><title>a<div>b</title>x</select>c</div>",
+   "markdown": "aabxc"
+  },
+  {
+   "name": "select-xmp-b",
+   "html": "<div>a<select><xmp>a<b>bold</b></xmp>x</select>c</div>",
+   "markdown": "aaboldxc"
+  },
+  {
+   "name": "select-plaintext",
+   "html": "<div>a<select><plaintext>a<div>b</select>c</div>",
+   "markdown": "aabc"
+  },
+  {
+   "name": "select-uppercase",
+   "html": "<SELECT><DIV>b</DIV></SELECT>",
+   "markdown": "b"
+  },
+  {
+   "name": "search-uppercase",
+   "html": "<p>a<SEARCH>b</SEARCH>c</p>",
+   "markdown": "abc"
+  },
+  {
+   "name": "select-quoted-gt",
+   "html": "<select><div title=\"a>b\">c</div>d</select>",
+   "markdown": "cd"
+  },
+  {
+   "name": "select-comment-hr",
+   "html": "<select><!-- <hr> -->b</select>",
+   "markdown": "b"
+  },
+  {
+   "name": "select-unquoted-slash",
+   "html": "<select><div a=b/c>d</select>",
+   "markdown": "d"
+  },
+  {
+   "name": "select-in-table-row",
+   "html": "<table><tr><td>a<select><tr><td>b</td></tr></select>c</td></tr></table>",
+   "markdown": "c\n\na\n\nb"
+  },
+  {
+   "name": "select-in-table-div",
+   "html": "<table><tr><td>a<select><div>b</div></select>c</td></tr></table>",
+   "markdown": "abc"
+  },
+  {
+   "name": "select-in-table-table",
+   "html": "<table><tr><td><select><table><tr><td>x</td></tr></table></select>y</td></tr></table>",
+   "markdown": "x\n\ny"
+  },
+  {
+   "name": "svg-select",
+   "html": "<svg><select><div>b</div></select></svg>",
+   "markdown": "b"
+  },
+  {
+   "name": "svg-search",
+   "html": "<svg><search><div>b</div></search></svg>",
+   "markdown": "b"
+  },
+  {
+   "name": "math-select",
+   "html": "<math><select><div>b</div></select></math>",
+   "markdown": "b"
+  },
+  {
+   "name": "svg-foreignObject-select",
+   "html": "<svg><foreignObject><select><div>b</div></select></foreignObject></svg>",
+   "markdown": "b"
+  },
+  {
+   "name": "svg-foreignObject-search",
+   "html": "<svg><foreignObject><search>b</search></foreignObject></svg>",
+   "markdown": "b"
+  },
+  {
+   "name": "control-dialog",
+   "html": "<p>a<dialog>b</dialog>c</p>",
+   "markdown": "a\n\nbc"
   }
  ],
  "fetch": {
