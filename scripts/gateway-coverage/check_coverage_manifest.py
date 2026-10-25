@@ -16,11 +16,15 @@ Checks specs/gateway-coverage/coverage-manifest.json:
    configuration/lifecycle/blockers, so the manifest cannot drift from the
    evidence ledger;
 5. every referenced baseline file matches the sha256 pinned in the ledger's
-   source_files table.
+   source_files table, and every file consumed by load_inputs() is pinned in
+   frozen_inputs.sha256;
+6. projection and summary comparisons are type-strict (bool/int/float never
+   compare equal), and when the primary validation is clean the in-memory
+   negative controls run by default (count in negative_self_test_count).
 
 Runs under ``python3 -I`` (stdlib only; ledger_format is imported from this
 directory explicitly).  A missing read-only baseline is fail-closed (exit 2),
-never treated as PASS.
+never treated as PASS.  ``--self-test`` is kept only as a compatibility flag.
 """
 import argparse
 import copy
@@ -29,6 +33,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 
@@ -82,6 +87,23 @@ def string_list(value, nonempty=False, unique=True):
             and (not unique or len(value) == len(set(value))))
 
 
+def strict_equal(left, right):
+    """Type-strict deep equality; bool/int/float drift never compares equal."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            strict_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            strict_equal(a, b) for a, b in zip(left, right))
+    return left == right
+
+
+def strict_contains(values, target):
+    return any(strict_equal(value, target) for value in values)
+
+
 def expected_owner(package):
     if package == 'A4':
         return 'A4'
@@ -107,7 +129,7 @@ class RefChecker:
     """Resolve B/ anchors and pin whole files to the ledger source table."""
 
     def __init__(self, baseline, source_files):
-        self.baseline = baseline
+        self.baseline = Path(baseline).resolve()
         self.pins = source_files if isinstance(source_files, dict) else {}
         self.digests = {}
         self.checked = 0
@@ -127,7 +149,10 @@ class RefChecker:
         if not isinstance(pin, dict) or not isinstance(pin.get('sha256'), str):
             fail('baseline_pin', where, 'file is not pinned by ledger.source_files: ' + relative)
             return
-        path = self.baseline / relative
+        path = (self.baseline / relative).resolve()
+        if not path.is_relative_to(self.baseline):
+            fail('reference_path', where, 'reference escapes baseline via symlink: ' + ref)
+            return
         try:
             if relative not in self.digests:
                 raw = path.read_bytes()
@@ -137,7 +162,7 @@ class RefChecker:
         except (OSError, UnicodeError) as exc:
             fail('reference_file', where, str(exc))
             return
-        if digest != pin['sha256'] or line_count != pin.get('line_count'):
+        if not strict_equal(digest, pin['sha256']) or not strict_equal(line_count, pin.get('line_count')):
             fail('baseline_pin', where, 'baseline file differs from frozen snapshot: ' + relative)
             return
         if not 1 <= int(number) <= line_count:
@@ -175,6 +200,8 @@ def load_inputs():
         'schema_sha': sha256(SCHEMA),
         'snapshot_sha': sha256(SNAPSHOT),
         'inventory_sha': sha256(INVENTORY),
+        'driver_sha': sha256(DRIVER),
+        'gap_sha': sha256(GAP),
     }
 
 
@@ -188,7 +215,7 @@ def validate(data, ledger_raw, ledger, inputs, checker):
     if not isinstance(data, dict):
         return [{'code': 'document', 'path': '$', 'detail': 'expected object'}], {}
 
-    if data.get('format_version') != 1:
+    if not strict_equal(data.get('format_version'), 1):
         fail('format_version', '$.format_version', 'expected format_version=1')
     if not isinstance(data.get('comment'), str) or not data['comment'].strip():
         fail('comment', '$.comment', 'nonempty comment required')
@@ -232,9 +259,9 @@ def validate(data, ledger_raw, ledger, inputs, checker):
     if not isinstance(baseline, dict):
         fail('baseline', '$.baseline', 'expected object')
         baseline = {}
-    if baseline.get('commit') != ledger_raw.get('baseline', {}).get('commit'):
+    if not strict_equal(baseline.get('commit'), ledger_raw.get('baseline', {}).get('commit')):
         fail('baseline', '$.baseline', 'commit differs from ledger baseline')
-    if baseline.get('commit') != PINNED_COMMIT:
+    if not strict_equal(baseline.get('commit'), PINNED_COMMIT):
         fail('baseline', '$.baseline', 'expected the schema-FROZEN baseline commit')
     if not isinstance(baseline.get('root'), str) or not baseline['root'].strip():
         fail('baseline', '$.baseline', 'nonempty root_hint required')
@@ -243,14 +270,18 @@ def validate(data, ledger_raw, ledger, inputs, checker):
     if not isinstance(frozen, dict):
         fail('input_hash', '$.frozen_inputs', 'expected object')
         frozen = {}
-    if frozen.get('method_count') != 101:
+    if not strict_equal(frozen.get('method_count'), 101):
         fail('input_methods', '$.frozen_inputs', 'method_count must be 101')
+    # load_inputs() consumes all five files; pin every one, like check_ledger's
+    # input_files table, so driver/gap.md drift is recorded by this entry too.
     expected_hashes = {
         'schema/gateway-protocol.schema.json': inputs['schema_sha'],
         'schema/gateway-methods.snapshot.json': inputs['snapshot_sha'],
         'docs/research/005_phase-a-gateway/method-inventory.md': inputs['inventory_sha'],
+        'scripts/gateway-parity/driver.mts': inputs['driver_sha'],
+        'docs/research/008_phase-a-session-domain/gap.md': inputs['gap_sha'],
     }
-    if frozen.get('sha256') != expected_hashes:
+    if not strict_equal(frozen.get('sha256'), expected_hashes):
         fail('input_hash', '$.frozen_inputs.sha256', 'frozen input hashes differ from checkout')
     if frozen.get('schema_enum') != 'schema/gateway-protocol.schema.json#/definitions/WsGatewayMethod/enum':
         fail('input_methods', '$.frozen_inputs.schema_enum', 'unexpected schema enum path')
@@ -265,9 +296,12 @@ def validate(data, ledger_raw, ledger, inputs, checker):
         source = {}
     if source.get('ledger') != 'specs/gateway-coverage/ledger.json':
         fail('ledger', '$.source.ledger', 'expected specs/gateway-coverage/ledger.json')
-    if source.get('ledger_sha256') != sha256(LEDGER):
-        fail('ledger_hash', '$.source.ledger_sha256', 'ledger hash differs from checkout')
-    if source.get('ledger_format_version') != ledger_raw.get('format_version'):
+    # Hash the ledger actually read via --ledger, not the hard-coded canonical
+    # path: hashing LEDGER while projecting args.ledger can PASS two different
+    # files.
+    if not strict_equal(source.get('ledger_sha256'), inputs['ledger_sha']):
+        fail('ledger_hash', '$.source.ledger_sha256', 'ledger hash differs from the ledger read')
+    if not strict_equal(source.get('ledger_format_version'), ledger_raw.get('format_version')):
         fail('ledger', '$.source.ledger_format_version', 'format_version differs from ledger')
     if source.get('ledger_validator') != 'scripts/gateway-coverage/check_ledger.py':
         fail('ledger', '$.source.ledger_validator', 'unexpected ledger validator path')
@@ -282,7 +316,7 @@ def validate(data, ledger_raw, ledger, inputs, checker):
 
     semantics = ledger_raw.get('semantics', {})
     expected_semantics = {key: semantics.get(key) for key in ('READY', 'BLOCKED')}
-    if data.get('status_semantics') != expected_semantics:
+    if not strict_equal(data.get('status_semantics'), expected_semantics):
         fail('status_semantics', '$.status_semantics', 'READY/BLOCKED semantics must match ledger')
     scenario_policy = data.get('scenario_policy')
     if (not isinstance(scenario_policy, dict)
@@ -296,7 +330,7 @@ def validate(data, ledger_raw, ledger, inputs, checker):
     if not isinstance(configuration, dict) or not configuration:
         fail('configuration', '$.configuration', 'nonempty configuration catalog required')
         configuration = {}
-    if configuration != ledger_raw.get('configuration'):
+    if not strict_equal(configuration, ledger_raw.get('configuration')):
         fail('configuration', '$.configuration', 'configuration catalog differs from ledger')
     for key, value in configuration.items():
         if (not isinstance(value, dict) or not isinstance(value.get('summary'), str)
@@ -308,7 +342,7 @@ def validate(data, ledger_raw, ledger, inputs, checker):
     if not isinstance(bindings, dict) or not bindings:
         fail('external_bindings', '$.external_bindings', 'nonempty binding table required')
         bindings = {}
-    if bindings != ledger_bindings:
+    if not strict_equal(bindings, ledger_bindings):
         fail('external_bindings', '$.external_bindings', 'binding table differs from ledger')
     if set(bindings) != set(ledger_bindings):
         fail('external_bindings', '$.external_bindings', 'binding keys differ from ledger')
@@ -363,11 +397,11 @@ def validate(data, ledger_raw, ledger, inputs, checker):
                       'branches', 'configuration', 'lifecycle', 'guard', 'a6_dependencies', 'blockers'):
             if field not in entry:
                 fail('required_field', where + '.' + field, 'missing required field')
-        if entry.get('frozen_category') != inputs['categories'].get(method):
+        if not strict_equal(entry.get('frozen_category'), inputs['categories'].get(method)):
             fail('frozen_category', where, method)
-        if entry.get('work_package') != inputs['groups'].get(method):
+        if not strict_equal(entry.get('work_package'), inputs['groups'].get(method)):
             fail('work_package', where, method)
-        if entry.get('owner') != expected_owner(inputs['groups'].get(method)):
+        if not strict_equal(entry.get('owner'), expected_owner(inputs['groups'].get(method))):
             fail('owner', where, method)
         if entry.get('status') not in STATUSES:
             fail('status', where, 'READY or BLOCKED required')
@@ -392,7 +426,9 @@ def validate(data, ledger_raw, ledger, inputs, checker):
             if not string_list(proposed, True):
                 fail('scenario', where + '.scenario_ids.proposed', 'nonempty unique proposed ids required')
             else:
-                pattern = re.compile(r'a51\.' + re.escape(method) + r'\.[a-z0-9_]+$')
+                # Same character class as check_ledger.py's proposed-scenario
+                # gate ([a-z_]+): no numeric id suffix is accepted by either.
+                pattern = re.compile(r'a51\.' + re.escape(method) + r'\.[a-z_]+$')
                 bad = [item for item in proposed if not pattern.fullmatch(item)]
                 if bad:
                     fail('scenario', where + '.scenario_ids.proposed', {'bad_ids': bad[:5]})
@@ -430,7 +466,7 @@ def validate(data, ledger_raw, ledger, inputs, checker):
                              {'unprojected_keys': sorted(unprojected)})
                     expected_stage = {key: ledger_stage.get(key)
                                       for key in ledger_stage if key in allowed}
-                    if value != expected_stage:
+                    if not strict_equal(value, expected_stage):
                         fail('ledger_projection', stage_where, 'stage differs from expanded ledger')
             if stage_name == 'state':
                 kinds = value.get('kinds')
@@ -470,7 +506,7 @@ def validate(data, ledger_raw, ledger, inputs, checker):
                         or not isinstance(record.get('summary'), str) or not record['summary'].strip()
                         or not string_list(record.get('refs'), True)):
                     fail('branches', record_where, 'summary and nonempty refs required')
-            if ledger_entry is not None and success != ledger_entry['branches']['success']:
+            if ledger_entry is not None and not strict_equal(success, ledger_entry['branches']['success']):
                 fail('ledger_projection', where + '.branches.success', 'differs from expanded ledger')
 
         unconfigured = branches.get('unconfigured')
@@ -484,7 +520,7 @@ def validate(data, ledger_raw, ledger, inputs, checker):
                         or not isinstance(record.get('summary'), str) or not record['summary'].strip()
                         or not string_list(record.get('refs'), True)):
                     fail('branches', record_where, 'code, summary and nonempty refs required')
-            if ledger_entry is not None and unconfigured != ledger_entry['branches']['unconfigured']:
+            if ledger_entry is not None and not strict_equal(unconfigured, ledger_entry['branches']['unconfigured']):
                 fail('ledger_projection', where + '.branches.unconfigured', 'differs from expanded ledger')
 
         error = branches.get('error')
@@ -508,22 +544,22 @@ def validate(data, ledger_raw, ledger, inputs, checker):
                 fail('error_sample', where + '.branches.error.sample', 'sample must follow sorted codes')
             handler_value = entry.get('handler')
             handler_refs = handler_value.get('refs') if isinstance(handler_value, dict) else None
-            if error.get('refs') != handler_refs:
+            if not strict_equal(error.get('refs'), handler_refs):
                 fail('error_branch', where + '.branches.error.refs', 'handler dispatch refs required')
             expected_evidence = 'specs/gateway-coverage/ledger.json#methods[%s].branches.error' % method
-            if error.get('evidence') != expected_evidence:
+            if not strict_equal(error.get('evidence'), expected_evidence):
                 fail('error_branch', where + '.branches.error.evidence', 'ledger pointer required')
             if ledger_entry is not None:
                 records = ledger_entry['branches']['error']
-                if count != len(records):
+                if not strict_equal(count, len(records)):
                     fail('error_branch', where + '.branches.error.count', 'count differs from ledger')
                 expected_codes = sorted({record['code'] for record in records})
-                if codes != expected_codes:
+                if not strict_equal(codes, expected_codes):
                     fail('error_codes', where + '.branches.error.codes', 'codes differ from ledger')
                 expected_dynamic = sorted({record['code'] for record in records if record.get('dynamic')})
-                if dynamic != expected_dynamic:
+                if not strict_equal(dynamic, expected_dynamic):
                     fail('error_dynamic', where + '.branches.error.dynamic_codes', 'dynamic codes differ from ledger')
-                if isinstance(sample, list) and any(record not in records for record in sample):
+                if isinstance(sample, list) and any(not strict_contains(records, record) for record in sample):
                     fail('error_sample', where + '.branches.error.sample', 'sample not found in ledger')
 
         configuration_keys = entry.get('configuration')
@@ -561,12 +597,12 @@ def validate(data, ledger_raw, ledger, inputs, checker):
         if ledger_entry is not None:
             for field in ('frozen_category', 'work_package', 'owner', 'delivery_package', 'status',
                           'configuration', 'a6_dependencies', 'blockers'):
-                if entry.get(field) != ledger_entry.get(field):
+                if not strict_equal(entry.get(field), ledger_entry.get(field)):
                     fail('ledger_projection', f'{where}.{field}', 'differs from expanded ledger')
-            if scenario != {'driver': ledger_entry['scenario_ids'],
-                            'proposed': ledger_entry['proposed_scenarios']}:
+            if not strict_equal(scenario, {'driver': ledger_entry['scenario_ids'],
+                                           'proposed': ledger_entry['proposed_scenarios']}):
                 fail('ledger_projection', where + '.scenario_ids', 'scenario ids differ from ledger')
-            if entry.get('scenario_note') != ledger_entry.get('scenario_note'):
+            if not strict_equal(entry.get('scenario_note'), ledger_entry.get('scenario_note')):
                 if entry.get('scenario_note') or ledger_entry.get('scenario_note'):
                     fail('ledger_projection', where + '.scenario_note', 'differs from expanded ledger')
 
@@ -602,12 +638,12 @@ def validate(data, ledger_raw, ledger, inputs, checker):
             for field in ('configuration', 'provider_refs', 'lifecycle_refs', 'status', 'missing', 'obtain'):
                 ledger_value = binding.get('provider', {}).get('refs') if field == 'provider_refs' else (
                     binding.get('lifecycle', {}).get('refs') if field == 'lifecycle_refs' else binding.get(field))
-                if value.get(field) != ledger_value:
+                if not strict_equal(value.get(field), ledger_value):
                     fail('domains', f'{where}.{field}', 'differs from external binding')
         else:
             if value.get('binding') is not None:
                 fail('domains', where + '.binding', 'snapshot has no host binding (env-only)')
-            if value.get('configuration') != ['snapshot']:
+            if not strict_equal(value.get('configuration'), ['snapshot']):
                 fail('domains', where + '.configuration', 'snapshot configuration key required')
             snapshot_entries = [entry for entry in entries
                                 if isinstance(entry, dict) and entry.get('work_package') == 'U3']
@@ -625,7 +661,7 @@ def validate(data, ledger_raw, ledger, inputs, checker):
                 for ref in (entry.get('lifecycle', {}).get('refs', [])
                             if isinstance(entry.get('lifecycle'), dict) else [])
             })
-            if value.get('lifecycle_refs') != expected_lifecycle:
+            if not strict_equal(value.get('lifecycle_refs'), expected_lifecycle):
                 fail('domains', where + '.lifecycle_refs', 'differs from snapshot method lifecycle refs')
             construction = value.get('construction_refs')
             if not string_list(construction, True) or len(construction) != 2:
@@ -642,11 +678,11 @@ def validate(data, ledger_raw, ledger, inputs, checker):
     if not isinstance(scope, dict):
         fail('scope', '$.scope', 'expected object')
     else:
-        if scope.get('total') != len(entries) or scope.get('total') != 101:
+        if not strict_equal(scope.get('total'), len(entries)) or not strict_equal(scope.get('total'), 101):
             fail('scope', '$.scope.total', 'must be 101')
-        if scope.get('ready') != ready or scope.get('blocked') != blocked:
+        if not strict_equal(scope.get('ready'), ready) or not strict_equal(scope.get('blocked'), blocked):
             fail('scope', '$.scope', {'ready': ready, 'blocked': blocked})
-        if scope.get('category_counts') != CATEGORIES:
+        if not strict_equal(scope.get('category_counts'), CATEGORIES):
             fail('scope', '$.scope.category_counts', 'frozen category totals required')
         if not isinstance(scope.get('note'), str) or not scope['note'].strip():
             fail('scope', '$.scope.note', 'nonempty note required')
@@ -660,7 +696,7 @@ def validate(data, ledger_raw, ledger, inputs, checker):
             row['methods'] += 1
             row['blocked'] += int(entry.get('status') == 'BLOCKED')
     computed_a6 = {key: computed_a6[key] for key in sorted(computed_a6)}
-    if data.get('a6_dependency_summary') != computed_a6:
+    if not strict_equal(data.get('a6_dependency_summary'), computed_a6):
         fail('a6_summary', '$.a6_dependency_summary', {'expected': computed_a6})
 
     # ---- every ref in the document resolves and is baseline-pinned --------
@@ -693,20 +729,93 @@ def validate(data, ledger_raw, ledger, inputs, checker):
 
 
 def self_test(data, ledger_raw, ledger, inputs, checker):
-    """In-memory negative controls; every mutation must trip its code."""
+    """In-memory negative controls; every mutation must trip its code.
+
+    Runs by default whenever the primary validation is clean, matching
+    check_ledger.py.  A control that raises is recorded as FAIL instead of
+    escaping; a control with no usable sample is recorded as an explicit SKIP.
+    """
     cases = []
+
+    class SkipControl(Exception):
+        pass
 
     def run(name, mutate, expected):
         mutated = copy.deepcopy(data)
-        mutate(mutated)
-        errors, _ = validate(mutated, ledger_raw, ledger, inputs, checker)
+        try:
+            mutate(mutated)
+            errors, _ = validate(mutated, ledger_raw, ledger, inputs, checker)
+        except SkipControl as exc:
+            cases.append({'name': name, 'expected_error': expected,
+                          'result': 'SKIP', 'reason': str(exc), 'status': 'SKIP'})
+            return
+        except (AttributeError, IndexError, KeyError, StopIteration, TypeError) as exc:
+            cases.append({'name': name, 'expected_error': expected,
+                          'result': 'FAIL',
+                          'detail': '%s: %s' % (type(exc).__name__, exc),
+                          'status': 'FAIL'})
+            return
         detected = any(error['code'] == expected for error in errors)
         cases.append({'name': name, 'expected_error': expected,
                       'result': 'PASS' if detected else 'FAIL',
                       'status': 'FAIL' if errors else 'PASS'})
 
-    def blocked_entry(mutated):
-        return next(entry for entry in mutated['methods'] if entry['status'] == 'BLOCKED')
+    def with_blocked(mutated, action):
+        entry = next((item for item in mutated['methods']
+                      if isinstance(item, dict) and item.get('status') == 'BLOCKED'), None)
+        if entry is None:
+            # A zero-BLOCKED manifest is a legal end state.  Synthesize a
+            # BLOCKED row so the reason controls still run (previously the
+            # bare next() raised StopIteration and crashed --self-test).
+            entry = mutated['methods'][0]
+            entry['status'] = 'BLOCKED'
+            entry['blockers'] = [{'missing': 'synthetic', 'obtain': 'synthetic'}]
+        action(entry)
+
+    def dynamic_sample_to_int(mutated):
+        for entry in mutated['methods']:
+            for record in entry.get('branches', {}).get('error', {}).get('sample', []):
+                if isinstance(record, dict) and record.get('dynamic') is True:
+                    record['dynamic'] = 1
+                    return
+        raise SkipControl('no dynamic error sample to retype')
+
+    def add_unknown_dynamic(mutated):
+        error = mutated['methods'][0]['branches']['error']
+        error['dynamic_codes'] = sorted(error['dynamic_codes'] + ['ZZZ_UNKNOWN_CODE'])
+
+    def numeric_proposed_id(mutated):
+        entry = mutated['methods'][0]
+        entry['scenario_ids']['proposed'].append('a51.%s.case2' % entry['method'])
+
+    def bump_a6_summary(mutated):
+        summary = mutated['a6_dependency_summary']
+        if not summary:
+            raise SkipControl('no A6 dependency row to bump')
+        key = next(iter(summary))
+        summary[key]['methods'] += 1
+
+    def symlink_escape_case():
+        expected = 'reference_path'
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp, 'baseline')
+                base.mkdir()
+                outside = Path(tmp, 'outside.ts')
+                outside.write_text('line\n')
+                (base / 'escape.ts').symlink_to(outside)
+                probe = RefChecker(base, {'escape.ts': {'sha256': '0' * 64, 'line_count': 1}})
+                codes = []
+                probe.check('B/escape.ts:1', '$',
+                            lambda code, where, detail: codes.append(code))
+                detected = expected in codes
+        except OSError as exc:
+            return {'name': 'symlink_escape', 'expected_error': expected,
+                    'result': 'FAIL', 'detail': 'symlink probe failed: %s' % exc,
+                    'status': 'FAIL'}
+        return {'name': 'symlink_escape', 'expected_error': expected,
+                'result': 'PASS' if detected else 'FAIL',
+                'status': 'PASS' if detected else 'FAIL'}
 
     run('remove_one_method', lambda mutated: mutated['methods'].pop(), 'method_set')
     run('duplicate_one_method',
@@ -715,9 +824,11 @@ def self_test(data, ledger_raw, ledger, inputs, checker):
     run('remove_owner', lambda mutated: mutated['methods'][0].pop('owner'), 'required_field')
     run('wrong_owner', lambda mutated: mutated['methods'][0].__setitem__('owner', 'A6'), 'owner')
     run('blocked_without_reason',
-        lambda mutated: blocked_entry(mutated).__setitem__('blockers', []), 'blocked_reason')
+        lambda mutated: with_blocked(mutated, lambda entry: entry.__setitem__('blockers', [])),
+        'blocked_reason')
     run('blocker_empty_text',
-        lambda mutated: blocked_entry(mutated)['blockers'][0].__setitem__('missing', ''),
+        lambda mutated: with_blocked(
+            mutated, lambda entry: entry['blockers'][0].__setitem__('missing', '')),
         'blocked_reason')
     run('bad_reference_format',
         lambda mutated: mutated['methods'][0]['handler']['refs'].append('B/not-a-reference'),
@@ -733,26 +844,75 @@ def self_test(data, ledger_raw, ledger, inputs, checker):
     run('foreign_scenario_id',
         lambda mutated: mutated['methods'][0]['scenario_ids']['proposed'].append('a51.other.success'),
         'scenario')
+    run('numeric_proposed_id', numeric_proposed_id, 'scenario')
     run('error_count_mismatch',
         lambda mutated: mutated['methods'][0]['branches']['error'].__setitem__(
             'count', mutated['methods'][0]['branches']['error']['count'] + 1), 'error_branch')
     run('invented_error_code',
         lambda mutated: mutated['methods'][0]['branches']['error']['codes'].append('TOTALLY_FAKE_CODE'),
         'error_codes')
+    run('error_dynamic_code', add_unknown_dynamic, 'error_dynamic')
     run('extra_method',
         lambda mutated: mutated['methods'].append(
             dict(copy.deepcopy(mutated['methods'][0]), method='totally_fake_method')), 'method_set')
     run('changed_input_hash',
         lambda mutated: mutated['frozen_inputs']['sha256'].__setitem__(
             'schema/gateway-protocol.schema.json', '0' * 64), 'input_hash')
+    run('changed_driver_hash',
+        lambda mutated: mutated['frozen_inputs']['sha256'].__setitem__(
+            'scripts/gateway-parity/driver.mts', '0' * 64), 'input_hash')
+    run('changed_gap_hash',
+        lambda mutated: mutated['frozen_inputs']['sha256'].__setitem__(
+            'docs/research/008_phase-a-session-domain/gap.md', '0' * 64), 'input_hash')
     run('memory_domain_drift',
         lambda mutated: mutated['domains']['memory'].__setitem__('methods', ['memory_list']), 'domains')
+    run('snapshot_lifecycle_drift',
+        lambda mutated: mutated['domains']['snapshot'].__setitem__('lifecycle_refs', []), 'domains')
     run('stage_not_from_ledger',
         lambda mutated: mutated['methods'][0]['provider']['refs'].__setitem__(
             0, 'B/src/cli/createLocalGateway.ts:1'), 'ledger_projection')
     run('dropped_error_sample',
         lambda mutated: mutated['methods'][0]['branches']['error'].__setitem__('sample', []),
         'error_sample')
+
+    # Type-strictness: plain == accepts bool/int and int/float drift.
+    run('strict_dynamic_int', dynamic_sample_to_int, 'error_sample')
+    run('strict_total_float',
+        lambda mutated: mutated['scope'].__setitem__('total', 101.0), 'scope')
+    run('strict_ready_int',
+        lambda mutated: mutated['scope'].__setitem__('ready', 1), 'scope')
+    run('strict_ready_float',
+        lambda mutated: mutated['scope'].__setitem__('ready', 46.0), 'scope')
+    run('strict_format_version_bool',
+        lambda mutated: mutated.__setitem__('format_version', True), 'format_version')
+    run('strict_method_count_float',
+        lambda mutated: mutated['frozen_inputs'].__setitem__('method_count', 101.0), 'input_methods')
+
+    # Remaining failure codes had no control.
+    run('baseline_commit_drift',
+        lambda mutated: mutated['baseline'].__setitem__('commit', '0' * 40), 'baseline')
+    run('ledger_hash_drift',
+        lambda mutated: mutated['source'].__setitem__('ledger_sha256', '0' * 64), 'ledger_hash')
+    run('status_semantics_drift',
+        lambda mutated: mutated['status_semantics'].__setitem__('READY', 'changed'),
+        'status_semantics')
+    run('owner_policy_missing',
+        lambda mutated: mutated['owner_policy'].pop('A6'), 'owner')
+    run('scenario_policy_blank',
+        lambda mutated: mutated['scenario_policy'].__setitem__('driver', ''), 'scenario')
+    run('configuration_drift',
+        lambda mutated: next(iter(mutated['configuration'].values())).__setitem__(
+            'summary', 'drifted summary'), 'configuration')
+    run('external_bindings_drift',
+        lambda mutated: next(iter(mutated['external_bindings'].values()))['provider'].__setitem__(
+            'summary', 'drifted summary'), 'external_bindings')
+    run('a6_summary_drift', bump_a6_summary, 'a6_summary')
+    run('success_shape_missing_refs',
+        lambda mutated: mutated['methods'][0]['branches']['success'][0].pop('refs'), 'branches')
+    run('unconfigured_shape_missing_code',
+        lambda mutated: mutated['methods'][0]['branches']['unconfigured'][0].pop('code'), 'branches')
+
+    cases.append(symlink_escape_case())
     return cases
 
 
@@ -762,7 +922,8 @@ def main():
     parser.add_argument('--ledger', type=Path, default=LEDGER)
     parser.add_argument('--baseline', type=Path, default=None,
                         help='read-only TS baseline (default: PDRS_BASELINE or ancestor resources/PilotDeck)')
-    parser.add_argument('--self-test', action='store_true', help='run in-memory negative controls too')
+    parser.add_argument('--self-test', action='store_true',
+                        help='deprecated compatibility flag; negative controls always run')
     args = parser.parse_args()
 
     baseline = (args.baseline or default_baseline()).resolve()
@@ -771,7 +932,9 @@ def main():
             print(json.dumps({'status': 'FAIL', 'scope': 'a51_coverage_manifest',
                               'failures': [{'code': 'baseline_missing', 'path': '$',
                                             'detail': str(baseline)}],
-                              'negative_self_tests': []}, ensure_ascii=False, indent=2))
+                              'negative_self_tests': [],
+                              'negative_self_test_count': 0},
+                             ensure_ascii=False, indent=2))
             return 2
         manifest = read_json(args.manifest)
         ledger_raw = read_json(args.ledger)
@@ -779,21 +942,29 @@ def main():
         if expansion_errors:
             raise ValueError('ledger expansion failed: %r' % expansion_errors)
         inputs = load_inputs()
+        # Bind the hash to the ledger actually read, not the canonical path.
+        inputs['ledger_sha'] = sha256(args.ledger)
         checker = RefChecker(baseline, ledger_raw.get('source_files'))
         errors, summary = validate(manifest, ledger_raw, ledger, inputs, checker)
-        controls = self_test(manifest, ledger_raw, ledger, inputs, checker) if args.self_test else []
-        failed = bool(errors) or any(control['result'] != 'PASS' for control in controls)
+        # check_ledger.py convention: negative controls always run when the
+        # primary validation is clean, so a bare PASS proves the ruler can fail.
+        controls = self_test(manifest, ledger_raw, ledger, inputs, checker) if not errors else []
+        failed = bool(errors) or any(control['result'] not in ('PASS', 'SKIP')
+                                     for control in controls)
         report = {
             'status': 'FAIL' if failed else 'PASS',
             'scope': 'a51_coverage_manifest',
             **summary,
             'failures': errors,
             'negative_self_tests': controls,
+            'negative_self_test_count': len(controls),
         }
-    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError,
+            IndexError, StopIteration, AttributeError) as exc:
         report = {'status': 'FAIL', 'scope': 'a51_coverage_manifest',
                   'failures': [{'code': 'input', 'path': '$', 'detail': str(exc)}],
-                  'negative_self_tests': []}
+                  'negative_self_tests': [],
+                  'negative_self_test_count': 0}
         failed = True
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if failed else 0

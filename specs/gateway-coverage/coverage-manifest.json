@@ -141,8 +141,10 @@
 "schema_enum": "schema/gateway-protocol.schema.json#/definitions/WsGatewayMethod/enum",
 "sha256": {
 "docs/research/005_phase-a-gateway/method-inventory.md": "31c279ee832bbc94c93d75f4ce0f0428ad0c4be86bc7095cf772b2cb0672f316",
+"docs/research/008_phase-a-session-domain/gap.md": "df5ce3ceaffb7fb70571e25aad03741bbc10f374fab8fbce2cd1ad1f3878a37e",
 "schema/gateway-methods.snapshot.json": "b7c2ef5b8ec24da3f17cd00129360f284963580e08e6e0bf3921a3a214c7b49c",
-"schema/gateway-protocol.schema.json": "d8272f367a2b66e19888793dc05898bd9c957c5c19a7c13b067dc7c24ac6c3e0"
+"schema/gateway-protocol.schema.json": "d8272f367a2b66e19888793dc05898bd9c957c5c19a7c13b067dc7c24ac6c3e0",
+"scripts/gateway-parity/driver.mts": "5f8e906fa532a58b994dff4f5e6438b07e31f14195b8142b75b398b6778e9e63"
 },
 "snapshot": "schema/gateway-methods.snapshot.json"
 },

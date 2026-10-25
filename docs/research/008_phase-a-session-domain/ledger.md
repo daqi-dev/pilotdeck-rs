@@ -11,7 +11,7 @@ status: 静态账本完成；未闭合依赖显式 BLOCKED
 
 正本为 [ledger.json](../../../specs/gateway-coverage/ledger.json)，验证入口为 [check_ledger.py](../../../scripts/gateway-coverage/check_ledger.py)。本页只解释口径与更正，不复制逐方法数据。只读基线 `B/` 为 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck/`，已核实 HEAD 为冻结 commit `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；未运行基线。
 
-A5.1 覆盖视图（issue #616）：[coverage-manifest.json](../../../specs/gateway-coverage/coverage-manifest.json) 把同一 101 行投影成逐 method 的 owner、场景 ID、handler→provider→存储/内存→通知→成功/错误/未配置分支与 BLOCKED 原因，校验入口为 [check_coverage_manifest.py](../../../scripts/gateway-coverage/check_coverage_manifest.py)。深度证据仍以 `ledger.json` 为正本；manifest 不是第二份事实源，也不替代账本。
+A5.1 覆盖视图（issue #616）：[coverage-manifest.json](../../../specs/gateway-coverage/coverage-manifest.json) 把同一 101 行投影成逐 method 的 owner、场景 ID、handler→provider→存储/内存→通知→成功/错误/未配置分支与 BLOCKED 原因，校验入口为 [check_coverage_manifest.py](../../../scripts/gateway-coverage/check_coverage_manifest.py)。该入口默认在主校验无失败后运行全部内存负例（报告 `negative_self_test_count` 给出条数），`--self-test` 仅为兼容旧命令保留；投影/汇总比较均为类型严格相等（bool/int/float 不互穿）。深度证据仍以 `ledger.json` 为正本；manifest 不是第二份事实源，也不替代账本。
 
 **口径（自决·待复核）**：账本是**规划索引**。下游 A6/A7/A8 每个 PR 动手前必须复核所涉 method 的 provider/state/guard/error，并回写账本。校验器负责结构完整（集合、行号、领域码扫描、默认构造点）；单项语义细节由下游复核兜底，后续同类细节漏写按 P2 处理。
 
@@ -169,11 +169,14 @@ snapshot 证据：`B/src/storage/workspaceSnapshot.ts:25`、`B/src/storage/works
 
 ```sh
 python3 scripts/gateway-coverage/check_ledger.py
+python3 scripts/gateway-coverage/check_coverage_manifest.py
 python3 scripts/gateway-parity/check_frozen.py
 git diff --check
 ```
 
-校验器仍核三方 method 集合、冻结类别、owner、字段、每处锚点、引用文件与输入哈希、A2场景调用。默认从 checkout/祖先寻找只读 resources/PilotDeck，可显式 --baseline。每次验证执行38项内存负例，必须命中指定错误类型；另有6项共用生产规则的解析/改名 Error 夹具。第3轮新增缩范围+重算hash+删callee、删除callee、虚构码、改成原正则未覆盖的新code类/未定义类、白名单篡改、缺关闭副作用/懒创建、可选store伪称默认与缺动态origin。独立CLI副本负例的退出码另存 RESULT 附件。
+**账本改动必须同 PR 重新投影 manifest 并跑本校验器**：`coverage-manifest.json` 的 `source.ledger_sha256` 与逐行投影都钉着当前 `ledger.json`；只跑 `check_ledger.py` 不会更新投影，之后 manifest 入口会报 `ledger_hash` 与大量 `ledger_projection` 的假 FAIL。改账本后须重新生成 `coverage-manifest.json`（含 `frozen_inputs.sha256` 的五枚输入哈希），再跑 `check_coverage_manifest.py`。
+
+校验器仍核三方 method 集合、冻结类别、owner、字段、每处锚点、引用文件与输入哈希、A2场景调用。默认从 checkout/祖先寻找只读 resources/PilotDeck，可显式 --baseline。`check_ledger.py` 每次验证执行38项内存负例，必须命中指定错误类型；另有6项共用生产规则的解析/改名 Error 夹具。第3轮新增缩范围+重算hash+删callee、删除callee、虚构码、改成原正则未覆盖的新code类/未定义类、白名单篡改、缺关闭副作用/懒创建、可选store伪称默认与缺动态origin。独立CLI副本负例的退出码另存 RESULT 附件。`check_coverage_manifest.py` 默认在无失败时执行全部负例，并核 schema/snapshot/inventory/driver/gap 五枚输入哈希。
 
 机器保证结构与扫描完整性；不证明每段中文语义、动态竞态或远端部署。下游每个 PR 前复核是规划索引的必要维护步骤。没有运行 A2/A5 服务对拍；READY/BLOCKED 仍为46/55。原始结果与完整新码清单在 `_tmp/RESULT.md` 第3轮。
 
@@ -193,7 +196,10 @@ git diff --check
 python3 scripts/gateway-coverage/ledger_format.py --expand specs/gateway-coverage/ledger.json --output _tmp/ledger-expanded.json
 python3 scripts/gateway-coverage/ledger_format.py --compact _tmp/ledger-expanded.json --output specs/gateway-coverage/ledger.json
 python3 scripts/gateway-coverage/check_ledger.py
+python3 scripts/gateway-coverage/check_coverage_manifest.py
 ```
+
+改动 `ledger.json` 后，须在同一 PR 内重新投影 `coverage-manifest.json`（含 `source.ledger_sha256` 与受影响行）再跑 `check_coverage_manifest.py`；只跑 `check_ledger.py` 会让 manifest 入口报出假 FAIL。
 
 `check_ledger.py` 在执行第3轮的全部检查前展开引用，并拒绝不存在的组/范围、组来源冲突、虚构组内码、重复 JSON 键、遗漏或重复的 `order` 下标等。一次性第3轮对照用 `--compare-expanded _tmp/ledger-round3.json`；默认日常校验不依赖本地快照。完整结果与负例见 `_tmp/RESULT.md` 的「第4轮」。本轮未发现须另列的第3轮语义错误。
 
