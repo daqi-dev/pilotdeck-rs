@@ -4599,7 +4599,7 @@
 "source": {
 "ledger": "specs/gateway-coverage/ledger.json",
 "ledger_format_version": 2,
-"ledger_sha256": "4c30466d1149096a4b4694a2660bc55ad17defe8495272d83c40b539a8c86b12",
+"ledger_sha256": "1bc509e31660f9badbc22689643cebf2ceccad611023aae31b92860c5eb8f59b",
 "ledger_validator": "scripts/gateway-coverage/check_ledger.py",
 "note": "本文件是 PR #79 已入库 101 method 依赖账本的覆盖视图；source_audit 函数范围/哈希、完整逐码 error 记录留在 ledger。"
 },

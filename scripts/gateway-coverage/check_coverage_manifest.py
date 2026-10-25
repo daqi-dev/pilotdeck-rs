@@ -20,11 +20,14 @@ Checks specs/gateway-coverage/coverage-manifest.json:
    frozen_inputs.sha256;
 6. projection and summary comparisons are type-strict (bool/int/float never
    compare equal), and when the primary validation is clean the in-memory
-   negative controls run by default (count in negative_self_test_count).
+   negative controls run by default.  ``negative_self_test_count`` counts only
+   PASS controls; a SKIP is listed in ``negative_self_test_skipped`` and warns
+   on stderr instead of silently counting as proof.
 
-Runs under ``python3 -I`` (stdlib only; ledger_format is imported from this
-directory explicitly).  A missing read-only baseline is fail-closed (exit 2),
-never treated as PASS.  ``--self-test`` is kept only as a compatibility flag.
+Runs under ``python3 -I`` (stdlib only; ledger_format/strict_compare are
+imported from this directory explicitly).  A missing read-only baseline is
+fail-closed (exit 2), never treated as PASS.  ``--self-test`` is kept only as a
+compatibility flag.
 """
 import argparse
 import copy
@@ -41,6 +44,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 from ledger_format import expand, unique_object  # noqa: E402
+from strict_compare import strict_contains, strict_equal  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / 'specs/gateway-coverage/coverage-manifest.json'
@@ -85,23 +89,6 @@ def string_list(value, nonempty=False, unique=True):
     return (isinstance(value, list) and (bool(value) or not nonempty)
             and all(isinstance(item, str) and item.strip() for item in value)
             and (not unique or len(value) == len(set(value))))
-
-
-def strict_equal(left, right):
-    """Type-strict deep equality; bool/int/float drift never compares equal."""
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, dict):
-        return left.keys() == right.keys() and all(
-            strict_equal(left[key], right[key]) for key in left)
-    if isinstance(left, list):
-        return len(left) == len(right) and all(
-            strict_equal(a, b) for a, b in zip(left, right))
-    return left == right
-
-
-def strict_contains(values, target):
-    return any(strict_equal(value, target) for value in values)
 
 
 def expected_owner(package):
@@ -875,18 +862,28 @@ def self_test(data, ledger_raw, ledger, inputs, checker):
         lambda mutated: mutated['methods'][0]['branches']['error'].__setitem__('sample', []),
         'error_sample')
 
-    # Type-strictness: plain == accepts bool/int and int/float drift.
+    # Type-strictness: plain == accepts bool/int and int/float drift.  Derive
+    # every value from the live manifest so a legitimate 46 -> 47 / 55 -> 56
+    # change cannot turn a type control into value drift.  bool/int has its real
+    # pair at format_version (1 -> True); ready=46 has no loose-equal bool.
     run('strict_dynamic_int', dynamic_sample_to_int, 'error_sample')
     run('strict_total_float',
-        lambda mutated: mutated['scope'].__setitem__('total', 101.0), 'scope')
-    run('strict_ready_int',
-        lambda mutated: mutated['scope'].__setitem__('ready', 1), 'scope')
+        lambda mutated: mutated['scope'].__setitem__(
+            'total', float(mutated['scope']['total'])), 'scope')
     run('strict_ready_float',
-        lambda mutated: mutated['scope'].__setitem__('ready', 46.0), 'scope')
+        lambda mutated: mutated['scope'].__setitem__(
+            'ready', float(mutated['scope']['ready'])), 'scope')
+    run('strict_blocked_float',
+        lambda mutated: mutated['scope'].__setitem__(
+            'blocked', float(mutated['scope']['blocked'])), 'scope')
+    run('strict_category_count_float',
+        lambda mutated: mutated['scope']['category_counts'].__setitem__(
+            '(b)', float(mutated['scope']['category_counts']['(b)'])), 'scope')
     run('strict_format_version_bool',
         lambda mutated: mutated.__setitem__('format_version', True), 'format_version')
     run('strict_method_count_float',
-        lambda mutated: mutated['frozen_inputs'].__setitem__('method_count', 101.0), 'input_methods')
+        lambda mutated: mutated['frozen_inputs'].__setitem__(
+            'method_count', float(mutated['frozen_inputs']['method_count'])), 'input_methods')
 
     # Remaining failure codes had no control.
     run('baseline_commit_drift',
@@ -916,6 +913,18 @@ def self_test(data, ledger_raw, ledger, inputs, checker):
     return cases
 
 
+def negative_control_tally(controls):
+    """Count only controls that actually proved the ruler can fail.
+
+    A SKIP is neither a pass nor a failure: it means this RPC/state had no
+    usable sample, so the negative control did not run.  Keep it visible in
+    its own report field and warn on stderr; never fold it into the count.
+    """
+    passed = sum(1 for control in controls if control['result'] == 'PASS')
+    skipped = [control['name'] for control in controls if control['result'] == 'SKIP']
+    return passed, skipped
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, default=MANIFEST)
@@ -927,13 +936,15 @@ def main():
     args = parser.parse_args()
 
     baseline = (args.baseline or default_baseline()).resolve()
+    skipped_controls = []
     try:
         if not baseline.is_dir():
             print(json.dumps({'status': 'FAIL', 'scope': 'a51_coverage_manifest',
                               'failures': [{'code': 'baseline_missing', 'path': '$',
                                             'detail': str(baseline)}],
                               'negative_self_tests': [],
-                              'negative_self_test_count': 0},
+                              'negative_self_test_count': 0,
+                              'negative_self_test_skipped': []},
                              ensure_ascii=False, indent=2))
             return 2
         manifest = read_json(args.manifest)
@@ -949,6 +960,7 @@ def main():
         # check_ledger.py convention: negative controls always run when the
         # primary validation is clean, so a bare PASS proves the ruler can fail.
         controls = self_test(manifest, ledger_raw, ledger, inputs, checker) if not errors else []
+        negative_count, skipped_controls = negative_control_tally(controls)
         failed = bool(errors) or any(control['result'] not in ('PASS', 'SKIP')
                                      for control in controls)
         report = {
@@ -957,16 +969,21 @@ def main():
             **summary,
             'failures': errors,
             'negative_self_tests': controls,
-            'negative_self_test_count': len(controls),
+            'negative_self_test_count': negative_count,
+            'negative_self_test_skipped': skipped_controls,
         }
     except (OSError, UnicodeError, ValueError, KeyError, TypeError,
             IndexError, StopIteration, AttributeError) as exc:
         report = {'status': 'FAIL', 'scope': 'a51_coverage_manifest',
                   'failures': [{'code': 'input', 'path': '$', 'detail': str(exc)}],
                   'negative_self_tests': [],
-                  'negative_self_test_count': 0}
+                  'negative_self_test_count': 0,
+                  'negative_self_test_skipped': []}
         failed = True
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    if skipped_controls:
+        print('warning: negative self-tests skipped (not counted as PASS): '
+              + ', '.join(skipped_controls), file=sys.stderr)
     return 1 if failed else 0
 
 
