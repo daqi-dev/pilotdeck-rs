@@ -16,6 +16,12 @@ import subprocess
 import sys
 import tempfile
 
+# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
+# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
+# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
+sys.dont_write_bytecode = True
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -34,11 +40,17 @@ def run_prerequisites(output, code_root=ROOT):
     results = {}
     # A3 prerequisites have their own evidence manifest, separate from the
     # A2 apparatus. Do not reintroduce A3 into common.apparatus_hashes().
+    # The gateway-parity part is derived from common.py so it cannot drift from
+    # the whitelist/data registry: A3_SCRIPTS + every DATA_FILES entry is bound
+    # by this hash gate.  The literals are the pre-r4 fallback for --code-root
+    # pointing at an older tree (same pattern as the A2_SCRIPTS getattr below).
+    a3_scripts = getattr(common, 'A3_SCRIPTS', (
+        'check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs'))
+    data_files = getattr(common, 'DATA_FILES', (
+        'fixtures/gateway-protocol.fixtures.json', 'package.json', 'package-lock.json'))
     inputs = (
-        'scripts/gateway-parity/check_schema.py', 'scripts/gateway-parity/export_schema.mjs',
-        'scripts/gateway-parity/validate_fixtures.mjs',
-        'scripts/gateway-parity/fixtures/gateway-protocol.fixtures.json',
-        'scripts/gateway-parity/package.json', 'scripts/gateway-parity/package-lock.json',
+        *(f'scripts/gateway-parity/{name}' for name in a3_scripts),
+        *(f'scripts/gateway-parity/{name}' for name in data_files),
         'schema/gateway-protocol.schema.json', 'schema/gateway-methods.snapshot.json',
         'docs/research/005_phase-a-gateway/method-inventory.md',
         'specs/gateway-parity/normalization.md', '.github/workflows/ci.yml',
@@ -136,12 +148,23 @@ def run_prerequisites(output, code_root=ROOT):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('A2')
         hashes = common.apparatus_hashes()
-        for name in ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs'):
+        # Whitelist positive controls: every registered non-A2 input (A3 tools
+        # and DATA_FILES) must be accepted without changing A2 evidence.  The
+        # lists come from common.py so a new data file cannot silently miss
+        # both this control and the input hash gate above.
+        for name in (*a3_scripts, *data_files):
             path = common.SCRIPT / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('registered A3 tool')
+            path.write_text('registered non-A2 input')
             record('apparatus-excludes-' + name, common.apparatus_hashes() == hashes,
-                   'registered A3 tool does not invalidate A2 evidence')
+                   'registered A3/data file does not invalidate A2 evidence')
+        # Same macOS metadata exemption as ui-server-parity: a regular file is
+        # accepted; the shared probe table keeps link/directory shapes rejected.
+        ds_store = common.SCRIPT / '.DS_Store'
+        ds_store.write_text('finder metadata')
+        record('apparatus-accepts-ds-store', common.apparatus_hashes() == hashes,
+               'regular .DS_Store is tolerated without changing A2 evidence')
+        ds_store.unlink()
         # #85: the installed top-level node_modules bytes must be bound to A2
         # evidence; skipping them let a swapped loader/tool run unobserved.
         path = common.SCRIPT / 'node_modules/dependency/index.mjs'
@@ -150,60 +173,46 @@ def run_prerequisites(output, code_root=ROOT):
         record('apparatus-binds-node_modules', common.apparatus_hashes() != hashes,
                'installed dependency bytes change the evidence hash')
 
-        # #85: every shape the scan rejects gets its own machine control here.
-        # The table lives in common.APPARATUS_PROBES and is shared with
-        # test_safety.ApparatusInputs, so the two machine controls cannot drift
-        # apart.  Link targets live outside SCRIPT so only the link is a probe.
+        # #85 / fix-r5: every shape the scan rejects gets its own machine
+        # control here.  The table and the materialize/remove implementation
+        # live in common.py and are shared with test_safety.ApparatusInputs, so
+        # the two machine controls cannot drift apart.  --code-root may point
+        # at a pre-fix tree; take the table and helpers from the running
+        # apparatus in that case.  Link targets live outside SCRIPT so only the
+        # link is a probe.
         shadows = common.ROOT / 'outside-apparatus'
         shadows.mkdir()
         (shadows / '__init__.py').write_text('shadow package')
         (shadows / 'evil.py').write_text('shadow module')
-        probes = getattr(common, 'APPARATUS_PROBES', None)
-        if probes is None:
-            # --code-root may point at a pre-fix tree whose common.py predates
-            # the shared table; take the table from the running apparatus.
-            probes = module_at('prerequisite_probe_table',
-                               Path(__file__).resolve().parents[1] / 'common.py').APPARATUS_PROBES
+        probe_module = common
+        if getattr(common, 'materialize_probe', None) is None:
+            probe_module = module_at('prerequisite_probe_impl',
+                                     Path(__file__).resolve().parents[1] / 'common.py')
+        probes = getattr(common, 'APPARATUS_PROBES', None) or probe_module.APPARATUS_PROBES
         for kind, name in probes:
-            path = common.SCRIPT / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if kind == 'dir-link':
-                path.symlink_to(shadows, target_is_directory=True)
-            elif kind == 'file-link':
-                path.symlink_to(shadows / 'evil.py')
-            elif kind == 'dir':
-                path.mkdir()
-            elif kind == 'nested-modules':
-                path.mkdir()
-                (path / 'evil.py').write_text('unregistered nested dependency')
-            elif kind == 'nested-modules-empty':
-                path.mkdir()
-            elif kind == 'unreadable-dir':
-                path.mkdir()
-                (path / 'evil.py').write_text('unregistered file')
-                os.chmod(path, 0)
-            else:
-                path.write_text('unregistered script')
+            # The scan reports a __pycache__ directory itself, not its files.
+            expected = '__pycache__' if name.startswith('__pycache__/') else name
+            try:
+                path = probe_module.materialize_probe(common.SCRIPT, kind, name, shadows)
+            except probe_module.ProbeSkipped as error:
+                # euid==0 can read mode-000 directories; mark the probe
+                # degenerate rather than pretending the shape was exercised.
+                record(f'apparatus-unregistered-{kind}-{name}', True,
+                       f'SKIPPED (degenerate, not evidence): {error}')
+                continue
             try:
                 common.apparatus_hashes()
                 unknown_rejected = False
             except ValueError as error:
                 unknown_rejected = ('unregistered gateway-parity scripts:' in str(error)
-                                    and name in str(error))
+                                    and expected in str(error))
             except PermissionError:
                 # Only the unreadable-directory probe may surface this; any
                 # other probe raising it is a broken control, not a pass.
                 unknown_rejected = kind == 'unreadable-dir'
             finally:
-                if kind == 'unreadable-dir':
-                    os.chmod(path, 0o700)
-                if kind in ('nested-modules', 'nested-modules-empty', 'unreadable-dir'):
-                    shutil.rmtree(path)
-                elif kind == 'dir':
-                    path.rmdir()
-                else:
-                    path.unlink()
-            record('apparatus-unregistered-' + name, unknown_rejected,
+                probe_module.remove_probe(kind, path)
+            record(f'apparatus-unregistered-{kind}-{name}', unknown_rejected,
                    'any file outside the whitelist shape, or an unreadable directory, must FAIL')
         (common.SCRIPT / 'compare.py').write_text('modified A2')
         record('apparatus-binds-A2', common.apparatus_hashes() != hashes, 'A2 edit changes evidence hash')
