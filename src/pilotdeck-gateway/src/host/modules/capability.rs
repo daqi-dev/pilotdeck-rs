@@ -84,6 +84,13 @@ pub struct Handler {
     plan_todo: Option<Arc<dyn PlanTodoHandler>>,
 }
 impl Handler {
+    /// Keep permission checks on the same native definitions as execution.
+    pub fn catalog(&self) -> Option<Arc<dyn ToolCatalog>> {
+        self.ports
+            .as_ref()
+            .map(|p| p.execution.clone() as Arc<dyn ToolCatalog>)
+    }
+
     pub fn new(
         execution: Arc<dyn ToolExecution>,
         context: Arc<dyn ToolContext>,

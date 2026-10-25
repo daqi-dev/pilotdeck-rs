@@ -251,6 +251,7 @@ async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
         inner: inner.clone(),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
+        forwarding: Mutex::default(),
     });
     let integrity = handler.integrity.clone();
     let sent = expected.clone();
@@ -317,6 +318,7 @@ async fn failed_handler_event_is_not_published() {
         }),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
+        forwarding: Mutex::default(),
     });
     let integrity = handler.integrity.clone();
     let mut turn = stream(
@@ -400,6 +402,7 @@ async fn event_after_the_authoritative_terminal_fails_closed() {
         inner: Arc::new(Handler::default()),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
+        forwarding: Mutex::default(),
     });
     let integrity = handler.integrity.clone();
     let mut turn = stream(
@@ -1141,6 +1144,7 @@ async fn events_after_a_violation_settle_to_none_even_when_buffered() {
         inner: Arc::new(Handler::default()),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
+        forwarding: Mutex::default(),
     });
     let integrity = handler.integrity.clone();
     let mut turn = stream(
