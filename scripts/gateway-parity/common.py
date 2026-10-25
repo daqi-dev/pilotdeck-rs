@@ -101,21 +101,53 @@ def unknown_apparatus_files(script=None):
     ``compare.cpython-<abi>-<platform>.so`` would run while ``compare.py`` keeps
     its registered hash.  Node native addons (``.node``) and ``.pth`` files are
     rejected for the same executable-input rule.
+
+    Symbolic links are rejected outright outside ``node_modules``, whatever
+    their own suffix: ``os.walk`` does not descend into a linked directory, so
+    files in its target would escape this scan, and a link can stand in for a
+    registered module.  Measured on CPython 3.14: with ``compare.py`` present,
+    a valid ``compare -> <dir containing __init__.py>`` link makes ``import
+    compare`` load the linked package while ``compare.py`` keeps its registered
+    hash, so ``check_frozen``/``apparatus_hashes`` would otherwise PASS.  A
+    plain directory named like a registered module is rejected as well: a
+    directory with ``__init__.py`` already has that file caught below (measured:
+    an empty directory does not shadow ``.py``, since the file suffix loop still
+    runs), but reporting the shadow container names the real hazard instead of a
+    nested file.  Links inside ``node_modules`` stay under the
+    installed-dependency rule: ``tree_digest`` records each as
+    ``link:<target>`` and never follows it, so repointing a link changes the
+    digest, while the bytes behind it are not bound (documented boundary).
     """
     script = Path(script) if script is not None else SCRIPT
-    found = []
-    for folder, dirs, files in os.walk(script):
-        dirs[:] = [name for name in dirs if name != 'node_modules']
+    # Importable names a directory could shadow: module stems, e.g. ``compare``.
+    module_names = {Path(name).stem for name in A2_SCRIPTS + A3_SCRIPTS}
+    found = set()
+    for folder, dirs, files in os.walk(script, followlinks=False):
+        current = Path(folder)
+        descend = []
+        for name in dirs:
+            path = current / name
+            if name == 'node_modules':
+                continue
+            if path.is_symlink() or name in module_names:
+                found.add(path.relative_to(script).as_posix())
+            else:
+                descend.append(name)
+        dirs[:] = sorted(descend)
         for name in files:
-            path = Path(folder) / name
+            path = current / name
             rel = path.relative_to(script)
-            if path.suffix in SCRIPT_SUFFIXES:
+            if path.is_symlink():
+                # Covers links to files, broken links, and links whose target
+                # is a directory but which os.walk lists as a file.
+                found.add(rel.as_posix())
+            elif path.suffix in SCRIPT_SUFFIXES:
                 if rel.as_posix() not in A2_SCRIPTS and rel.as_posix() not in A3_SCRIPTS:
-                    found.append(rel.as_posix())
+                    found.add(rel.as_posix())
             elif path.suffix in BYTECODE_SUFFIXES and '__pycache__' not in rel.parts:
-                found.append(rel.as_posix())
+                found.add(rel.as_posix())
             elif name.endswith(EXTENSION_SUFFIXES) or name.endswith(SITE_SUFFIXES):
-                found.append(rel.as_posix())
+                found.add(rel.as_posix())
     return sorted(found)
 
 

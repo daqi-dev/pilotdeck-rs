@@ -151,21 +151,57 @@ def run_prerequisites(output, code_root=ROOT):
         record('apparatus-binds-node_modules', common.apparatus_hashes() != hashes,
                'installed dependency bytes change the evidence hash')
 
-        for name in ('extra.py', 'extra.mjs', 'extra.mts', 'extra.js', 'extra.cjs',
-                     'extra.ts', 'extra.cts', 'extra.sh', 'nested/extra.py',
-                     'nested/check_schema.py'):
+        # #85: every shape the scan rejects gets its own machine control here;
+        # this list tracks test_safety.ApparatusInputs one for one (script
+        # suffixes, root bytecode, extension modules, links, module-named dirs).
+        # Link targets live outside SCRIPT so only the link is the probe.
+        shadows = common.ROOT / 'outside-apparatus'
+        shadows.mkdir()
+        (shadows / '__init__.py').write_text('shadow package')
+        (shadows / 'evil.py').write_text('shadow module')
+        # --code-root may point at a pre-fix tree whose common.py predates
+        # EXTENSION_SUFFIXES; keep a distinct probe name instead of crashing,
+        # and let the old scan accept it (that is the demonstrated blind spot).
+        abi = (getattr(common, 'EXTENSION_SUFFIXES', ()) or ('.cpython-abi.so',))[0]
+        probes = [
+            ('file', 'extra.py'), ('file', 'extra.pyw'), ('file', 'extra.mjs'),
+            ('file', 'extra.mts'), ('file', 'extra.js'), ('file', 'extra.cjs'),
+            ('file', 'extra.jsx'), ('file', 'extra.ts'),
+            ('file', 'extra.cts'), ('file', 'extra.tsx'), ('file', 'extra.sh'),
+            ('file', 'extra.bash'), ('file', 'extra.zsh'),
+            ('file', 'nested/extra.py'), ('file', 'nested/check_schema.py'),
+            ('file', 'legacy.pyc'),
+            ('file', 'probe' + abi), ('file', 'probe.abi3.so'),
+            ('file', 'probe.so'), ('file', 'probe.pyd'), ('file', 'probe.dylib'),
+            ('file', 'probe.node'), ('file', 'evil.pth'),
+            ('dir-link', 'linked-dir'), ('file-link', 'linked-file.txt'),
+            ('dir-link', 'compare'),  # shadows the registered compare.py
+            ('dir', 'observer'),  # module-named directory shadows observer.py
+        ]
+        for kind, name in probes:
             path = common.SCRIPT / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('unregistered script')
+            if kind == 'dir-link':
+                path.symlink_to(shadows, target_is_directory=True)
+            elif kind == 'file-link':
+                path.symlink_to(shadows / 'evil.py')
+            elif kind == 'dir':
+                path.mkdir()
+            else:
+                path.write_text('unregistered script')
             try:
                 common.apparatus_hashes()
                 unknown_rejected = False
             except ValueError as error:
-                unknown_rejected = 'unregistered gateway-parity scripts:' in str(error) and name in str(error)
+                unknown_rejected = ('unregistered gateway-parity scripts:' in str(error)
+                                    and name in str(error))
             finally:
-                path.unlink()
+                if kind == 'dir':
+                    path.rmdir()
+                else:
+                    path.unlink()
             record('apparatus-unregistered-' + name, unknown_rejected,
-                   'script outside A2 whitelist and three A3 tools must FAIL')
+                   'script, bytecode, link or module-named directory outside the whitelist must FAIL')
         (common.SCRIPT / 'compare.py').write_text('modified A2')
         record('apparatus-binds-A2', common.apparatus_hashes() != hashes, 'A2 edit changes evidence hash')
         (common.SCRIPT / 'compare.py').unlink()
