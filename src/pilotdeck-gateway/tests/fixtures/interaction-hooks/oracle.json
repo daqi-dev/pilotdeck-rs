@@ -1,0 +1,295 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/extension/hooks/execution/HookRuntime.ts": "1b8c7c6549b538bf5f85576f0f1638fc5f82ebd13f5a1dad8a01cf2c518a417e",
+    "src/extension/hooks/execution/AsyncHookRegistry.ts": "3605fd1393dc363030cc364d14c0b6f60aceefd9d8c6cdd28047a479e43a1294",
+    "src/lifecycle/runtime/LifecycleRuntime.ts": "90afe325048ab832c822d184f7433b80df810dfa9e3da429f861aab135df0a26",
+    "src/gateway/permission/createGatewayPermissionHook.ts": "38cf333b8de143f4d81140688d190fc7392029935fefa9590b66db0d356d5e57",
+    "src/gateway/permission/GatewayPermissionBus.ts": "b0caf4420156bf71eeaddb03159c80d9bc57c0a678f3d8714878486b96634ba8"
+  },
+  "suggestions": [
+    null,
+    {
+      "id": "allow_session",
+      "rules": "bad"
+    },
+    {
+      "id": "allow_session",
+      "rules": [
+        null,
+        [],
+        {
+          "toolName": "bash",
+          "pattern": "git *",
+          "behavior": "deny",
+          "source": "project"
+        },
+        {
+          "toolName": "",
+          "pattern": ""
+        },
+        {
+          "pattern": 4
+        },
+        {
+          "toolName": "bash",
+          "pattern": "git *"
+        }
+      ]
+    },
+    {
+      "id": "allow_session",
+      "rules": [
+        {
+          "toolName": "ignored"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "mode": "allow",
+      "result": {
+        "effects": [
+          {
+            "type": "system_message",
+            "content": "configured"
+          },
+          {
+            "type": "permission_request_result",
+            "result": {
+              "behavior": "allow"
+            }
+          }
+        ],
+        "messages": [],
+        "events": [
+          {
+            "type": "started",
+            "sessionId": "s",
+            "hookName": "command",
+            "hookEvent": "PermissionRequest"
+          },
+          {
+            "type": "response",
+            "sessionId": "s",
+            "hookName": "command",
+            "hookEvent": "PermissionRequest",
+            "stdout": "{\"systemMessage\":\"configured\"}",
+            "stderr": "",
+            "exitCode": 0,
+            "outcome": "success"
+          },
+          {
+            "type": "started",
+            "sessionId": "s",
+            "hookName": "callback",
+            "hookEvent": "PermissionRequest"
+          },
+          {
+            "type": "response",
+            "sessionId": "s",
+            "hookName": "callback",
+            "hookEvent": "PermissionRequest",
+            "stdout": "",
+            "stderr": "",
+            "exitCode": 0,
+            "outcome": "success"
+          }
+        ],
+        "blockingErrors": [],
+        "nonBlockingErrors": [],
+        "pendingAsyncHooks": []
+      },
+      "rules": [
+        {
+          "source": "session",
+          "behavior": "allow",
+          "toolName": "bash",
+          "pattern": "git *"
+        },
+        {
+          "source": "session",
+          "behavior": "allow",
+          "toolName": "danger"
+        }
+      ]
+    },
+    {
+      "mode": "no-sink",
+      "result": {
+        "effects": [
+          {
+            "type": "system_message",
+            "content": "configured"
+          },
+          {
+            "type": "permission_request_result",
+            "result": {
+              "behavior": "deny",
+              "message": "Permission prompt could not be delivered to the Web UI."
+            }
+          }
+        ],
+        "messages": [],
+        "events": [
+          {
+            "type": "started",
+            "sessionId": "s",
+            "hookName": "command",
+            "hookEvent": "PermissionRequest"
+          },
+          {
+            "type": "response",
+            "sessionId": "s",
+            "hookName": "command",
+            "hookEvent": "PermissionRequest",
+            "stdout": "{\"systemMessage\":\"configured\"}",
+            "stderr": "",
+            "exitCode": 0,
+            "outcome": "success"
+          },
+          {
+            "type": "started",
+            "sessionId": "s",
+            "hookName": "callback",
+            "hookEvent": "PermissionRequest"
+          },
+          {
+            "type": "response",
+            "sessionId": "s",
+            "hookName": "callback",
+            "hookEvent": "PermissionRequest",
+            "stdout": "",
+            "stderr": "",
+            "exitCode": 0,
+            "outcome": "success"
+          }
+        ],
+        "blockingErrors": [],
+        "nonBlockingErrors": [],
+        "pendingAsyncHooks": []
+      },
+      "rules": []
+    },
+    {
+      "mode": "deny",
+      "result": {
+        "effects": [
+          {
+            "type": "system_message",
+            "content": "configured"
+          },
+          {
+            "type": "permission_request_result",
+            "result": {
+              "behavior": "deny",
+              "message": "blocked"
+            }
+          }
+        ],
+        "messages": [],
+        "events": [
+          {
+            "type": "started",
+            "sessionId": "s",
+            "hookName": "command",
+            "hookEvent": "PermissionRequest"
+          },
+          {
+            "type": "response",
+            "sessionId": "s",
+            "hookName": "command",
+            "hookEvent": "PermissionRequest",
+            "stdout": "{\"systemMessage\":\"configured\"}",
+            "stderr": "",
+            "exitCode": 0,
+            "outcome": "success"
+          },
+          {
+            "type": "started",
+            "sessionId": "s",
+            "hookName": "callback",
+            "hookEvent": "PermissionRequest"
+          },
+          {
+            "type": "response",
+            "sessionId": "s",
+            "hookName": "callback",
+            "hookEvent": "PermissionRequest",
+            "stdout": "",
+            "stderr": "",
+            "exitCode": 0,
+            "outcome": "success"
+          }
+        ],
+        "blockingErrors": [],
+        "nonBlockingErrors": [],
+        "pendingAsyncHooks": []
+      },
+      "rules": []
+    }
+  ],
+  "async": {
+    "pending": {
+      "effects": [],
+      "messages": [],
+      "events": [
+        {
+          "type": "started",
+          "sessionId": "s",
+          "hookName": "command",
+          "hookEvent": "PreToolUse"
+        },
+        {
+          "type": "response",
+          "sessionId": "s",
+          "hookName": "command",
+          "hookEvent": "PreToolUse",
+          "stdout": "{\"async\":true}",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success"
+        }
+      ],
+      "blockingErrors": [],
+      "nonBlockingErrors": [],
+      "pendingAsyncHooks": [
+        {
+          "id": "command:1",
+          "generation": 1,
+          "hookName": "command",
+          "hookEvent": "PreToolUse",
+          "startedAt": "<time>"
+        }
+      ]
+    },
+    "accepted": true,
+    "duplicate": false,
+    "responses": [
+      {
+        "id": "command:1",
+        "hookName": "command",
+        "hookEvent": "PreToolUse",
+        "stdout": "{\"continue\":false,\"stopReason\":\"stop\"}",
+        "stderr": "",
+        "output": {
+          "type": "sync",
+          "continue": false,
+          "stopReason": "stop",
+          "raw": {
+            "continue": false,
+            "stopReason": "stop"
+          }
+        },
+        "rewake": true
+      }
+    ],
+    "repeated": []
+  },
+  "difference": {
+    "oldGeneration": 1,
+    "newGeneration": 2,
+    "staleIdAccepted": true
+  }
+}

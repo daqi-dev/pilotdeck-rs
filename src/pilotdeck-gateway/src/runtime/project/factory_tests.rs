@@ -3693,3 +3693,162 @@ async fn interaction_permission_registry_keeps_old_generation_until_lease_drain(
     assert!(new.is_closed());
     assert_eq!(new.release_count(), 1);
 }
+
+fn hooks_resource(context: &StageContext) -> super::super::interaction_hooks::InteractionHooks {
+    context
+        .resource(Resource::InteractionHooks)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<super::super::interaction_hooks::InteractionHooks>()
+        .unwrap()
+        .clone()
+}
+fn bind_hooks(
+    resource: &super::super::interaction_hooks::InteractionHooks,
+) -> (
+    super::super::interaction_hooks::TurnHooks,
+    crate::host::modules::ModuleRouter,
+) {
+    use crate::host::modules::{ModuleRouter, lifecycle::Binding};
+    let mut router = ModuleRouter::default();
+    let turn = resource
+        .bind_turn(
+            Binding {
+                session_id: "session".into(),
+                turn_id: "turn".into(),
+                cwd: "/workspace".into(),
+                permission_mode: None,
+                base_env: Some(JsObject::new()),
+                signal: None,
+            },
+            "run".into(),
+            vec![],
+            None,
+            &mut router,
+        )
+        .unwrap();
+    (turn, router)
+}
+#[tokio::test]
+async fn interaction_hooks_factory_binds_and_rolls_back_in_both_builder_orders() {
+    for families in [
+        Families::unwired().with_interaction().with_tools_mcp(),
+        Families::unwired().with_tools_mcp().with_interaction(),
+    ] {
+        let group = interaction_test_group();
+        let context = group.context();
+        families
+            .execution_world
+            .stage(&context, &mut group.sink())
+            .unwrap();
+        let resource = hooks_resource(&context);
+        let (turn, router) = bind_hooks(&resource);
+        assert!(router.lifecycle.is_installed());
+        assert!(turn.pending_receipts().unwrap().is_empty());
+        group.dispose().await.unwrap();
+        group.dispose().await.unwrap();
+        assert!(resource.is_closed());
+        assert_eq!(resource.release_count(), 1);
+        assert_eq!(turn.release_count(), 1);
+        assert!(turn.pending_receipts().is_err());
+    }
+    // A later family failure invokes the same concrete resource cleanup.
+    use super::super::interaction_hooks::{InteractionHooks, TurnHooks};
+    type Captured = Arc<Mutex<Option<(InteractionHooks, TurnHooks)>>>;
+    struct FailAfterHooks(Captured);
+    impl ResourceFamilySource for FailAfterHooks {
+        fn family(&self) -> Family {
+            Family::ContextStorage
+        }
+        fn stage(&self, context: &StageContext, _: &mut StageSink<'_>) -> RuntimeResult {
+            let hooks = hooks_resource(context);
+            let (turn, _) = bind_hooks(&hooks);
+            *self.0.lock().unwrap() = Some((hooks, turn));
+            Err(RuntimeError::new("injected after hooks"))
+        }
+    }
+    let scratch = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    std::fs::create_dir_all(scratch.0.join(".pilotdeck")).unwrap();
+    std::fs::write(
+        scratch.0.join(".pilotdeck/pilotdeck.yaml"),
+        PROJECT_CONFIGS[0].1,
+    )
+    .unwrap();
+    std::fs::create_dir_all(scratch.0.join("config-home")).unwrap();
+    std::fs::write(scratch.0.join("config-home/pilotdeck.yaml"), GLOBAL_YAML).unwrap();
+    let captured: Captured = Arc::default();
+    let mut families = families(&probe).with_interaction();
+    families.context_storage = Arc::new(FailAfterHooks(captured.clone()));
+    let mut env = crate::config::Env::new();
+    env.insert(
+        "PILOT_HOME".into(),
+        scratch.0.join("config-home").to_string_lossy().into_owned(),
+    );
+    let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+        pilot_home: scratch.0.join("home"),
+        cwd: scratch.0.clone(),
+        env,
+        homedir: Some(scratch.0.join("home")),
+        builtin_skills_root: None,
+        now: Arc::new(|| SystemTime::UNIX_EPOCH),
+        config_version: None,
+        runtime_profile_overrides: Default::default(),
+        families,
+    });
+    let registry = ProjectRuntimeRegistry::new(scratch.0.clone(), Arc::new(factory));
+    let error = registry
+        .resolve(Some(&scratch.0))
+        .err()
+        .expect("injected stage error");
+    assert_eq!(error, RuntimeError::new("injected after hooks"));
+    let (resource, turn) = captured.lock().unwrap().take().unwrap();
+    until(|| resource.is_closed()).await;
+    bounded(turn.wait_closed()).await;
+    assert_eq!(resource.release_count(), 1);
+    assert_eq!(turn.release_count(), 1);
+    assert!(turn.pending_receipts().is_err());
+    bounded(registry.dispose()).await.unwrap();
+}
+#[tokio::test]
+async fn interaction_hooks_registry_keeps_old_generation_until_lease_drain() {
+    let scratch = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let registry = interaction_fake_registry(&scratch, &probe);
+    let root = scratch.0.join("a");
+    let runtime = registry.resolve(Some(&root)).unwrap();
+    let mut lease = runtime.acquire().unwrap();
+    let old = hooks_resource(
+        &lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .unwrap()
+            .context(),
+    );
+    let (old_turn, _) = bind_hooks(&old);
+    bounded(registry.reload()).await.unwrap();
+    let current = registry.resolve(Some(&root)).unwrap();
+    let current_lease = current.acquire().unwrap();
+    let new = hooks_resource(
+        &current_lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .unwrap()
+            .context(),
+    );
+    let (new_turn, _) = bind_hooks(&new);
+    assert!(old_turn.pending_receipts().is_ok());
+    lease.release().await.unwrap();
+    assert!(old.is_closed());
+    assert_eq!(old.release_count(), 1);
+    assert_eq!(old_turn.release_count(), 1);
+    assert!(old_turn.pending_receipts().is_err());
+    assert!(new_turn.pending_receipts().is_ok());
+    drop(current_lease);
+    bounded(registry.dispose()).await.unwrap();
+    assert!(new.is_closed());
+    assert_eq!(new.release_count(), 1);
+    assert_eq!(new_turn.release_count(), 1);
+}
