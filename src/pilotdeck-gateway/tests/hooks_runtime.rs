@@ -1941,7 +1941,8 @@ async fn lifecycle_dispatch_matches_real_ts() {
             &cwd_value.clone().into(),
             &string(field(case, "sessionId")),
             &string(field(case, "turnId")),
-        );
+        )
+        .expect("valid process cwd");
         let expected = substitute_text(
             &text(field(case, "expected")),
             &[("<dir>", &root), ("<cwd>", &cwd)],
@@ -2104,6 +2105,68 @@ async fn lifecycle_dispatch_matches_real_ts() {
         "Lifecycle payload must be an object."
     );
     handler.dispose().await.unwrap();
+}
+
+/// #335 ② sibling: TS `buildTurnEnvironment` resolves a relative `cwd` through
+/// `path.resolve`/`process.cwd()`. A cold Node process whose cwd was deleted
+/// throws `ENOENT: no such file or directory, uv_cwd`; it never joins an empty
+/// base. Absolute cwds do not read the process cwd in either implementation.
+/// Delete the cwd in an owned child process because this test binary shares one
+/// process with the other tests.
+#[test]
+fn deleted_process_cwd_fails_turn_environment() {
+    if std::env::var_os("PDRS_DELETED_CWD_TURN_CHILD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "deleted_process_cwd_fails_turn_environment",
+                "--nocapture",
+            ])
+            .env("PDRS_DELETED_CWD_TURN_CHILD", "1")
+            .output()
+            .expect("run deleted-cwd child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
+        assert!(
+            stdout.contains("PD_TURN_CWD_ERROR=ENOENT: no such file or directory, uv_cwd"),
+            "missing Node-shaped error in: {stdout}\n{stderr}"
+        );
+        return;
+    }
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "pdrs-deleted-turn-cwd-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("create cwd");
+    std::env::set_current_dir(&directory).expect("enter cwd");
+    std::fs::remove_dir_all(&directory).expect("delete cwd");
+
+    let absolute = host_lifecycle::build_turn_environment(
+        None,
+        &"/tmp/absolute".into(),
+        &"session".into(),
+        &"turn".into(),
+    )
+    .expect("an absolute cwd must not read process.cwd()");
+    assert_eq!(
+        text(field(&JsValue::Object(absolute), "PILOTDECK_WORK_DIR")),
+        "/tmp/absolute/.pilotdeck/work/session/turn"
+    );
+
+    let error = host_lifecycle::build_turn_environment(
+        None,
+        &"relative/project".into(),
+        &"session".into(),
+        &"turn".into(),
+    )
+    .expect_err("a relative cwd with a deleted process cwd must fail");
+    println!("PD_TURN_CWD_ERROR={}", error.message);
 }
 
 /// P1: `Handler::dispose` is the per-turn dispatcher teardown and must not

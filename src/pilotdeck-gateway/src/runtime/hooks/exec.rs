@@ -15,11 +15,12 @@
 //! while the shared model connector's own timeout stays TCP-only. Redirects
 //! follow undici's default policy through `crate::fetch_redirect`. Prompt/agent
 //! execution needs a model runner (A7).
+use crate::hooks::config::MAX_STRINGIFY_DEPTH;
 use crate::hooks::protocol::{
     HookAsyncOutput, HookDecision, HookOutput, HookSpecificOutput, HookSyncOutput,
     PermissionDecision, PermissionHookDecision,
 };
-use crate::js_value::{self, MAX_ARRAY_DEPTH, StackOverflow};
+use crate::js_value::{self, StackOverflow};
 use crate::runtime::model::http::ConnectDeadline;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
@@ -135,14 +136,17 @@ impl ExecutionResult {
 // ------------------------------------------------------------------ JSON helpers
 
 /// JS `JSON.stringify` throws `RangeError` past a caller-dependent V8 stack
-/// limit. The protocol encoder is iterative, so check the conservative V8
-/// container bound first and report the same message TS catches.
+/// limit. The protocol encoder is iterative, so check the conservative hook
+/// container bound first and report the same message TS catches. The four
+/// executors measured a first failure at 6886 on Node 22.22.0; the shared
+/// `MAX_STRINGIFY_DEPTH` (6500) is their common stable prefix and the same
+/// budget the condition path uses.
 pub(crate) fn stringify_json_value(value: &JsValue) -> Result<String, StackOverflow> {
     let mut pending = vec![(value, 0usize)];
     while let Some((value, parent)) = pending.pop() {
         if matches!(value, JsValue::Array(_) | JsValue::Object(_)) {
             let depth = parent + 1;
-            if depth > MAX_ARRAY_DEPTH {
+            if depth > MAX_STRINGIFY_DEPTH {
                 return Err(StackOverflow);
             }
             match value {
@@ -168,6 +172,38 @@ pub(crate) fn object_stringify_with_bounded_stack(
     object: &JsObject,
 ) -> Result<String, StackOverflow> {
     stringify_json_value(&JsValue::Object(object.clone()))
+}
+
+#[cfg(test)]
+mod stringify_depth_tests {
+    use super::*;
+
+    fn nested_object(depth: usize) -> JsValue {
+        let mut value = JsValue::Number(0.0);
+        for _ in 0..depth {
+            let mut object = JsObject::new();
+            object.insert("a".into(), value);
+            value = JsValue::Object(object);
+        }
+        value
+    }
+
+    /// Both hook-condition and hook-execution payloads share
+    /// `MAX_STRINGIFY_DEPTH`; the old `js_value::MAX_ARRAY_DEPTH` (2000) is a
+    /// different predicate and must not reject an executor payload at 2001.
+    #[test]
+    fn hook_payload_stringify_uses_the_shared_depth_budget() {
+        for depth in [2001, MAX_STRINGIFY_DEPTH] {
+            assert!(
+                stringify_json_value(&nested_object(depth)).is_ok(),
+                "depth {depth} must serialize"
+            );
+        }
+        assert_eq!(
+            stringify_json_value(&nested_object(MAX_STRINGIFY_DEPTH + 1)),
+            Err(StackOverflow)
+        );
+    }
 }
 
 // ------------------------------------------------------------------ parseHookOutput

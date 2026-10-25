@@ -5,7 +5,7 @@
 //! dispatcher's exact field order, including `pendingAsyncHooks`.
 use super::wire;
 use crate::hooks::protocol::is_hook_event;
-use crate::host::{HostFuture, JsObject, JsString, JsValue, ModuleError};
+use crate::host::{HostError, HostFuture, JsObject, JsString, JsValue, ModuleError};
 use crate::runtime::hooks::{
     Cancellation, LifecycleDispatchInput, LifecycleDispatchResult, LifecycleRuntime,
     exec::process_env, runtime::serialize_lifecycle_dispatch_result,
@@ -111,7 +111,7 @@ impl Handler {
                 &ports.binding.cwd,
                 &ports.binding.session_id,
                 &ports.binding.turn_id,
-            );
+            )?;
             let result = ports
                 .runtime
                 .dispatch(LifecycleDispatchInput {
@@ -167,14 +167,14 @@ pub fn build_turn_environment(
     cwd: &JsString,
     session_id: &JsString,
     turn_id: &JsString,
-) -> JsObject {
+) -> Result<JsObject, HostError> {
     let mut env = base_env.cloned().unwrap_or_else(process_env);
     env.insert(
         "PILOTDECK_SESSION_ID".into(),
         JsValue::String(session_id.clone()),
     );
     env.insert("PILOTDECK_TURN_ID".into(), JsValue::String(turn_id.clone()));
-    let work_dir = resolve_path(cwd)
+    let work_dir = resolve_path(cwd)?
         .join(".pilotdeck")
         .join("work")
         .join(path_segment(session_id))
@@ -183,18 +183,23 @@ pub fn build_turn_environment(
         "PILOTDECK_WORK_DIR".into(),
         JsValue::String(work_dir.to_string_lossy().into_owned().into()),
     );
-    env
+    Ok(env)
 }
 
-fn resolve_path(cwd: &JsString) -> PathBuf {
+/// TS `path.resolve(cwd)` inside `buildTurnEnvironment`: an absolute `cwd`
+/// never reads the process cwd; a relative one uses `process.cwd()` and fails
+/// closed with Node's cold-path `ENOENT ... uv_cwd` instead of joining an
+/// empty base (TS never substitutes `""` for a missing cwd).
+fn resolve_path(cwd: &JsString) -> Result<PathBuf, HostError> {
     let cwd = String::from_utf16_lossy(cwd.units());
     let path = Path::new(&cwd);
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir().unwrap_or_default().join(path)
+        let process_cwd = crate::runtime::permission::process_cwd_units()?;
+        PathBuf::from(String::from_utf16_lossy(process_cwd.units())).join(path)
     };
-    normalize(&absolute)
+    Ok(normalize(&absolute))
 }
 
 fn normalize(path: &Path) -> PathBuf {
