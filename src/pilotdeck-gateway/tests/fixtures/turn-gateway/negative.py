@@ -32,6 +32,12 @@ def mutation(name, path, before, after, case=None, marker='assertion'):
 
 mutants = [
     mutation('transport-bypasses-serial-host', gateway, 'self.host\n            .call(async move { connection.receive(&text).await })\n            .await?', 'connection.receive(&text).await', 'permission-before-event-and-final', 'gateway host thread'),
+    # close-active reaches the `Session::abort` host-thread assertion after
+    # disconnect; running `closed` on the caller thread trips it there.
+    mutation('closed-bypasses-serial-host', gateway, 'self.host\n            .call(async move { connection.closed().await })\n            .await?', 'connection.closed().await', 'close-active', 'gateway host thread'),
+    # `notify` only sends a frame, so it needs its own host-thread observation:
+    # the fixture transport records the thread of every outbound frame.
+    mutation('notify-bypasses-serial-host', gateway, 'self.host\n            .call(async move {\n                connection.notify(&name, payload);\n            })\n            .await', '{ connection.notify(&name, payload); Ok(()) }', None, 'A7.2-COORDINATOR-DELIVERY-001-R1: HostedConnection::notify must run on the serial host thread'),
     mutation('emit-bypasses-serial-host', gateway, 'let gateway = self.gateway.clone();\n        self.call(async move { gateway.0.submitter.coordinator.emit(&session, &event) })\n            .await', 'Ok(self.gateway.0.submitter.coordinator.emit(&session, &event))', None, 'A7.2-COORDINATOR-DELIVERY-001-R1'),
     # Delivery moves to a later host task: same thread, non-overlapping, once
     # per event, but the `emit` future now resolves before the sink ran.
@@ -110,6 +116,7 @@ with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
         'abort_waits_for_latest_real_ts_session_fence',
         'abort_snapshots_before_ungated_cleanup_replacement',
     'concurrent_external_emits_are_serialized_on_the_serial_host',
+        'hosted_connection_notify_enters_the_serial_host',
     ]
     command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::gateway::tests', '--', '--nocapture', '--test-threads=1']
     (out / 'original-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest() for p, data in original.items()}, indent=2)+'\n')
@@ -129,6 +136,11 @@ with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
             for path in original:
                 if modified[path] != original[path]: path.write_bytes(modified[path])
             run_env = dict(env)
+            # The baseline proof may run against a temporary alternate git dir
+            # (a commit-less sandbox cannot write the shared worktree git dir);
+            # cargo and its build scripts must still see the real worktree.
+            run_env.pop('GIT_DIR', None)
+            run_env.pop('GIT_WORK_TREE', None)
             if mutant['case']: run_env['PDRS_GATEWAY_CASE'] = mutant['case']
             else: run_env.pop('PDRS_GATEWAY_CASE', None)
             timed_out = False
