@@ -76,6 +76,23 @@ def main():
          'self.0.turns.admission.end_turn(key, None, None);\n        let current = self.0.turns.completion.is_current(key, handle);',
          'close_and_completion_cleanup_preserve_later_same_run_reservation',
          'assertion failed: owner.has_active_turn(&key)'),
+        ('idle-ignores-active-turn', owner,
+         '&& !self.0.turns.admission.has_active_turn(key)\n'
+         '                    && !self.0.turns.admission.has_maintenance(key)',
+         '&& !self.0.turns.admission.has_maintenance(key)',
+         'idle_strict_boundary_and_turn_matches_ts',
+         'idle_strict_boundary_and_turn: value'),
+        ('idle-ignores-maintenance', owner,
+         '&& !self.0.turns.admission.has_maintenance(key)\n'
+         '                    && now.saturating_sub(record.last_used) > self.0.options.idle_timeout_ms',
+         '&& now.saturating_sub(record.last_used) > self.0.options.idle_timeout_ms',
+         'maintenance_blocks_turn_and_idle_matches_ts',
+         'maintenance_blocks_turn_and_idle: value'),
+        ('idle-strict-boundary-inclusive', owner,
+         '&& now.saturating_sub(record.last_used) > self.0.options.idle_timeout_ms',
+         '&& now.saturating_sub(record.last_used) >= self.0.options.idle_timeout_ms',
+         'idle_strict_boundary_and_turn_matches_ts',
+         'idle_strict_boundary_and_turn: value'),
     ]
     originals = {name: (rust / name).read_text() for name in {m[1] for m in mutants} | {fixture}}
     oracle = json.loads(originals[fixture])
