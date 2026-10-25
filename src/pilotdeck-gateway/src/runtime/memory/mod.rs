@@ -141,7 +141,7 @@ impl MemoryCaptureStrategy {
 /// TS `PilotMemoryConfig.schedule` subset, carried without interpretation.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MemoryScheduleConfig {
-    pub reasoning_mode: Option<String>,
+    pub reasoning_mode: Option<JsString>,
     pub auto_index_interval_minutes: Option<f64>,
     pub auto_dream_interval_minutes: Option<f64>,
 }
@@ -149,18 +149,22 @@ pub struct MemoryScheduleConfig {
 /// TS `PilotMemoryConfig` (`src/pilot/config/types.ts:119-132`) as normalized
 /// by the config snapshot. This type is a carrier: no memory behavior is
 /// invented here, and the native EdgeClaw provider port consumes it later.
+/// String fields stay [`JsString`] instead of `String`: normalization keeps
+/// the raw UTF-16 units (`config/snapshot.rs:1111-1123` does not UTF-8 check
+/// `rootDir`), so a lone surrogate must reach the provider factory unchanged
+/// rather than being replacement-decoded or dropped here.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MemoryConfig {
     pub enabled: bool,
-    pub provider: String,
-    pub root_dir: String,
+    pub provider: JsString,
+    pub root_dir: JsString,
     pub capture_strategy: MemoryCaptureStrategy,
     pub include_assistant: bool,
     pub max_message_chars: Option<f64>,
     pub retrieval_timeout_ms: Option<f64>,
     /// `"provider/model"` reference.
-    pub model: Option<String>,
-    pub api_type: Option<String>,
+    pub model: Option<JsString>,
+    pub api_type: Option<JsString>,
     pub schedule: Option<MemoryScheduleConfig>,
     pub heartbeat_batch_size: Option<f64>,
 }
@@ -168,11 +172,11 @@ impl MemoryConfig {
     /// A selection-only config with the same defaults normalization gives the
     /// absent optional fields. Callers that stage a real snapshot get the
     /// normalized values instead.
-    pub fn new(enabled: bool, provider: impl Into<String>) -> Self {
+    pub fn new(enabled: bool, provider: impl Into<JsString>) -> Self {
         Self {
             enabled,
             provider: provider.into(),
-            root_dir: String::new(),
+            root_dir: JsString::default(),
             capture_strategy: MemoryCaptureStrategy::LastTurn,
             include_assistant: true,
             max_message_chars: None,
@@ -191,13 +195,14 @@ impl MemoryConfig {
 /// factory and are intentionally not duplicated here.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MemoryModelProvider {
-    pub protocol: Option<String>,
-    pub url: Option<String>,
-    pub api_key: Option<String>,
+    pub protocol: Option<JsString>,
+    pub url: Option<JsString>,
+    pub api_key: Option<JsString>,
 }
 
 /// TS `ModelConfig` (`src/model/protocol/canonical.ts:377-379`) reduced to the
-/// providers the memory factory actually reads.
+/// providers the memory factory actually reads. The three fields stay
+/// [`JsString`] for the same reason as [`MemoryConfig`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MemoryModelConfig {
     pub providers: BTreeMap<String, MemoryModelProvider>,
@@ -489,7 +494,7 @@ impl ProjectMemoryBundle {
             .options
             .config
             .as_ref()
-            .is_some_and(|config| config.enabled && config.provider == "edgeclaw")
+            .is_some_and(|config| config.enabled && config.provider.equals_str("edgeclaw"))
         {
             Err(MemoryBundleError::NativeProviderNotPorted)
         } else {

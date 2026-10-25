@@ -1447,30 +1447,54 @@ impl RuntimeResources for BackgroundResources {
     }
 }
 
-/// A rejection from the SDK projections, as `{ name, code?, message }`.
+/// A rejection from the SDK projections, as `{ name, code?, message,
+/// requires_host }`.
+///
+/// The SDK methods (`ProjectRuntimeRegistry.ts:1707-1751`) do not catch a
+/// failed `this.resolve(...)`: the original error object reaches the caller.
+/// The memory family is the last resolve stage, so a throwing memory factory
+/// (`DialogGatewayError`, `requires_host`) must survive this boundary with its
+/// `name`/`code`/UTF-16 `message`/`requires_host` intact, exactly like the
+/// memory projection (`From<RuntimeError> for MemoryProviderError`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BackgroundProjectionError {
-    pub name: &'static str,
-    pub code: Option<&'static str>,
+    pub name: String,
+    pub code: Option<String>,
     pub message: JsString,
+    pub requires_host: bool,
 }
 
 impl From<BackgroundTaskError> for BackgroundProjectionError {
     fn from(error: BackgroundTaskError) -> Self {
         Self {
-            name: error.name,
+            name: error.name.into(),
             code: None,
             message: error.message,
+            requires_host: false,
         }
     }
 }
 
 impl From<RuntimeError> for BackgroundProjectionError {
+    /// Keep the JS shape retained on `RuntimeError.js_error`; a plain runtime
+    /// error keeps the ordinary `Error` shape and its display message.
     fn from(error: RuntimeError) -> Self {
-        Self {
-            name: "Error",
-            code: None,
-            message: JsString::from(error.message.as_str()),
+        let RuntimeError {
+            message, js_error, ..
+        } = error;
+        match js_error {
+            Some(error) => Self {
+                name: error.name,
+                code: error.code,
+                message: error.message,
+                requires_host: error.requires_host,
+            },
+            None => Self {
+                name: "Error".into(),
+                code: None,
+                message: JsString::from(message),
+                requires_host: false,
+            },
         }
     }
 }
@@ -1508,8 +1532,8 @@ pub async fn stop_background_task_for_sdk(
         .is_some_and(|task| strict_equals(&task.session_id, &JsValue::String(session_key.clone())));
     if !owned {
         return Err(BackgroundProjectionError {
-            name: "DialogGatewayError",
-            code: Some("BACKGROUND_TASK_NOT_FOUND"),
+            name: "DialogGatewayError".into(),
+            code: Some("BACKGROUND_TASK_NOT_FOUND".into()),
             message: concat(&[
                 &units("Background task "),
                 task_id.units(),
@@ -1517,6 +1541,7 @@ pub async fn stop_background_task_for_sdk(
                 session_key.units(),
                 &units("."),
             ]),
+            requires_host: false,
         });
     }
     resources
@@ -1604,9 +1629,10 @@ fn project_resources(
         .resources()
         .get::<BackgroundResources>()
         .ok_or_else(|| BackgroundProjectionError {
-            name: "Error",
+            name: "Error".into(),
             code: None,
             message: JsString::from("Project runtime has no background task resources."),
+            requires_host: false,
         })
 }
 
@@ -1981,5 +2007,94 @@ mod tests {
         );
         assert!(replacement.is_ok());
         assert_eq!(runtime.inner.state.lock().unwrap().pending_starts, 0);
+    }
+
+    /// #636 fix-r1: the SDK projection consumes `this.resolve(...)` without a
+    /// catch (`ProjectRuntimeRegistry.ts:1707-1711`), so a memory factory
+    /// rejection during resolve must keep its JS shape here. Measured against
+    /// the real TS baseline: `stopBackgroundTask` returns the exact thrown
+    /// object (`name/code/requires_host`, lone-surrogate message).
+    #[test]
+    fn resolve_error_keeps_the_memory_factory_js_shape() {
+        use crate::runtime::project::RuntimeJsError;
+
+        let message = JsString::from_utf16(
+            "factory boom "
+                .encode_utf16()
+                .chain([0xD800])
+                .collect::<Vec<_>>(),
+        );
+        let error = BackgroundProjectionError::from(
+            RuntimeError::new(String::from_utf16_lossy(message.units())).with_js_error(
+                RuntimeJsError {
+                    name: "DialogGatewayError".into(),
+                    code: Some("FACTORY_FAILED".into()),
+                    message: message.clone(),
+                    requires_host: true,
+                },
+            ),
+        );
+        assert_eq!(error.name, "DialogGatewayError");
+        assert_eq!(error.code.as_deref(), Some("FACTORY_FAILED"));
+        assert_eq!(error.message.units(), message.units());
+        assert!(
+            !error.message.units().contains(&0xFFFD),
+            "a lone surrogate must not be replacement-decoded"
+        );
+        assert!(error.requires_host);
+    }
+
+    #[test]
+    fn plain_runtime_error_keeps_the_ordinary_error_shape() {
+        let error = BackgroundProjectionError::from(RuntimeError::new("dispose boom"));
+        assert_eq!(error.name, "Error");
+        assert_eq!(error.code, None);
+        assert_eq!(error.message, JsString::from("dispose boom"));
+        assert!(!error.requires_host);
+    }
+
+    /// The real projection entry point: a failing `registry.resolve` (the
+    /// memory family is the last resolve stage) reaches the SDK caller with
+    /// the original shape instead of a fixed `Error`.
+    #[tokio::test]
+    async fn stop_background_task_resolve_failure_keeps_the_js_error() {
+        use crate::runtime::project::{ResourceBundle, RuntimeJsError, RuntimeResult};
+
+        let message = JsString::from_utf16(
+            "factory boom "
+                .encode_utf16()
+                .chain([0xD800])
+                .collect::<Vec<_>>(),
+        );
+        let thrown = message.clone();
+        let registry = ProjectRuntimeRegistry::new(
+            PathBuf::from("/pdrs-fixture/fallback"),
+            Arc::new(move |_: &Path, _: &mut ResourceBundle| -> RuntimeResult {
+                Err(
+                    RuntimeError::new(String::from_utf16_lossy(thrown.units())).with_js_error(
+                        RuntimeJsError {
+                            name: "DialogGatewayError".into(),
+                            code: Some("FACTORY_FAILED".into()),
+                            message: thrown.clone(),
+                            requires_host: true,
+                        },
+                    ),
+                )
+            }),
+        );
+        let error = stop_background_task_in_registry(
+            &registry,
+            Some(Path::new("/pdrs-fixture/project")),
+            &JsString::from("session"),
+            &JsString::from("task"),
+        )
+        .await
+        .expect_err("the resolve failure must stop the SDK projection");
+        assert_eq!(error.name, "DialogGatewayError");
+        assert_eq!(error.code.as_deref(), Some("FACTORY_FAILED"));
+        assert_eq!(error.message.units(), message.units());
+        assert!(!error.message.units().contains(&0xFFFD));
+        assert!(error.requires_host);
+        registry.dispose().await.unwrap();
     }
 }

@@ -561,9 +561,9 @@ async fn run_sequence(sequence: &JsValue, scratch_root: &Path) {
                 let value = match result {
                     Ok(result) => JsValue::Object(result),
                     Err(error) => {
-                        let mut inner = object([("name", JsValue::from(error.name))]);
+                        let mut inner = object([("name", JsValue::from(error.name.as_str()))]);
                         if let Some(code) = error.code {
-                            inner.insert("code".into(), JsValue::from(code));
+                            inner.insert("code".into(), JsValue::from(code.as_str()));
                         }
                         inner.insert("message".into(), JsValue::String(error.message));
                         JsValue::Object(object([("error", JsValue::Object(inner))]))
@@ -794,7 +794,7 @@ fn registry_dispose_drains_background_tasks() {
         let denied = stop_background_task_in_registry(&registry, None, &JsString::from("s2"), &id)
             .await
             .expect_err("other session");
-        assert_eq!(denied.code, Some("BACKGROUND_TASK_NOT_FOUND"));
+        assert_eq!(denied.code.as_deref(), Some("BACKGROUND_TASK_NOT_FOUND"));
 
         registry.dispose().await.unwrap();
         until("registry dispose", || !group_alive(pid)).await;
