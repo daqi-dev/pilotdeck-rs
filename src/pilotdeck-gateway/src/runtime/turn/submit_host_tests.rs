@@ -46,6 +46,7 @@ struct Fake {
     policy: Mutex<JsValue>,
     refresh_failure: bool,
     prepare_failure: bool,
+    model_selection_failure: bool,
     workspace_id: Option<JsString>,
     workspace_error: bool,
     snapshots_required: bool,
@@ -61,6 +62,7 @@ impl Default for Fake {
             policy: Mutex::new(JsValue::Undefined),
             refresh_failure: false,
             prepare_failure: false,
+            model_selection_failure: false,
             workspace_id: None,
             workspace_error: false,
             snapshots_required: false,
@@ -169,10 +171,14 @@ impl SubmitHostServices for Fake {
         &'a self,
         _: &'a JsValue,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
-        Box::pin(std::future::ready(Ok(object([(
-            "source",
-            "default".into(),
-        )]))))
+        Box::pin(std::future::ready(if self.model_selection_failure {
+            Err(SubmitError::new(
+                "MODEL_SELECTION",
+                "injected selection failure",
+            ))
+        } else {
+            Ok(object([("source", "default".into())]))
+        }))
     }
     fn record_failure<'a>(
         &'a self,
@@ -272,7 +278,11 @@ fn run() -> RunRef {
 }
 
 /// Matrix cell 5: the lease is released exactly once per acquired lease, even
-/// across repeated finish_pump calls (removal precedes release).
+/// across repeated finish_pump calls (removal precedes release). The release
+/// counter is asserted after each call: a hypothetical double-release path
+/// (the guard demoted from `remove` to a re-observable handle) cannot be
+/// written against the `FnOnce` ownership type, so the repeated-call
+/// assertion is the observable guard for it.
 #[tokio::test]
 async fn finish_pump_releases_a_lease_exactly_once() {
     let fake = Arc::new(Fake::default());
@@ -283,7 +293,69 @@ async fn finish_pump_releases_a_lease_exactly_once() {
     )]);
     host.prepare(&input, &run()).await.unwrap();
     host.finish_pump(&run()).await.unwrap();
+    assert_eq!(fake.releases.load(Ordering::SeqCst), 1);
     host.finish_pump(&run()).await.unwrap();
+    assert_eq!(
+        fake.releases.load(Ordering::SeqCst),
+        1,
+        "a second finish_pump must not release again"
+    );
+    host.finish_pump(&run()).await.unwrap();
+    assert_eq!(
+        fake.releases.load(Ordering::SeqCst),
+        1,
+        "a third finish_pump must not release again"
+    );
+}
+
+/// DeepSeek P1-1: a panic that poisons the leases mutex must not block a
+/// later finish_pump from removing and releasing the acquired lease, nor a
+/// later turn from registering its own lease.
+#[tokio::test]
+async fn finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned() {
+    let fake = Arc::new(Fake::default());
+    let host = make_host(&fake);
+    let input = fake.input(&[(
+        "uploadedAttachments",
+        JsValue::Array(vec![Fake::attachment("uploaded")]),
+    )]);
+    host.prepare(&input, &run()).await.unwrap();
+    let leases = &host.leases;
+    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _held = leases.lock().unwrap();
+        panic!("poison the leases mutex mid-turn");
+    }));
+    assert!(poisoned.is_err(), "the mutex must actually be poisoned");
+    assert!(host.leases.is_poisoned());
+    host.finish_pump(&run()).await.unwrap();
+    assert_eq!(fake.releases.load(Ordering::SeqCst), 1);
+    // A second turn under the same poisoned host registers and releases its
+    // own lease.
+    host.prepare(&input, &run()).await.unwrap();
+    host.finish_pump(&run()).await.unwrap();
+    assert_eq!(fake.releases.load(Ordering::SeqCst), 2);
+}
+
+/// DeepSeek P2-2: the lease is owned from resolution, so a failure in the
+/// last prepare step (resolve_model_selection) still reaches finish_pump.
+#[tokio::test]
+async fn lease_is_released_when_model_selection_fails() {
+    let fake = Arc::new(Fake {
+        model_selection_failure: true,
+        ..Fake::default()
+    });
+    let host = make_host(&fake);
+    let input = fake.input(&[(
+        "uploadedAttachments",
+        JsValue::Array(vec![Fake::attachment("uploaded")]),
+    )]);
+    let error = host.prepare(&input, &run()).await.err().unwrap();
+    assert_eq!(error.code, "MODEL_SELECTION");
+    assert_eq!(
+        *fake.attachments_seen.lock().unwrap(),
+        vec![vec!["lease-b".to_string()]],
+        "prepare_attachment_turn ran with the merged attachments"
+    );
     host.finish_pump(&run()).await.unwrap();
     assert_eq!(fake.releases.load(Ordering::SeqCst), 1);
 }

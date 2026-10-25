@@ -616,6 +616,10 @@ async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
 }
 async fn replay_case(case: &Value) {
     let name = case["name"].as_str().unwrap();
+    // Order-only cases (inline, not oracle-replayed) still drive the full
+    // turn; they skip the byte-for-byte per-step comparison because their
+    // expected values are not part of the frozen fixture.
+    let order_only = case["orderOnly"] == true;
     let controlled_clock = case["steps"]
         .as_array()
         .unwrap()
@@ -760,10 +764,9 @@ async fn replay_case(case: &Value) {
         // Dirty is observed via a real recreation below, independently of the
         // SDK setter's return. Do not mirror the implementation in its mock.
         let mut expected = expected.clone();
-        expected["hostCalls"]
-            .as_array_mut()
-            .unwrap()
-            .retain(|v| v != "sdk_dirty");
+        if let Some(calls) = expected["hostCalls"].as_array_mut() {
+            calls.retain(|v| v != "sdk_dirty");
+        }
         let mut actual = json!({"visible":*log.visible.lock().unwrap(), "hostCalls":*log.host.lock().unwrap(), "durableCalls":*log.durable.lock().unwrap(), "registryCalls":*log.registry.lock().unwrap(), "active":owner.has_active_turn(&"s".into()), "ended":log.ended.load(Ordering::SeqCst), "thrown":*log.thrown.lock().unwrap()});
         if setup["failureGuard"].is_object() {
             actual["guardWire"] = json!(*log.guard_wire.lock().unwrap());
@@ -787,11 +790,26 @@ async fn replay_case(case: &Value) {
                     .any(|c| c == "submit"),
                 "{name}: no native submit"
             );
-        } else {
+        } else if !order_only {
             assert_eq!(actual, expected, "{name}: step {index} {step}");
         }
     }
     consumer.await.unwrap();
+    // InProcessGateway releases the attachment lease in the pump finally
+    // (:1767-1773) before afterTurnCompleted (:1850) — including the timeout
+    // takeover, where the outer finally only `void`s the pump. Measured by
+    // the real-TS probe ts-probe-lease-after-order.out; pinned for every
+    // scenario that acquires a lease.
+    let host = log.host.lock().unwrap().clone();
+    if let (Some(lease), Some(after)) = (
+        host.iter().position(|call| call == "lease_release"),
+        host.iter().position(|call| call == "after"),
+    ) {
+        assert!(
+            lease < after,
+            "{name}: lease_release must precede after_turn (lease@{lease} after@{after}): {host:?}"
+        );
+    }
     if let Some(abort) = abort {
         abort.await.unwrap();
     }
@@ -815,6 +833,8 @@ async fn replay_case(case: &Value) {
                 .any(|e| is(field(e, "event"), "code", "CAPABILITY_UNAVAILABLE")),
             "{name}: durable capability refusal"
         );
+    } else if order_only {
+        // Inline lease-order cases carry no frozen durable expectations.
     } else {
         assert_eq!(
             reopened
@@ -877,6 +897,56 @@ async fn real_ts_submit_scenarios() {
         }
     }
     assert!(selected > 0, "PDRS_SUBMIT_CASE matched no scenario");
+}
+
+/// DeepSeek P1-2: the TS pump releases the attachment lease in its finally
+/// (InProcessGateway.ts:1767-1773) before the outer finally's afterTurnCompleted
+/// (:1850) on every exit path. Real-TS measurement: probe
+/// ts-probe-lease-after-order.out shows `lease_release < after` for normal
+/// completion, a throwing pump, and a timeout takeover. These inline cases pin
+/// that order against the same harness the oracle replay uses; the oracle
+/// itself already covers the plain completion path (`lease-release`).
+#[tokio::test]
+async fn lease_release_precedes_after_turn_across_exit_paths() {
+    let started = vec![
+        json!({"type": "turn_started", "sessionId": "s", "turnId": "r"}),
+        json!({"type": "input_accepted", "sessionId": "s", "turnId": "r",
+         "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]}),
+    ];
+    let mut native = started.clone();
+    native.push(
+        json!({"type": "model_event", "event": {"type": "text_delta", "text": "hello back"}}),
+    );
+    native.push(json!({"type": "turn_completed", "result": {"type": "success", "stopReason": "completed", "usage": {}}}));
+    let mut aborted = started.clone();
+    aborted.push(json!({"type": "turn_completed", "result": {"type": "aborted", "stopReason": "aborted_streaming", "usage": {}}}));
+    let cases = [
+        (
+            "lease-normal",
+            json!({"input": {"uploadedAttachments": [{"uploadId": "fixture"}]}}),
+            json!(["observe", "accept", "terminal", "end"]),
+            native,
+        ),
+        (
+            "lease-pump-failed",
+            json!({"pumpFailure": true, "input": {"uploadedAttachments": [{"uploadId": "fixture"}]}}),
+            json!(["observe", "accept", "terminal"]),
+            started,
+        ),
+        (
+            "lease-timeout",
+            json!({"input": {"timeoutMs": 100, "uploadedAttachments": [{"uploadId": "fixture"}]}}),
+            json!(["observe", "accept", "timeout"]),
+            aborted,
+        ),
+    ];
+    for (name, setup, steps, native) in cases {
+        let case = json!({"name": name, "setup": setup, "steps": steps, "native": native,
+            "results": [], "orderOnly": true});
+        tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+            .await
+            .unwrap_or_else(|_| panic!("{} deadlocked", name));
+    }
 }
 #[tokio::test]
 async fn unavailable_capabilities_are_explicitly_refused() {
