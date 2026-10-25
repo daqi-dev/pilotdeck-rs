@@ -106,8 +106,9 @@ impl SdkConfigChange for Fakes {
     }
 }
 impl MemoryMaintenance for Fakes {
-    fn schedule(&self, key: &JsString) {
+    fn schedule(&self, key: &JsString) -> RuntimeResult {
         self.0.push(format!("schedule:{}", utf8(key)));
+        Ok(())
     }
 }
 impl RefreshLog for Fakes {

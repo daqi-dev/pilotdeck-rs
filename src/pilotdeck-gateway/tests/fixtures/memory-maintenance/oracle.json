@@ -1,0 +1,633 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/cli/ProjectMemoryMaintenanceController.ts": "a4f8edb31cacca4f5b91c7a6706a3c978cdc03b61089be6be2ca5d33c11abddb",
+    "src/cli/GatewayRuntimeRefreshBundle.ts": "00b9cc05235de23afd9925758fa643d26c8a963292f36fd7509ea308e573a52c",
+    "src/context/memory/edgeclaw-memory-core/src/service.ts": "a76c5a266d392faa92d19805e4df3f0a56d2324ba50e189fac1d436addb8698f",
+    "src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts": "92ee83f07aaefc070850a6ac366fbc75924b2efdaa45f9f9999ed0d3d25e5093"
+  },
+  "nodeVersion": "v22.22.0",
+  "cases": [
+    {
+      "name": "idle",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "coalesce",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "settling",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ],
+        [
+          "settling"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "reject",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "error",
+          {
+            "name": "TypeError",
+            "message": "maintenance failed"
+          },
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "loop_end",
+            "errorCategory": "loop_error",
+            "code": "TypeError"
+          }
+        ],
+        [
+          "diagnostic",
+          "[pilotdeck] memory maintenance failed for project /project:",
+          {
+            "name": "TypeError",
+            "message": "maintenance failed"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "reject_requested",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "error",
+          {
+            "name": "TypeError",
+            "message": "maintenance failed"
+          },
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "loop_end",
+            "errorCategory": "loop_error",
+            "code": "TypeError"
+          }
+        ],
+        [
+          "diagnostic",
+          "[pilotdeck] memory maintenance failed for project /project:",
+          {
+            "name": "TypeError",
+            "message": "maintenance failed"
+          }
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "generations",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "B",
+          "scheduled"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "disposed",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "closed"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "error",
+          {
+            "name": "Error",
+            "message": "database is not open",
+            "code": "ERR_INVALID_STATE"
+          },
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "loop_end",
+            "errorCategory": "loop_error",
+            "code": "Error"
+          }
+        ],
+        [
+          "diagnostic",
+          "[pilotdeck] memory maintenance failed for project /project:",
+          {
+            "name": "Error",
+            "message": "database is not open",
+            "code": "ERR_INVALID_STATE"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "absent",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "returned"
+        ]
+      ]
+    },
+    {
+      "name": "resolver_error",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "throw",
+          {
+            "name": "TypeError",
+            "message": "resolve failed"
+          }
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "refresh_reject",
+          {
+            "name": "TypeError",
+            "message": "resolve failed"
+          }
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "never",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "B",
+          "scheduled"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "cancelled",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "error",
+          {
+            "name": "AbortError",
+            "message": "cancelled"
+          },
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "loop_end",
+            "errorCategory": "loop_error",
+            "code": "AbortError"
+          }
+        ],
+        [
+          "diagnostic",
+          "[pilotdeck] memory maintenance failed for project /project:",
+          {
+            "name": "AbortError",
+            "message": "cancelled"
+          }
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "before_await",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    }
+  ]
+}

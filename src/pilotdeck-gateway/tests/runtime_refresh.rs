@@ -305,12 +305,13 @@ impl SdkConfigChange for Fake {
     }
 }
 impl MemoryMaintenance for Fake {
-    fn schedule(&self, project_key: &JsString) {
+    fn schedule(&self, project_key: &JsString) -> RuntimeResult {
         record(
             &self.0,
             "memory.schedule",
             vec![("args", JsValue::Array(vec![string(project_key)]))],
         );
+        Ok(())
     }
 }
 impl MemoryDiagnostics for Fake {
@@ -496,11 +497,13 @@ async fn replay(scenario: &JsValue) {
                 let input = field(step, "input").unwrap();
                 let key =
                     |name: &str| field(input, name).map(|value| value.as_string().unwrap().clone());
-                bundle.after_turn_completed(TurnCompleted {
-                    session_key: key("sessionKey").unwrap(),
-                    project_key: key("projectKey"),
-                    run_id: key("runId"),
-                });
+                bundle
+                    .after_turn_completed(TurnCompleted {
+                        session_key: key("sessionKey").unwrap(),
+                        project_key: key("projectKey"),
+                        run_id: key("runId"),
+                    })
+                    .unwrap();
                 out.push(("result", JsValue::Undefined));
             }
             other => panic!("{id}: unknown op {other}"),

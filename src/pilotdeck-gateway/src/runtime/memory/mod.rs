@@ -9,6 +9,7 @@ use crate::runtime::project::{
 };
 
 pub mod edgeclaw;
+pub mod maintenance;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::BTreeMap,

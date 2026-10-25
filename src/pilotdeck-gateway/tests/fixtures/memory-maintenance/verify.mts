@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import {mkdtempSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+const out=mkdtempSync(join(tmpdir(),'pdrs-maintenance-verify-'));
+execFileSync(process.execPath,[...process.execArgv,fileURLToPath(new URL('./generate.mts',import.meta.url)),out],{stdio:'pipe'});
+assert.deepEqual(readFileSync(join(out,'oracle.json')),readFileSync(new URL('./oracle.json',import.meta.url)));
+console.log('MEMORY_MAINTENANCE_IDENTICAL');
