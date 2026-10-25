@@ -13,7 +13,9 @@ use super::{
     ledger::field,
     recorder::{RecorderClock, RecorderError, RecorderResult, RecorderUuid},
     session_domain::DomainState,
-    transcript::{create_temporary, private_dirs, private_open, read_transcript_limited, uuid},
+    transcript::{
+        LedgerLock, create_temporary, private_dirs, private_open, read_transcript_limited, uuid,
+    },
 };
 use crate::js_value;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -143,15 +145,30 @@ pub trait TranscriptStore: Send + Sync {
 /// instead of losing one; a failed write can leave a torn line, which
 /// readTranscript then reports. Like TS `prepareTail`, the first append to a
 /// path in this instance adds one LF after unterminated crash debris. No
-/// `.lock` file (TS has none either); this instance serializes its own writes.
+/// `.lock` file by default (TS has none either); this instance serializes its
+/// own writes. Project persistence opts into `open_locked` for one writer per
+/// canonical path, sharing the ledger fence until all writer clones drop.
 #[derive(Default)]
 pub struct JsonlTranscriptStore {
     /// Write lock; holds the paths whose tail this instance has prepared.
     prepared: Mutex<HashSet<PathBuf>>,
+    /// Only project-owned session stores opt into the shared ledger fence.
+    /// The store is retained by every Arc<TranscriptWriter> clone.
+    _owner: Option<LedgerLock>,
 }
 impl JsonlTranscriptStore {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub(crate) fn open_locked(path: &Path) -> StoreResult<(Self, PathBuf)> {
+        let (path, owner) = LedgerLock::acquire(path)?;
+        Ok((
+            Self {
+                _owner: Some(owner),
+                ..Self::default()
+            },
+            path,
+        ))
     }
     fn lock(&self, path: &Path) -> StoreResult<MutexGuard<'_, HashSet<PathBuf>>> {
         let guard = self.prepared.lock().unwrap_or_else(|e| e.into_inner());
@@ -425,13 +442,7 @@ impl SessionStorage {
         let inner = self.transcript.lock();
         let read = self.read_transcript(None)?;
         // A truncated read cannot seed a writable session's sequence chain.
-        if let Some(diagnostic) = read
-            .diagnostics
-            .iter()
-            .find(|d| d.code == "transcript_too_large")
-        {
-            return Err(AdapterError::Store(invalid(diagnostic.message.clone())));
-        }
+        read.ensure_writable().map_err(AdapterError::Store)?;
         self.transcript.restore_entries(&read.entries, inner)?;
         Ok(read)
     }

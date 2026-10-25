@@ -29,10 +29,27 @@ pub struct Diagnostic {
     /// JSON syntax text follows the pinned V8 formatter, like TS JSON.parse.
     pub message: String,
 }
+impl Diagnostic {
+    pub const TRANSCRIPT_TOO_LARGE: &'static str = "transcript_too_large";
+}
 #[derive(Debug)]
 pub struct TranscriptRead {
     pub entries: Vec<JsValue>,
     pub diagnostics: Vec<Diagnostic>,
+}
+impl TranscriptRead {
+    /// A size-limited projection cannot seed a writable sequence chain. Other
+    /// diagnostics (missing file, malformed lines) remain recoverable.
+    pub(crate) fn ensure_writable(&self) -> Result<()> {
+        if let Some(diagnostic) = self
+            .diagnostics
+            .iter()
+            .find(|d| d.code == Diagnostic::TRANSCRIPT_TOO_LARGE)
+        {
+            return Err(invalid(diagnostic.message.clone()));
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WriterState {
@@ -59,7 +76,7 @@ fn load(path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
                 TranscriptRead {
                     entries: vec![],
                     diagnostics: vec![Diagnostic {
-                        code: "transcript_too_large",
+                        code: Diagnostic::TRANSCRIPT_TOO_LARGE,
                         severity: "error",
                         line: None,
                         message: format!(
@@ -205,46 +222,11 @@ impl JsonlLedgerStore {
         path: impl AsRef<Path>,
         session_id: impl Into<JsString>,
     ) -> Result<SessionOperationLedger<Self>> {
-        let supplied = path.as_ref();
-        let parent = supplied
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        private_dirs(parent)?;
-        let path = if supplied.exists() {
-            supplied.canonicalize()?
-        } else {
-            parent.canonicalize()?.join(
-                supplied
-                    .file_name()
-                    .ok_or_else(|| invalid("Transcript path requires a filename."))?,
-            )
-        };
-        let mut lock_path = path.as_os_str().to_os_string();
-        lock_path.push(".lock");
-        let lock = private_open()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(PathBuf::from(lock_path))?;
-        lock.try_lock().map_err(|error| match error {
-            fs::TryLockError::WouldBlock => LedgerError::Io(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "Session operation ledger is locked.",
-            )),
-            fs::TryLockError::Error(error) => error.into(),
-        })?;
-        let lock = LedgerLock(lock);
+        let (path, lock) = LedgerLock::acquire(path.as_ref())?;
         let (bytes, read) = load(&path, MAX_BYTES)?;
         // Reading too-large transcripts returns diagnostics, as TS does. Opening
         // a writer must not mistake that empty projection for a fresh session.
-        if read
-            .diagnostics
-            .iter()
-            .any(|d| d.code == "transcript_too_large")
-        {
-            return Err(invalid(read.diagnostics[0].message.clone()));
-        }
+        read.ensure_writable()?;
         let (state, entry_ids) = restore_state(&read.entries)?;
         let store = Self {
             path,
@@ -418,7 +400,44 @@ impl Drop for Temporary {
         let _ = fs::remove_file(&self.0);
     }
 }
-struct LedgerLock(File);
+pub(super) struct LedgerLock(File);
+impl LedgerLock {
+    /// Shared single-writer fence. Resolve aliases before opening the stable
+    /// sibling lock inode, and retain it for the actual writer's lifetime.
+    pub(super) fn acquire(supplied: &Path) -> Result<(PathBuf, Self)> {
+        let parent = supplied
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        private_dirs(parent)?;
+        let path = match fs::symlink_metadata(supplied) {
+            // A dangling leaf symlink must fail canonicalization, not acquire
+            // an alias lock while later appends follow its different target.
+            Ok(_) => supplied.canonicalize()?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => parent.canonicalize()?.join(
+                supplied
+                    .file_name()
+                    .ok_or_else(|| invalid("Transcript path requires a filename."))?,
+            ),
+            Err(error) => return Err(error.into()),
+        };
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let lock = private_open()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(PathBuf::from(lock_path))?;
+        lock.try_lock().map_err(|error| match error {
+            fs::TryLockError::WouldBlock => LedgerError::Io(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Session operation ledger is locked.",
+            )),
+            fs::TryLockError::Error(error) => error.into(),
+        })?;
+        Ok((path, Self(lock)))
+    }
+}
 impl Drop for LedgerLock {
     fn drop(&mut self) {
         // Explicit unlock matters when a concurrent process spawn briefly

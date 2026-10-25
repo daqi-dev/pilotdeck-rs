@@ -54,9 +54,11 @@ impl PersistenceResources {
     /// Restore a recorder before publishing it to the session. The host supplies
     /// the session storage's resolved transcript path; `None` deliberately selects
     /// memory-only recording (AgentSessionRuntimeBundle.ts:125-142). No home or
-    /// project fallback is invented. One active writer per path is required,
-    /// including across generations: hold the session's RuntimeLease and reuse
-    /// `recorder.writer()` for every producer of that session's events.
+    /// project fallback is invented. A canonical-path advisory lock enforces one
+    /// participating writer across generations, until all `recorder.writer()`
+    /// clones drop. Reuse that writer for every producer and hold the session's
+    /// RuntimeLease. TS writers, unlocked stores and hard-link aliases do not
+    /// honor this fence (A6.2-TRANSCRIPT-LOCK-001); stop them before opening.
     ///
     /// A new disk store per session rechecks crash debris on each reopen. Missing
     /// files and malformed lines retain the reader's diagnostics; invalid event
@@ -67,27 +69,24 @@ impl PersistenceResources {
         transcript_path: Option<PathBuf>,
     ) -> RecorderResult<SessionRecording> {
         let persistent = transcript_path.is_some();
+        let (store, transcript_path): (Arc<dyn TranscriptStore>, _) = match transcript_path {
+            Some(path) => {
+                let (store, path) =
+                    JsonlTranscriptStore::open_locked(&path).map_err(RecorderError::Store)?;
+                (Arc::new(store), path)
+            }
+            None => (Arc::new(MemoryEvents::default()), PathBuf::new()),
+        };
         let key = TranscriptKey {
             project_root: self.project_root.clone(),
             pilot_home: self.pilot_home.clone(),
             session_id,
-            transcript_path: transcript_path.unwrap_or_default(),
-        };
-        let store: Arc<dyn TranscriptStore> = if persistent {
-            Arc::new(JsonlTranscriptStore::new())
-        } else {
-            Arc::new(MemoryEvents::default())
+            transcript_path,
         };
         let restored = store.read(&key, None).map_err(RecorderError::Store)?;
         // A size-limited read is not an empty log. Refuse to create a writable
         // recorder with a reset chain (same guard as JsonlLedgerStore::open).
-        if let Some(diagnostic) = restored
-            .diagnostics
-            .iter()
-            .find(|d| d.code == "transcript_too_large")
-        {
-            return Err(RecorderError::State(diagnostic.message.clone()));
-        }
+        restored.ensure_writable().map_err(RecorderError::Store)?;
         let recorder = Recorder::new(store.clone(), key.clone());
         recorder.restore(&restored.entries)?;
         Ok(SessionRecording {
@@ -104,8 +103,8 @@ impl FamilyResource for PersistenceResources {
         self
     }
     fn dispose(&self) -> super::DisposeFuture<'_> {
-        // Constructors hold no open files, and every append/capture completes
-        // before returning. Session lifetime belongs to the lease holder.
+        // The project holds no open files. Sessions retain their own writer
+        // locks, including across project disposal; all IO is synchronous.
         Box::pin(async { Ok(()) })
     }
 }
