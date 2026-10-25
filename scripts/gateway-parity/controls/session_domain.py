@@ -9,17 +9,50 @@ import sys
 import tempfile
 from unittest.mock import patch
 
-# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
-# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
-# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing common.py is what this block defends.  -B only
+# stops cache writes, so redirect the bytecode prefix too (fix-r5).
+import importlib.util, sys, tempfile
+from pathlib import Path
+
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common import SCRIPT, digest, save
-from session_domain import (CELLS, EvidenceError, audit_native, calibration_coverage,
-                            observation_check, read, require, validate_calibration)
+
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
+
+SCRIPT = common.SCRIPT
+digest = common.digest
+save = common.save
+session_domain_module = _load('session_domain', common.SCRIPT / 'session_domain.py')
+CELLS = session_domain_module.CELLS
+EvidenceError = session_domain_module.EvidenceError
+audit_native = session_domain_module.audit_native
+calibration_coverage = session_domain_module.calibration_coverage
+observation_check = session_domain_module.observation_check
+read = session_domain_module.read
+require = session_domain_module.require
+validate_calibration = session_domain_module.validate_calibration
 
 CALIBRATION_CASES = {
     'calibration-repetition': 'COVERAGE',

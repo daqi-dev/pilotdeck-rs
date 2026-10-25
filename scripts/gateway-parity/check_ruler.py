@@ -6,7 +6,6 @@ evidence; choose a fresh --output to rerun. A pending review returns exit 2.
 """
 import argparse
 from contextlib import redirect_stdout
-import importlib.util
 from itertools import combinations
 import json
 import os
@@ -14,20 +13,52 @@ from pathlib import Path
 import sys
 import tempfile
 
-# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
-# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
-# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing common.py is what this block defends.  -B only
+# stops cache writes, so redirect the bytecode prefix too (fix-r5).
+import importlib.util, sys, tempfile
+from pathlib import Path
+
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
 
-# python3 -I removes the script directory from sys.path; the apparatus directory
-# is the only trusted import root.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (DEFAULT_OUT, ROOT, SCRIPT, apparatus_hashes, baseline_dependency_hashes,
-                    cargo_config_problems, digest, install_shutdown, parity_lock, save)
-from compare import compare
-from run_round import run_round
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
+
+DEFAULT_OUT = common.DEFAULT_OUT
+ROOT = common.ROOT
+SCRIPT = common.SCRIPT
+apparatus_hashes = common.apparatus_hashes
+baseline_dependency_hashes = common.baseline_dependency_hashes
+cargo_config_problems = common.cargo_config_problems
+digest = common.digest
+install_shutdown = common.install_shutdown
+parity_lock = common.parity_lock
+save = common.save
+compare_module = _load('compare', common.SCRIPT / 'compare.py')
+compare = compare_module.compare
+run_round_module = _load('run_round', common.SCRIPT / 'run_round.py')
+run_round = run_round_module.run_round
 
 
 def main():
@@ -77,10 +108,7 @@ def main():
             comparisons.append({'pair': [a, b], 'status': result['status'], 'rules': [row['rule'] for row in result['failures']]})
         proxy = compare(output / 'ts1', output / 'proxy')
         save(output / 'compare-proxy.json', proxy)
-        spec = importlib.util.spec_from_file_location('gateway_controls', SCRIPT / 'controls/run_all.py')
-        sys.path.insert(0, str(SCRIPT / 'controls'))
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = _load('gateway_controls', SCRIPT / 'controls/run_all.py')
         controls_path = output / 'controls'
         # Recompute in a new directory so a cached successful control report
         # cannot hide subsequent edits to source evidence or comparator.
@@ -97,6 +125,12 @@ def main():
             'distinct_ts_rounds': distinct, 'gateway_pids': identities,
             'positive_controls': bool(cases) and all(item['passed'] for name, item in cases.items() if not item.get('bothSides')),
             'prerequisite_controls': controls.get('prerequisites', {}).get('passed', False),
+            # Skips stay outside the pass count and are listed explicitly; a
+            # declared host-degenerate skip is allowed, an undeclared one fails
+            # prerequisite_controls via summarize_results() (fix-r6 P2).
+            'prerequisite_skips': controls.get('prerequisites', {}).get('skipped', {}),
+            'prerequisite_skipped_count': controls.get('prerequisites', {}).get('skippedCount', 0),
+            'prerequisite_unexpected_skips': controls.get('prerequisites', {}).get('unexpectedSkips', []),
             'prerequisiteSha256': controls.get('prerequisites', {}).get('inputSha256', {}),
             'prerequisiteAuditSha256': controls.get('prerequisites', {}).get('auditSha256'),
             'same_bad_rejected': bool(cases) and all(cases.get(name, {}).get('passed', False) for name in

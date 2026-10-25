@@ -6,7 +6,6 @@ probes against a saved pre-change tree to demonstrate the original blind spots.
 from contextlib import redirect_stdout
 import copy
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -16,20 +15,91 @@ import subprocess
 import sys
 import tempfile
 
-# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
-# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
-# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing common.py is what this block defends.  -B only
+# stops cache writes, so redirect the bytecode prefix too (fix-r5).
+import importlib.util, sys, tempfile
+from pathlib import Path
+
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
+
+
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
 def module_at(name, path):
+    path = Path(path).resolve()
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
     return module
+
+
+def select_probe_source(common_module, running_common_path):
+    """Return the probe module and table from the running tree, always.
+
+    ``--code-root`` may point at a saved pre-fix tree whose common.py has an
+    older rejects table (or predates ``materialize_probe``).  The table and
+    materializer must still come from the running apparatus so the counterproof
+    exercises the current shapes; only the scanned tree and its hash helpers
+    come from --code-root.  The previous fallback preferred the old tree's table
+    whenever it had one, silently skipping exactly the new shapes the comparison
+    exists to demonstrate (fix-r6 P2).
+    """
+    running_common_path = Path(running_common_path).resolve()
+    current = Path(getattr(common_module, '__file__', '')).resolve()
+    if current == running_common_path:
+        probe_module = common_module
+    else:
+        probe_module = module_at('prerequisite_probe_impl', running_common_path)
+    return probe_module, probe_module.APPARATUS_PROBES
+
+
+def summarize_results(results, allowed_skips):
+    """Three-state gate: executed PASS/FAIL plus explicitly listed SKIPPED.
+
+    A skipped case is never counted as a pass.  Only skips declared as
+    host-degenerate (``allowed_skips``) are tolerated, every skip is listed in
+    the report, and an empty executed set cannot pass.
+    """
+    for name, case in results.items():
+        if 'skipped' not in case:
+            # The old shape was {'passed': True, 'detail': 'SKIPPED ...'} with no
+            # explicit state; refuse it instead of letting ``all(passed)`` count
+            # an unrunnable control as a pass.
+            raise ValueError(f'{name}: control result lacks explicit skipped state')
+    skipped = {name: case['detail'] for name, case in results.items()
+               if case.get('skipped')}
+    unexpected = sorted(set(skipped) - set(allowed_skips))
+    executed = [case for case in results.values() if not case.get('skipped')]
+    passed = bool(executed) and not unexpected and all(case['passed'] for case in executed)
+    return passed, skipped, unexpected
 
 
 def run_prerequisites(output, code_root=ROOT):
@@ -64,9 +134,13 @@ def run_prerequisites(output, code_root=ROOT):
     audit_text = audit_path.read_text() if audit_path.is_file() else ''
     audit_hash = common.digest(audit_path) if audit_path.is_file() else None
 
-    def record(name, passed, detail):
-        results[name] = {'passed': bool(passed), 'detail': detail}
-        print(f"[{'PASS' if passed else 'FAIL'}] {name}: {detail}")
+    def record(name, passed, detail, skipped=False):
+        if skipped:
+            results[name] = {'passed': None, 'skipped': True, 'detail': detail}
+            print(f'[SKIPPED] {name}: {detail}')
+        else:
+            results[name] = {'passed': bool(passed), 'skipped': False, 'detail': detail}
+            print(f"[{'PASS' if passed else 'FAIL'}] {name}: {detail}")
 
     # Presence of the seven required audit rows is a machine gate. This only
     # checks the artifact; it cannot certify two independent model approvals.
@@ -81,9 +155,18 @@ def run_prerequisites(output, code_root=ROOT):
         incomplete = audit_text.replace(f'| {view} |', '| OMITTED |')
         record('audit-missing-' + view, not audit_complete(incomplete), 'missing required audit row must FAIL')
 
-    # Load the selected version; compare.py imports common by module name.
-    sys.path.insert(0, str(scripts))
-    normalizer = module_at('prerequisite_compare', scripts / 'compare.py').Normalizer
+    # Load the selected version; an older compare.py still imports common by
+    # module name, so point sys.modules at the same tree for the load and then
+    # restore the running apparatus module.
+    previous_common = sys.modules.get('common')
+    sys.modules['common'] = common
+    try:
+        normalizer = module_at('prerequisite_compare', scripts / 'compare.py').Normalizer
+    finally:
+        if previous_common is None:
+            sys.modules.pop('common', None)
+        else:
+            sys.modules['common'] = previous_common
     for marker in ('sessionId', 'runId', 'toolCallId'):
         for field in ('startedAt', 'completedAt'):
             a = {marker: 'business', field: 1}
@@ -177,28 +260,30 @@ def run_prerequisites(output, code_root=ROOT):
         # control here.  The table and the materialize/remove implementation
         # live in common.py and are shared with test_safety.ApparatusInputs, so
         # the two machine controls cannot drift apart.  --code-root may point
-        # at a pre-fix tree; take the table and helpers from the running
-        # apparatus in that case.  Link targets live outside SCRIPT so only the
-        # link is a probe.
+        # at a pre-fix tree; the table and helpers still come from the running
+        # apparatus (select_probe_source).  Link targets live outside SCRIPT so
+        # only the link is a probe.
         shadows = common.ROOT / 'outside-apparatus'
         shadows.mkdir()
         (shadows / '__init__.py').write_text('shadow package')
         (shadows / 'evil.py').write_text('shadow module')
-        probe_module = common
-        if getattr(common, 'materialize_probe', None) is None:
-            probe_module = module_at('prerequisite_probe_impl',
-                                     Path(__file__).resolve().parents[1] / 'common.py')
-        probes = getattr(common, 'APPARATUS_PROBES', None) or probe_module.APPARATUS_PROBES
+        probe_module, probes = select_probe_source(
+            common, Path(__file__).resolve().parents[1] / 'common.py')
+        allowed_skips = {f'apparatus-unregistered-{kind}-{name}'
+                         for kind, name in probe_module.DEGENERATE_PROBES}
         for kind, name in probes:
-            # The scan reports a __pycache__ directory itself, not its files.
-            expected = '__pycache__' if name.startswith('__pycache__/') else name
+            # The scan reports the first __pycache__ directory itself, never a
+            # file below it (root or nested).
+            expected = probe_module.probe_expected(name)
             try:
                 path = probe_module.materialize_probe(common.SCRIPT, kind, name, shadows)
             except probe_module.ProbeSkipped as error:
                 # euid==0 can read mode-000 directories; mark the probe
                 # degenerate rather than pretending the shape was exercised.
-                record(f'apparatus-unregistered-{kind}-{name}', True,
-                       f'SKIPPED (degenerate, not evidence): {error}')
+                # A skip is its own state and stays out of the pass count; an
+                # undeclared skip fails the aggregate gate (summarize_results).
+                record(f'apparatus-unregistered-{kind}-{name}', None,
+                       f'SKIPPED (degenerate, not evidence): {error}', skipped=True)
                 continue
             try:
                 common.apparatus_hashes()
@@ -400,7 +485,10 @@ def run_prerequisites(output, code_root=ROOT):
     current_audit_hash = common.digest(audit_path) if audit_path.is_file() else None
     record('audit-input-stability', current_audit_hash == audit_hash,
            'audit artifact unchanged during controls')
-    report = {'passed': all(c['passed'] for c in results.values()), 'cases': results,
+    passed, skipped, unexpected_skips = summarize_results(results, allowed_skips)
+    report = {'passed': passed, 'cases': results, 'skipped': skipped,
+              'skippedCount': len(skipped), 'unexpectedSkips': unexpected_skips,
+              'allowedSkips': sorted(allowed_skips),
               'inputSha256': prerequisite_hashes,
               'auditSha256': audit_hash if audit_path.is_file() else None,
               'fixtureCounts': {'positiveFrames': len(fixtures['frames']['positive']),

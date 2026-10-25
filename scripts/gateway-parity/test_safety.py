@@ -13,22 +13,66 @@ import tempfile
 import time
 import unittest
 
-# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
-# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
-# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing common.py is what this block defends.  -B only
+# stops cache writes, so redirect the bytecode prefix too (fix-r5).
+import importlib.util, sys, tempfile
+from pathlib import Path
+
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
 
-# python3 -I removes the script directory from sys.path; the apparatus directory
-# is the only trusted import root.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (APPARATUS_PROBES, DATA_FILES, MAX_AGE, ProbeSkipped,
-                    apparatus_whitelist, baseline_dependency_hashes, cargo_config_problems,
-                    guard, materialize_probe, node_modules_entry, owner, parity_lock,
-                    remove_probe, save, unknown_apparatus_files)
-from compare import Normalizer, compare, wire_frame
-from observer import Decoder
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
+
+APPARATUS_PROBES = common.APPARATUS_PROBES
+DATA_FILES = common.DATA_FILES
+DEGENERATE_PROBES = common.DEGENERATE_PROBES
+MAX_AGE = common.MAX_AGE
+ProbeSkipped = common.ProbeSkipped
+apparatus_whitelist = common.apparatus_whitelist
+baseline_dependency_hashes = common.baseline_dependency_hashes
+cargo_config_problems = common.cargo_config_problems
+guard = common.guard
+materialize_probe = common.materialize_probe
+node_modules_entry = common.node_modules_entry
+owner = common.owner
+parity_lock = common.parity_lock
+probe_expected = common.probe_expected
+remove_probe = common.remove_probe
+save = common.save
+unknown_apparatus_files = common.unknown_apparatus_files
+compare_module = _load('compare', common.SCRIPT / 'compare.py')
+Normalizer = compare_module.Normalizer
+compare = compare_module.compare
+wire_frame = compare_module.wire_frame
+observer_module = _load('observer', common.SCRIPT / 'observer.py')
+Decoder = observer_module.Decoder
+
+BOOTSTRAP_START = '# >>> apparatus bootstrap'
+BOOTSTRAP_END = '# <<< apparatus bootstrap'
+APPARATUS_MODULES = ('common', 'compare', 'observer', 'run_round', 'session_domain',
+                     'prerequisites')
 
 
 def contender(lock, events):
@@ -230,15 +274,21 @@ class ApparatusInputs(unittest.TestCase):
         self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
         (outside / '__init__.py').write_text('shadow package')
         (outside / 'evil.py').write_text('shadow module')
+        skipped = {}
         for kind, name in APPARATUS_PROBES:
+            # Each shape is its own subTest.  A host-degenerate skip records the
+            # entry and continues: raising SkipTest here would abort the whole
+            # method and silently stop the remaining probes (fix-r6 P2).
             with self.subTest(kind=kind, name=name):
                 try:
                     path = materialize_probe(self.root, kind, name, outside)
                 except ProbeSkipped as error:
-                    self.skipTest(str(error))
-                # The scan reports a __pycache__ directory itself, not each
-                # file below it (it never descends into one).
-                expected = '__pycache__' if name.startswith('__pycache__/') else name
+                    skipped[(kind, name)] = str(error)
+                    print(f'[SKIPPED] {kind}:{name}: {error}', file=sys.stderr)
+                    continue
+                # The scan reports the first __pycache__ directory itself, not
+                # each file below it (it never descends into one).
+                expected = probe_expected(name)
                 try:
                     if kind == 'unreadable-dir':
                         # onerror must surface the failure, never skip the tree.
@@ -248,6 +298,11 @@ class ApparatusInputs(unittest.TestCase):
                         self.assertEqual(unknown_apparatus_files(self.root), [expected])
                 finally:
                     remove_probe(kind, path)
+        self.assertLessEqual(set(skipped), set(DEGENERATE_PROBES),
+                             f'undeclared probe skip: {skipped}')
+        print(f'probes: {len(APPARATUS_PROBES)} shapes, {len(skipped)} declared '
+              f'degenerate skips, {len(APPARATUS_PROBES) - len(skipped)} exercised',
+              file=sys.stderr)
         self.assertEqual(unknown_apparatus_files(self.root), [])
 
     def test_unknown_probe_kind_is_an_error(self):
@@ -261,6 +316,111 @@ class ApparatusInputs(unittest.TestCase):
             remove_probe('fifo', self.root / 'pipe')
         self.assertFalse((self.root / 'pipe').exists())
         self.assertEqual(unknown_apparatus_files(self.root), [])
+
+    def test_a2_entries_share_one_verbatim_path_bootstrap(self):
+        # Every A2 entry that touches common must carry the same inline block.
+        # It cannot move into common.py (importing common is what it defends),
+        # so the machine check is what stops a future entry from reverting to
+        # ``from common import`` and being shadowed before the scan (fix-r6 P1).
+        folder = Path(__file__).resolve().parent
+        blocks = {}
+        for name in common.A2_SCRIPTS:
+            if name == 'common.py' or not name.endswith('.py'):
+                continue
+            text = (folder / name).read_text(encoding='utf-8')
+            if 'common' not in text and '_load(' not in text:
+                continue
+            start = text.find(BOOTSTRAP_START)
+            self.assertNotEqual(start, -1, f'{name}: missing apparatus bootstrap')
+            end = text.find(BOOTSTRAP_END, start)
+            self.assertNotEqual(end, -1, f'{name}: unterminated apparatus bootstrap')
+            blocks[name] = text[start:end + len(BOOTSTRAP_END)]
+            prefix = text[:start]
+            self.assertNotRegex(prefix, r'sys[.]path[.]insert', name)
+            self.assertNotRegex(prefix, r'(?m)^\s*(?:from|import)\s+(?:'
+                                        + '|'.join(APPARATUS_MODULES) + r')\b', name)
+        self.assertEqual(sorted(blocks), sorted([
+            'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
+            'run_round.py', 'session_domain.py', 'test_safety.py',
+            'controls/run_all.py', 'controls/prerequisites.py',
+            'controls/session_domain.py']))
+        self.assertEqual(len(set(blocks.values())), 1,
+                         'apparatus bootstrap differs between entries')
+
+    def test_a2_entries_never_resolve_apparatus_through_sys_path(self):
+        # Covers entries that do not mention ``common`` but still import a
+        # sibling module by name; sys.path lookup is the P1 bypass in both cases.
+        folder = Path(__file__).resolve().parent
+        pattern = r'(?m)^\s*(?:from|import)\s+(?:' + '|'.join(APPARATUS_MODULES) + r')\b'
+        for name in common.A2_SCRIPTS:
+            if not name.endswith('.py') or name == 'common.py':
+                continue
+            text = (folder / name).read_text(encoding='utf-8')
+            self.assertNotRegex(text, r'sys[.]path[.]insert', name)
+            self.assertNotRegex(text, pattern, name)
+
+    def test_controls_entry_ignores_controls_common_shadow(self):
+        # The controls/ entries must resolve common.py from the apparatus dir,
+        # never from their own directory: a controls/common.py is not a second
+        # canonical module, and preferring it would be the same P1 bypass one
+        # level down (fix-r6 P1).
+        folder = Path(__file__).resolve().parent
+        shadow = folder / 'controls/common.py'
+        marker = self.root / 'controls-common-executed'
+        shadow.write_text("from pathlib import Path\n"
+                          f"Path({str(marker)!r}).write_text('executed')\n"
+                          "raise RuntimeError('controls/common.py must not be loaded')\n",
+                          encoding='utf-8')
+        self.addCleanup(lambda: shadow.unlink(missing_ok=True))
+        module = _load('probe_controls_prerequisites', folder / 'controls/prerequisites.py')
+        self.assertEqual(Path(module.common.__file__).resolve(), folder / 'common.py')
+        self.assertFalse(marker.exists())
+
+    def test_skipped_probe_is_not_counted_as_passed(self):
+        # Three-state gate (fix-r6 P2): a skipped control is listed but never
+        # satisfies ``all(passed)``.  Only declared host-degenerate skips are
+        # tolerated; an undeclared skip fails, and a skip-only report cannot pass.
+        prerequisites = _load('prerequisites',
+                              Path(__file__).resolve().parent / 'controls/prerequisites.py')
+        declared = 'apparatus-unregistered-case-variant-COMMON.PY'
+        results = {
+            'ok': {'passed': True, 'skipped': False, 'detail': ''},
+            declared: {'passed': None, 'skipped': True, 'detail': 'SKIPPED: APFS folds case'},
+        }
+        passed, skipped, unexpected = prerequisites.summarize_results(results, {declared})
+        self.assertTrue(passed)
+        self.assertEqual(skipped, {declared: 'SKIPPED: APFS folds case'})
+        self.assertEqual(unexpected, [])
+        results['apparatus-unregistered-file-surprise'] = {
+            'passed': None, 'skipped': True, 'detail': 'SKIPPED: unexpected'}
+        passed, skipped, unexpected = prerequisites.summarize_results(results, {declared})
+        self.assertFalse(passed)
+        self.assertEqual(unexpected, ['apparatus-unregistered-file-surprise'])
+        only_skip = {'x': {'passed': None, 'skipped': True, 'detail': 'SKIPPED'}}
+        self.assertFalse(prerequisites.summarize_results(only_skip, {'x'})[0])
+        # The pre-fix shape had no explicit state and ``passed: True``; the gate
+        # must refuse it rather than silently counting it as an executed pass.
+        legacy = {'old': {'passed': True, 'detail': 'SKIPPED (degenerate)'}}
+        with self.assertRaises(ValueError):
+            prerequisites.summarize_results(legacy, set())
+
+    def test_probe_table_prefers_running_tree_over_old_code_root(self):
+        # fix-r6 P2: --code-root may point at a pre-fix tree with an old table.
+        # The running table must win, otherwise the new shapes are silently not
+        # exercised in exactly the comparison that is meant to expose them.
+        prerequisites = _load('prerequisites',
+                              Path(__file__).resolve().parent / 'controls/prerequisites.py')
+        running_path = Path(__file__).resolve().parent / 'common.py'
+        old = type('OldCommon', (), {
+            'APPARATUS_PROBES': (('file', 'old-only.py'),),
+            'materialize_probe': None,
+        })()
+        module, table = prerequisites.select_probe_source(old, running_path)
+        self.assertEqual(tuple(table), tuple(APPARATUS_PROBES))
+        self.assertNotIn(('file', 'old-only.py'), table)
+        current, current_table = prerequisites.select_probe_source(common, running_path)
+        self.assertIs(current, common)
+        self.assertEqual(tuple(current_table), tuple(APPARATUS_PROBES))
 
     def test_whitelisted_and_data_files_are_accepted_by_path(self):
         for name in apparatus_whitelist():
@@ -309,6 +469,12 @@ class ApparatusInputs(unittest.TestCase):
         (self.root / 'legacy.pyc').write_bytes(b'x')
         (self.root / 'legacy.pyo').write_bytes(b'x')
         self.assertEqual(unknown_apparatus_files(self.root), ['legacy.pyc', 'legacy.pyo'])
+        # A cache below a subdirectory is rejected at its first __pycache__
+        # segment too; controls/run_all.py is loaded by path and would shadow.
+        (self.root / 'controls/__pycache__').mkdir(parents=True)
+        (self.root / 'controls/__pycache__/run_all.cpython-314.pyc').write_bytes(b'x')
+        self.assertEqual(unknown_apparatus_files(self.root), [
+            'controls/__pycache__', 'legacy.pyc', 'legacy.pyo'])
 
     def test_ds_store_is_tolerated_only_as_a_regular_file(self):
         # Same exemption as scripts/ui-server-parity/apparatus.py: ordinary

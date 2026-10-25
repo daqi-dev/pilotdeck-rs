@@ -10,17 +10,42 @@ import sqlite3
 import sys
 import tempfile
 
-# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
-# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
-# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing common.py is what this block defends.  -B only
+# stops cache writes, so redirect the bytecode prefix too (fix-r5).
+import importlib.util, sys, tempfile
+from pathlib import Path
+
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
 
-# python3 -I removes the script directory from sys.path; the apparatus directory
-# is the only trusted import root.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import DEFAULT_OUT, READ_METHODS, SCENARIOS, save
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
+
+DEFAULT_OUT = common.DEFAULT_OUT
+READ_METHODS = common.READ_METHODS
+SCENARIOS = common.SCENARIOS
+save = common.save
 
 UUID = re.compile(r'\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', re.I)
 

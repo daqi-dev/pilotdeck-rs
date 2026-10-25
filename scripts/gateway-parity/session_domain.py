@@ -16,20 +16,50 @@ import sys
 import tempfile
 import time
 
-# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
-# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
-# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing common.py is what this block defends.  -B only
+# stops cache writes, so redirect the bytecode prefix too (fix-r5).
+import importlib.util, sys, tempfile
+from pathlib import Path
+
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
 
-# python3 -I removes the script directory from sys.path; the apparatus directory
-# is the only trusted import root.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (ROOT, SCRIPT, apparatus_hashes, baseline_dependency_hashes, digest,
-                    install_shutdown, parity_lock, save)
-from compare import wire_frame
-from observer import Decoder
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
+
+ROOT = common.ROOT
+SCRIPT = common.SCRIPT
+apparatus_hashes = common.apparatus_hashes
+baseline_dependency_hashes = common.baseline_dependency_hashes
+digest = common.digest
+install_shutdown = common.install_shutdown
+parity_lock = common.parity_lock
+save = common.save
+compare_module = _load('compare', common.SCRIPT / 'compare.py')
+wire_frame = compare_module.wire_frame
+observer_module = _load('observer', common.SCRIPT / 'observer.py')
+Decoder = observer_module.Decoder
 
 # 显式 --baseline > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck（#187：不再写死主仓绝对路径）
 BASELINE = Path(os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck')
