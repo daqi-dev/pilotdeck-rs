@@ -52,7 +52,7 @@
 | 事件 | 判定 | 证据 |
 |---|---|---|
 | E1 重提交 | 差异已登记 A6.9-STEER-RUN-001（屏障前 start_turn 拒绝或等待；wait_ready 等全部前驱；失败屏障只堵同 key，其他 key 可用） | Rust `tests.rs:254`（insert 挂起中拒绝+等待）、`:448`（未启动绑定的连续替换不移除屏障）、`:518`（失败屏障同 key 重复 rebind 均拒）、`interaction_host_tests.rs:588`（dispose 超时重提交等旧 recorder） |
-| E2 steer | 已实测对齐 | TS `A1_running_mailbox`（close 后 turn_closing）+ `A4_sequential`（未 drain 条目 close 时 discard，记录 steer_unapplied 先于 turn_completed）；Rust `tests.rs:254`（insertion err + 恰 1 条 turn_closing discard） |
+| E2 steer | 已实测对齐 | TS `oracle.json A1_running_mailbox.trace`：trace[7] `{"messages":[],"closed":true}`（drainOrClose 已关）之后、trace[9] `finished` 清空之前，trace[8] `{"accepted":false,"reason":"turn_closing"}`（oracle.json:45，与 trace[10] `no_active_turn` 相区分）——close 已发起、finish 未排空时 enqueue 拒绝。+ `A4_sequential`（未 drain 条目 close 时 discard reason `turn_ended`，事件序 `steer_unapplied` 先于 `turn_completed`）；Rust `tests.rs:254`（insertion err + 恰 1 条 turn_closing discard） |
 | E4 前驱 durable 保护 | 差异已登记 A6.9-STEER-RUN-001（applying 锁保护 admitted durable write，close 等待 applying；TS 对应竞争即 A3 泄漏） | Rust `tests.rs:329`、`:448`、`interaction_host_tests.rs:588` |
 | E6 | 并入 E1/E4 行 | — |
 
