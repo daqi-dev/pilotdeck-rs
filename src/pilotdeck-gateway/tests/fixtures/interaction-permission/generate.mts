@@ -2,20 +2,16 @@
 // PDRS_BASELINE=/abs/PilotDeck node --import /abs/PilotDeck/node_modules/tsx/dist/loader.mjs \
 //   src/pilotdeck-gateway/tests/fixtures/interaction-permission/generate.mts /new/output/dir
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 
 assert.ok(process.env.PDRS_BASELINE);
 assert.ok(process.argv[2]);
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
-const git = (...args: string[]) => execFileSync('git', ['--no-replace-objects', '-C', baseline, ...args]);
-assert.equal(git('rev-parse', 'HEAD').toString().trim(), commit);
-assert.equal(git('status', '--porcelain', '--untracked-files=no').toString(), '');
+const commit = assertBaseline(baseline);
 const entries = [
   'src/cli/SessionInteractionBundle.ts',
   'src/interaction/InteractionProfile.ts',
@@ -23,20 +19,18 @@ const entries = [
   'src/interaction/ProfiledPermissionDecisionPort.ts',
   'src/permission/decision/PermissionRuntime.ts',
   'src/gateway/permission/createGatewayPermissionHook.ts',
+  'src/permission/protocol/types.ts',
+  'src/gateway/permission/GatewayPermissionBus.ts',
+  'src/gateway/elicitation/GatewayElicitationBus.ts',
 ];
-const hashes: Record<string, string> = {};
-for (const file of entries) {
-  const bytes = await readFile(join(baseline, file));
-  assert.deepEqual(bytes, git('show', `${commit}:${file}`));
-  hashes[file] = createHash('sha256').update(bytes).digest('hex');
-}
+const hashes = await baselineSourceHashes(baseline, entries);
 const load = (file: string) => import(pathToFileURL(join(baseline, file)).href);
 const { SessionInteractionBundle } = await load(entries[0]);
 const { resolveInteractionProfile } = await load(entries[1]);
-const { createDefaultPermissionContext } = await load('src/permission/protocol/types.ts');
+const { createDefaultPermissionContext } = await load(entries[6]);
 const { createGatewayPermissionHook } = await load(entries[5]);
-const { GatewayPermissionBus } = await load('src/gateway/permission/GatewayPermissionBus.ts');
-const { GatewayElicitationBus } = await load('src/gateway/elicitation/GatewayElicitationBus.ts');
+const { GatewayPermissionBus } = await load(entries[7]);
+const { GatewayElicitationBus } = await load(entries[8]);
 
 const profiles = [];
 for (const [name, canPrompt, forcedMcp, policyCanPrompt] of [
@@ -94,9 +88,23 @@ for (const mode of ['allow', 'no-sink', 'cancel', 'throw-error', 'throw-string',
   const result = await hook({ hookInput: { toolName: 'danger', toolCallId: 'call', toolInput: null }, signal: abort.signal });
   hooks.push({ mode, result, rules });
 }
-assert.equal(git('status', '--porcelain', '--untracked-files=no').toString(), '');
+const byMode = new Map(hooks.map(row => [row.mode, row]));
+const allow = byMode.get('allow')!;
+const answerThenNoSink = byMode.get('answer-then-no-sink')!;
+assert.deepEqual(answerThenNoSink.result, allow.result,
+  'a synchronous answer must win over a later delivery=false');
+assert.deepEqual(answerThenNoSink.rules, allow.rules);
+for (const mode of ['throw-error', 'throw-string']) {
+  assert.deepEqual(byMode.get(mode)!.result, {
+    type: 'sync', specific: { hookEventName: 'PermissionRequest', decision: {
+      behavior: 'deny', message: 'Permission prompt delivery failed: sink failed',
+    } },
+  });
+  assert.deepEqual(byMode.get(mode)!.rules, []);
+}
+assertBaseline(baseline);
 await mkdir(output); // Never overwrite prior evidence.
-for (const [name, value] of Object.entries({ profiles, hooks, source: { commit, hashes } })) {
+for (const [name, value] of Object.entries({ profiles, oracle: hooks.slice(0, 3), hooks, source: { commit, hashes } })) {
   await writeFile(join(output, `${name}.json`), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
 }
 console.log(JSON.stringify({ output, profiles, hooks }, null, 2));

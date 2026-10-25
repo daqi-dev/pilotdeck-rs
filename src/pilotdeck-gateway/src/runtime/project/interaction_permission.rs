@@ -220,13 +220,15 @@ impl TurnPermission {
             let guard = {
                 let state = lock(&turn.state);
                 turn.check(&state)?;
-                if let Some(message) = turn.prompt_denial() {
-                    return Ok(denied(message));
-                }
+                // Match decide's effective order: native Gateway policy denial
+                // precedes profile admission, including direct callback misuse.
                 if turn.run.options.context.policy_can_prompt == Some(false) {
                     return Ok(denied(
                         "Permission prompt denied because Gateway policy disables prompts for this session.",
                     ));
+                }
+                if let Some(message) = turn.prompt_denial() {
+                    return Ok(denied(message));
                 }
                 if cancel.is_cancelled() {
                     return Ok(denied("Permission prompt cancelled."));

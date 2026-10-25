@@ -197,6 +197,70 @@ async fn profiled_decisions_match_ts_bundle_including_native_denials() {
 }
 
 #[tokio::test]
+async fn gateway_policy_denial_precedes_profile_admission_for_direct_requests() {
+    // TS has no request(context) port. Its effective bundle.decide path keeps
+    // this native policy denial for both headless and disabled profiles.
+    for name in [
+        InteractionProfileName::Interactive,
+        InteractionProfileName::Headless,
+        InteractionProfileName::Disabled,
+    ] {
+        for can_prompt in [true, false] {
+            let coordinator = Arc::new(GatewayInteractionCoordinator::default());
+            let resource = InteractionPermission::default();
+            let turn = resource
+                .bind_turn(
+                    "s".into(),
+                    "r".into(),
+                    PermissionTurnOptions {
+                        profile: profile(name),
+                        context: permission::create_default_permission_context(
+                            permission::DefaultPermissionContextOptions {
+                                cwd: "/workspace".into(),
+                                can_prompt: Some(can_prompt),
+                                policy_can_prompt: Some(false),
+                                ..Default::default()
+                            },
+                        ),
+                        rules: RuleSetHandle::empty(),
+                        coordinator: coordinator.clone(),
+                        emit: Arc::new(|_| panic!("policy denial must not emit")),
+                        timeout: Duration::ZERO,
+                    },
+                    Arc::new(Catalog),
+                    &mut ModuleRouter::default(),
+                )
+                .unwrap();
+            let message: JsValue =
+                "Permission prompt denied because Gateway policy disables prompts for this session."
+                    .into();
+            let context = turn.prepare(JsValue::Null).await.unwrap();
+            assert_eq!(
+                turn.decide(named_tool("danger"), JsValue::Null, context, "call".into())
+                    .await
+                    .unwrap(),
+                object([
+                    ("type", "deny".into()),
+                    (
+                        "reason",
+                        object([("type", "runtime".into()), ("message", message.clone())]),
+                    ),
+                    ("message", message.clone()),
+                ]),
+            );
+            assert_eq!(
+                prompt(&turn, Cancellation::new()).await.unwrap(),
+                object([("behavior", "deny".into()), ("message", message)]),
+                "{name:?}, can_prompt={can_prompt}",
+            );
+            assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 0);
+            assert!(lock(&turn.run.requests).is_empty());
+            assert!(turn.run.options.rules.snapshot().allow.is_empty());
+        }
+    }
+}
+
+#[tokio::test]
 async fn emit_panic_unwinds_but_drops_the_pending_registration() {
     // Fn -> bool has no error channel. This records the Rust boundary, not a
     // claim of parity with TS's catch(error) -> delivery-failed deny branch.
@@ -243,14 +307,34 @@ async fn synchronous_answer_wins_over_delivery_false() {
             false
         }),
     );
-    // Real TS answer-then-no-sink probe equals the original allow oracle.
+    let JsValue::Array(ref hooks) = pilotdeck_protocol::parse_json(include_str!(
+        "../../../../tests/fixtures/interaction-permission/hooks.json"
+    ))
+    .unwrap() else {
+        panic!("hook oracle must be an array")
+    };
+    let expected = hooks
+        .iter()
+        .find(|row| {
+            row.get("mode")
+                .and_then(JsValue::as_string)
+                .is_some_and(|mode| mode.equals_str("answer-then-no-sink"))
+        })
+        .unwrap();
     assert_eq!(
         prompt(&turn, Cancellation::new()).await.unwrap(),
-        oracle_decision(0)
+        *expected
+            .get("result")
+            .unwrap()
+            .get("specific")
+            .unwrap()
+            .get("decision")
+            .unwrap(),
     );
+    let rules = turn.run.options.rules.snapshot().allow;
     assert_eq!(
-        turn.run.options.rules.snapshot().allow,
-        vec![PermissionRule::new("session", "allow", "danger")]
+        JsValue::Array(rules.iter().map(PermissionRule::to_value).collect()),
+        *expected.get("rules").unwrap(),
     );
     assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 0);
 }
