@@ -175,6 +175,7 @@ pub trait SubmitHost: Send + Sync {
     fn admitted_preflight<'a>(
         &'a self,
         input: &'a JsValue,
+        run: &'a RunRef,
         completion: &'a TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>>;
     /// Permission transitions, model telemetry and task-budget spend run here
@@ -184,9 +185,12 @@ pub trait SubmitHost: Send + Sync {
         input: &'a JsValue,
         event: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>>;
+    /// The replacement claim runs here with the run's generated runId
+    /// (InProcessGateway.ts:956 claims after `runId = input.runId ?? uuid()`).
     fn preflight<'a>(
         &'a self,
         input: &'a JsValue,
+        run: &'a RunRef,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>>;
     fn has_sdk_config(&self) -> bool;
     fn validate_sdk_config(&self, config: &JsValue) -> Result<(), SubmitError>;
@@ -353,7 +357,7 @@ impl TurnSubmitter {
             released: false,
             workspace: None,
         };
-        let preflight = self.host.preflight(&input).await;
+        let preflight = self.host.preflight(&input, &run).await;
         let early = match preflight {
             Ok(events) => events,
             Err(error) => vec![error_event(&run, &error.code, &error.message, true)],
@@ -508,7 +512,10 @@ impl TurnSubmitter {
                 return Ok(());
             }
         }
-        let admitted = self.host.admitted_preflight(&input, &completion).await;
+        let admitted = self
+            .host
+            .admitted_preflight(&input, &run, &completion)
+            .await;
         let early = match admitted {
             Ok(events) if events.is_empty() && completion.is_cancelled() => vec![aborted(&run)],
             Ok(events) => events,
@@ -1146,13 +1153,13 @@ fn emit_all(send: &mpsc::UnboundedSender<Message>, events: Vec<JsValue>) {
         let _ = send.send(Message::Event(event));
     }
 }
-fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
+pub(super) fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
     value.get(key).unwrap_or({
         static UNDEFINED: JsValue = JsValue::Undefined;
         &UNDEFINED
     })
 }
-fn string(value: &JsValue) -> JsString {
+pub(super) fn string(value: &JsValue) -> JsString {
     value.as_string().cloned().unwrap_or_default()
 }
 fn display(value: &JsString) -> String {
@@ -1165,7 +1172,7 @@ fn strings(value: &JsValue) -> Option<Vec<JsString>> {
         None
     }
 }
-fn is(value: &JsValue, key: &str, text: &str) -> bool {
+pub(super) fn is(value: &JsValue, key: &str, text: &str) -> bool {
     field(value, key)
         .as_string()
         .is_some_and(|value| value.equals_str(text))
@@ -1179,7 +1186,7 @@ pub(super) fn truthy(value: &JsValue) -> bool {
         _ => true,
     }
 }
-fn set(value: &mut JsValue, key: &str, item: JsValue) {
+pub(super) fn set(value: &mut JsValue, key: &str, item: JsValue) {
     if let JsValue::Object(value) = value {
         value.insert(key.into(), item);
     }
@@ -1188,7 +1195,7 @@ fn with_run(mut value: JsValue, run: &RunRef) -> JsValue {
     set(&mut value, "runId", JsValue::String(run.run_id.clone()));
     value
 }
-fn error_event(run: &RunRef, code: &str, message: &str, recoverable: bool) -> JsValue {
+pub(super) fn error_event(run: &RunRef, code: &str, message: &str, recoverable: bool) -> JsValue {
     object([
         ("type", "error".into()),
         ("runId", JsValue::String(run.run_id.clone())),
@@ -1213,7 +1220,7 @@ fn model_event(selection: &JsValue, source: &JsValue, run: &RunRef) -> JsValue {
         ("runId", JsValue::String(run.run_id.clone())),
     ])
 }
-fn aborted(run: &RunRef) -> JsValue {
+pub(super) fn aborted(run: &RunRef) -> JsValue {
     object([
         ("type", "turn_completed".into()),
         ("runId", JsValue::String(run.run_id.clone())),

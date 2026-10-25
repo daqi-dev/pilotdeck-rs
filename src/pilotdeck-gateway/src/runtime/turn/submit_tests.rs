@@ -256,8 +256,9 @@ impl SubmitAdmission for Host {
     }
     fn admitted_preflight<'a>(
         &'a self,
-        input: &'a JsValue,
-        completion: &'a TurnCompletionHandle,
+        _input: &'a JsValue,
+        run: &'a RunRef,
+        _completion: &'a TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
         Box::pin(async move {
             if self.session.setup["recovery"] == true {
@@ -266,11 +267,6 @@ impl SubmitAdmission for Host {
                     self.recovery.wait().await;
                 }
                 if self.session.setup["recoveryFailure"] == true {
-                    let run = RunRef {
-                        session_key: string(field(input, "sessionKey")),
-                        project_key: None,
-                        run_id: completion.run_id().clone(),
-                    };
                     let mut event = error_event(
                         &run,
                         "gateway_dialog_recovery_cleanup_failed",
@@ -298,6 +294,7 @@ impl SubmitAdmission for Host {
     fn preflight<'a>(
         &'a self,
         _: &'a JsValue,
+        _: &'a RunRef,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
         Box::pin(async { Ok(vec![]) })
     }

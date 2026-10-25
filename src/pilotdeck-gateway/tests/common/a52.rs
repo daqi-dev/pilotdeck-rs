@@ -183,12 +183,14 @@ impl SubmitHost for Host {
     fn preflight<'a>(
         &'a self,
         _: &'a JsValue,
+        _: &'a RunRef,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
         Box::pin(async { Ok(vec![]) })
     }
     fn admitted_preflight<'a>(
         &'a self,
         _: &'a JsValue,
+        _: &'a RunRef,
         _: &'a TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
         Box::pin(async { Ok(vec![]) })

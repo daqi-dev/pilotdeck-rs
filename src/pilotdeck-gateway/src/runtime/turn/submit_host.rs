@@ -139,10 +139,12 @@ pub trait SubmitAdmission: Send + Sync {
     fn preflight<'a>(
         &'a self,
         input: &'a JsValue,
+        run: &'a RunRef,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>>;
     fn admitted_preflight<'a>(
         &'a self,
         input: &'a JsValue,
+        run: &'a RunRef,
         completion: &'a crate::runtime::session::TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>>;
     fn observe_event<'a>(
@@ -326,15 +328,17 @@ impl SubmitHost for GatewaySubmitHost {
     fn preflight<'a>(
         &'a self,
         input: &'a JsValue,
+        run: &'a RunRef,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
-        self.admission.preflight(input)
+        self.admission.preflight(input, run)
     }
     fn admitted_preflight<'a>(
         &'a self,
         input: &'a JsValue,
+        run: &'a RunRef,
         completion: &'a crate::runtime::session::TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
-        self.admission.admitted_preflight(input, completion)
+        self.admission.admitted_preflight(input, run, completion)
     }
     fn observe_event<'a>(
         &'a self,
