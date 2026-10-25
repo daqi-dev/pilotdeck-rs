@@ -50,16 +50,6 @@ impl ProjectionError {
         }
     }
 
-    /// A `..` in `sessionId`/`turnId` can pop the protected root and land the
-    /// write in the shared temp directory with no ownership/symlink checks.
-    /// TS writes there; refusing is the security-direction deviation recorded
-    /// in A6.9-TOOL-RESULT-DIR-SECURE-001.
-    fn artifact_path_escape(path: &Path, root: &Path) -> Self {
-        Self {
-            text: format!("Error: {}", refused_artifact_path(path, root)),
-        }
-    }
-
     /// The `TypeError: …` / `RangeError: …` text, as `String(error)` yields.
     pub fn message(&self) -> &str {
         &self.text
@@ -306,9 +296,11 @@ impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
         // A `..` path part must not pop the protected root: every security
         // check below starts at `root`, and a write landing beside it in the
         // shared temp directory would have none. TS writes there; fail closed
-        // (A6.9-TOOL-RESULT-DIR-SECURE-001, scope).
+        // by refusing to queue the write and handing out no path (the same
+        // outcome as a write that could not be queued), so the tool result
+        // itself still projects (A6.9-TOOL-RESULT-DIR-SECURE-001, scope).
         if path.strip_prefix(&root).is_err() {
-            return Err(ProjectionError::artifact_path_escape(&path, &root));
+            return Ok(None);
         }
         // `void this.write(...)`: return the path immediately; the advisory
         // write runs off-thread and failures are swallowed.

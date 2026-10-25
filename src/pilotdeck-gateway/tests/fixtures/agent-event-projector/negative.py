@@ -230,7 +230,21 @@ mutants = [
         "projector.rs",
         "            Component::ParentDir => {\n                normalized.pop();\n            }",
         "            Component::ParentDir => {\n                normalized.push(component.as_os_str());\n            }",
-        "default_store_resolves_dot_segments_like_ts",
+        # The renamed case now only exercises in-root `.` normalization; the
+        # `..` case that still reaches `ParentDir` is the escape test.
+        "artifact_session_parent_dir_escape_is_refused",
+    ),
+    # Fix round 2 (P1): the `..` root guard must stay wired. Without it the
+    # escaped path is queued and handed back as `resultPath`.
+    (
+        "drop-artifact-escape-guard",
+        "projector.rs",
+        '''        if path.strip_prefix(&root).is_err() {
+            return Ok(None);
+        }
+''',
+        "",
+        "artifact_session_parent_dir_escape_keeps_projection_without_a_path",
     ),
     # Fix round 2: one control per P1 (silent path fields, queue overflow,
     # detached advisory writer, deep-array `String()` clamp).
@@ -555,12 +569,23 @@ with tempfile.TemporaryDirectory(prefix="pdrs-aep-negative-", dir="/tmp") as tem
         f"pilotdeck-protocol={{path={json.dumps(str(rust / 'pilotdeck-protocol'))}}}\n"
         'sha2="=0.10.9"\n'
         'uuid={version="=1.27.0",features=["v4"]}\n'
+        'libc="=0.2.190"\n'
+        'rustix={version="=1.1.5",features=["fs","process"]}\n'
     )
     (scratch / "Cargo.toml").write_text(manifest)
+    # `projector.rs` also uses `crate::node_io::node_tmpdir` and
+    # `crate::project_files::create_directories_at`. Both real modules pull in
+    # more than the projector needs (`node_io` has libuv errno fixtures and
+    # `project_files` imports the `metadata`/icu tree), so the scratch crate
+    # carries minimal stand-ins that mirror the exact functions used here.
     base_lib = (
         'mod metadata { pub(crate) fn js_trim(text: &str) -> &str { text.trim() } }\n'
         '#[path="js_value.rs"] pub mod js_value;\n'
+        '#[path="node_io_shim.rs"] pub mod node_io;\n'
+        '#[path="project_files_shim.rs"] pub mod project_files;\n'
         '#[path="runtime/turn/projector.rs"] pub mod projector;\n'
+        f'#[cfg(test)] #[path={json.dumps(str(rust / "pilotdeck-gateway/tests/common/scratch.rs"))}] '
+        "mod test_scratch;\n"
         f'#[cfg(test)] #[path={json.dumps(str(rust / "pilotdeck-gateway/tests/common/baseline.rs"))}] '
         "mod test_baseline;\n"
     )
@@ -570,6 +595,90 @@ with tempfile.TemporaryDirectory(prefix="pdrs-aep-negative-", dir="/tmp") as tem
     # `to_number`/`string_to_number` touch it, which this fixture never calls).
     (scratch / "src/js_value.rs").write_text(
         (rust / "pilotdeck-gateway/src/js_value.rs").read_text()
+    )
+    # Mirrors `node_io.rs::node_tmpdir` (Node `os.tmpdir()` fallbacks).
+    (scratch / "src/node_io_shim.rs").write_text(
+        """\
+//! Minimal stand-in for `node_io::node_tmpdir` (node_io.rs): TMPDIR -> TMP ->
+//! TEMP, skipping empty values, then `/tmp`; one trailing slash is dropped.
+//! Keep in step with the production function.
+#![allow(dead_code)]
+pub(crate) fn node_tmpdir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> String {
+    let mut path = ["TMPDIR", "TMP", "TEMP"]
+        .into_iter()
+        .find_map(|key| {
+            var(key)
+                .map(|value| value.to_string_lossy().into_owned())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "/tmp".into());
+    if path.len() > 1 && path.ends_with('/') {
+        path.pop();
+    }
+    path
+}
+"""
+    )
+    # Mirrors `project_files.rs:138-180` (`create_directories_at`): every
+    # lookup/mkdir is relative to the pinned parent and no symlink is followed.
+    (scratch / "src/project_files_shim.rs").write_text(
+        """\
+//! Minimal stand-in for the gateway's `project_files::create_directories_at`
+//! (project_files.rs) used by the projector's advisory writer. The real module
+//! imports the `metadata` tree (icu/base64), so the negative-control crate
+//! carries just this no-follow mkdir walk; keep it in step with production.
+#![allow(dead_code)]
+use std::{fs::File, io, path::{Component, Path}};
+
+#[cfg(unix)]
+pub(crate) fn create_directories_at(
+    root: &File,
+    relative: &Path,
+    mode: rustix::fs::Mode,
+) -> io::Result<()> {
+    use rustix::fs::{AtFlags, FileType, Mode, mkdirat, openat, statat};
+    let components: Vec<_> = relative.components().collect();
+    let mut parent = root.try_clone()?;
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
+        };
+        let name: &std::ffi::OsStr = name;
+        let open = || openat(&parent, name, directory_flags(), Mode::empty());
+        let opened = match open() {
+            Err(rustix::io::Errno::NOENT) => {
+                match mkdirat(&parent, name, mode) {
+                    Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+                    Err(error) => return Err(error.into()),
+                }
+                open()
+            }
+            result => result,
+        };
+        parent = File::from(opened.map_err(|error| {
+            if matches!(error, rustix::io::Errno::NOTDIR | rustix::io::Errno::LOOP)
+                && let Ok(stat) = statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW)
+            {
+                let kind = FileType::from_raw_mode(stat.st_mode);
+                if kind == FileType::Symlink {
+                    return io::Error::from_raw_os_error(libc::ELOOP);
+                }
+                if kind != FileType::Directory && index + 1 == components.len() {
+                    return io::Error::from_raw_os_error(libc::EEXIST);
+                }
+            }
+            error.into()
+        })?);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn directory_flags() -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+    OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW
+}
+"""
     )
 
     for name, filename, before, after, marker in [("baseline", None, None, None, None)] + mutants:
