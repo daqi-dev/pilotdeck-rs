@@ -16,6 +16,17 @@
 //! modelling the old `in select`/`in select in table` rules over the token
 //! stream. Everything else is copied byte-for-byte, and documents without
 //! `<select` / `<search` take the borrowed fast path.
+//!
+//! The scanner only models the tokenizer/tree-building states it names. Some
+//! constructs change tokenization or the select context in ways it does not
+//! model: foreign content (`<svg>` / `<math>` roots, including their
+//! integration points), `PLAINTEXT` (which has no end tag), and script data
+//! escaped/double-escaped regions. At the first such construct the remainder
+//! is handed to html5ever verbatim, without dropping tags or renaming
+//! `<search>`. That is deliberately conservative: html5ever's current rules
+//! may differ from domino after that point; those differences are registered
+//! in `specs/gateway-parity/diffs/A6.5-WEBFETCH-HTMLCOMPAT-BAILOUT-001.md`
+//! instead of being modelled token by token.
 use std::borrow::Cow;
 
 /// Neutral inline element name that replaces `<search>`. It is not in
@@ -96,7 +107,7 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
             continue;
         }
         let name = &html[name_start..name_end];
-        let tag_end = scan_tag_end(bytes, name_end);
+        let (tag_end, self_closing) = scan_tag_end(bytes, name_end);
         if bytes.get(tag_end - 1) != Some(&b'>') {
             // The tokenizer emits no tag for an unterminated tag: keep the
             // remaining bytes for the parser instead of modelling a tag.
@@ -108,6 +119,14 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
             .last()
             .is_some_and(|frame| frame.context == Context::Select);
         let in_table = table_depth > 0;
+
+        // Unmodelled structure: stop rewriting and let html5ever parse the
+        // rest verbatim. Doing this before any tag is emitted also covers the
+        // script start tag whose own raw text is escaped.
+        if unmodelled(name, is_end, self_closing, tag_end, in_select, html) {
+            out.push_str(&html[i..]);
+            break;
+        }
 
         if in_select {
             if is_end {
@@ -121,7 +140,7 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
                 } else if eq(name, "template") {
                     out.push_str(tag);
                     pop_frame(&mut frames, &mut table_depth, Context::Template);
-                } else if in_table && is_table_structure(name) {
+                } else if in_table && closes_select_in_table(name) {
                     // in select in table: close the select and reprocess.
                     close_select(&mut out, &mut frames, &mut table_depth);
                     out.push_str(tag);
@@ -155,7 +174,7 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
             } else if eq(name, "hr") {
                 // Domino's old in-select mode ignores HR; the current spec
                 // allows it as a select child.
-            } else if in_table && is_table_structure(name) {
+            } else if in_table && closes_select_in_table(name) {
                 close_select(&mut out, &mut frames, &mut table_depth);
                 out.push_str(tag);
                 enter_table_element(name, &mut table_depth);
@@ -220,10 +239,38 @@ fn pop_frame(frames: &mut Vec<Frame>, table_depth: &mut usize, wanted: Context) 
     }
 }
 
-/// Copy raw text up to (not including) `</name`; the main loop then processes
-/// the end tag. If it is missing, the remainder is raw text.
-fn copy_raw_text(html: &str, from: usize, end_name: &str, out: &mut String) -> usize {
-    let bytes = html.as_bytes();
+/// True for the constructs whose tokenization or select context this scanner
+/// does not model. Called before the tag is emitted: the caller then appends
+/// the untouched remainder and stops rewriting.
+fn unmodelled(
+    name: &str,
+    is_end: bool,
+    self_closing: bool,
+    tag_end: usize,
+    in_select: bool,
+    html: &str,
+) -> bool {
+    if is_end {
+        return false;
+    }
+    if !in_select {
+        // A self-closing foreign root is popped immediately, so no foreign
+        // subtree follows; later tokens are ordinary HTML again.
+        if (eq(name, "svg") || eq(name, "math")) && !self_closing {
+            return true;
+        }
+        // PLAINTEXT has no end tag: every following byte is text.
+        if eq(name, "plaintext") {
+            return true;
+        }
+    }
+    // Old in-select keeps script and the tokenizer still enters escaped
+    // states, so this is unmodelled in either context.
+    eq(name, "script") && script_enters_double_escape(html, tag_end)
+}
+
+/// Offset of `</name` from `from`, or the input length when it is missing.
+fn raw_text_end(bytes: &[u8], from: usize, end_name: &str) -> usize {
     let needle = format!("</{end_name}");
     let mut search = from;
     while search < bytes.len() {
@@ -237,26 +284,63 @@ fn copy_raw_text(html: &str, from: usize, end_name: &str, out: &mut String) -> u
                 .get(at + needle.len())
                 .is_none_or(|byte| is_tag_name_delimiter(*byte))
         {
-            out.push_str(&html[from..at]);
             return at;
         }
         search = at + 1;
     }
-    out.push_str(&html[from..]);
     bytes.len()
+}
+
+/// Copy raw text up to (not including) `</name`; the main loop then processes
+/// the end tag. If it is missing, the remainder is raw text.
+fn copy_raw_text(html: &str, from: usize, end_name: &str, out: &mut String) -> usize {
+    let end = raw_text_end(html.as_bytes(), from, end_name);
+    out.push_str(&html[from..end]);
+    end
+}
+
+/// True when script data contains `<!--` followed by a `<script` name that
+/// enters the double-escaped state before `-->` closes the escaped region.
+/// Only that state makes the first `</script` non-closing; a plain `<!--`
+/// opener (even unterminated) does not move our raw-scan end, so it stays
+/// modelled and is not a reason to stop rewriting.
+fn script_enters_double_escape(html: &str, from: usize) -> bool {
+    let bytes = html.as_bytes();
+    let end = raw_text_end(bytes, from, "script");
+    let mut search = from;
+    while search + 4 <= end {
+        let Some(offset) = bytes[search..end]
+            .windows(4)
+            .position(|window| window == b"<!--")
+        else {
+            return false;
+        };
+        let mut cursor = search + offset + 4;
+        loop {
+            if cursor >= end {
+                return false;
+            }
+            if bytes[cursor..end].starts_with(b"-->") {
+                search = cursor + 3;
+                break;
+            }
+            if cursor + 7 <= end
+                && bytes[cursor..cursor + 7].eq_ignore_ascii_case(b"<script")
+                && bytes
+                    .get(cursor + 7)
+                    .is_some_and(|byte| is_tag_name_delimiter(*byte))
+            {
+                return true;
+            }
+            cursor += 1;
+        }
+    }
+    false
 }
 
 fn raw_text_element(name: &str) -> Option<&'static str> {
     [
-        "script",
-        "style",
-        "textarea",
-        "title",
-        "xmp",
-        "iframe",
-        "noembed",
-        "noframes",
-        "plaintext",
+        "script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes",
     ]
     .into_iter()
     .find(|&element| eq(name, element))
@@ -285,6 +369,20 @@ fn is_table_structure(name: &str) -> bool {
     false
 }
 
+/// The old `in select in table` close list: caption, table, tbody, tfoot,
+/// thead, tr, td, th. Unlike table-scope tracking it does not include
+/// `colgroup`/`col`, which the old in-select mode simply ignores.
+fn closes_select_in_table(name: &str) -> bool {
+    for element in [
+        "caption", "table", "tbody", "tfoot", "thead", "tr", "td", "th",
+    ] {
+        if eq(name, element) {
+            return true;
+        }
+    }
+    false
+}
+
 fn eq(name: &str, expected: &str) -> bool {
     name.eq_ignore_ascii_case(expected)
 }
@@ -301,7 +399,7 @@ fn is_html_space(byte: u8) -> bool {
 ///
 /// Quotes only hide `>` while they delimit an attribute value: a quote in a
 /// name, or inside an unquoted value, is ordinary data in the tokenizer.
-fn scan_tag_end(bytes: &[u8], from: usize) -> usize {
+fn scan_tag_end(bytes: &[u8], from: usize) -> (usize, bool) {
     #[derive(Clone, Copy)]
     enum State {
         BeforeAttributeName,
@@ -320,34 +418,34 @@ fn scan_tag_end(bytes: &[u8], from: usize) -> usize {
         let byte = bytes[index];
         match state {
             State::BeforeAttributeName => match byte {
-                b'>' => return index + 1,
+                b'>' => return (index + 1, false),
                 b'/' => state = State::SelfClosing,
                 byte if is_html_space(byte) => {}
                 _ => state = State::AttributeName,
             },
             State::AttributeName => match byte {
-                b'>' => return index + 1,
+                b'>' => return (index + 1, false),
                 b'/' => state = State::SelfClosing,
                 b'=' => state = State::BeforeAttributeValue,
                 byte if is_html_space(byte) => state = State::AfterAttributeName,
                 _ => {}
             },
             State::AfterAttributeName => match byte {
-                b'>' => return index + 1,
+                b'>' => return (index + 1, false),
                 b'/' => state = State::SelfClosing,
                 b'=' => state = State::BeforeAttributeValue,
                 byte if is_html_space(byte) => {}
                 _ => state = State::AttributeName,
             },
             State::BeforeAttributeValue => match byte {
-                b'>' => return index + 1,
+                b'>' => return (index + 1, false),
                 b'"' => state = State::QuotedValue(b'"'),
                 b'\'' => state = State::QuotedValue(b'\''),
                 byte if is_html_space(byte) => {}
                 _ => state = State::UnquotedValue,
             },
             State::UnquotedValue => match byte {
-                b'>' => return index + 1,
+                b'>' => return (index + 1, false),
                 byte if is_html_space(byte) => state = State::BeforeAttributeName,
                 _ => {}
             },
@@ -357,7 +455,7 @@ fn scan_tag_end(bytes: &[u8], from: usize) -> usize {
                 }
             }
             State::AfterQuotedValue => match byte {
-                b'>' => return index + 1,
+                b'>' => return (index + 1, false),
                 b'/' => state = State::SelfClosing,
                 byte if is_html_space(byte) => state = State::BeforeAttributeName,
                 _ => {
@@ -367,7 +465,7 @@ fn scan_tag_end(bytes: &[u8], from: usize) -> usize {
             },
             State::SelfClosing => {
                 if byte == b'>' {
-                    return index + 1;
+                    return (index + 1, true);
                 }
                 state = State::BeforeAttributeName;
                 continue;
@@ -375,7 +473,7 @@ fn scan_tag_end(bytes: &[u8], from: usize) -> usize {
         }
         index += 1;
     }
-    bytes.len()
+    (bytes.len(), false)
 }
 
 /// A bogus comment (`<!x`, `<?`, or `<![CDATA[` in HTML content) ends at the
@@ -528,6 +626,118 @@ mod tests {
         assert_eq!(
             rewritten("<!-- x --!><select><hr></select>"),
             "<!-- x --!><select></select>"
+        );
+    }
+
+    #[test]
+    fn foreign_content_hands_the_remainder_to_the_parser() {
+        // Breakout tokens inside a foreign <select> are real HTML, not
+        // in-select markup to drop.
+        assert_eq!(
+            rewritten("<svg><select><hr></select></svg>"),
+            "<svg><select><hr></select></svg>"
+        );
+        assert_eq!(
+            rewritten("<math><select><h1>x</h1></select></math>"),
+            "<math><select><h1>x</h1></select></math>"
+        );
+        // After the foreign root starts, later HTML is not rewritten either.
+        assert_eq!(
+            rewritten("<svg></svg><select><hr></select>"),
+            "<svg></svg><select><hr></select>"
+        );
+        // A self-closing foreign root has no foreign subtree, so the
+        // following <select> is still ordinary HTML.
+        assert_eq!(
+            rewritten("<svg/><select><hr></select>"),
+            "<svg/><select></select>"
+        );
+        // A slash separated from `>` does not set the self-closing flag.
+        assert_eq!(
+            rewritten("<svg / ><select><hr></select>"),
+            "<svg / ><select><hr></select>"
+        );
+        // Nor does a slash inside an unquoted attribute value.
+        assert_eq!(
+            rewritten("<svg a=b/><select><hr></select>"),
+            "<svg a=b/><select><hr></select>"
+        );
+        // A slash after a quoted value does set it.
+        assert_eq!(
+            rewritten("<svg a=\"b\"/><select><hr></select>"),
+            "<svg a=\"b\"/><select></select>"
+        );
+        // <svg>/<math> inside <select> are ignored by the old in-select mode,
+        // so the select model still applies.
+        assert_eq!(
+            rewritten("<select><svg><hr></svg><hr></select>"),
+            "<select></select>"
+        );
+    }
+
+    #[test]
+    fn plaintext_hands_the_remainder_to_the_parser() {
+        // PLAINTEXT has no end tag: `</plaintext>` and every later tag are
+        // literal text, so nothing after it may be dropped or renamed.
+        assert_eq!(
+            rewritten("<p>a<plaintext>b</plaintext><select><hr></select>"),
+            "<p>a<plaintext>b</plaintext><select><hr></select>"
+        );
+        // Inside <select> the start tag is ignored by the old mode, so the
+        // tokenizer never enters PLAINTEXT.
+        assert_eq!(
+            rewritten("<select><plaintext><hr></select>"),
+            "<select></select>"
+        );
+    }
+
+    #[test]
+    fn script_double_escape_hands_the_remainder_to_the_parser() {
+        // `<!--<script` enters script data double escaped: the first
+        // `</script>` does not close the element, so the following <hr> is
+        // raw script text and must not be dropped.
+        assert_eq!(
+            rewritten("<div>a<select>b<script><!--<script></script><hr></script>c</select>d</div>"),
+            "<div>a<select>b<script><!--<script></script><hr></script>c</select>d</div>"
+        );
+        assert_eq!(
+            rewritten("<div>a<script><!--<script></script><search>x</search></script>b</div>"),
+            "<div>a<script><!--<script></script><search>x</search></script>b</div>"
+        );
+        // A plain `<!--` (even unterminated) does not move the raw-scan end,
+        // so it stays modelled and later <select> markup is still rewritten.
+        assert_eq!(
+            rewritten("<script>var s = \"<!--\";</script><select><hr></select>"),
+            "<script>var s = \"<!--\";</script><select></select>"
+        );
+        // RAWTEXT (style) has no escaped state: its text is copied verbatim
+        // and the next <select> is still rewritten.
+        assert_eq!(
+            rewritten("<style><!--<script></script></style><select><hr></select>"),
+            "<style><!--<script></script></style><select></select>"
+        );
+    }
+
+    #[test]
+    fn colgroup_does_not_close_a_select_in_a_table() {
+        // The old `in select in table` close set is caption/table/tbody/
+        // tfoot/thead/tr/td/th; colgroup and col are ignored instead.
+        assert_eq!(
+            rewritten("<table><tr><td><select>a<colgroup><h1>x</h1></select>c</table>"),
+            "<table><tr><td><select>ax</select>c</table>"
+        );
+        assert_eq!(
+            rewritten("<table><tr><td><select>a<colgroup><option>o</option></select>c</table>"),
+            "<table><tr><td><select>a<option>o</option></select>c</table>"
+        );
+        assert_eq!(
+            rewritten("<table><tr><td><select>a<colgroup><select>b</select>c</table>"),
+            "<table><tr><td><select>a</select>b</select>c</table>"
+        );
+        // A real table-structure token still closes the select.
+        assert_eq!(
+            rewritten("<table><tr><td><select>a<tbody><tr><td>z</table>"),
+            "<table><tr><td><select>a</select><tbody><tr><td>z</table>"
         );
     }
 
