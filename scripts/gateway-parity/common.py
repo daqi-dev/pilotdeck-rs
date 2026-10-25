@@ -103,6 +103,7 @@ APPARATUS_PROBES = tuple(dict.fromkeys((
     ('file', 'nested/extra.py'),
     ('file', 'nested/check_schema.py'),
     ('file', 'legacy.pyc'),
+    ('file', 'legacy.pyo'),
     ('file', f'probe{NATIVE_SUFFIX}'),
     ('file', 'probe.abi3.so'),
     ('file', 'probe.so'),
@@ -126,6 +127,10 @@ APPARATUS_PROBES = tuple(dict.fromkeys((
     ('file', '__pycache__/common.cpython-314.pyc'),
     ('file', '__pycache__/orphan.cpython-314.pyc'),
     ('file', '__pycache__/evil.py'),
+    # Caches below a subdirectory are rejected by the same first-__pycache__-
+    # segment rule; controls/run_all.py is loaded by path, so this is the shape
+    # that could shadow a real control module.
+    ('file', 'controls/__pycache__/run_all.cpython-314.pyc'),
     ('case-variant', 'COMMON.PY'),
     # macOS Finder metadata is tolerated only as a regular file (same rule as
     # ui-server-parity/apparatus.py); a link or directory of that name stays
@@ -146,6 +151,29 @@ APPARATUS_PROBES = tuple(dict.fromkeys((
     # An unreadable subtree must fail the scan, never be skipped.
     ('unreadable-dir', 'unreadable'),
 )))
+
+# Host properties (case-folding filesystem, euid 0) can make a probe shape
+# impossible to materialize.  A skip is never a pass: consumers record it as
+# its own state, list it in the report and require the skipped set to be a
+# subset of this declaration, so an unexpected skip still fails the gate.
+# (fix-r6 P2: ``ProbeSkipped`` used to be recorded as ``passed: True``.)
+DEGENERATE_PROBES = frozenset({
+    ('case-variant', 'COMMON.PY'),      # APFS folds case: variant is common.py's inode
+    ('unreadable-dir', 'unreadable'),   # euid 0 can read a mode-000 directory
+})
+
+
+def probe_expected(name):
+    """Path the scanner reports for a probe: the first __pycache__ segment.
+
+    The scan reports a ``__pycache__`` directory itself and never descends into
+    it, so a file below one (root or nested) is expected as that directory.
+    """
+    parts = Path(name).parts
+    for index, part in enumerate(parts):
+        if part.casefold() == '__pycache__':
+            return Path(*parts[:index + 1]).as_posix()
+    return name
 
 
 class ProbeSkipped(RuntimeError):
@@ -306,6 +334,15 @@ def unknown_apparatus_files(script=None):
     crafted unchecked-hash cache is imported before the scan and can override
     this function, making ``check_frozen`` PASS (measured in the fix-r5
     negative control; with the redirect it FAILs and the payload does not run).
+
+    Bytecode is not the only pre-scan import hazard: CPython's FileFinder tries
+    a same-named package directory and extension module before the ``.py`` file,
+    so ``common/__init__.py`` or ``common.cpython-<abi>-<platform>.so`` would
+    replace this module before it could scan (fix-r6 P1).  Every entry therefore
+    loads apparatus modules with ``spec_from_file_location(name, path)`` and
+    asserts the loaded module's ``__file__`` is exactly that path; it never
+    relies on ``sys.path`` resolution.  Both shadow shapes remain unregistered
+    files, so the scan reports them once the real ``common.py`` runs.
     A ``__pycache__`` directory anywhere in
     the apparatus is reported unregistered (an empty one included), as is any
     ``.pyc``/``.pyo`` file, an orphan cache, or a non-bytecode file inside

@@ -17,19 +17,51 @@ import tempfile
 import time
 import urllib.request
 
-# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
-# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
-# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+# >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
+# Load apparatus modules by explicit path, never sys.path: a same-named package
+# or extension module beside the source would win before the scan (fix-r6 P1).
+# Inline on purpose: importing common.py is what this block defends.  -B only
+# stops cache writes, so redirect the bytecode prefix too (fix-r5).
+import importlib.util, sys, tempfile
+from pathlib import Path
+
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
 
-# python3 -I removes the script directory from sys.path; the apparatus directory
-# is the only trusted import root.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (DEFAULT_OUT, READ_METHODS, ROOT, SCRIPT, SCENARIOS, apparatus_hashes,
-                    baseline_dependency_hashes, cargo_config_problems, digest, install_shutdown,
-                    parity_lock, save)
+def _load(name, path):
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+_here = Path(__file__).resolve().parent
+_apparatus = _here.parent if _here.name == 'controls' else _here
+common = _load('common', _apparatus / 'common.py')
+# <<< apparatus bootstrap
+
+DEFAULT_OUT = common.DEFAULT_OUT
+READ_METHODS = common.READ_METHODS
+ROOT = common.ROOT
+SCRIPT = common.SCRIPT
+SCENARIOS = common.SCENARIOS
+apparatus_hashes = common.apparatus_hashes
+baseline_dependency_hashes = common.baseline_dependency_hashes
+cargo_config_problems = common.cargo_config_problems
+digest = common.digest
+install_shutdown = common.install_shutdown
+parity_lock = common.parity_lock
+save = common.save
+compare_module = _load('compare', common.SCRIPT / 'compare.py')
 
 TOKEN = 'gateway-parity-isolated-token'
 
@@ -263,8 +295,7 @@ def main():
     with parity_lock(args.lock_timeout, takeovers):
         path = run_round(args.side, args.label, args.output, args.baseline, args.ports, args.timeout)
         save(path / 'lock.json', {'takeovers': takeovers})
-    from compare import validate
-    return 1 if validate(path, args.local_method)[1] else 0
+    return 1 if compare_module.validate(path, args.local_method)[1] else 0
 
 
 if __name__ == '__main__':
