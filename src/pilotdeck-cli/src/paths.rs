@@ -111,35 +111,9 @@ pub fn js_trim(text: &str) -> &str {
     text.trim_matches(is_js_space)
 }
 
-/// Node fs error message `CODE: description, syscall 'path'` for common errnos.
+/// Node fs error message `CODE: description, syscall 'path'`.
 pub fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> Option<String> {
-    let (code, description) = match error.raw_os_error()? {
-        1 => ("EPERM", "operation not permitted"),
-        2 => ("ENOENT", "no such file or directory"),
-        13 => ("EACCES", "permission denied"),
-        17 => ("EEXIST", "file already exists"),
-        20 => ("ENOTDIR", "not a directory"),
-        21 => ("EISDIR", "illegal operation on a directory"),
-        28 => ("ENOSPC", "no space left on device"),
-        30 => ("EROFS", "read-only file system"),
-        libc::EIO => ("EIO", "i/o error"),
-        libc::ELOOP => ("ELOOP", "too many symbolic links encountered"),
-        libc::ENAMETOOLONG => ("ENAMETOOLONG", "name too long"),
-        libc::EXDEV => ("EXDEV", "cross-device link not permitted"),
-        libc::ENOTEMPTY => ("ENOTEMPTY", "directory not empty"),
-        libc::EINVAL => ("EINVAL", "invalid argument"),
-        libc::EBUSY => ("EBUSY", "resource busy or locked"),
-        libc::EMFILE => ("EMFILE", "too many open files"),
-        libc::ENFILE => ("ENFILE", "file table overflow"),
-        libc::ENOMEM => ("ENOMEM", "not enough memory"),
-        libc::EFBIG => ("EFBIG", "file too large"),
-        libc::ENXIO => ("ENXIO", "no such device or address"),
-        libc::ENODEV => ("ENODEV", "no such device"),
-        libc::EBADF => ("EBADF", "bad file descriptor"),
-        libc::ETXTBSY => ("ETXTBSY", "text file is busy"),
-        libc::ENOTSUP => ("ENOTSUP", "operation not supported on socket"),
-        _ => return None,
-    };
+    let (code, description) = pilotdeck_gateway::node_fs_errno(error)?;
     Some(format!(
         "{code}: {description}, {syscall} '{}'",
         path.display()
@@ -206,5 +180,85 @@ mod tests {
     fn js_trim_uses_ecmascript_whitespace() {
         assert_eq!(js_trim("\u{feff} tok\n\u{3000}"), "tok");
         assert_eq!(js_trim("\u{85}tok"), "\u{85}tok");
+    }
+
+    fn node_message(errno: i32) -> String {
+        node_fs_message(
+            &std::io::Error::from_raw_os_error(errno),
+            "stat",
+            Path::new("/tmp/errno"),
+        )
+        .unwrap_or_else(|| panic!("errno {errno} must be in the libuv table"))
+    }
+
+    /// Every errno the previous hand-written table covered must keep the exact
+    /// Node v22.22.0 / libuv 1.52.1 message.
+    #[test]
+    fn node_fs_message_matches_libuv_for_previous_table() {
+        for (errno, expected) in [
+            (libc::EPERM, "EPERM: operation not permitted"),
+            (libc::ENOENT, "ENOENT: no such file or directory"),
+            (libc::EACCES, "EACCES: permission denied"),
+            (libc::EEXIST, "EEXIST: file already exists"),
+            (libc::ENOTDIR, "ENOTDIR: not a directory"),
+            (libc::EISDIR, "EISDIR: illegal operation on a directory"),
+            (libc::ENOSPC, "ENOSPC: no space left on device"),
+            (libc::EROFS, "EROFS: read-only file system"),
+            (libc::EIO, "EIO: i/o error"),
+            (libc::ELOOP, "ELOOP: too many symbolic links encountered"),
+            (libc::ENAMETOOLONG, "ENAMETOOLONG: name too long"),
+            (libc::EXDEV, "EXDEV: cross-device link not permitted"),
+            (libc::ENOTEMPTY, "ENOTEMPTY: directory not empty"),
+            (libc::EINVAL, "EINVAL: invalid argument"),
+            (libc::EBUSY, "EBUSY: resource busy or locked"),
+            (libc::EMFILE, "EMFILE: too many open files"),
+            (libc::ENFILE, "ENFILE: file table overflow"),
+            (libc::ENOMEM, "ENOMEM: not enough memory"),
+            (libc::EFBIG, "EFBIG: file too large"),
+            (libc::ENXIO, "ENXIO: no such device or address"),
+            (libc::ENODEV, "ENODEV: no such device"),
+            (libc::EBADF, "EBADF: bad file descriptor"),
+            (libc::ETXTBSY, "ETXTBSY: text file is busy"),
+            (libc::ENOTSUP, "ENOTSUP: operation not supported on socket"),
+        ] {
+            assert_eq!(
+                node_message(errno),
+                format!("{expected}, stat '/tmp/errno'"),
+                "errno {errno}"
+            );
+        }
+    }
+
+    /// The CLI used to hand-maintain a subset; the shared libuv table also
+    /// covers errnos that were previously reported as unknown.
+    #[test]
+    fn node_fs_message_uses_the_full_libuv_table() {
+        assert_eq!(
+            node_message(libc::EAGAIN),
+            "EAGAIN: resource temporarily unavailable, stat '/tmp/errno'"
+        );
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(123456),
+                "stat",
+                Path::new("/tmp/errno")
+            ),
+            None
+        );
+    }
+
+    /// Node inserts the path verbatim: quotes and newlines are not escaped
+    /// (expected bytes: `tests/fixtures/node-io/errors.json`, EPERM row).
+    #[test]
+    fn path_is_inserted_verbatim_like_node() {
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(libc::EPERM),
+                "stat",
+                Path::new("/fixture/quote' and\nline")
+            )
+            .as_deref(),
+            Some("EPERM: operation not permitted, stat '/fixture/quote' and\nline'")
+        );
     }
 }
