@@ -1,7 +1,7 @@
 //! Generation-owned permission binding. Decision and UI requests stay separate,
 //! as in PermissionRuntime.ts and createGatewayPermissionHook.ts (cc7c4e6).
 //! Callers retain the generation lease until the bound turn ends. The lifecycle
-//! adapter (next package) consumes request(); binding does not install hooks.
+//! adapter in interaction_hooks consumes request(); binding alone does not install hooks.
 use super::{DisposeFuture, FamilyResource, InteractionProfile, RuntimeError, RuntimeResult};
 use crate::{
     config::permission::RuleSetHandle,
@@ -90,6 +90,17 @@ pub struct InteractionPermission {
     state: Arc<Mutex<State>>,
 }
 impl InteractionPermission {
+    pub(super) fn owns_turn(
+        &self,
+        turn: &TurnPermission,
+        session: &JsString,
+        run: &JsString,
+    ) -> bool {
+        Arc::ptr_eq(&self.state, &turn.state)
+            && &turn.run.session == session
+            && &turn.run.run_id == run
+            && turn.check(&lock(&self.state)).is_ok()
+    }
     pub fn bind_turn(
         &self,
         session: JsString,
@@ -168,6 +179,19 @@ impl TurnPermission {
         }
     }
 
+    pub(super) fn is_current(&self) -> bool {
+        self.check(&lock(&self.state)).is_ok()
+    }
+    pub(super) fn cancellation(&self) -> Cancellation {
+        self.run.cancelled.clone()
+    }
+    pub(super) fn same_run(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.run, &other.run)
+    }
+    pub(super) fn can_prompt(&self) -> bool {
+        self.run.options.profile.permission_provider == "gateway"
+            && self.run.options.profile.can_prompt
+    }
     fn check(&self, state: &State) -> Result<(), HostError> {
         if state.closed
             || self.run.cancelled.is_cancelled()
