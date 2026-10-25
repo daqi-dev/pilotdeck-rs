@@ -30,8 +30,13 @@
 //! the reentrant call site rather than at their own emitters'. These
 //! port-only delivery edges — including the unbounded queue, disclosed at
 //! `emit` — are registered as A7.2-COORDINATOR-DELIVERY-001 in
-//! `specs/gateway-parity/accepted-diffs.md` (unapproved; aligning them needs
-//! the host scheduling loop planned for A7.2-pr5).
+//! `specs/gateway-parity/accepted-diffs.md`. The production `TurnGateway`
+//! host (`gateway.rs`) now drives every mutating coordinator call on one
+//! current-thread runtime, making these edges unreachable through the
+//! supported host API; the elimination is recorded as
+//! A7.2-COORDINATOR-DELIVERY-001-R1 in `specs/gateway-parity/diffs/`. The
+//! edges remain the documented behavior for callers that use this type
+//! directly (or leak it out of a host builder) from several threads.
 //!
 //! Sink ownership is another port-only edge: TS keeps the sink in a plain
 //! `Map` and its GC collects the whole object graph, cycles included; Rust
