@@ -20,6 +20,18 @@ Node v22.22.0 (macOS arm64) raw-socket captures for issue #699.
   `connectionsCheckingInterval=50 ms` (and per-case `keepAliveTimeout`s), so the
   same byte constants are observable for follow-up/shutdown/body cells. Generated
   by `_tmp/20261025-issue-699/node/probe-header-lifecycle-short.mjs`.
+- `node-header-budget.json` — fix-r1 `maxHeaderSize` accounting goldens, from
+  `_tmp/20261025-issue-699/fix-r1/node/probe-header-budget.mjs` (Node v22.22.0,
+  plain `http.createServer`). It pins: the counted total is request target +
+  header field name + value bytes; the limit is reached at exactly 16,384
+  counted bytes (16,383 pass, 16,384 gets the 67-byte 431); the request target
+  counts; a single long value lands on the same 16,383/16,384 boundary; an
+  unterminated line is charged as it arrives (the 16,384-raw-byte
+  completed-field + 16,368-byte incomplete-line shape still gets Node's 67-byte
+  431); 90,000 uncounted leading value whitespace bytes are accepted by Node
+  (the Rust raw cap answers earlier, a registered difference); 4,097 tiny
+  fields are accepted by Node (hyper's 4,096-slot `max_headers` backstop is a
+  registered difference).
 
 Key timing facts (do not normalize away):
 

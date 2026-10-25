@@ -1,0 +1,139 @@
+{
+  "node": "v22.22.0",
+  "generatedAt": "2026-10-25T14:07:00.631Z",
+  "baseline": "plain node:http createServer (maxHeaderSize default)",
+  "results": [
+    {
+      "name": "budget-2000-aaaaa-x",
+      "note": "2,000 fields count 12,000 + target 34 + Host 13 + Connection 15 = 12,062",
+      "requestBytes": 20087,
+      "requestSha256": "9ae9f68ba3636dc35a1a446ea79db7f17a67b635e164e53baa09d231ecc3943c",
+      "why": "headers",
+      "elapsedMs": 7,
+      "status": 200,
+      "responseBytes": 122,
+      "responseHex": "485454502f312e3120323030204f4b0d0a436f6e74656e742d547970653a20746578742f706c61696e0d0a446174653a2053756e2c203235204f637420323032362031343a30373a303020474d540d0a436f6e6e656374696f6e3a20636c6f73650d0a436f6e74656e742d4c656e6774683a20320d0a0d0a6f6b",
+      "responseText": "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nDate: Sun, 25 Oct 2026 14:07:00 GMT\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"
+    },
+    {
+      "name": "budget-2730-aaaaa-x",
+      "note": "2,730 fields count 16,380 + 62 = 16,442 >= 16,384",
+      "requestBytes": 27387,
+      "requestSha256": "fe1e38bf2ca4bcd7b2f54043a86c66905f469d73c94b090174ae6066d611850e",
+      "why": "headers",
+      "elapsedMs": 1,
+      "status": 431,
+      "responseBytes": 67,
+      "responseHex": "485454502f312e3120343331205265717565737420486561646572204669656c647320546f6f204c617267650d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a",
+      "responseText": "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "boundary-16383",
+      "note": "16,314 + X-Pad 7 + 62 = 16,383",
+      "requestBytes": 27288,
+      "requestSha256": "6362f6a37e8bce825b9b25a7a78dc70f9f8d845489a90a4f8a26b50a6b6d9563",
+      "why": "headers",
+      "elapsedMs": 1,
+      "status": 200,
+      "responseBytes": 122,
+      "responseHex": "485454502f312e3120323030204f4b0d0a436f6e74656e742d547970653a20746578742f706c61696e0d0a446174653a2053756e2c203235204f637420323032362031343a30373a303020474d540d0a436f6e6e656374696f6e3a20636c6f73650d0a436f6e74656e742d4c656e6774683a20320d0a0d0a6f6b",
+      "responseText": "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nDate: Sun, 25 Oct 2026 14:07:00 GMT\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"
+    },
+    {
+      "name": "boundary-16384",
+      "note": "16,314 + X-Pad 8 + 62 = 16,384",
+      "requestBytes": 27289,
+      "requestSha256": "b6ea79680b2856ce1d0be6c79eeb466d2c0d074f4e8fb18f4f026313e30471d5",
+      "why": "headers",
+      "elapsedMs": 1,
+      "status": 431,
+      "responseBytes": 67,
+      "responseHex": "485454502f312e3120343331205265717565737420486561646572204669656c647320546f6f204c617267650d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a",
+      "responseText": "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "single-value-16372",
+      "note": "1 + 5 + 5 + 16,372 = 16,383",
+      "requestBytes": 16408,
+      "requestSha256": "2a97a59677472c2a73393cbe247083a4f09c6acc8c451b9fee83969ab83f1adf",
+      "why": "headers",
+      "elapsedMs": 1,
+      "status": 200,
+      "responseBytes": 150,
+      "responseHex": "485454502f312e3120323030204f4b0d0a436f6e74656e742d547970653a20746578742f706c61696e0d0a446174653a2053756e2c203235204f637420323032362031343a30373a303020474d540d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4b6565702d416c6976653a2074696d656f75743d350d0a436f6e74656e742d4c656e6774683a20320d0a0d0a6f6b",
+      "responseText": "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nDate: Sun, 25 Oct 2026 14:07:00 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    },
+    {
+      "name": "single-value-16373",
+      "note": "1 + 5 + 5 + 16,373 = 16,384",
+      "requestBytes": 16409,
+      "requestSha256": "22a448d9bec0c7bfab0d2892bf20cd77bc8a9ced7ac2dcd081eeb56d6ec6171e",
+      "why": "headers",
+      "elapsedMs": 1,
+      "status": 431,
+      "responseBytes": 67,
+      "responseHex": "485454502f312e3120343331205265717565737420486561646572204669656c647320546f6f204c617267650d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a",
+      "responseText": "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "target-16383",
+      "note": "target 16,378 + Host 5 = 16,383",
+      "requestBytes": 16404,
+      "requestSha256": "e44626c02eb86075265373bf931ffe38777f38213983bcd8c1a0cad6778821f0",
+      "why": "headers",
+      "elapsedMs": 0,
+      "status": 200,
+      "responseBytes": 150,
+      "responseHex": "485454502f312e3120323030204f4b0d0a436f6e74656e742d547970653a20746578742f706c61696e0d0a446174653a2053756e2c203235204f637420323032362031343a30373a303020474d540d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4b6565702d416c6976653a2074696d656f75743d350d0a436f6e74656e742d4c656e6774683a20320d0a0d0a6f6b",
+      "responseText": "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nDate: Sun, 25 Oct 2026 14:07:00 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    },
+    {
+      "name": "target-16384",
+      "note": "target 16,379 + Host 5 = 16,384",
+      "requestBytes": 16405,
+      "requestSha256": "ee70d78502ed2f49ac0df4fa1cc6e414c12439b4b67f529d0a4b38729405b592",
+      "why": "headers",
+      "elapsedMs": 1,
+      "status": 431,
+      "responseBytes": 67,
+      "responseHex": "485454502f312e3120343331205265717565737420486561646572204669656c647320546f6f204c617267650d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a",
+      "responseText": "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "buffer-boundary-incomplete-line",
+      "note": "completed raw 16,384 / counted 9,829; incomplete X-Pad value 16,368; no final CRLF",
+      "requestBytes": 32817,
+      "requestSha256": "bb43a9d2e183ccef951401ef5a6544896f10213c48ad55999798ac717620fe02",
+      "why": "headers",
+      "elapsedMs": 1,
+      "status": 431,
+      "responseBytes": 67,
+      "responseHex": "485454502f312e3120343331205265717565737420486561646572204669656c647320546f6f204c617267650d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a",
+      "responseText": "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+    },
+    {
+      "name": "leading-ows-90000",
+      "note": "leading OWS 90,000 is not counted; Node accepts",
+      "requestBytes": 90085,
+      "requestSha256": "cfadb0773686aa2087fe6a26ac57505d16a677d37e18181aa1f3b4e1ab6afaa6",
+      "why": "headers",
+      "elapsedMs": 0,
+      "status": 200,
+      "responseBytes": 122,
+      "responseHex": "485454502f312e3120323030204f4b0d0a436f6e74656e742d547970653a20746578742f706c61696e0d0a446174653a2053756e2c203235204f637420323032362031343a30373a303020474d540d0a436f6e6e656374696f6e3a20636c6f73650d0a436f6e74656e742d4c656e6774683a20320d0a0d0a6f6b",
+      "responseText": "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nDate: Sun, 25 Oct 2026 14:07:00 GMT\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"
+    },
+    {
+      "name": "fields-4097-empty-value",
+      "note": "4,097 fields count 4,097 + 62 = 4,159 < 16,384; Node accepts",
+      "requestBytes": 16475,
+      "requestSha256": "2d89230c0e2a07e1a3b94467c76be79be027375552bc7aed98e05374e10b1133",
+      "why": "headers",
+      "elapsedMs": 1,
+      "status": 200,
+      "responseBytes": 122,
+      "responseHex": "485454502f312e3120323030204f4b0d0a436f6e74656e742d547970653a20746578742f706c61696e0d0a446174653a2053756e2c203235204f637420323032362031343a30373a303020474d540d0a436f6e6e656374696f6e3a20636c6f73650d0a436f6e74656e742d4c656e6774683a20320d0a0d0a6f6b",
+      "responseText": "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nDate: Sun, 25 Oct 2026 14:07:00 GMT\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"
+    }
+  ]
+}
