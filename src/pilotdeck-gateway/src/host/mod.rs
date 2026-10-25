@@ -286,6 +286,28 @@ impl From<ModuleError> for HostError {
 }
 
 pub type HostFuture<T> = Pin<Box<dyn Future<Output = Result<T, HostError>> + Send>>;
+/// Resources reserved during validation belong to the queued event, including
+/// when execution exits before its application callback can run.
+#[derive(Default)]
+#[must_use]
+pub struct EventGuard(Option<Box<dyn FnOnce() + Send>>);
+impl EventGuard {
+    pub fn new(release: impl FnOnce() + Send + 'static) -> Self {
+        Self(Some(Box::new(release)))
+    }
+}
+impl std::fmt::Debug for EventGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventGuard").finish_non_exhaustive()
+    }
+}
+impl Drop for EventGuard {
+    fn drop(&mut self) {
+        if let Some(release) = self.0.take() {
+            release();
+        }
+    }
+}
 /// Returned module payload is wrapped with the callback's own correlation IDs.
 /// Events arrive in sequence and are ACKed only after `event` succeeds. A pending
 /// module callback never prevents an event callback or input validation progressing.
@@ -319,9 +341,11 @@ pub trait HostHandler: Send + Sync + 'static {
     /// queued for application — a violating event is never applied and never
     /// ACKed. Not called for the authoritative final, which the caller
     /// projects from ExecuteResult instead. Must not block. Default: no
-    /// behavior; an error fails the execution closed.
-    fn validate_event(&self, _payload: &JsValue) -> Result<(), HostError> {
-        Ok(())
+    /// behavior; an error fails the execution closed. The returned guard is
+    /// held through application and released on every exit, even an unpolled
+    /// callback or a discarded queue entry.
+    fn validate_event(&self, _payload: &JsValue) -> Result<EventGuard, HostError> {
+        Ok(EventGuard::default())
     }
     /// Passive, synchronous telemetry. Must not block; panics are isolated from
     /// execution, like TS client:1135-1140's best-effort transport observer.

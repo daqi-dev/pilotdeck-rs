@@ -47,21 +47,25 @@ impl Entry {
         }
         state.retiring = true;
         let entry = self.clone();
-        self.executor.spawn(async move {
-            entry.drained().await;
-            // Isolate a provider panic so every waiter still completes.
-            let cleanup = entry.clone();
-            let result = entry
-                .executor
-                .spawn(async move { cleanup.provider.dispose().await })
-                .await
-                .unwrap_or_else(|error| {
-                    Err(RuntimeError::new(format!(
-                        "Provider cleanup task failed: {error}"
-                    )))
-                });
-            entry.completion.send_replace(Some(result));
-        });
+        crate::runtime::cleanup_task::spawn_with_error(
+            &self.executor,
+            self.completion.clone(),
+            RuntimeError::new("Provider cleanup task was dropped or panicked before completion."),
+            async move {
+                entry.drained().await;
+                // Isolate a provider panic so every waiter still completes.
+                let cleanup = entry.clone();
+                entry
+                    .executor
+                    .spawn(async move { cleanup.provider.dispose().await })
+                    .await
+                    .unwrap_or_else(|error| {
+                        Err(RuntimeError::new(format!(
+                            "Provider cleanup task failed: {error}"
+                        )))
+                    })
+            },
+        );
     }
     async fn drained(&self) {
         let mut changed = self.changed.subscribe();

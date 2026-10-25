@@ -365,14 +365,21 @@ impl PluginRuntime {
                 st.refresh_receiver = Some(rx.clone());
                 let options = Arc::clone(&self.options);
                 let state_clone = Arc::clone(&self.state);
-                tokio::spawn(async move {
-                    let result = perform_refresh(&options, &state_clone).await;
-                    let mut s = state_clone.lock().await;
-                    s.refresh_sender = None;
-                    s.refresh_receiver = None;
-                    drop(s);
-                    let _ = tx.send(Some(result));
-                });
+                super::cleanup_task::spawn_with_error(
+                    &tokio::runtime::Handle::current(),
+                    tx,
+                    PluginRuntimeError::new(
+                        "Plugin refresh task was dropped or panicked before completion.",
+                    ),
+                    async move {
+                        let result = perform_refresh(&options, &state_clone).await;
+                        let mut s = state_clone.lock().await;
+                        s.refresh_sender = None;
+                        s.refresh_receiver = None;
+                        drop(s);
+                        result
+                    },
+                );
                 rx
             }
         };
@@ -474,46 +481,51 @@ impl PluginRuntime {
                 st.dispose_receiver = Some(rx.clone());
                 let pending_refresh_rx = st.refresh_receiver.clone();
                 let state_clone = Arc::clone(&self.state);
-                tokio::spawn(async move {
-                    if let Some(prx) = pending_refresh_rx {
-                        let _ = wait_watch(prx).await;
-                    }
-                    let (pending, group) = {
-                        let mut s = state_clone.lock().await;
-                        s.registry.state = RegistryState::Draining;
-                        let mut plugins = s.registry.retired_plugins.clone();
-                        for plugin in s.registry.list() {
-                            if !plugins.iter().any(|p| Arc::ptr_eq(p, &plugin)) {
-                                plugins.push(plugin);
-                            }
+                super::cleanup_task::spawn_with_error(
+                    &tokio::runtime::Handle::current(),
+                    tx,
+                    PluginRuntimeError::new(
+                        "Plugin disposal task was dropped or panicked before completion.",
+                    ),
+                    async move {
+                        if let Some(prx) = pending_refresh_rx {
+                            let _ = wait_watch(prx).await;
                         }
-                        s.registry.plugins.clear();
-                        s.registry.order.clear();
-                        s.registry.waiters.notify_waiters();
-                        let group = start_disposals(&mut s.registry, plugins, &state_clone);
-                        let pending = s
-                            .registry
-                            .pending_disposals
-                            .iter()
-                            .map(|pending| pending.receiver.clone())
-                            .collect();
-                        (pending, group)
-                    };
-                    let mut errors = settle_disposals(pending).await;
-                    // PluginRegistry.ts:106-114 settles both the individual
-                    // promises and disposeActive's group promise. Its group
-                    // rejection is included even when it shares those causes.
-                    if let Err(group) = PluginRuntimeError::aggregate(
-                        "Failed to dispose retired plugins.",
-                        settle_disposals(group).await,
-                    ) {
-                        errors.push(group);
-                    }
-                    state_clone.lock().await.registry.state = RegistryState::Disposed;
-                    let result =
-                        PluginRuntimeError::aggregate("Failed to dispose plugins.", errors);
-                    let _ = tx.send(Some(result));
-                });
+                        let (pending, group) = {
+                            let mut s = state_clone.lock().await;
+                            s.registry.state = RegistryState::Draining;
+                            let mut plugins = s.registry.retired_plugins.clone();
+                            for plugin in s.registry.list() {
+                                if !plugins.iter().any(|p| Arc::ptr_eq(p, &plugin)) {
+                                    plugins.push(plugin);
+                                }
+                            }
+                            s.registry.plugins.clear();
+                            s.registry.order.clear();
+                            s.registry.waiters.notify_waiters();
+                            let group = start_disposals(&mut s.registry, plugins, &state_clone);
+                            let pending = s
+                                .registry
+                                .pending_disposals
+                                .iter()
+                                .map(|pending| pending.receiver.clone())
+                                .collect();
+                            (pending, group)
+                        };
+                        let mut errors = settle_disposals(pending).await;
+                        // PluginRegistry.ts:106-114 settles both the individual
+                        // promises and disposeActive's group promise. Its group
+                        // rejection is included even when it shares those causes.
+                        if let Err(group) = PluginRuntimeError::aggregate(
+                            "Failed to dispose retired plugins.",
+                            settle_disposals(group).await,
+                        ) {
+                            errors.push(group);
+                        }
+                        state_clone.lock().await.registry.state = RegistryState::Disposed;
+                        PluginRuntimeError::aggregate("Failed to dispose plugins.", errors)
+                    },
+                );
                 rx
             }
         };

@@ -290,14 +290,21 @@ impl ProjectRuntime {
         }
         state.cleanup_started = true;
         let runtime = Arc::clone(self);
-        self.executor.spawn(async move {
-            let result = runtime
-                .resources
-                .dispose(&runtime.executor, runtime.staged)
-                .await;
-            runtime.state.lock().unwrap().phase = RuntimeState::Disposed;
-            runtime.completion.send_replace(Some(result));
-        });
+        super::cleanup_task::spawn_with_error(
+            &self.executor,
+            self.completion.clone(),
+            RuntimeError::new(
+                "Project runtime cleanup task was dropped or panicked before completion.",
+            ),
+            async move {
+                let result = runtime
+                    .resources
+                    .dispose(&runtime.executor, runtime.staged)
+                    .await;
+                runtime.state.lock().unwrap().phase = RuntimeState::Disposed;
+                result
+            },
+        );
     }
     /// Wait for retirement, outstanding leases, and asynchronous cleanup.
     /// Calling this on an active generation waits until it is retired.

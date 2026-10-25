@@ -1190,3 +1190,56 @@ async fn model_family_resolve_without_tokio_returns_error_without_panic() {
     assert!(registry.resolve(None).is_ok());
     bounded(registry.dispose()).await.unwrap();
 }
+
+#[test]
+fn provider_cleanup_completion_survives_stopped_executor() {
+    for retire_before_shutdown in [false, true] {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let trace = Trace::default();
+        let registry = ModelInvocationProviderRegistry::new(executor.handle().clone());
+        let registration = registry
+            .register(Arc::new(ReplacementProvider {
+                id: "stopped".into(),
+                label: "stopped",
+                trace: trace.clone(),
+            }))
+            .unwrap();
+        let mut pending = Box::pin(registration.dispose());
+        if retire_before_shutdown {
+            use std::task::{Context, Waker};
+            assert!(
+                pending
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        drop(executor);
+        let observer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        observer.block_on(async {
+            let error = tokio::time::timeout(Duration::from_secs(1), pending)
+                .await
+                .expect("provider completion must survive stopped executor")
+                .unwrap_err();
+            assert_eq!(
+                error.message,
+                "Provider cleanup task was dropped or panicked before completion."
+            );
+            assert_eq!(
+                registration.dispose().await.unwrap_err().message,
+                error.message
+            );
+            println!(
+                "retire_before_shutdown={retire_before_shutdown}: {}",
+                error.message
+            );
+        });
+        assert!(trace.lock().unwrap().is_empty());
+    }
+}

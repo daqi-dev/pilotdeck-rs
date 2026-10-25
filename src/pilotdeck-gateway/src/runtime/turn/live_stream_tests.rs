@@ -67,14 +67,14 @@ impl HostHandler for Handler {
         })
     }
 
-    fn validate_event(&self, payload: &JsValue) -> Result<(), HostError> {
+    fn validate_event(&self, payload: &JsValue) -> Result<EventGuard, HostError> {
         if self.reject_input_accepted && payload.get("type") == Some(&"input_accepted".into()) {
             return Err(HostError::new(
                 HostErrorKind::Protocol,
                 "inner rejected input_accepted",
             ));
         }
-        Ok(())
+        Ok(EventGuard::default())
     }
 
     fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
@@ -136,9 +136,11 @@ async fn deliver(
     payload: &JsValue,
     final_event: bool,
 ) -> Result<(), HostError> {
-    if !final_event {
-        handler.validate_event(payload)?;
-    }
+    let _guard = if !final_event {
+        handler.validate_event(payload)?
+    } else {
+        EventGuard::default()
+    };
     handler.event(wire(payload, final_event)).await
 }
 
@@ -261,7 +263,7 @@ async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
         inner: inner.clone(),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
-        forwarding: Mutex::default(),
+        forwarding: Arc::default(),
     });
     let integrity = handler.integrity.clone();
     let sent = expected.clone();
@@ -328,7 +330,7 @@ async fn failed_handler_event_is_not_published() {
         }),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
-        forwarding: Mutex::default(),
+        forwarding: Arc::default(),
     });
     let integrity = handler.integrity.clone();
     let mut turn = stream(
@@ -412,7 +414,7 @@ async fn event_after_the_authoritative_terminal_fails_closed() {
         inner: Arc::new(Handler::default()),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
-        forwarding: Mutex::default(),
+        forwarding: Arc::default(),
     });
     let integrity = handler.integrity.clone();
     let mut turn = stream(
@@ -1154,7 +1156,7 @@ async fn events_after_a_violation_settle_to_none_even_when_buffered() {
         inner: Arc::new(Handler::default()),
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
-        forwarding: Mutex::default(),
+        forwarding: Arc::default(),
     });
     let integrity = handler.integrity.clone();
     let mut turn = stream(
@@ -1611,7 +1613,7 @@ fn buffered_handler(
         inner: inner.clone(),
         events,
         integrity: Arc::new(StreamIntegrity::new()),
-        forwarding: Mutex::default(),
+        forwarding: Arc::default(),
     });
     (inner, handler, receiver)
 }
@@ -1746,10 +1748,10 @@ async fn host_buffer_batches_wait_for_reserved_wire_order() {
     let accepted = host_event("input_accepted");
     let first = [host_event("module_first_a"), host_event("module_first_b")];
     let second = [host_event("module_second_a"), host_event("module_second_b")];
-    handler.validate_event(&started).unwrap();
+    let _started_guard = handler.validate_event(&started).unwrap();
     queue_host_events(&inner, &first);
     let mut first_call = handler.module_call(JsValue::Null);
-    handler.validate_event(&accepted).unwrap();
+    let _accepted_guard = handler.validate_event(&accepted).unwrap();
     queue_host_events(&inner, &second);
     let mut second_call = handler.module_call(JsValue::Null);
     // Reverse poll order cannot move either batch past the reserved wire slot.
@@ -1805,7 +1807,7 @@ async fn host_error_cuts_off_prevalidated_and_backpressured_deliveries() {
         let started = host_event("turn_started");
         deliver(&handler, &started, false).await.unwrap(); // fill the channel
         let accepted = host_event("input_accepted");
-        handler.validate_event(&accepted).unwrap();
+        let _accepted_guard = handler.validate_event(&accepted).unwrap();
         let mut pending = if pending_send {
             let mut future = handler.event(wire(&accepted, false));
             assert_pending(&mut future).await; // blocked on capacity
@@ -1928,7 +1930,7 @@ async fn final_event_payload_shape_is_left_to_inner_handler() {
         }),
         events,
         integrity: Arc::new(StreamIntegrity::new()),
-        forwarding: Mutex::new(Forwarding::default()),
+        forwarding: Arc::default(),
     };
     let error = handler
         .event(parse_json(r#"{"final":true}"#).unwrap())
@@ -1961,5 +1963,175 @@ async fn non_final_event_object_payload_is_applied_and_forwarded() {
                 Err(mpsc::error::TryRecvError::Empty)
             ));
         }
+    }
+}
+
+#[tokio::test]
+async fn aborted_execution_releases_validated_wire_reservations() {
+    let inner = Arc::new(Handler {
+        block_input_accepted: true,
+        ..Handler::default()
+    });
+    let (events, mut rx) = mpsc::channel(16);
+    let handler = Arc::new(StreamHandler {
+        inner: inner.clone(),
+        events,
+        integrity: Arc::new(StreamIntegrity::new()),
+        forwarding: Arc::default(),
+    });
+    let client = spawn_client("live-normal").await.unwrap();
+    let final_received = client.final_received();
+    let child = client.child_id().unwrap();
+    let request = parse_execute_request(&input(), &options()).unwrap();
+    let mut run = Box::pin(client.execute(request, handler.clone()));
+    timeout(FINAL_SYNC_TIMEOUT, async {
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut run => panic!("application must remain pending: {result:?}"),
+                _ = tokio::task::yield_now() => {}
+            }
+            if final_received.load(Ordering::SeqCst) && inner.events.lock().unwrap().len() == 2 {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("host must validate the queued events before abort");
+    let reserved = handler.forwarding.lock().unwrap().wire.len();
+    assert_eq!(reserved, 3);
+    assert_eq!(inner.events.lock().unwrap().len(), 2); // input_accepted is pending
+    assert_eq!(
+        rx.try_recv().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    // Construct a real host-buffered callback behind the queued wire slots.
+    let module_event = host_event("after_aborted_execution");
+    queue_host_events(&inner, std::slice::from_ref(&module_event));
+    let mut callback = handler.module_call(JsValue::Null);
+    assert_pending(&mut callback).await;
+    drop(run); // the production execution future owns and drops the queue
+    timeout(FINAL_SYNC_TIMEOUT, callback)
+        .await
+        .expect("discarded wire reservations must not strand a later module callback")
+        .unwrap();
+    assert!(handler.forwarding.lock().unwrap().wire.is_empty());
+    assert_eq!(rx.try_recv().unwrap(), module_event);
+    let later = host_event("after_aborted_wire");
+    deliver(&handler, &later, false).await.unwrap();
+    assert_eq!(rx.try_recv().unwrap(), later);
+    timeout(
+        FINAL_SYNC_TIMEOUT,
+        handler.event(wire(&JsValue::Null, true)),
+    )
+    .await
+    .expect("terminal callback must not wait on a discarded reservation")
+    .unwrap();
+    assert!(rx.try_recv().is_err());
+    assert_reaped(child).await;
+    println!(
+        "queued=3; module blocked before abort; module/wire/final progressed after abort; wire=0"
+    );
+}
+
+#[tokio::test]
+async fn discarded_event_guards_release_only_their_own_reservation() {
+    let (inner, handler, mut rx) = buffered_handler(8);
+    let started = host_event("turn_started");
+    let accepted = host_event("input_accepted");
+    let first = handler.validate_event(&started).unwrap();
+    let second = handler.validate_event(&accepted).unwrap();
+    drop(second); // a later queue entry must not remove the earlier reservation
+    let reserved = handler.forwarding.lock().unwrap().wire.len();
+    assert_eq!(reserved, 1);
+    queue_host_events(&inner, &[host_event("after_discard")]);
+    let module = handler.module_call(JsValue::Null);
+    drop(first);
+    timeout(FINAL_SYNC_TIMEOUT, module).await.unwrap().unwrap();
+    assert!(handler.forwarding.lock().unwrap().wire.is_empty());
+    assert_eq!(rx.try_recv().unwrap(), host_event("after_discard"));
+    // A callback constructed but never polled must release its transferred slot.
+    let guard = handler.validate_event(&host_event("model_event")).unwrap();
+    let callback = handler.event(wire(&host_event("model_event"), false));
+    drop(guard);
+    drop(callback);
+    timeout(
+        FINAL_SYNC_TIMEOUT,
+        handler.event(wire(&JsValue::Null, true)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+}
+
+#[tokio::test]
+async fn embedded_final_uses_js_truthiness() {
+    for value in [
+        JsValue::Bool(true),
+        "true".into(),
+        "false".into(),
+        JsValue::Number(1.0),
+        JsValue::Number(-1.0),
+        JsValue::Array(vec![]),
+        JsValue::Object(JsObject::new()),
+    ] {
+        for payload in [
+            None,
+            Some(JsValue::Null),
+            Some(JsValue::Bool(false)),
+            Some(host_event("model_event")),
+        ] {
+            let (inner, handler, mut rx) = buffered_handler(4);
+            let mut event = JsObject::new();
+            event.insert("final".into(), value.clone());
+            if let Some(payload) = payload {
+                event.insert("payload".into(), payload);
+            }
+            let event = JsValue::Object(event);
+            handler.event(event.clone()).await.unwrap();
+            assert_eq!(*inner.events.lock().unwrap(), vec![event]);
+            assert!(
+                rx.try_recv().is_err(),
+                "final payload must not be forwarded"
+            );
+        }
+    }
+    for value in [
+        JsValue::Undefined,
+        JsValue::Null,
+        JsValue::Bool(false),
+        JsValue::Number(0.0),
+        JsValue::Number(-0.0),
+        JsValue::Number(f64::NAN),
+        "".into(),
+    ] {
+        let mut event = JsObject::new();
+        event.insert("final".into(), value);
+        event.insert("payload".into(), JsValue::Null);
+        assert_invalid_event_payload(JsValue::Object(event.clone())).await;
+        let (inner, handler, mut rx) = buffered_handler(4);
+        let payload = host_event("model_event");
+        event.insert("payload".into(), payload.clone());
+        let event = JsValue::Object(event);
+        handler.event(event.clone()).await.unwrap();
+        let recorded = inner.events.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        if event
+            .get("final")
+            .and_then(JsValue::as_number)
+            .is_some_and(f64::is_nan)
+        {
+            assert!(
+                recorded[0]
+                    .get("final")
+                    .and_then(JsValue::as_number)
+                    .unwrap()
+                    .is_nan()
+            );
+            assert_eq!(recorded[0].get("payload"), Some(&payload));
+        } else {
+            assert_eq!(recorded, vec![event]);
+        }
+        assert_eq!(rx.try_recv().unwrap(), payload);
     }
 }

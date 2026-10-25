@@ -183,7 +183,7 @@ pub(super) async fn run(
     drop(outgoing);
     let mut next_sequence = 0.0;
     let mut calls: HashMap<JsString, Call> = HashMap::new();
-    let mut events: VecDeque<(Arc<Frame>, bool)> = VecDeque::new();
+    let mut events: VecDeque<(Arc<Frame>, bool, EventGuard)> = VecDeque::new();
     let mut event_running = false;
     let mut terminal_received = false;
     let mut known_terminal = None;
@@ -288,7 +288,7 @@ pub(super) async fn run(
             );
             client.connection.send_cancel(&JsValue::Object(cancel));
         }
-        if !event_running && let Some((event, aborted)) = events.pop_front() {
+        if !event_running && let Some((event, aborted, guard)) = events.pop_front() {
             let handler = handler.clone();
             let lease = event.lease.duplicate()?;
             let sequence = event
@@ -297,6 +297,7 @@ pub(super) async fn run(
                 .expect("validated event");
             let last_applied = progress.last_applied_sequence.clone();
             callbacks.spawn(async move {
+                let _guard = guard;
                 // TS readFinalTerminal replaces an incomplete compaction final
                 // with abortedResult(input). Do not expose that raw payload to
                 // a handler; the session layer projects the original input.
@@ -445,13 +446,11 @@ pub(super) async fn run(
                         // violating event is never applied and never ACKed. The
                         // authoritative final is skipped; the caller projects
                         // it from ExecuteResult.
-                        if !event.final_event
-                            && let Err(error) = handler.validate_event(
-                                raw.get("payload").expect("validated event payload"),
-                            )
-                        {
-                            return Err(error);
-                        }
+                        let guard = if event.final_event {
+                            EventGuard::default()
+                        } else {
+                            handler.validate_event(raw.get("payload").expect("validated event payload"))?
+                        };
                         terminal_received = event.final_event;
                         if events.len() >= limits.queue_capacity {
                             return Err(HostError::new(HostErrorKind::Limit, "Host event application queue full."));
@@ -463,7 +462,7 @@ pub(super) async fn run(
                             #[cfg(test)]
                             client.test_signals.final_received.store(true, Ordering::SeqCst);
                         }
-                        events.push_back((raw, aborted));
+                        events.push_back((raw, aborted, guard));
                     }
                     MessageRef::Request(call) => {
                         if !matches!(call.body, RequestBodyRef::ModuleCall { .. }) { continue; }
