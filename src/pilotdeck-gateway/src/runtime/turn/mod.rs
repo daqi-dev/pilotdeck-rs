@@ -8,4 +8,5 @@ pub mod projector;
 pub mod publish;
 pub mod read;
 pub mod replay;
+pub mod runner;
 pub mod submit;
