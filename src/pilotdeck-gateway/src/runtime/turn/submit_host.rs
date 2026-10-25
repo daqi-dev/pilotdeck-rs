@@ -230,7 +230,7 @@ impl SubmitHost for GatewaySubmitHost {
                 false => None,
             };
             let mut attachments = match field(input, "attachments") {
-                JsValue::Array(values) => values.iter().cloned().collect::<Vec<_>>(),
+                JsValue::Array(values) => values.to_vec(),
                 _ => Vec::new(),
             };
             if let Some(lease) = &lease {
