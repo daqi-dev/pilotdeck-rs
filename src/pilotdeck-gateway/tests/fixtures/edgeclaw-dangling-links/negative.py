@@ -29,36 +29,69 @@ READ_AFTER = '''            let Ok(Some(mut e)) = self.entry(id) else {
 
 WRITE_ENTRY_BEFORE = '            let old = self.entry(path)?.unwrap_or_default();\n'
 WRITE_ENTRY_AFTER = '            let old = self.entry(path).ok().flatten().unwrap_or_default();\n'
-WRITE_PATH_BEFORE = '        let absolute = self.path(path)?;\n'
-WRITE_PATH_AFTER = '''        let absolute = match self.path(path) {
-            Ok(path) => path,
-            Err(_) => absolute(&self.root.join(path))?,
-        };
+# #597 moved the write behind a root-directory handle: `write_bytes` pins the
+# boundary with `mutation_target` (whose `checked_path` refuses a dangling
+# link) and then overwrites the relative target.  The old path-based anchor
+# (`let absolute = self.path(path)?;`) no longer exists.  Mutating the live
+# unix path keeps the defect shape: resolve the leaf link the boundary check
+# refused and write through it, like TS `writeFileSync`.
+WRITE_TARGET_BEFORE = '''            let (root, target) = self.mutation_target(relative)?;
+            // A root-addressed relative has no parent: Node's writeFileSync on
+'''
+WRITE_TARGET_AFTER = '''            // Mutant: a leaf symlink the boundary check refuses is resolved by
+            // hand and written through, like TS writeFileSync follows the link.
+            let symlink = fs::symlink_metadata(self.root.join(relative))
+                .is_ok_and(|m| m.file_type().is_symlink());
+            let (root, target) = match self.mutation_target(relative) {
+                Ok(pinned) => pinned,
+                Err(_) if symlink => {
+                    let link = absolute(&self.root.join(relative))?;
+                    let target = fs::read_link(&link)
+                        .map_err(|e| crate::node_io::path_error(e, "readlink", &link))?;
+                    let target = if target.is_relative() {
+                        link.parent().unwrap_or(self.root.as_path()).join(target)
+                    } else {
+                        target
+                    };
+                    // Retry the resolved target through the normal pinned-root
+                    // path, so the descriptor root and the relative target are
+                    // derived from the same (lexical) boundary.
+                    let boundary = absolute(&self.root)?;
+                    let resolved = target
+                        .strip_prefix(&boundary)
+                        .unwrap_or(&target)
+                        .to_string_lossy()
+                        .into_owned();
+                    self.mutation_target(&resolved)?
+                }
+                Err(e) => return Err(e),
+            };
+            // A root-addressed relative has no parent: Node's writeFileSync on
 '''
 
-DELETE_BEFORE = '''            "deleteEntries" => {
-                let mut changed = vec![];
-                for path in array(input, "relativePaths") {
-                    if self.within(&path)? && self.path(&path)?.exists() {
-                        let absolute = self.path(&path)?;
-                        fs::remove_file(&absolute)
-                            .map_err(|e| crate::node_io::path_error(e, "unlink", &absolute))?;
+# #597 replaced the old `fs::remove_file(self.path(...))` block with the
+# descriptor-relative `unlink`.  The rejection now lives in two places: the
+# `deleteEntries` guard (`within` + `path`) and `unlink`'s own `within`.
+# Mutating both removes exactly that check, so the dangling link is deleted
+# instead of rejected; the descriptor `unlink_at` leg otherwise stays intact.
+DELETE_BEFORE = '''                    if self.within(&path)? && self.path(&path)?.exists() {
+                        self.unlink(&path)?;
                         changed.push(path);
                     }
-                }
-                self.repair()?;
 '''
-DELETE_AFTER = '''            "deleteEntries" => {
-                let mut changed = vec![];
-                for path in array(input, "relativePaths") {
-                    let absolute = absolute(&self.root.join(&path))?;
-                    if absolute.exists() {
-                        fs::remove_file(&absolute)
-                            .map_err(|e| crate::node_io::path_error(e, "unlink", &absolute))?;
+DELETE_AFTER = '''                    // Mutant: a lexically present path (dangling link included)
+                    // is accepted instead of rejected by the boundary check.
+                    if fs::symlink_metadata(self.root.join(&path)).is_ok() {
+                        self.unlink(&path)?;
                         changed.push(path);
                     }
-                }
-                let _ = self.repair();
+'''
+DELETE_UNLINK_BEFORE = '''            self.within(relative)?;
+            // unlink removes an allowed leaf symlink, not its canonical target.
+'''
+DELETE_UNLINK_AFTER = '''            // Mutant: the caller's guard already accepted the path, so unlink
+            // no longer re-checks it and removes the dangling link itself.
+            // unlink removes an allowed leaf symlink, not its canonical target.
 '''
 
 EDIT_LOOKUP_BEFORE = '''            "editEntry" => {
@@ -118,14 +151,17 @@ MUTANTS = [
         test='dangling_link_write_is_rejected_before_any_io',
         replacements=[
             (WRITE_ENTRY_BEFORE, WRITE_ENTRY_AFTER),
-            (WRITE_PATH_BEFORE, WRITE_PATH_AFTER),
+            (WRITE_TARGET_BEFORE, WRITE_TARGET_AFTER),
         ],
     ),
     dict(
         name='allow-delete-dangling',
         scenario='delete',
         test='dangling_link_delete_is_rejected_before_any_io',
-        replacements=[(DELETE_BEFORE, DELETE_AFTER)],
+        replacements=[
+            (DELETE_BEFORE, DELETE_AFTER),
+            (DELETE_UNLINK_BEFORE, DELETE_UNLINK_AFTER),
+        ],
     ),
     dict(
         name='allow-edit-dangling',
