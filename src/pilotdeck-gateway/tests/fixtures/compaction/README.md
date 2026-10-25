@@ -41,4 +41,4 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction
 
 `TurnRunner.ts:338-374` 的 durable 分支在 Rust 侧由 `turn::persist_compaction_to_recorder` 表达：compact boundary 写 replacement 后 commit；非 compact boundary 或写失败先 `failDeferredCompaction`，再以 `compaction_persistence_failed` 触发注入的 abort 回调，最后正常返回（dispatcher 响应 `{persisted:true}`）。这与 TS 的 catch 一致：失败不冒充成功，abort 与响应分两路，由宿主执行层把取消投影成 aborted result。
 
-范围：只证明 compaction 生命周期与 control boundary 的 JSONL 落盘格式、域校验和 `persist_compaction` 分派；`durableContextRuntime` / `TurnRunner` 的调度本身、`try_auto_compact` 预算注入、question/permission/inbox 生命周期与 `completeTurn` 留给后续 PR。
+范围：只证明 compaction 生命周期与 control boundary 的 JSONL 落盘格式、域校验和 `persist_compaction` 分派；`durableContextRuntime` / `TurnRunner` 的调度本身、`try_auto_compact` 预算注入、question/permission/inbox 生命周期留给后续 PR；`completeTurn` 的独立耐久验收见 [`turn-runner`](../turn-runner/README.md)。

@@ -1,0 +1,1558 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/turn/TurnRunner.ts": "8bf4dab4c8e40bba78781e6ad7352dda79e3fc52adf99b9504f1213e0157a5ac",
+    "src/agent/turn/TurnInputProcessor.ts": "450760d073b39b57d1f32349ca02f035ff0d1b5a74308f7b5606a011833a3526",
+    "src/agent/session/AgentSessionEventRecorder.ts": "4d8311f564a5d45bdbacaf7953f8a9d6fbae366c086ecf96162bdad027667ada",
+    "src/session/transcript/JsonlTranscriptWriter.ts": "28cd4788ff4465be4594edf7fb59762299362ac867ef9a50c24732ab212a4678",
+    "src/session/events/SessionRuntime.ts": "b7fa7a9a6e7395dc29464a2c2f539a3c1b17ac13fd71a3b243ba93c78fc316ec",
+    "src/session/persistence/JsonlSessionPersistence.ts": "721c720f36f0fb0f2b6bd77bd2490d181182dfa909c3bd85e80d2ca3df643124",
+    "src/agent/loop/AgentLoop.ts": "d9949a78b6396e58060f5b19d32d51ba15139bc9900de8bf9fe1c1231621aff2",
+    "src/agent/loop/AgentTurnCapabilities.ts": "573db659bdc8c26702b15d01ce8fc499d0505272fdcf5e482e9b8e895530ddcb",
+    "src/agent/modules/transport/agentLoopSidecarClient.ts": "0897981fa636cdec2e1ac9f6f5b0b974d8cb49d6bcf154d5a74577a0f863eb11",
+    "src/agent/modules/transport/agentLoopSidecarServer.ts": "7279b8767b785a121574d3fd1769bddea3a0d1c01b65efae6242ad865de0a254",
+    "src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts": "2ec674ccf767533e0cd7c592d16bc0157a1c441c3c43d35e6288276300dc7e2f",
+    "src/cli/pilotdeck-agent-loop-default-factory.ts": "98227654052c954f564828d4ceb45ca0af7fd390bf200eda6ffb0b9a13545ec0",
+    "src/agent/session/createAgentSession.ts": "39734d0e453044962e354764c121f866151c0c2b44268ab5112cf535dc537e52",
+    "src/session/transcript/InMemoryTranscriptWriter.ts": "cc41f662051c2fed672c0333c9304f72d16e9212774df4168e5d2905d5a85fe9",
+    "src/session/events/SessionDomainValidation.ts": "64763871d039acb7fcc279c741f344c53568cd0a310726e0f74ff58f1d06d47c",
+    "src/agent/protocol/errors.ts": "3ecccf183bdd9c5869244a561846c4688fc22052d99834c82274d0f561795541",
+    "src/status/agentStatus.ts": "9b3f11e574fc33652594afa0a7b74f574542df57b50bb7226111cc40f2d6233b"
+  },
+  "matrix": [
+    {
+      "name": "success",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n"
+    },
+    {
+      "name": "start-fails",
+      "events": [],
+      "error": "injected write failure",
+      "loopCalls": 0,
+      "modelCalls": 0,
+      "returns": 0,
+      "completes": 0,
+      "closes": 0,
+      "writeAttempts": 1,
+      "transcript": ""
+    },
+    {
+      "name": "accepted-fails",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Failed to record accepted input.",
+          "detail": {
+            "message": "Failed to record accepted input.",
+            "code": "agent_transcript_error",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_transcript_error",
+            "message": "Failed to record accepted input.",
+            "details": {}
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_transcript_error",
+                "message": "Failed to record accepted input.",
+                "details": {}
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 0,
+      "modelCalls": 0,
+      "returns": 0,
+      "completes": 1,
+      "closes": 1,
+      "writeAttempts": 1,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_transcript_error\",\"message\":\"Failed to record accepted input.\",\"details\":{}}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Failed to record accepted input.\",\"detail\":{\"message\":\"Failed to record accepted input.\",\"code\":\"agent_transcript_error\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n"
+    },
+    {
+      "name": "abort-before-execute",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "sessionId": "s",
+            "turnId": "t",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"aborted\",\"stopReason\":\"aborted_streaming\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"sessionId\":\"s\",\"turnId\":\"t\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n"
+    },
+    {
+      "name": "abort-after-accepted",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "aborted",
+            "stopReason": "aborted_streaming",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "sessionId": "s",
+            "turnId": "t",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"aborted\",\"stopReason\":\"aborted_streaming\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"sessionId\":\"s\",\"turnId\":\"t\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n"
+    },
+    {
+      "name": "loop-fails-twice",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "loop failed",
+          "detail": {
+            "message": "loop failed",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "loop failed"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "loop failed"
+          }
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"loop failed\",\"detail\":{\"message\":\"loop failed\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n"
+    },
+    {
+      "name": "loop-throws",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "injected loop failure",
+          "detail": {
+            "message": "injected loop failure",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "injected loop failure"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "injected loop failure"
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"injected loop failure\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"injected loop failure\",\"detail\":{\"message\":\"injected loop failure\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n"
+    },
+    {
+      "name": "early-completed",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n"
+    },
+    {
+      "name": "consumer-drop",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 0,
+      "closes": 1,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n"
+    },
+    {
+      "name": "complete-once",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "injected write failure",
+          "detail": {
+            "message": "injected write failure",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "injected write failure"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "injected write failure"
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 2,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"injected write failure\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"injected write failure\",\"detail\":{\"message\":\"injected write failure\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n"
+    },
+    {
+      "name": "complete-always",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        }
+      ],
+      "error": "injected write failure",
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 2,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n"
+    }
+  ],
+  "recorderCases": [
+    {
+      "name": "success",
+      "fault": "",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n"
+    },
+    {
+      "name": "error",
+      "fault": "",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n"
+    },
+    {
+      "name": "aborted",
+      "fault": "",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "aborted",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "aborted",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"aborted\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"aborted\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n"
+    },
+    {
+      "name": "max_turns",
+      "fault": "",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "max_turns",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "max_turns",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"max_turns\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n"
+    },
+    {
+      "name": "no-step",
+      "fault": "",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n"
+    },
+    {
+      "name": "unstarted",
+      "fault": "",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "Durable turn t has not started.",
+        "Durable turn t has not started."
+      ],
+      "transcript": ""
+    },
+    {
+      "name": "step-once",
+      "fault": "step_completed",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "injected write failure",
+        "ok"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n"
+    },
+    {
+      "name": "result-once",
+      "fault": "turn_result",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "injected write failure",
+        "ok"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-4\"}\n"
+    },
+    {
+      "name": "result-always",
+      "fault": "turn_result",
+      "failures": 99,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "injected write failure",
+        "injected write failure"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n"
+    },
+    {
+      "name": "new-turn",
+      "fault": "",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "start",
+          "turn": "other"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "other",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "Durable turn t has not started.",
+        "ok"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"other\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"other\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"other\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n"
+    },
+    {
+      "name": "restore",
+      "fault": "",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "restore"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "Durable turn t has not started."
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n"
+    },
+    {
+      "name": "restart-fails",
+      "fault": "",
+      "failures": 1,
+      "operations": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "request",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        },
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "complete",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "outcomes": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "Turn t has already started.",
+        "ok"
+      ],
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n"
+    }
+  ],
+  "sidecar": [
+    {
+      "name": "success",
+      "connections": 1,
+      "closed": 1,
+      "modelCalls": 1,
+      "events": [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "instructions_loaded",
+        "model_request_started",
+        "model_event",
+        "model_event",
+        "model_event",
+        "model_event",
+        "assistant_message",
+        "stop_requested",
+        "turn_completed",
+        "session_ended"
+      ],
+      "firstSidecarEvent": {
+        "sequence": 0,
+        "final": false,
+        "type": "model_request_started"
+      },
+      "terminal": "success",
+      "error": null
+    },
+    {
+      "name": "gap",
+      "connections": 1,
+      "closed": 1,
+      "modelCalls": 1,
+      "events": [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "agent_status",
+        "turn_failed",
+        "turn_completed",
+        "session_ended"
+      ],
+      "firstSidecarEvent": {
+        "sequence": 0,
+        "final": false,
+        "type": "model_request_started"
+      },
+      "terminal": "error",
+      "error": {
+        "code": "agent_invalid_state",
+        "message": "Sidecar event sequence mismatch: expected 0, got 1."
+      }
+    },
+    {
+      "name": "duplicate",
+      "connections": 1,
+      "closed": 1,
+      "modelCalls": 0,
+      "events": [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "instructions_loaded",
+        "model_request_started",
+        "agent_status",
+        "turn_failed",
+        "turn_completed",
+        "session_ended"
+      ],
+      "firstSidecarEvent": {
+        "sequence": 0,
+        "final": false,
+        "type": "model_request_started"
+      },
+      "terminal": "error",
+      "error": {
+        "code": "agent_invalid_state",
+        "message": "Sidecar event sequence mismatch: expected 1, got 0."
+      }
+    },
+    {
+      "name": "early-final",
+      "connections": 1,
+      "closed": 1,
+      "modelCalls": 1,
+      "events": [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "instructions_loaded",
+        "turn_completed",
+        "session_ended"
+      ],
+      "firstSidecarEvent": {
+        "sequence": 0,
+        "final": false,
+        "type": "model_request_started"
+      },
+      "terminal": "success",
+      "error": null
+    },
+    {
+      "name": "drop",
+      "connections": 1,
+      "closed": 1,
+      "modelCalls": 1,
+      "events": [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "instructions_loaded",
+        "model_request_started",
+        "model_event"
+      ],
+      "firstSidecarEvent": {
+        "sequence": 0,
+        "final": false,
+        "type": "model_request_started"
+      },
+      "terminal": null,
+      "error": null
+    },
+    {
+      "name": "abort-before",
+      "connections": 0,
+      "closed": 0,
+      "modelCalls": 0,
+      "events": [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "session_ended"
+      ],
+      "firstSidecarEvent": null,
+      "terminal": null,
+      "error": null
+    },
+    {
+      "name": "abort-after",
+      "connections": 0,
+      "closed": 0,
+      "modelCalls": 0,
+      "events": [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "session_ended"
+      ],
+      "firstSidecarEvent": null,
+      "terminal": null,
+      "error": null
+    }
+  ]
+}
