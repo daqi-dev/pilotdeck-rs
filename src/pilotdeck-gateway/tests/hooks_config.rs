@@ -170,7 +170,11 @@ fn conservative_resource_budgets_are_inclusive() {
         Some(&"/^(?!(a?){1000001}c)b$/".into()),
         Some(&query)
     ));
-    for depth in [4000, 4001] {
+    for (depth, expected) in [
+        (5000, Ok(true)),
+        (6500, Ok(true)),
+        (6501, Err(HookConditionError::StackOverflow)),
+    ] {
         let input = parse_json(&format!("{}0{}", "[".repeat(depth), "]".repeat(depth))).unwrap();
         let result = match_hook_condition(
             Some(&"Read(0)".into()),
@@ -179,14 +183,7 @@ fn conservative_resource_budgets_are_inclusive() {
                 tool_input: Some(&input),
             },
         );
-        assert_eq!(
-            result,
-            if depth == 4000 {
-                Ok(true)
-            } else {
-                Err(HookConditionError::StackOverflow)
-            }
-        );
+        assert_eq!(result, expected, "depth {depth}");
     }
 }
 #[test]

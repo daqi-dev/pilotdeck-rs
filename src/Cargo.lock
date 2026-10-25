@@ -877,6 +877,7 @@ dependencies = [
  "icu_casemap",
  "icu_collator",
  "icu_locale_core",
+ "icu_normalizer",
  "libc",
  "pilotdeck-child-signals",
  "pilotdeck-protocol",

@@ -1931,7 +1931,7 @@ async fn lifecycle_dispatch_matches_real_ts() {
         .to_string_lossy()
         .into_owned();
     let env_cases = array(field(section, "envCases"));
-    assert_eq!(env_cases.len(), 6);
+    assert_eq!(env_cases.len(), 12);
     for case in env_cases {
         let name = text(field(case, "name"));
         let base_env = case.get("base").map(object);
