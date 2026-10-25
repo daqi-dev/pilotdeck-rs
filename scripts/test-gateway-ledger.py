@@ -234,9 +234,16 @@ class Ledger(unittest.TestCase):
         manifest.write_bytes('# 冻结登记\n'.encode('utf-8') + manifest.read_bytes())
         env = {**os.environ, 'LC_ALL': 'C', 'PYTHONUTF8': '0', 'PYTHONCOERCECLOCALE': '0',
                'PYTHONIOENCODING': 'utf-8'}
-        # Deliberately not -I: this case proves explicit UTF-8 handling still
-        # works under hostile PYTHON* env, which isolated mode would ignore.
-        result = subprocess.run([sys.executable, str(self.root / CHECKER), '--base', self.base],
+        # The checker now refuses to run without -I (A5.4 pkg2 fix-r7): under
+        # isolated mode the hostile PYTHON* variables are ignored by design, so
+        # what remains to prove is (a) a non-isolated run is refused rather than
+        # silently trusting that environment, and (b) the isolated run still
+        # reads the UTF-8 manifest under a C locale.
+        refused = subprocess.run([sys.executable, str(self.root / CHECKER), '--base', self.base],
+                                 capture_output=True, timeout=30, env=env)
+        self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+        self.assertIn(b'-I', refused.stdout + refused.stderr)
+        result = subprocess.run([sys.executable, '-I', str(self.root / CHECKER), '--base', self.base],
                                 capture_output=True, timeout=30, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads(result.stdout)['status'], 'PASS')
