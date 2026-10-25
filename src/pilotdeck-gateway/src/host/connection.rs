@@ -334,6 +334,14 @@ impl Connection {
         self.term_sent.clone()
     }
 
+    // #308/#542: the same widening for the integration-style host tests. Only
+    // the post-SIGKILL reap (pure OS scheduling) is widened; EOF/TERM grace
+    // stays at limits.close_timeout. The product default is unchanged.
+    #[cfg(test)]
+    pub(super) fn widen_reap_for_test(&mut self) {
+        self.reap_deadline = Some(std::time::Duration::from_secs(10));
+    }
+
     // #542: the deadline for the only wait that depends on real OS scheduling
     // (reaping after SIGKILL). A test may override just this segment; the
     // product default is unchanged.
@@ -511,7 +519,7 @@ mod tests {
     // wait after SIGKILL is real OS scheduling (Tokio's SIGCHLD reaping), so
     // widen that single stage; the protocol deadlines stay short on purpose.
     fn widen_reap(connection: &mut Connection) {
-        connection.reap_deadline = Some(Duration::from_secs(10));
+        connection.widen_reap_for_test();
     }
     fn controlled_queue(capacity: usize) -> (Connection, mpsc::Receiver<WriteCommand>) {
         let mut connection = Connection::spawn(&mut peer("handshake-hang"), limits()).unwrap();

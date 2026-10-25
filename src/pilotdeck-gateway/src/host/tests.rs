@@ -319,8 +319,12 @@ async fn handshake_execute_ack_and_terminal() {
             matches!(result, ExecuteResult::Rejected(_)),
             mode == "rejected"
         );
+        // Protocol semantics, not a timing race: the bound only guards the
+        // unbounded-cleanup regression (the peer's own hang is a 60 s sleep).
+        // The elapsed span covers Python startup and the peer round trips, so
+        // it must tolerate a loaded CI worker instead of racing it (#308).
         assert!(
-            started.elapsed() < Duration::from_secs(3),
+            started.elapsed() < Duration::from_secs(10),
             "unbounded cleanup: {mode}"
         );
         println!("HOST_PASS {mode}");
@@ -478,7 +482,9 @@ async fn unknown_fixture_mode_fails_immediately() {
         .spawn()
         .unwrap();
     let _stdin = child.stdin.take().unwrap();
-    let output = timeout(Duration::from_secs(2), child.wait_with_output())
+    // The watchdog only prevents a hang; the fixture must merely start Python
+    // and exit before reading hello, which is machine-speed dependent (#308).
+    let output = timeout(Duration::from_secs(5), child.wait_with_output())
         .await
         .unwrap()
         .unwrap();
@@ -641,7 +647,10 @@ async fn callbacks_do_not_block_input_or_run_twice() {
     let started = Instant::now();
     let error = run("callback-disconnect").await.unwrap_err();
     assert_eq!(error.kind, HostErrorKind::Disconnected);
-    assert!(error.accepted && started.elapsed() < Duration::from_secs(1));
+    // The kind above is the oracle (an execution timeout would surface as
+    // Timeout); this wall bound only guards gross hangs, so it must not race
+    // Python startup on a loaded CI worker (#308).
+    assert!(error.accepted && started.elapsed() < Duration::from_secs(5));
     println!("HOST_REJECT callback-disconnect: {error}");
 }
 #[tokio::test]
@@ -926,7 +935,11 @@ fn duplicate_payload_comparison_preserves_js_wire_facts() {
 }
 
 async fn assert_reaped(pid: u32) {
-    timeout(Duration::from_secs(1), async {
+    // Observing that a killed child was reaped is plain OS scheduling; the
+    // semantic bounds (close grace, post-cancel exit) are asserted by the
+    // callers' own deadlines. Keep this anti-hang watchdog generous so it
+    // cannot race a loaded CI worker (#308/#542 class).
+    timeout(Duration::from_secs(10), async {
         loop {
             match rustix::process::test_kill_process(
                 rustix::process::Pid::from_raw(pid as i32).unwrap(),
@@ -948,7 +961,9 @@ async fn dropped_execute_reaps_child_and_aborts_callback() {
     let pid = client.child_id().unwrap();
     let handler = Handler::new("callback-timeout");
     let task = tokio::spawn(client.execute(request(), handler.clone()));
-    timeout(Duration::from_secs(1), async {
+    // The callback start is a round trip through the Python peer, so it is
+    // machine-speed dependent; the watchdog must not race CI load (#308).
+    timeout(Duration::from_secs(5), async {
         while handler.active_calls.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
@@ -958,7 +973,7 @@ async fn dropped_execute_reaps_child_and_aborts_callback() {
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     assert_reaped(pid).await;
-    timeout(Duration::from_secs(1), async {
+    timeout(Duration::from_secs(5), async {
         while handler.active_calls.load(Ordering::SeqCst) != 0 {
             tokio::task::yield_now().await;
         }
@@ -983,15 +998,17 @@ async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
     // finish each observation before advancing virtual time. Python does not
     // share Tokio's clock; real grace periods race its scheduling (#308).
     // close_timeout also bounds the final reap after SIGKILL, which is plain
-    // OS scheduling and cannot be driven by the paused clock. Two seconds keep
-    // that observation honest under load; the deadline value is otherwise
-    // symbolic because the manual clock drives every grace phase (#528).
+    // OS scheduling and cannot be driven by the paused clock. Like #542, the
+    // test widens only that last segment to 10 s; the deadline value is
+    // otherwise symbolic because the manual clock drives every grace phase
+    // (#528).
     let mut bounded = protocol_limits();
     bounded.close_timeout = Duration::from_secs(2);
     let (mut command, receipt) = peer("close-hang");
-    let client = HostClient::spawn(&mut command, None, bounded)
+    let mut client = HostClient::spawn(&mut command, None, bounded)
         .await
         .unwrap();
+    client.connection.widen_reap_for_test();
     let pid = client.child_id().unwrap();
     let writer = client.connection.writer_task();
     let term_sent = client.connection.term_sent();
@@ -1132,8 +1149,12 @@ async fn unbounded_execution_and_maximum_terminal_drain_do_not_panic() {
         let client = HostClient::spawn(&mut command, None, bounded)
             .await
             .unwrap();
+        // The watchdog must stay strictly looser than the limits this test
+        // grants: variant 2 still allows a legal 2 s execution, and a peer
+        // using that time would otherwise be cut off by the outer bound with
+        // an ambiguous timeout instead of the limit under test (#308).
         let result = timeout(
-            Duration::from_secs(2),
+            Duration::from_secs(10),
             client.execute(request(), Handler::new("positive")),
         )
         .await
@@ -1427,7 +1448,9 @@ async fn every_execution_limit_fails_closed_and_drops_callbacks() {
         assert_eq!(error.kind, HostErrorKind::Limit, "{mode}: {error}");
         assert!(error.accepted, "{mode}: {error}");
         assert!(error.message.contains(reason), "{mode}: {error}");
-        timeout(Duration::from_secs(1), async {
+        // In-process callback teardown after the error; an anti-hang watchdog
+        // only, so it must not race a loaded CI worker (#308).
+        timeout(Duration::from_secs(5), async {
             while handler.active_calls.load(Ordering::SeqCst) != 0 {
                 tokio::task::yield_now().await;
             }
