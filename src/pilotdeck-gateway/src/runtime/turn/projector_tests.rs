@@ -608,9 +608,11 @@ fn artifact_directories_are_0700_and_the_file_is_0600() {
     assert_eq!(mode, 0o600, "the artifact file must be 0600");
 }
 
-/// P1 fix-r1: `sessionId = ".."` pops `pilotdeck-tool-results` and would land
-/// the write beside it in the shared temp directory, where none of the
-/// ownership/symlink checks apply (TS writes there). Refuse instead.
+/// P1 fix-r1 / P2 fix-r2: `sessionId = ".."` pops `pilotdeck-tool-results`
+/// and would land the write beside it in the shared temp directory, where none
+/// of the ownership/symlink checks apply (TS writes there). Refuse by queuing
+/// no write and returning no path (like a write that could not be queued);
+/// the tool result itself still projects.
 #[cfg(unix)]
 #[test]
 fn artifact_session_parent_dir_escape_is_refused() {
@@ -623,13 +625,85 @@ fn artifact_session_parent_dir_escape_is_refused() {
         tool_call_id: text("c"),
         text: JsString::from("abcde"),
     };
-    let error = store.persist(&input).expect_err("escape is refused");
-    assert!(error.to_string().contains("outside"), "{error}");
+    assert_eq!(
+        store
+            .persist(&input)
+            .expect("escape is not a projection error"),
+        None,
+        "an escaped path must never be handed out"
+    );
     store.wait_for_pending();
     // The would-be path is `<scratch>/t/c.txt`, beside the protected root.
     assert!(
         !scratch.path().join("t").exists(),
         "no escaped directory may appear"
+    );
+}
+
+/// P2 fix-r2 (opus boundary): refusing a `..` escape must not throw: the
+/// `?` used to drop the whole `tool_result` projection (preview, lines, bytes)
+/// because `persist`'s `Err` reached `publish.rs`'s `agent_event`. The frame
+/// must still be produced with no `resultPath`, and nothing may be written
+/// outside the root.
+#[cfg(unix)]
+#[test]
+fn artifact_session_parent_dir_escape_keeps_projection_without_a_path() {
+    let scratch = Scratch::new("artifact-projection-escape");
+    let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
+    let store = Arc::new(GatewayToolResultArtifactStore::new(&root, 4));
+    let event = object([
+        ("type", text("tool_result")),
+        ("sessionId", text("..")),
+        ("turnId", text("t")),
+        (
+            "result",
+            object([
+                ("type", text("success")),
+                ("toolCallId", text("c")),
+                ("toolName", text("bash")),
+                (
+                    "content",
+                    JsValue::Array(vec![object([
+                        ("type", text("text")),
+                        ("text", JsValue::String(JsString::from("x".repeat(5_000)))),
+                    ])]),
+                ),
+            ]),
+        ),
+    ]);
+    let frames = map_agent_event(
+        &event,
+        "run-1",
+        GatewayAgentEventProjectorOptions {
+            tool_result_artifacts: Some(store.clone()),
+            forward_subagent_text: false,
+        },
+    )
+    .expect("an escaped artifact path must not drop the tool_result projection");
+    let finished = frames
+        .iter()
+        .find(|frame| is_type(field(frame, "type"), "tool_call_finished"))
+        .expect("the tool result still projects");
+    assert_eq!(
+        field(finished, "toolCallId")
+            .as_string()
+            .map(|value| value.to_utf8().expect("toolCallId is utf-8")),
+        Some("c".to_string()),
+        "the frame belongs to the escaped result"
+    );
+    assert!(
+        field(finished, "resultPath").is_undefined(),
+        "a refused write has no path"
+    );
+    assert_eq!(
+        field(finished, "resultBytes"),
+        &number(5_000.0),
+        "the projection is intact"
+    );
+    store.wait_for_pending();
+    assert!(
+        !scratch.path().join("t").exists(),
+        "nothing may be written beside the protected root"
     );
 }
 
@@ -653,7 +727,13 @@ fn artifact_double_parent_dir_escape_is_refused() {
         tool_call_id: text("c"),
         text: JsString::from("abcde"),
     };
-    store.persist(&input).expect_err("escape is refused");
+    assert_eq!(
+        store
+            .persist(&input)
+            .expect("escape is not a projection error"),
+        None,
+        "an escaped path must never be handed out"
+    );
     store.wait_for_pending();
     // `root/../..` is `scratch/a`, still inside the test-owned scratch tree.
     assert!(
