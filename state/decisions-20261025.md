@@ -51,3 +51,123 @@
 - **不改变的**：AI 实测不改变阶段完成状态，人签字后才算实效通过；AI 不代人签字。
 - **能否撤回**：能，恢复 CLAUDE.md §三原文即可。
 - **原则**：能用真实 provider 跑出来的结论，不留给人手动点；人的时间只花在签字和机器判不了的体验上。
+## 人批 · 待批清单逐条决定（2026-10-25 17:14）
+人在协调者会话里逐条勾选「pdrs 待批清单」（`_tmp/20261025-claude-loop/pending-review.html`，条目由 `_tmp/20261025-claude-loop/pending-diffs.json` 收集）后提交决定，原话「以下决定仅供参考，如果你觉得有更合理的决定，也可以沟通」。下方逐字保留人的提交原文，作为这批批准的持久指针。gateway-parity 条目另新增 `-R<n>.md` 指回本节。
+
+- **批准 85 条**：所列条目的批准状态由「未批准 / AI 代批，待人复核」改为**人批（2026-10-25）**。批注「regress 接入暂停：或者换到更优的实现」另开跟进，评估替代实现。
+- **需讨论 8 条**：协调者逐条回复给人，结论另记。
+- **应修代码 9 条**：不再作为差异接受，改为修代码，逐条开 issue 进 READY。
+
+<details><summary>人的提交原文（逐字）</summary>
+
+```text
+pdrs 待批清单 · 我的决定
+【批准】85 条
+- R5 · 冻结记录的人批字段可写「AI 代批，待人复核」（state/decisions-20261014.md:156）
+- A6.7-pr4：hooks matcher 消费型嵌套量词回溯不设预算（state/decisions-20261020.md:21）
+- regress 接入暂停（执行更正）（state/decisions-20261022.md:72）：或者换到更优的实现
+- A6.6-EDGECLAW-ENTRY-PATH-CONTAIN-001（specs/gateway-parity/accepted-diffs.md:704）
+- A6.6-EDGECLAW-IMPORT-SWAP-ROLLBACK-001（specs/gateway-parity/accepted-diffs.md:892）
+- 10-23 · EdgeClaw 条目路径穿越（state/decisions-20261023.md:11）
+- A6.3-PLUGIN-MARKDOWN-ROOT-001（specs/gateway-parity/diffs/A6.3-PLUGIN-MARKDOWN-ROOT-001-R3.md）
+- A6.4-MODEL-DUMP-SECURE-001（specs/gateway-parity/diffs/A6.4-MODEL-DUMP-SECURE-001.md）
+- A6.9-PERMISSION-RUN-001（specs/gateway-parity/diffs/A6.9-PERMISSION-RUN-001-R2.md）
+- A6.9-TOOL-RESULT-DIR-SECURE-001（specs/gateway-parity/diffs/A6.9-TOOL-RESULT-DIR-SECURE-001-R1.md）
+- A6.9-STEER-RUN-001（specs/gateway-parity/diffs/A6.9-STEER-RUN-001.md）
+- #649-3 工具结果落盘目录在共享 /tmp 下的加固（state/decisions-20261025.md:16）
+- R1 · B2 比较器：消息 / @chat 时间顺序（state/decisions-20261014.md:141）
+- R2 · YAML 解析忠实移植 npm yaml 2.9.0（state/decisions-20261014.md:142）
+- R3 · system_clock 停止裁剪，只入仓 Node 实测回归（state/decisions-20261014.md:143）
+- R4 · 尺子装置完整性的威胁模型（state/decisions-20261014.md:155）
+- R6 · A5.1 依赖账本定位为规划索引（state/decisions-20261014.md:157）
+- R7 · YAML 深嵌套阈值（state/decisions-20261014.md:158）
+- R8 · F2 基线 spec 失效登记（state/decisions-20261014.md:159）
+- R9 · F2 失效级联（state/decisions-20261014.md:160）
+- R10 · 账本校验器的防护边界（state/decisions-20261014.md:166）
+- R11 · YAML 资源判据改按 RSS 增量（state/decisions-20261014.md:167）
+- R12 · 被测进程的 HOME 隔离（state/decisions-20261014.md:168）
+- R15 · session_model_get 仍属 (a) 类本地化（state/decisions-20261014.md:211）
+- R16 · 产品入口账本的有限实现（state/decisions-20261016.md:3）
+- R19 · 非良构 UTF-16 排序的精确宿主边界（state/decisions-20261016.md:30）
+- R21 · #112 真实 sidecar 绝对 deadline 与读面结算（state/decisions-20261016.md:42）
+- R24 · 外审超时的有界诊断（state/decisions-20261016.md:60）
+- R25 · #65 保留 P1 并先补调度证据（state/decisions-20261016.md:66）
+- R26 · #113 批准原件的可移植登记（state/decisions-20261016.md:76）
+- R31 · #52 与 #85A 组合输入加固的准备范围（state/decisions-20261016.md:105）
+- R32 · #56.2 先限定资源域补事实（state/decisions-20261016.md:116）
+- R34 · 动态 Snapshot 数值复算差异另列未修（state/decisions-20261016.md:132）
+- R37 · 逐子项主次归类与等级轴分离（state/decisions-20261016.md:162）
+- R40 · #65 只实施测试共同提交域原型（state/decisions-20261016.md:188）
+- R41 · 类型计数谓词与 R37 措辞纠正（state/decisions-20261016.md:198）
+- R42 · 独立改级后的 R37 保护基线刷新（state/decisions-20261016.md:204）
+- R43 · 快照外 #145 单独登记（state/decisions-20261016.md:212）
+- R46 · 用已核新执行器恢复 #138 边界的有界诊断（state/decisions-20261016-followup.md:3）
+- R47 · 取得健康证据后先做四个实路径负控（state/decisions-20261016-followup.md:11）
+- R50 · #65 TS 真实结果到 RPC 提交资格的窄映射（state/decisions-20261016-followup.md:33）
+- R52 · 资源单位与并发执行边界消歧（state/decisions-20261016-followup.md:42）
+- #167 卡 1 · 代理轮用哪个二进制（state/decisions-20261017-167-ruler.md:3）
+- #134 授权内容（AI 归纳，待人复核语义无损）（state/decisions-20261017.md:9）
+- Claude 作者的 PR 怎么过第 2/3 步（#185）（state/decisions-20261017.md:60）
+- ui-server #94 两条验收债与定标资源门（specs/ui-server-parity/accepted-diffs.md:56）
+- GLM 试点结论（#226）（state/decisions-20261017.md:93）
+- B2 定标装置磁盘上限对齐现行人定（state/decisions-20261017.md:97）
+- D0 跨流顺序不可观察场景按流比较（state/decisions-20261017.md:136）
+- codex 通道额度耗尽（至 10-25）——实现与评审改派（state/decisions-20261017.md:143）
+- 闸门复跑只剩 P2 时归入跟进单（state/decisions-20261017.md:165）
+- A6.4-pr5：anthropic 流的 jsonrepair 缺口（state/decisions-20261020.md:14）
+- CLAUDE.md 精简（state/decisions-20261020.md:42）
+- A6.6-pr8b：compaction「重入被拒」验收改挂 A7.1（state/decisions-20261020.md:56）
+- pr9 同源遗漏的范围（state/decisions-20261021.md:3）
+- gateway 差异登记账本放错（state/decisions-20261021.md:69）
+- #386 unsafe 例外改为独立 crate，gateway 恢复 forbid（state/decisions-20261021.md:79）
+- #386 守卫的构建配置检查改为「一律不许存在」（state/decisions-20261021.md:89）
+- #421-surrogate-p1（state/decisions-20261022.md:2）
+- A7.2-ZERO-RETENTION-TIMER-001（specs/gateway-parity/accepted-diffs.md:426）
+- A7.2-COORDINATOR-SINK-OWNERSHIP-001（specs/gateway-parity/accepted-diffs.md:460）
+- A7.5-REPLACEMENT-ACTIVE-GETTER-PANIC-001（specs/gateway-parity/accepted-diffs.md:492）
+- D2-CHATSEARCH-REGEX-BACKTRACK-001（specs/gateway-parity/accepted-diffs.md:503）
+- D2-CHATSEARCH-REGEX-GIANTQUANT-001（specs/gateway-parity/accepted-diffs.md:513）
+- A6.7-HOOK-OUTPUT-001（specs/gateway-parity/accepted-diffs.md:537）
+- A7.4-HTTPSTORE-AUTH-BEFORE-BODY-001（specs/gateway-parity/accepted-diffs.md:559）
+- A7.4-HTTPSTORE-BODY-LIMIT-001（specs/gateway-parity/accepted-diffs.md:562）
+- A7.4-HTTPSTORE-TIMEOUTS-001（specs/gateway-parity/accepted-diffs.md:565）
+- A7.4-HTTPSTORE-MAX-CONNECTIONS-001（specs/gateway-parity/accepted-diffs.md:571）
+- A7.4-HTTPSTORE-KEY-ORDER-001（specs/gateway-parity/accepted-diffs.md:577）
+- A7.4-HTTPSTORE-CLIENT-ERROR-CLASS-001（specs/gateway-parity/accepted-diffs.md:580）
+- A7.2-READ-LASTSEQ-DEPTH-001（specs/gateway-parity/accepted-diffs.md:674）
+- A6.6-EDGECLAW-SNAPSHOT-CPSYNC-ERROR-001（specs/gateway-parity/accepted-diffs.md:731）
+- A6.3-PLUGIN-MARKDOWN-CYCLE-001（specs/gateway-parity/accepted-diffs.md:742）
+- A6.5-MCP-SCHEME-001（specs/gateway-parity/accepted-diffs.md:827）
+- A6.5-MCP-TLS-CAUSE-001（specs/gateway-parity/accepted-diffs.md:836）
+- 10-23 · V8 栈深判据（state/decisions-20261023.md:10）
+- 10-23 · tower-service 直接依赖（state/decisions-20261023.md:12）
+- 10-23 · #541 skills 自指链接、#484 插件防环与根边界（state/decisions-20261023.md:13）
+- #547 两块按「同一处修 3 次不过」挂起拆分（state/decisions-20261023.md:49）
+- A6.8-SKILLS-TREEFILES-002（specs/gateway-parity/diffs/A6.8-SKILLS-TREEFILES-002-R1.md）
+- A6.6-MEMORY-PROVIDER-OPTIONS-001（specs/gateway-parity/diffs/A6.6-MEMORY-PROVIDER-OPTIONS-001.md）
+- A6.9-INTERACTION-EVENTS-001（specs/gateway-parity/diffs/A6.9-INTERACTION-EVENTS-001.md）
+- A6.9-TOOL-RESULT-COLLISION-001（specs/gateway-parity/diffs/A6.9-TOOL-RESULT-COLLISION-001.md）
+- A7.4-HTTPSTORE-CLIENT-BODY-UNITS-001（specs/gateway-parity/diffs/A7.4-HTTPSTORE-CLIENT-BODY-UNITS-001-R2.md）
+【需讨论】8 条
+- A7.2-COORDINATOR-DELIVERY-001（specs/gateway-parity/accepted-diffs.md:449）
+- A6.5-MCP-TLS-TRUST-001（specs/gateway-parity/accepted-diffs.md:818）
+- A6.6-EDGECLAW-WRITE-INODE-001（specs/gateway-parity/diffs/A6.6-EDGECLAW-WRITE-INODE-001-R1.md）：意思是：批准这种情况下Rust拒写，但是要记录差异
+- A6.7-HOOK-TLS-TRUST-001（specs/gateway-parity/diffs/A6.7-HOOK-TLS-TRUST-001-R1.md）：意思是：私有 CA 下 Rust应该也成功
+- A6.9-HOOKS-RUN-001（specs/gateway-parity/diffs/A6.9-HOOKS-RUN-001.md）：意思是：会延续到下一轮
+- A7.2-INTERACTION-CONSUME-001（specs/gateway-parity/diffs/A7.2-INTERACTION-CONSUME-001-R1.md）
+- A7.4-HTTPSTORE-431-408-SHAPE-001（specs/gateway-parity/accepted-diffs.md:574）
+- A7.4-TOOLBUDGET-SPILL-PARTIAL-FILE-001（specs/gateway-parity/diffs/A7.4-TOOLBUDGET-SPILL-PARTIAL-FILE-001.md）
+【应修代码】9 条
+- parity #1–#3 · deadline 场景多写 gateway_submit_failed（specs/parity/accepted-diffs.md:9）
+- A6.5-MCP-PROXY-HTTPS-001（specs/gateway-parity/accepted-diffs.md:910）
+- A6.5-MCP-PROXY-SOCKS-001（specs/gateway-parity/accepted-diffs.md:924）
+- A6.5-MCP-PROXY-FALLBACK-001（specs/gateway-parity/accepted-diffs.md:935）
+- 已知未对齐（待 pr9c）· web_fetch HTML 解析差异 4 类（specs/gateway-parity/accepted-diffs.md:64）
+- A7.3-INTERACTION-BOUNDARY-001（specs/gateway-parity/accepted-diffs.md:413）
+- A7.4-HTTPSTORE-KEEPALIVE-001（specs/gateway-parity/accepted-diffs.md:568）
+- A6.6-EDGECLAW-ENTRY-IDS-SHAPE-001（specs/gateway-parity/accepted-diffs.md:713）
+- A6.5-MCP-CONNECT-HOSTNAME-001（specs/gateway-parity/accepted-diffs.md:850）
+未决 0 条
+```
+
+</details>
