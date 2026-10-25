@@ -1,7 +1,7 @@
 //! A6.9-pr3c2: interaction capability marker for the project factory.
 //!
-//! This module also publishes a separate native event-buffer resource; its
-//! checked per-turn binding is in `interaction_events`. The marker itself
+//! This module also publishes separate native event and permission resources;
+//! their checked turn bindings live in interaction_events/interaction_permission. The marker itself
 //! retains its original contract.
 //!
 //! This module publishes one stateless [`Resource::Interaction`] marker under
@@ -97,6 +97,10 @@ impl ResourceFamilySource for InteractionFamilySource {
         sink.register_resource(
             Resource::InteractionEvents,
             Arc::new(super::interaction_events::InteractionEvents::default()),
+        );
+        sink.register_resource(
+            Resource::InteractionPermission,
+            Arc::new(super::interaction_permission::InteractionPermission::default()),
         );
         Ok(())
     }

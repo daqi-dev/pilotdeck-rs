@@ -111,6 +111,7 @@ pub mod custom_routers;
 mod factory;
 pub mod interaction;
 pub mod interaction_events;
+pub mod interaction_permission;
 pub mod memory_bundle;
 pub mod model;
 pub mod plugins;

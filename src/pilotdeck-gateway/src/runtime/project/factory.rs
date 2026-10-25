@@ -295,6 +295,7 @@ pub enum Resource {
     Interaction,
     /// Concrete native event buffers, independent of the port-free marker.
     InteractionEvents,
+    InteractionPermission,
     InstructionStorage,
     ToolResultSpill,
     PromptCacheCoordinator,
@@ -315,6 +316,7 @@ impl Resource {
             Self::ExecutionWorld => "executionWorld",
             Self::Interaction => "interaction",
             Self::InteractionEvents => "interactionEvents",
+            Self::InteractionPermission => "interactionPermission",
             Self::InstructionStorage => "instructionStorage",
             Self::ToolResultSpill => "toolResultSpill",
             Self::PromptCacheCoordinator => "promptCacheCoordinator",
@@ -640,6 +642,7 @@ struct Slots {
     execution_world: Option<Arc<dyn FamilyResource>>,
     interaction: Option<Arc<dyn FamilyResource>>,
     interaction_events: Option<Arc<dyn FamilyResource>>,
+    interaction_permission: Option<Arc<dyn FamilyResource>>,
     instruction_storage: Option<Arc<dyn FamilyResource>>,
     tool_result_spill: Option<Arc<dyn FamilyResource>>,
     prompt_cache_coordinator: Option<Arc<dyn FamilyResource>>,
@@ -715,6 +718,7 @@ impl StageContext {
             Resource::ExecutionWorld => slots.execution_world.clone(),
             Resource::Interaction => slots.interaction.clone(),
             Resource::InteractionEvents => slots.interaction_events.clone(),
+            Resource::InteractionPermission => slots.interaction_permission.clone(),
             Resource::InstructionStorage => slots.instruction_storage.clone(),
             Resource::ToolResultSpill => slots.tool_result_spill.clone(),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator.clone(),
@@ -766,6 +770,7 @@ impl StageSink<'_> {
             Resource::ExecutionWorld => slots.execution_world = Some(handle),
             Resource::Interaction => slots.interaction = Some(handle),
             Resource::InteractionEvents => slots.interaction_events = Some(handle),
+            Resource::InteractionPermission => slots.interaction_permission = Some(handle),
             Resource::InstructionStorage => slots.instruction_storage = Some(handle),
             Resource::ToolResultSpill => slots.tool_result_spill = Some(handle),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator = Some(handle),
@@ -823,6 +828,7 @@ impl ProjectResources {
                 execution_world: None,
                 interaction: None,
                 interaction_events: None,
+                interaction_permission: None,
                 instruction_storage: None,
                 tool_result_spill: None,
                 prompt_cache_coordinator: None,
@@ -869,6 +875,7 @@ impl RuntimeResources for ProjectResources {
         );
         let memory_bundle = slots.memory_bundle.clone();
         let interaction_events = slots.interaction_events.clone();
+        let interaction_permission = slots.interaction_permission.clone();
         drop(slots);
         // The single group of a generation: `ResourceBundle::aggregate`
         // returns this error unchanged, so the group's own single- or
@@ -885,6 +892,11 @@ impl RuntimeResources for ProjectResources {
                 model,
             ) = parallel;
             let mut failures = Vec::new();
+            if let Err(error) =
+                super::interaction_permission::close_resource(interaction_permission)
+            {
+                failures.push(error);
+            }
             if let Err(error) = super::interaction_events::close_resource(interaction_events) {
                 failures.push(error);
             }
