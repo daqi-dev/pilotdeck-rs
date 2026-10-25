@@ -874,10 +874,14 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
 }
 
 /// A7.2-COORDINATOR-DELIVERY-001-R1: every external emit enters the one
-/// current-thread host, so concurrent callers queue behind each other and the
-/// sink never runs off the host thread or overlaps another call. The mutation
-/// `emit-bypasses-serial-host` in tests/fixtures/turn-gateway/negative.py
-/// calls the coordinator directly and turns the thread/overlap assertions red.
+/// current-thread host, so concurrent callers queue behind each other, the
+/// sink never runs off the host thread or overlaps another call, every event
+/// is delivered exactly once, and delivery is part of the `emit` call: the
+/// event is already in the sink when `emit` returns. The
+/// `emit-bypasses-serial-host`, `emit-deferred-after-return` and
+/// `emit-duplicated-delivery` mutations in
+/// tests/fixtures/turn-gateway/negative.py respectively turn the thread,
+/// delivery-before-return and per-event-exactly-once assertions red.
 #[tokio::test]
 async fn concurrent_external_emits_are_serialized_on_the_serial_host() {
     const CALLERS: usize = 8;
@@ -889,26 +893,33 @@ async fn concurrent_external_emits_are_serialized_on_the_serial_host() {
     let coordinator = host.gateway.0.submitter.coordinator.clone();
     let in_sink = Arc::new(AtomicBool::new(false));
     let overlap = Arc::new(AtomicBool::new(false));
-    let calls = Arc::new(AtomicUsize::new(0));
-    let sink_threads = Arc::new(Mutex::new(Vec::new()));
+    // One entry per sink call: the event's own text plus the thread that
+    // delivered it. Per-event identity, not just a total: a duplicate is
+    // named here, while a drop is caught by its own caller below before the
+    // join, so a balanced double-delivery/drop cannot pass.
+    let deliveries = Arc::new(Mutex::new(Vec::<(String, std::thread::ThreadId)>::new()));
     let registration = {
         let in_sink = in_sink.clone();
         let overlap = overlap.clone();
-        let calls = calls.clone();
-        let sink_threads = sink_threads.clone();
+        let deliveries = deliveries.clone();
         host.call(async move {
-            coordinator.start(&"s".into(), &"r".into(), move |_| {
+            coordinator.start(&"s".into(), &"r".into(), move |event| {
                 if in_sink.swap(true, Ordering::SeqCst) {
                     overlap.store(true, Ordering::SeqCst);
                 }
                 // Widen the window a non-serialized emitter would need; the
                 // assertion itself does not depend on this sleep.
                 std::thread::sleep(Duration::from_millis(2));
-                sink_threads
+                let text = event
+                    .get("text")
+                    .and_then(JsValue::as_string)
+                    .expect("sink event carries text")
+                    .to_utf8()
+                    .expect("event text is valid UTF-8");
+                deliveries
                     .lock()
                     .unwrap()
-                    .push(std::thread::current().id());
-                calls.fetch_add(1, Ordering::SeqCst);
+                    .push((text, std::thread::current().id()));
                 in_sink.store(false, Ordering::SeqCst);
             })
         })
@@ -917,50 +928,69 @@ async fn concurrent_external_emits_are_serialized_on_the_serial_host() {
     };
     let barrier = Arc::new(std::sync::Barrier::new(CALLERS));
     let mut callers = Vec::new();
-    for _ in 0..CALLERS {
+    for index in 0..CALLERS {
         let gateway = host.clone();
         let barrier = barrier.clone();
+        let deliveries = deliveries.clone();
         callers.push(std::thread::spawn(move || {
+            let text = format!("concurrent-{index}");
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
             barrier.wait();
             runtime.block_on(async move {
-                gateway
-                    .emit(
-                        "s".into(),
-                        parse_json(r#"{"type":"text","text":"concurrent"}"#).unwrap(),
-                    )
-                    .await
+                let event = parse_json(&format!(r#"{{"type":"text","text":"{text}"}}"#)).unwrap();
+                let accepted = gateway.emit("s".into(), event).await.expect("emit");
+                // Checked the instant `emit` resolves, without joining the
+                // other callers: a detached host task that delivers after
+                // the call returns must fail here even when it still
+                // delivers once, in order, on the host thread.
+                let delivered_before_return = deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(delivered, _)| delivered == &text);
+                assert!(
+                    delivered_before_return,
+                    "A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink ({text})"
+                );
+                accepted
             })
         }));
     }
     let accepted = callers
         .into_iter()
-        .map(|caller| caller.join().expect("caller thread").unwrap())
+        .map(|caller| caller.join().expect("caller thread"))
         .collect::<Vec<_>>();
     assert!(
         accepted.iter().all(|accepted| *accepted),
         "A7.2-COORDINATOR-DELIVERY-001-R1: every concurrent external emit must be accepted"
     );
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        CALLERS,
-        "A7.2-COORDINATOR-DELIVERY-001-R1: every accepted event must reach the sink once"
-    );
     assert!(
         !overlap.load(Ordering::SeqCst),
         "A7.2-COORDINATOR-DELIVERY-001-R1: sink calls must not overlap"
     );
-    let sink_threads = sink_threads.lock().unwrap();
+    let deliveries = deliveries.lock().unwrap();
+    let mut counts = std::collections::HashMap::new();
+    for (text, _) in deliveries.iter() {
+        *counts.entry(text.as_str()).or_insert(0usize) += 1;
+    }
+    for index in 0..CALLERS {
+        let text = format!("concurrent-{index}");
+        assert_eq!(
+            counts.get(text.as_str()).copied().unwrap_or(0),
+            1,
+            "A7.2-COORDINATOR-DELIVERY-001-R1: event {text} must reach the sink exactly once"
+        );
+    }
     assert_eq!(
-        sink_threads.len(),
+        deliveries.len(),
         CALLERS,
-        "A7.2-COORDINATOR-DELIVERY-001-R1: every accepted event must reach the sink once"
+        "A7.2-COORDINATOR-DELIVERY-001-R1: every accepted event must reach the sink exactly once"
     );
     assert!(
-        sink_threads.iter().all(|thread| *thread == host_thread),
+        deliveries.iter().all(|(_, thread)| *thread == host_thread),
         "A7.2-COORDINATOR-DELIVERY-001-R1: the sink must run on the serial host thread, not on callers"
     );
     drop(registration);

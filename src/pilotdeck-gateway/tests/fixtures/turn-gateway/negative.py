@@ -30,6 +30,13 @@ def mutation(name, path, before, after, case=None, marker='assertion'):
 mutants = [
     mutation('transport-bypasses-serial-host', gateway, 'self.host\n            .call(async move { connection.receive(&text).await })\n            .await?', 'connection.receive(&text).await', 'permission-before-event-and-final', 'gateway host thread'),
     mutation('emit-bypasses-serial-host', gateway, 'let gateway = self.gateway.clone();\n        self.call(async move { gateway.0.submitter.coordinator.emit(&session, &event) })\n            .await', 'Ok(self.gateway.0.submitter.coordinator.emit(&session, &event))', None, 'A7.2-COORDINATOR-DELIVERY-001-R1'),
+    # Delivery moves to a later host task: same thread, non-overlapping, once
+    # per event, but the `emit` future now resolves before the sink ran.
+    mutation('emit-deferred-after-return', gateway, 'let gateway = self.gateway.clone();\n        self.call(async move { gateway.0.submitter.coordinator.emit(&session, &event) })\n            .await', 'let gateway = self.gateway.clone();\n        let jobs = self.jobs.clone();\n        let _ = jobs.send(Box::pin(async move {\n            tokio::time::sleep(std::time::Duration::from_millis(250)).await;\n            gateway.0.submitter.coordinator.emit(&session, &event);\n        }));\n        Ok(true)', None, 'A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink'),
+    # Every event reaches the sink twice, on the host, before its call returns.
+    # A total-only count also sees 16 here; the named per-event assertion must
+    # name the duplicated event instead of only reporting a wrong total.
+    mutation('emit-duplicated-delivery', gateway, 'let gateway = self.gateway.clone();\n        self.call(async move { gateway.0.submitter.coordinator.emit(&session, &event) })\n            .await', 'let gateway = self.gateway.clone();\n        self.call(async move {\n            let accepted = gateway.0.submitter.coordinator.emit(&session, &event);\n            gateway.0.submitter.coordinator.emit(&session, &event);\n            accepted\n        })\n        .await', None, 'A7.2-COORDINATOR-DELIVERY-001-R1: event concurrent-0 must reach the sink exactly once'),
     mutation('dropped-event', gateway, '                emit(event);', '                let _ = event;', 'permission-before-event-and-final', 'transport observation did not arrive'),
     mutation('duplicated-event', gateway, '                emit(event);', '                emit(event.clone()); emit(event);', 'permission-before-event-and-final'),
     mutation('early-final', gateway, '                emit(event);', '                emit(event); break;', 'permission-before-event-and-final'),
