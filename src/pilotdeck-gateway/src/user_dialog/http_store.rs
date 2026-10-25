@@ -70,8 +70,10 @@ const DEFAULT_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 /// headers after [`serve`] builds the response, so the advertised value is still
 /// the bare `keepAliveTimeout` (5), not this 6 s effective deadline.
 const DEFAULT_KEEP_ALIVE_TIMEOUT_BUFFER: Duration = Duration::from_secs(1);
-/// Node `http.maxHeaderSize` default (v22.22.0: 16384 bytes). hyper's
-/// `max_buf_size` is also its read-buffer cap and replays Node's 431.
+/// Node `http.maxHeaderSize` default (v22.22.0: 16,384 bytes; a head is
+/// rejected once the counted total *reaches* it). hyper's `max_buf_size` is
+/// only a backpressure bound now: [`HeaderGuard`] owns the 431 bytes and
+/// hyper's parser never sees a head large enough to answer with its own.
 const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
 /// Node v22.22.0 `_http_server.js` `requestTimeoutResponse`: exactly these
 /// bytes, with no `content-length` / `date` (probed against a real
@@ -84,6 +86,29 @@ const NODE_431_RESPONSE: &[u8] =
     b"HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n";
 /// Largest raw socket chunk the header guard inspects in one `poll_read`.
 const HEADER_GUARD_BUFFER_BYTES: usize = 8 * 1024;
+
+/// hyper's `max_buf_size` while [`HeaderGuard`] owns the 431. A Node-legal head
+/// can use four raw bytes per counted byte (`a:` = one counted name byte plus
+/// `:` and CRLF), so `4 * max` covers every head without uncounted leading
+/// whitespace; two more read chunks give that whitespace some room and one
+/// chunk keeps the guard's raw cap (below) ahead of hyper's parser cap.
+fn hyper_buffer_bytes(max_header_bytes: usize) -> usize {
+    max_header_bytes
+        .saturating_mul(4)
+        .saturating_add(HEADER_GUARD_BUFFER_BYTES.saturating_mul(3))
+}
+
+/// Raw ceiling enforced by [`HeaderGuard`]. It is a resource bound, not Node's
+/// accounting: Node has no raw buffer cap, so a head padded with uncounted
+/// leading whitespace beyond this gets the 67-byte Node 431 earlier than Node
+/// (registered in the A7.4 R3 entry). It is two read chunks below
+/// [`hyper_buffer_bytes`], so the guard always answers first.
+fn header_guard_raw_limit(max_header_bytes: usize) -> usize {
+    max_header_bytes
+        .saturating_mul(4)
+        .saturating_add(HEADER_GUARD_BUFFER_BYTES.saturating_mul(2))
+}
+
 /// The TS server has no body cap (`serveNodeRequest` collects every chunk), so
 /// this is a deliberate resource bound rather than a parity value; it is
 /// registered as an unapproved difference. 2 MiB clears the real TS fixture's
@@ -1974,12 +1999,23 @@ impl KeepAliveTimer {
     }
 }
 
-/// Replays Node's `maxHeaderSize` on the raw request bytes before hyper's
-/// parser can answer with its own 431. hyper's canned 431 carries
-/// `content-length: 0` and `date` and lower-cases the header name; Node's
-/// `_http_server.js` constant does not. Node counts the header field lines
-/// only (the request line is excluded): the raw `name: value\r\n` bytes of
-/// every field, including any folding continuation.
+/// Replays Node v22.22.0's `maxHeaderSize` accounting on the raw request bytes
+/// before hyper's parser can answer with its own 431. Node's
+/// `node_http_parser.cc` `TrackHeader` counts the request target (`on_url`),
+/// every header field name and every header value, then rejects once the
+/// running total reaches the limit (`>=`, so 16,383 counted bytes pass and
+/// 16,384 fail). The method, the spaces and `:`/CRLF separators are excluded;
+/// whitespace *before* a value is excluded too, while trailing whitespace is
+/// part of the value callback and is counted (probed on v22.22.0:
+/// `_tmp/20261025-issue-699/fix-r1/node/node-header-budget.json`).
+///
+/// hyper buffers the whole head before its parser runs, and its `max_buf_size`
+/// would answer with its own 431 shape. The guard therefore also caps the raw
+/// bytes it hands to hyper: [`header_guard_raw_limit`] sits above the densest
+/// Node-legal head (an `a:` field is four raw bytes per counted byte) plus two
+/// read chunks of leading whitespace, and below hyper's `max_buf_size` by one
+/// read chunk. The guard's 67-byte 431 always wins on the normal read path;
+/// hyper's cap is only a backstop.
 ///
 /// The guard only scans while the connection is waiting for a request head
 /// (`InitialHeaders` / `Idle` / `NextHeaders`). Body bytes and a pipelined head
@@ -1988,32 +2024,50 @@ impl KeepAliveTimer {
 #[derive(Debug)]
 struct HeaderGuard {
     max_header_bytes: usize,
+    raw_limit: usize,
     active: bool,
-    in_request_line: bool,
-    line_bytes: usize,
-    previous_byte: Option<u8>,
-    header_bytes: usize,
+    line: GuardLine,
+    counted_bytes: usize,
+    raw_bytes: usize,
+    line_has_content: bool,
+    /// `0` = method, `1` = request target, `2` = HTTP version.
+    request_line_section: u8,
+    /// Leading SP/HTAB after the colon is not part of Node's value count.
+    discarding_leading_whitespace: bool,
     completed: bool,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GuardLine {
+    RequestLine,
+    FieldName,
+    FieldValue,
+}
+
 impl HeaderGuard {
     fn new(max_header_bytes: usize) -> Self {
         Self {
             max_header_bytes,
+            raw_limit: header_guard_raw_limit(max_header_bytes),
             active: true,
-            in_request_line: true,
-            line_bytes: 0,
-            previous_byte: None,
-            header_bytes: 0,
+            line: GuardLine::RequestLine,
+            counted_bytes: 0,
+            raw_bytes: 0,
+            line_has_content: false,
+            request_line_section: 0,
+            discarding_leading_whitespace: false,
             completed: false,
         }
     }
 
     fn reset(&mut self) {
         self.active = true;
-        self.in_request_line = true;
-        self.line_bytes = 0;
-        self.previous_byte = None;
-        self.header_bytes = 0;
+        self.line = GuardLine::RequestLine;
+        self.counted_bytes = 0;
+        self.raw_bytes = 0;
+        self.line_has_content = false;
+        self.request_line_section = 0;
+        self.discarding_leading_whitespace = false;
         self.completed = false;
     }
 
@@ -2032,41 +2086,95 @@ impl HeaderGuard {
         }
     }
 
+    fn count(&mut self, bytes: usize) -> bool {
+        self.counted_bytes = self.counted_bytes.saturating_add(bytes);
+        if self.counted_bytes >= self.max_header_bytes {
+            self.active = false;
+            return true;
+        }
+        false
+    }
+
     /// Returns `true` when this chunk pushes the current request head over
-    /// Node's limit. The head cannot be complete at that point, so the caller
+    /// Node's limit (or over the raw bound that keeps hyper's 431 from
+    /// preempting). The head cannot be complete at that point, so the caller
     /// must write the 431 and close without handing the bytes to hyper.
     fn push(&mut self, bytes: &[u8]) -> bool {
         if !self.active {
             return false;
         }
         for &byte in bytes {
-            let previous = self.previous_byte;
-            self.previous_byte = Some(byte);
-            self.line_bytes += 1;
-            if byte != b'\n' {
+            self.raw_bytes = self.raw_bytes.saturating_add(1);
+            if self.raw_bytes >= self.raw_limit {
+                self.active = false;
+                return true;
+            }
+            if byte == b'\r' {
                 continue;
             }
-            let line_bytes = std::mem::take(&mut self.line_bytes);
-            if self.in_request_line {
-                // Node's maxHeaderSize excludes the request line.
-                self.in_request_line = false;
-            } else if line_bytes == 1 || (line_bytes == 2 && previous == Some(b'\r')) {
-                self.completed = true;
-                self.active = false;
-                return false;
-            } else {
-                self.header_bytes = self.header_bytes.saturating_add(line_bytes);
-                if self.header_bytes > self.max_header_bytes {
-                    self.active = false;
-                    return true;
+            if byte == b'\n' {
+                match self.line {
+                    GuardLine::RequestLine => {
+                        if !self.line_has_content {
+                            // Leading empty lines are tolerated before a
+                            // request line, like hyper's `consume_leading_lines`.
+                            continue;
+                        }
+                        self.line = GuardLine::FieldName;
+                        self.line_has_content = false;
+                        self.request_line_section = 0;
+                    }
+                    GuardLine::FieldName | GuardLine::FieldValue => {
+                        if !self.line_has_content {
+                            self.completed = true;
+                            self.active = false;
+                            return false;
+                        }
+                        self.line = GuardLine::FieldName;
+                        self.line_has_content = false;
+                        self.discarding_leading_whitespace = false;
+                    }
+                }
+                continue;
+            }
+            let at_line_start = !self.line_has_content;
+            self.line_has_content = true;
+            match self.line {
+                GuardLine::RequestLine => {
+                    if byte == b' ' {
+                        if self.request_line_section == 0 {
+                            self.request_line_section = 1;
+                        } else if self.request_line_section == 1 {
+                            self.request_line_section = 2;
+                        }
+                    } else if self.request_line_section == 1 && self.count(1) {
+                        return true;
+                    }
+                }
+                GuardLine::FieldName => {
+                    if at_line_start && (byte == b' ' || byte == b'\t') {
+                        // Obsolete line folding: the continuation is value text.
+                        self.line = GuardLine::FieldValue;
+                        self.discarding_leading_whitespace = true;
+                    } else if byte == b':' {
+                        self.line = GuardLine::FieldValue;
+                        self.discarding_leading_whitespace = true;
+                    } else if self.count(1) {
+                        return true;
+                    }
+                }
+                GuardLine::FieldValue => {
+                    if self.discarding_leading_whitespace && (byte == b' ' || byte == b'\t') {
+                        // Leading value whitespace is not counted; all-OW
+                        // values count nothing.
+                    } else {
+                        self.discarding_leading_whitespace = false;
+                        if self.count(1) {
+                            return true;
+                        }
+                    }
                 }
             }
-        }
-        // A field line already longer than the whole budget can never fit,
-        // even before its terminator arrives; bound hyper's read buffer.
-        if !self.in_request_line && self.line_bytes > self.max_header_bytes {
-            self.active = false;
-            return true;
         }
         false
     }
@@ -2358,12 +2466,11 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
     let address = listener.local_addr().map_err(DialogError::Io)?;
     let handler = Arc::new(handler);
     // hyper asserts `max_buf_size >= 8192`; keep that h1 minimum. The parser's
-    // own cap sits above Node's limit so the `HeaderGuard` (not hyper's canned
-    // 431 with `content-length`/`date`) is the one that answers an oversized
-    // head. `HeaderGuard::push` bounds the field bytes at `max_header_bytes`,
-    // so hyper never has to buffer more than the request line plus that.
+    // own cap sits above everything `HeaderGuard` lets through, so the guard
+    // (not hyper's canned 431 with `content-length`/`date`) is the one that
+    // answers an oversized head; see `hyper_buffer_bytes` for the derivation.
     let max_header_bytes = limits.max_header_bytes.max(8 * 1024);
-    let hyper_buffer_bytes = max_header_bytes.saturating_mul(2);
+    let hyper_buffer_bytes = hyper_buffer_bytes(max_header_bytes);
     // Node arms `socket.setTimeout(keepAliveTimeout + keepAliveTimeoutBuffer)`.
     let keep_alive_timeout = limits.keep_alive_timeout + limits.keep_alive_timeout_buffer;
     let connections = Arc::new(Semaphore::new(limits.max_connections));
@@ -2457,8 +2564,10 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                             // hyper's own default caps at 100 fields; Node
                             // v22.22.0's runtime `maxHeadersCount` default is
                             // `null` (unlimited; the 2000 in the docs is not
-                            // applied), so this is only a backstop above what
-                            // the 16 KiB buffer can hold.
+                            // applied). hyper sizes its parser arrays up front,
+                            // so 4096 is a resource backstop, not Node's count:
+                            // a Node-legal head with more than 4096 tiny fields
+                            // gets hyper's 123-byte 431 (registered in R3).
                             .max_headers(4096)
                             .max_buf_size(hyper_buffer_bytes);
                         let connection = builder.serve_connection(
@@ -2595,21 +2704,25 @@ async fn serve(
         .get(header::HOST)
         .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
         .unwrap_or_else(|| "localhost".into());
-    // Node's `maxHeaderSize` counts header field name + value bytes (probed on
-    // v22.22.0: 2,500 fields of `aaaaa: x` pass, 2,800 fail; a 16,350-byte
-    // value passes, 16,380 fails). This is the backstop for heads that hyper
+    // Node's `maxHeaderSize` counts the request target plus header field name
+    // and value bytes, and rejects once the total reaches the limit (probed on
+    // v22.22.0: 2,500 fields of `aaaaa: x` pass, 2,800 fail; 16,383 counted
+    // bytes pass and 16,384 fail). This is the backstop for heads that hyper
     // already buffered before [`HeaderGuard`] could scan them (a pipelined
     // request read during a body); the guard owns the normal path and writes
-    // Node's exact 431 bytes. This sum assumes a `name: value` separator and
-    // can disagree with Node for a separator-less field; that stricter
-    // direction stays registered as an unapproved difference (see the
-    // A7.4-HTTPSTORE candidate note).
-    let header_bytes: usize = request
-        .headers()
-        .iter()
-        .map(|(name, value)| name.as_str().len() + 2 + value.as_bytes().len() + 2)
-        .sum();
-    if header_bytes > limits.max_header_bytes {
+    // Node's exact 431 bytes. hyper has already trimmed leading/trailing value
+    // whitespace here; leading OWS matches Node's `on_header_value`, but a
+    // pipelined head with trailing value OWS can undercount Node's total in
+    // this backstop (the guard, which sees raw bytes, is exact). The
+    // request-line target is included like Node's `on_url`.
+    let max_header_bytes = limits.max_header_bytes.max(8 * 1024);
+    let header_bytes: usize = request.uri().to_string().len()
+        + request
+            .headers()
+            .iter()
+            .map(|(name, value)| name.as_str().len() + value.as_bytes().len())
+            .sum::<usize>();
+    if header_bytes >= max_header_bytes {
         // Node's parser answers 431 with an empty body and `Connection: close`.
         return empty_response(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
     }

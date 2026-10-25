@@ -618,6 +618,165 @@ async fn many_small_headers_are_not_capped_at_the_documented_two_thousand() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
+/// Node's `maxHeaderSize` counts the request target plus field name and value
+/// bytes, not the raw `name: value\r\n` line. 2,000 fields of `aaaaa: x`
+/// (20,000 raw bytes but only 12,000 counted bytes) are inside the 16 KiB
+/// budget, so the guard must not pre-reject them; 2,730 fields are over the
+/// budget and must get Node's exact 67-byte 431. A guard that counts raw line
+/// bytes fails the first half (it answers 431), which is the #699 review
+/// counter-example.
+#[tokio::test]
+async fn header_guard_counts_name_and_value_like_node() {
+    let (store, directory) = file_store("header-name-value-count");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let pass = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n{}Connection: close\r\n\r\n",
+        "aaaaa: x\r\n".repeat(2_000)
+    );
+    let response = exchange(port, pass.as_bytes()).await.unwrap();
+    assert_eq!(
+        status(&response),
+        405,
+        "2,000x `aaaaa: x` count 12,000 bytes and must reach the handler: {}",
+        String::from_utf8_lossy(&response)
+    );
+
+    let fail = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n{}Connection: close\r\n\r\n",
+        "aaaaa: x\r\n".repeat(2_730)
+    );
+    let (response, closed) =
+        exchange_until_eof(port, fail.as_bytes(), Duration::from_secs(5)).await;
+    assert_eq!(
+        response, NODE_431,
+        "2,730x `aaaaa: x` count 16,380 bytes plus the target/Host/Connection"
+    );
+    assert!(closed, "the 431 must end the connection");
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Node rejects once the counted total *reaches* `maxHeaderSize` (16,384).
+/// The fixed target/Host/Connection bytes are 34 + 13 + 15 = 62; 2,719
+/// `aaaaa: x` fields count 16,314 and one `X-Pad: aa` counts 7, so the pass
+/// case is exactly 16,383. One more value byte makes 16,384 and must get the
+/// 67-byte 431. `aaaaa: x` is used instead of `a:` so the field count stays
+/// under hyper's 4,096-slot `max_headers` backstop (a separate, registered
+/// difference).
+#[tokio::test]
+async fn header_guard_boundary_matches_node_16384() {
+    let (store, directory) = file_store("header-boundary");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let request = |extra: &str| {
+        format!(
+            "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n{}X-Pad: {extra}\r\nConnection: close\r\n\r\n",
+            "aaaaa: x\r\n".repeat(2_719)
+        )
+    };
+    let pass = request("aa");
+    let (response, closed) =
+        exchange_until_eof(port, pass.as_bytes(), Duration::from_secs(5)).await;
+    assert!(closed, "Connection: close must end the pass case");
+    assert_eq!(
+        status(&response),
+        405,
+        "16,383 counted bytes are inside Node's budget: {}",
+        String::from_utf8_lossy(&response)
+    );
+
+    let fail = request("aaa");
+    let (response, closed) =
+        exchange_until_eof(port, fail.as_bytes(), Duration::from_secs(5)).await;
+    assert_eq!(response, NODE_431, "16,384 counted bytes must be 431");
+    assert!(closed, "the 431 must end the connection");
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Node counts the request target (`on_url`) as part of `maxHeaderSize`.
+/// `GET /<p*16377> HTTP/1.1` has a 16,378-byte target; with `Host: h` (5) the
+/// total is 16,383 and the request reaches the handler (404 for the unknown
+/// path). One more `p` makes 16,384 and must get the 67-byte 431. The Node
+/// goldens for the identical bytes are `target-16383` / `target-16384` in
+/// `node-header-budget.json`.
+#[tokio::test]
+async fn request_target_counts_toward_node_header_budget() {
+    let (store, directory) = file_store("header-target");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let request =
+        |pad: usize| format!("GET /{} HTTP/1.1\r\nHost: h\r\n\r\n", "p".repeat(pad)).into_bytes();
+
+    let mut pass = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    pass.write_all(&request(16_377)).await.unwrap();
+    let head = read_head(&mut pass).await;
+    assert_eq!(
+        status(head.as_bytes()),
+        405,
+        "16,383 counted bytes must reach the handler: {head}"
+    );
+    drop(pass);
+
+    let mut fail = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    fail.write_all(&request(16_378)).await.unwrap();
+    expect_terminal_bytes(&mut fail, NODE_431, "target pushes the head to 16,384").await;
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// The pre-fix guard only charged *completed* lines, so a head with exactly
+/// 16,384 raw header bytes followed by a long unterminated line let hyper's
+/// 32 KiB `max_buf_size` fire first: the client got hyper's 123-byte 431
+/// (`content-length: 0`, `date`, lower-case name) instead of Node's 67-byte
+/// constant. Node's counted total crosses 16,384 while the line is still
+/// incomplete, so the guard must answer with [`NODE_431`].
+#[tokio::test]
+async fn header_guard_beats_hyper_buffer_cap_at_the_boundary() {
+    let (store, directory) = file_store("header-buffer-boundary");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    // 1,637 * 10 + 5 = 16,375 raw field bytes plus `Host: h\r\n` (9) is
+    // exactly the 16,384-byte completed-line total the old guard let through;
+    // only 9,824 of them are counted bytes.
+    let completed = format!("{}bb:\r\n", "aaaaa: x\r\n".repeat(1_637));
+    assert_eq!(completed.len() + "Host: h\r\n".len(), 16_384);
+    let mut request =
+        format!("GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\n{completed}X-Pad: ")
+            .into_bytes();
+    // 16,368 value bytes, no CRLF: the head is still incomplete when hyper's
+    // old 32 KiB buffer filled, but Node's count already exceeded 16,384.
+    request.extend(std::iter::repeat_n(b'a', 16_368));
+    let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(5)).await;
+    assert_eq!(
+        response,
+        NODE_431,
+        "guard bytes, not hyper's 123-byte 431: {:?}",
+        String::from_utf8_lossy(&response)
+    );
+    assert!(closed, "the 431 must end the connection");
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Registered resource bound (R3): Node does not count leading whitespace
+/// after the colon and accepts a 90 KB `X: <spaces>a` header, but hyper has to
+/// buffer every raw byte before parsing. The guard's raw cap rejects before
+/// hyper's parser can write its own 431 shape; the early 431 is the registered
+/// unapproved difference, the 67 bytes are Node's.
+#[tokio::test]
+async fn header_guard_raw_cap_uses_node_431_bytes() {
+    let (store, directory) = file_store("header-raw-cap");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let request = format!(
+        "GET {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: h\r\nX: {}a\r\nConnection: close\r\n\r\n",
+        " ".repeat(90_000)
+    );
+    let (response, closed) =
+        exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
+    assert_eq!(response, NODE_431, "the guard must own the 431 bytes");
+    assert!(closed, "the 431 must end the connection");
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 /// Before the fix, `close()` only stopped the accept loop and left idle
 /// keep-alive connections (and their permits) alive for `headersTimeout`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1439,42 +1598,66 @@ async fn shutdown_folds_header_deadline_into_silent_eof() {
     assert_eq!(timer.expired(past), ExpiredTimer::Idle);
 }
 
-/// Replays Node's `maxHeaderSize` accounting on raw bytes: the request line is
-/// excluded, every `name: value\r\n` field line counts, and an incomplete head
-/// is only rejected once a line cannot fit. Both directions matter: a guard
-/// that counts the request line rejects requests Node accepts, and one that
-/// waits for `header_bytes > max` only after the head completes lets hyper's
-/// parser answer first.
+/// Replays Node v22.22.0's `maxHeaderSize` accounting: the request target,
+/// every field name, and every field value count; method, spaces, `:`, CRLF
+/// and leading value whitespace do not; the running total rejects at `>=`
+/// (16,383 pass, 16,384 fail). The total includes an incomplete line, so a
+/// head cannot grow past the budget while waiting for its terminator.
 #[test]
 fn header_guard_replays_node_field_budget() {
+    // The request target counts, but the method/version/request-line
+    // separators do not: target `/123456789012` is 13 bytes.
     let mut guard = HeaderGuard::new(16);
     assert!(
-        !guard.push(b"GET / HTTP/1.1\r\n"),
-        "request line is excluded"
+        !guard.push(b"LONGMETHOD /123456789012 HTTP/1.1\r\n"),
+        "only the 13 target bytes are counted"
     );
-    assert!(!guard.push(b"A: b\r\n"), "6 field bytes fit");
-    assert!(!guard.push(b"B: c\r\n"), "12 field bytes fit");
-    assert!(!guard.push(b"\r\n"), "head completes under the limit");
-    assert!(
-        !guard.push(&[b'x'; 100]),
-        "bytes after the head are body/next request, not this head"
-    );
+    assert!(!guard.push(b"A: b\r\n"), "A + b = 2, running total 15");
+    // `B: c` starts with the 16th counted byte (the field name); the limit is
+    // `>=`, so this push already rejects.
+    assert!(guard.push(b"B: c\r\n"), "16 counted bytes reach the limit");
 
-    // A follow-up head resets the budget at the next Idle phase.
-    guard.begin(TimeoutPhase::Idle);
-    assert!(!guard.push(b"GET / HTTP/1.1\r\n"));
-    assert!(
-        guard.push(b"X: 012345678901\r\n"),
-        "17 field bytes exceed the 16-byte budget"
-    );
-
-    // A single field line that cannot fit is rejected before its terminator,
-    // so hyper's read buffer cannot grow past the guard.
+    // Leading value whitespace is excluded and an all-whitespace value counts
+    // nothing; trailing whitespace belongs to the value and does count.
     let mut guard = HeaderGuard::new(16);
-    assert!(!guard.push(b"GET / HTTP/1.1\r\n"));
+    assert!(!guard.push(b"GET / HTTP/1.1\r\n"), "target '/' = 1");
     assert!(
-        guard.push(&[b'a'; 17]),
-        "a field line already longer than the budget cannot fit"
+        !guard.push(b"X:      ab   \r\n"),
+        "X + `ab   ` = 6 counted, total 7"
+    );
+    assert!(
+        !guard.push(b"Y:        \r\n"),
+        "name Y counts 1 and an all-whitespace value counts 0, total 8"
+    );
+    assert!(!guard.push(&[b'A'; 7]), "7 more field bytes, total 15");
+    assert!(guard.push(&[b'A'; 1]), "the 16th counted byte rejects");
+
+    // An incomplete line is charged as it arrives, not only when it ends.
+    let mut guard = HeaderGuard::new(16);
+    assert!(!guard.push(b"GET / HTTP/1.1\r\n"), "target '/' = 1");
+    assert!(!guard.push(b"X: "), "X = 2");
+    assert!(
+        !guard.push(&[b'a'; 13]),
+        "13 value bytes bring the total to 15"
+    );
+    assert!(
+        guard.push(&[b'a'; 1]),
+        "the 16th counted byte rejects before the line ends"
+    );
+
+    // The raw cap is a separate bound above the densest Node-legal head; a
+    // head padded with uncounted leading whitespace still cannot grow hyper's
+    // buffer without bound.
+    let max = DEFAULT_MAX_HEADER_BYTES;
+    assert_eq!(header_guard_raw_limit(max), 4 * max + 2 * 8 * 1024);
+    assert!(header_guard_raw_limit(max) < hyper_buffer_bytes(max));
+    let mut guard = HeaderGuard::new(max);
+    assert!(!guard.push(b"GET / HTTP/1.1\r\n"));
+    assert!(!guard.push(b"X:"), "colon starts the value");
+    let padding = vec![b' '; 4 * max + 2 * 8 * 1024];
+    assert!(
+        guard.push(&padding),
+        "uncounted leading whitespace is still bounded"
     );
 }
 
@@ -2211,11 +2394,12 @@ fn list_body() -> Vec<u8> {
 }
 
 /// `max_buf_size` also caps hyper's write buffer; a list response larger than
-/// the 16 KiB header cap must still arrive whole.
+/// `hyper_buffer_bytes` (4 x 16 KiB + 3 x 8 KiB with defaults) must still
+/// arrive whole.
 #[tokio::test]
 async fn large_list_responses_are_not_truncated_by_the_header_buffer_cap() {
     let (store, directory) = file_store("large-response");
-    let prompt = "a".repeat(64 * 1024);
+    let prompt = "a".repeat(128 * 1024);
     let request = parse_json(&format!(
         r#"{{"type":"user_dialog_request","requestId":"r1","dialogKind":"form","toolCallId":"t1","toolName":"request_user_form","prompt":"{prompt}"}}"#
     ))
@@ -2235,7 +2419,7 @@ async fn large_list_responses_are_not_truncated_by_the_header_buffer_cap() {
     let body = String::from_utf8_lossy(&response);
     let payload = body.split("\r\n\r\n").nth(1).unwrap_or_default();
     assert!(
-        payload.len() > 64 * 1024,
+        payload.len() > 128 * 1024,
         "large list response was truncated at {} bytes",
         payload.len()
     );
