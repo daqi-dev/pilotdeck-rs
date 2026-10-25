@@ -193,6 +193,21 @@ fn source_tokens(source: &str) -> Vec<SourceToken> {
                 }
                 i += 1;
             }
+        } else if bytes[i] == b'r'
+            && bytes.get(i + 1) == Some(&b'#')
+            && bytes
+                .get(i + 2)
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+        {
+            // Raw identifiers (`r#path`, `r#include!`) name the same item as
+            // their plain spelling. Normalize to the bare identifier so every
+            // identifier-text check sees one shape instead of `r`, `#`, name.
+            let start = i + 2;
+            i = start;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            tokens.push(SourceToken::Ident(source[start..i].to_owned()));
         } else if bytes[i] == b'"' {
             i += 1;
             let mut value = Vec::new();
