@@ -996,6 +996,90 @@ async fn concurrent_external_emits_are_serialized_on_the_serial_host() {
     drop(registration);
 }
 
+/// A7.2-COORDINATOR-DELIVERY-001-R1: `HostedConnection::notify` is part of the
+/// same serial-host entry as `receive`/`emit`. Unlike `emit` it only sends a
+/// frame and mutates no coordinator state, so a direct call on the caller's
+/// thread would be silent unless the transport records the delivering thread.
+/// Every outbound frame's thread is captured here; `notify` must be the host
+/// thread. `closed` is pinned by the `Session::abort` host-thread assertion
+/// that the `close-active` replay case exercises.
+struct HostText {
+    frames: Mutex<Vec<(String, std::thread::ThreadId)>>,
+    changed: watch::Sender<u64>,
+}
+impl Default for HostText {
+    fn default() -> Self {
+        Self {
+            frames: Mutex::new(vec![]),
+            changed: watch::channel(0).0,
+        }
+    }
+}
+impl HostText {
+    async fn wait_for_notification(&self) {
+        let mut changed = self.changed.subscribe();
+        loop {
+            changed.borrow_and_update();
+            if self
+                .frames
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(frame, _)| frame.contains(r#""type":"notification""#))
+            {
+                return;
+            }
+            changed.changed().await.unwrap();
+        }
+    }
+}
+impl GatewayTextConnection for HostText {
+    fn send_text(&self, text: String) {
+        self.frames
+            .lock()
+            .unwrap()
+            .push((text, std::thread::current().id()));
+        self.changed.send_modify(|generation| *generation += 1);
+    }
+    fn close(&self, code: u16, reason: &str) {
+        panic!("unexpected close {code}:{reason}");
+    }
+}
+#[tokio::test]
+async fn hosted_connection_notify_enters_the_serial_host() {
+    let host = empty_gateway_with_clock(0, Arc::new(Clock::default()));
+    let host_thread = host
+        .call(async { std::thread::current().id() })
+        .await
+        .unwrap();
+    let text = Arc::new(HostText::default());
+    let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+    connection
+        .receive(
+            json!({"type":"hello", "protocolVersion":GATEWAY_PROTOCOL_VERSION, "token":"token", "clientName":"web", "clientVersion":"fixture"})
+                .to_string(),
+        )
+        .await
+        .unwrap();
+    connection
+        .notify(
+            "fixture".into(),
+            Some(parse_json(r#"{"value":1}"#).unwrap()),
+        )
+        .await
+        .unwrap();
+    text.wait_for_notification().await;
+    let frames = text.frames.lock().unwrap();
+    let (_, thread) = frames
+        .iter()
+        .find(|(frame, _)| frame.contains(r#""type":"notification""#))
+        .expect("notification frame");
+    assert_eq!(
+        *thread, host_thread,
+        "A7.2-COORDINATOR-DELIVERY-001-R1: HostedConnection::notify must run on the serial host thread, not on callers"
+    );
+}
+
 // Poll exactly at fixture observation points. This makes the abort await and
 // replacement deterministic without sleeps or assumptions about scheduler turns.
 #[tokio::test]
