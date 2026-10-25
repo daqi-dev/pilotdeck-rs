@@ -118,7 +118,7 @@ pub trait SdkConfigChange: Send + Sync {
 
 /// `ProjectMemoryMaintenancePort`.
 pub trait MemoryMaintenance: Send + Sync {
-    fn schedule(&self, project_key: &JsString);
+    fn schedule(&self, project_key: &JsString) -> RuntimeResult;
 }
 
 /// `logMemoryDiagnostic` and `summarizeMessages`; present only when memory
@@ -365,8 +365,9 @@ impl RefreshBundle {
         self.inner.options.config_store.reload("turn-start")
     }
 
-    /// `afterTurnCompleted`; synchronous like the baseline body.
-    pub fn after_turn_completed(&self, input: TurnCompleted) {
+    /// `afterTurnCompleted`; runs the baseline body synchronously, returning
+    /// resolver failures as `Err` (the TS async method rejects its promise).
+    pub fn after_turn_completed(&self, input: TurnCompleted) -> RuntimeResult {
         let options = &self.inner.options;
         if let Some(diagnostics) = &options.memory_diagnostics {
             let snapshot =
@@ -396,7 +397,7 @@ impl RefreshBundle {
         }
         // `projectKey ?? projectRoot`: an empty key is kept.
         let project_key = input.project_key.as_ref().unwrap_or(&options.project_root);
-        options.memory_maintenance.schedule(project_key);
+        options.memory_maintenance.schedule(project_key)
     }
 }
 

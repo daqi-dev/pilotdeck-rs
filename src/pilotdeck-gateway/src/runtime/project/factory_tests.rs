@@ -3274,6 +3274,16 @@ mod memory_bundle_tests {
             Ok(Some(injected_provider(&provider_in_factory)))
         });
         let source = MemoryBundleFamilySource::default().with_provider_factory(factory);
+        use crate::runtime::memory::maintenance::MaintenanceRuntime;
+        let mut resources = ResourceBundle::default();
+        resources.add(group.clone());
+        let runtime = ProjectRuntime::new(
+            scratch.0.join("project"),
+            resources,
+            tokio::runtime::Handle::current(),
+            true,
+        );
+        assert!(runtime.memory_service().is_none());
 
         stage_memory(&source, &group).expect("an injected provider must stage");
 
@@ -3359,6 +3369,14 @@ mod memory_bundle_tests {
         let expected_management: Arc<dyn MemoryManagementService> = provider.clone();
         assert!(Arc::ptr_eq(memory.resolver(), &expected_memory));
         assert!(Arc::ptr_eq(service.maintenance(), &expected_maintenance));
+        assert!(Arc::ptr_eq(
+            &runtime.memory_service().unwrap(),
+            &expected_maintenance
+        ));
+        assert_eq!(
+            MaintenanceRuntime::project_root(runtime.as_ref()),
+            JsString::from(scratch.0.join("project").to_str().unwrap())
+        );
         assert!(Arc::ptr_eq(management.management(), &expected_management));
 
         let retrieved = memory
