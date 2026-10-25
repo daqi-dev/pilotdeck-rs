@@ -62,9 +62,7 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
             } else if comment.starts_with("->") {
                 i + 6
             } else {
-                comment
-                    .find("-->")
-                    .map_or(bytes.len(), |offset| i + 7 + offset)
+                i + 4 + comment_end(comment)
             };
             out.push_str(&html[i..end]);
             i = end;
@@ -73,13 +71,13 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
         if rest.starts_with("<![CDATA[") {
             // In HTML content this is a bogus comment ending at the first
             // `>`; foreign-content CDATA is outside the modelled scope.
-            let end = scan_tag_end(bytes, i + 9);
+            let end = scan_bogus_comment_end(bytes, i + 9);
             out.push_str(&html[i..end]);
             i = end;
             continue;
         }
         if matches!(bytes.get(i + 1), Some(b'!') | Some(b'?')) {
-            let end = scan_tag_end(bytes, i + 2);
+            let end = scan_bogus_comment_end(bytes, i + 2);
             out.push_str(&html[i..end]);
             i = end;
             continue;
@@ -99,6 +97,12 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
         }
         let name = &html[name_start..name_end];
         let tag_end = scan_tag_end(bytes, name_end);
+        if bytes.get(tag_end - 1) != Some(&b'>') {
+            // The tokenizer emits no tag for an unterminated tag: keep the
+            // remaining bytes for the parser instead of modelling a tag.
+            out.push_str(&html[i..]);
+            break;
+        }
         let tag = &html[i..tag_end];
         let in_select = frames
             .last()
@@ -204,6 +208,10 @@ fn close_select(out: &mut String, frames: &mut Vec<Frame>, table_depth: &mut usi
 }
 
 fn pop_frame(frames: &mut Vec<Frame>, table_depth: &mut usize, wanted: Context) {
+    if !frames.iter().any(|frame| frame.context == wanted) {
+        // An unmatched end tag changes nothing in the old insertion modes.
+        return;
+    }
     while let Some(frame) = frames.pop() {
         if frame.context == wanted {
             *table_depth = frame.saved_table_depth;
@@ -285,19 +293,113 @@ fn is_tag_name_delimiter(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | b'\x0c' | b'/' | b'>')
 }
 
+fn is_html_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
+}
+
+/// Scan a start or end tag from `from`, ending after its `>`.
+///
+/// Quotes only hide `>` while they delimit an attribute value: a quote in a
+/// name, or inside an unquoted value, is ordinary data in the tokenizer.
 fn scan_tag_end(bytes: &[u8], from: usize) -> usize {
-    let mut quote = None;
+    #[derive(Clone, Copy)]
+    enum State {
+        BeforeAttributeName,
+        AttributeName,
+        AfterAttributeName,
+        BeforeAttributeValue,
+        UnquotedValue,
+        QuotedValue(u8),
+        AfterQuotedValue,
+        SelfClosing,
+    }
+
+    let mut state = State::BeforeAttributeName;
     let mut index = from;
     while index < bytes.len() {
         let byte = bytes[index];
-        match quote {
-            Some(wanted) if byte == wanted => quote = None,
-            Some(_) => {}
-            None => match byte {
-                b'\'' | b'"' => quote = Some(byte),
+        match state {
+            State::BeforeAttributeName => match byte {
                 b'>' => return index + 1,
+                b'/' => state = State::SelfClosing,
+                byte if is_html_space(byte) => {}
+                _ => state = State::AttributeName,
+            },
+            State::AttributeName => match byte {
+                b'>' => return index + 1,
+                b'/' => state = State::SelfClosing,
+                b'=' => state = State::BeforeAttributeValue,
+                byte if is_html_space(byte) => state = State::AfterAttributeName,
                 _ => {}
             },
+            State::AfterAttributeName => match byte {
+                b'>' => return index + 1,
+                b'/' => state = State::SelfClosing,
+                b'=' => state = State::BeforeAttributeValue,
+                byte if is_html_space(byte) => {}
+                _ => state = State::AttributeName,
+            },
+            State::BeforeAttributeValue => match byte {
+                b'>' => return index + 1,
+                b'"' => state = State::QuotedValue(b'"'),
+                b'\'' => state = State::QuotedValue(b'\''),
+                byte if is_html_space(byte) => {}
+                _ => state = State::UnquotedValue,
+            },
+            State::UnquotedValue => match byte {
+                b'>' => return index + 1,
+                byte if is_html_space(byte) => state = State::BeforeAttributeName,
+                _ => {}
+            },
+            State::QuotedValue(wanted) => {
+                if byte == wanted {
+                    state = State::AfterQuotedValue;
+                }
+            }
+            State::AfterQuotedValue => match byte {
+                b'>' => return index + 1,
+                b'/' => state = State::SelfClosing,
+                byte if is_html_space(byte) => state = State::BeforeAttributeName,
+                _ => {
+                    state = State::BeforeAttributeName;
+                    continue;
+                }
+            },
+            State::SelfClosing => {
+                if byte == b'>' {
+                    return index + 1;
+                }
+                state = State::BeforeAttributeName;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    bytes.len()
+}
+
+/// A bogus comment (`<!x`, `<?`, or `<![CDATA[` in HTML content) ends at the
+/// first `>`; quotes are not special there.
+fn scan_bogus_comment_end(bytes: &[u8], from: usize) -> usize {
+    bytes[from..]
+        .iter()
+        .position(|&byte| byte == b'>')
+        .map_or(bytes.len(), |offset| from + offset + 1)
+}
+
+/// Offset just past the comment terminator (`-->` or `--!>`), or the comment
+/// length when it is unterminated.
+fn comment_end(comment: &str) -> usize {
+    let bytes = comment.as_bytes();
+    let mut index = 0;
+    while index + 2 < bytes.len() {
+        if bytes[index] == b'-' && bytes[index + 1] == b'-' {
+            if bytes[index + 2] == b'>' {
+                return index + 3;
+            }
+            if bytes[index + 2] == b'!' && bytes.get(index + 3) == Some(&b'>') {
+                return index + 4;
+            }
         }
         index += 1;
     }
@@ -373,6 +475,84 @@ mod tests {
         assert_eq!(
             rewritten("<table><tr><td><select><tr><td>b</table>"),
             "<table><tr><td><select></select><tr><td>b</table>"
+        );
+    }
+
+    #[test]
+    fn quotes_only_open_attribute_values() {
+        // A quote inside an unquoted value is ordinary value data, so the tag
+        // still ends at `>` and the text after it survives.
+        assert_eq!(
+            rewritten("<select><div a=b\"c>d</select>"),
+            "<select>d</select>"
+        );
+        assert_eq!(
+            rewritten("<select><div a=b'c>d</select>"),
+            "<select>d</select>"
+        );
+        assert_eq!(
+            rewritten("<select><div a=b\"c' d>e</select>"),
+            "<select>e</select>"
+        );
+        // Quotes in an attribute name are not quoted values either.
+        assert_eq!(
+            rewritten("<select><div a\"b c>d</select>"),
+            "<select>d</select>"
+        );
+        // A quote as the first value byte still hides `>`.
+        assert_eq!(
+            rewritten("<select><div title=\"a>b\">c</div>d</select>"),
+            "<select>cd</select>"
+        );
+    }
+
+    #[test]
+    fn unterminated_tags_are_preserved() {
+        assert_eq!(rewritten("<select><div a=b"), "<select><div a=b");
+    }
+
+    #[test]
+    fn bogus_comments_end_at_the_first_gt() {
+        assert_eq!(
+            rewritten("<? a \" > <select><hr></select>"),
+            "<? a \" > <select></select>"
+        );
+        assert_eq!(
+            rewritten("<![CDATA[ \" > <select><hr></select>"),
+            "<![CDATA[ \" > <select></select>"
+        );
+        assert_eq!(
+            rewritten("<!x a ' > <select><hr></select>"),
+            "<!x a ' > <select></select>"
+        );
+        assert_eq!(
+            rewritten("<!-- x --!><select><hr></select>"),
+            "<!-- x --!><select></select>"
+        );
+    }
+
+    #[test]
+    fn unmatched_end_tags_do_not_pop_outer_frames() {
+        assert_eq!(
+            rewritten("<div>a<select>b</template><hr>c</select>d</div>"),
+            "<div>a<select>b</template>c</select>d</div>"
+        );
+        assert_eq!(
+            rewritten("<div>a<select>b</template><div>x</div>c</select>d</div>"),
+            "<div>a<select>b</template>xc</select>d</div>"
+        );
+        assert_eq!(
+            rewritten("<select>b</template><hr>c</select>"),
+            "<select>b</template>c</select>"
+        );
+        // A real template frame still pops through from select to template.
+        assert_eq!(
+            rewritten("<template><select>b</template><hr>c</select>d"),
+            "<template><select>b</template><hr>c</select>d"
+        );
+        assert_eq!(
+            rewritten("<select><template></template><hr>b</select>"),
+            "<select><template></template>b</select>"
         );
     }
 }

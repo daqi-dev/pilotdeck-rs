@@ -170,6 +170,27 @@ export const parserGaps = [
   ['select-quoted-gt', '<select><div title="a>b">c</div>d</select>'],
   ['select-comment-hr', '<select><!-- <hr> -->b</select>'],
   ['select-unquoted-slash', '<select><div a=b/c>d</select>'],
+  // Quotes only hide `>` as the first byte of an attribute value; in a name or
+  // an unquoted value they are ordinary data and the tag still ends at `>`.
+  ['select-unquoted-double-quote', '<select><div a=b"c>d</select>'],
+  ['select-unquoted-single-quote', "<select><div a=b'c>d</select>"],
+  ['select-unquoted-mixed-quote', '<select><div a=b"c\' d>e</select>'],
+  ['select-attr-name-double-quote', '<select><div a"b c>d</select>'],
+  ['select-unquoted-quote-slash', '<select><div a=b"c/>d</select>'],
+  ['select-space-eq-quoted', '<select><div a = "b>c">d</select>'],
+  // Bogus comments and CDATA end at the first `>`; quotes are not special.
+  ['bogus-comment-double-quote', '<? a " > <select><hr></select>'],
+  ['bogus-comment-single-quote', "<!x a ' > <select><hr></select>"],
+  ['bogus-comment-unbalanced-quote', '<!x " a> <select><hr></select> tail'],
+  ['cdata-double-quote', '<![CDATA[ " > <select><hr></select>'],
+  // `--!>` also closes a comment, like `-->`.
+  ['comment-bang-close', '<!-- x --!><select><hr></select>'],
+  // An unmatched end tag changes nothing: it must not pop the select frame.
+  ['select-unmatched-template-end', '<div>a<select>b</template><hr>c</select>d</div>'],
+  ['select-unmatched-template-end-div', '<div>a<select>b</template><div>x</div>c</select>d</div>'],
+  ['select-unmatched-template-end-only', '<select>b</template><hr>c</select>'],
+  ['select-template-match-end', '<template><select>b</template><hr>c</select>d'],
+  ['select-template-inside-end', '<select><template></template><hr>b</select>'],
   // Domino's in-select-in-table closes the select before table structure.
   ['select-in-table-row', '<table><tr><td>a<select><tr><td>b</td></tr></select>c</td></tr></table>'],
   ['select-in-table-div', '<table><tr><td>a<select><div>b</div></select>c</td></tr></table>'],
