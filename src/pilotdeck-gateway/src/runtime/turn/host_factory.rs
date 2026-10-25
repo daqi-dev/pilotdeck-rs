@@ -133,12 +133,46 @@ fn required_text(value: Option<&str>, default: &str, name: &str) -> Result<Strin
     Ok(value.to_owned())
 }
 
+/// JS `Number(value)` restricted to the integer forms the deployment profile
+/// consumes. TS parses both numbers with `Number()` + `Number.isInteger`
+/// (`AgentLoopDeploymentProfile.ts:127-141`), so `+80`, `80.0`, `1e3` and
+/// `0x50` are all accepted. `Number()` rejects signed radix prefixes
+/// (`+0x50` is NaN), and Rust's `f64` parser accepts `inf`/`NaN` spellings that
+/// JS rejects, so both cases are filtered explicitly.
+fn js_integral_number(value: &str) -> Option<f64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let radix = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .map(|digits| (digits, 16))
+        .or_else(|| {
+            value
+                .strip_prefix("0b")
+                .or_else(|| value.strip_prefix("0B"))
+                .map(|digits| (digits, 2))
+        })
+        .or_else(|| {
+            value
+                .strip_prefix("0o")
+                .or_else(|| value.strip_prefix("0O"))
+                .map(|digits| (digits, 8))
+        });
+    let number = match radix {
+        Some((digits, radix)) => u128::from_str_radix(digits, radix).ok()? as f64,
+        None => value.parse::<f64>().ok()?,
+    };
+    (number.is_finite() && number.fract() == 0.0).then_some(number)
+}
+
 fn required_port(value: Option<&str>) -> Result<u16, String> {
     let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
         return Err("PILOTDECK_AGENT_LOOP_TCP_PORT is required when transport is tcp.".into());
     };
-    match value.trim().parse::<u32>() {
-        Ok(port) if (1..=65_535).contains(&port) => Ok(port as u16),
+    match js_integral_number(value) {
+        Some(port) if (1.0..=65_535.0).contains(&port) => Ok(port as u16),
         _ => Err("PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535.".into()),
     }
 }
@@ -147,8 +181,10 @@ fn optional_positive_integer(value: Option<&str>) -> Result<Option<u64>, String>
     let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
         return Ok(None);
     };
-    match value.trim().parse::<u64>() {
-        Ok(number) if number > 0 => Ok(Some(number)),
+    match js_integral_number(value) {
+        // TS accepts any positive integer `number`; the deployment field is a
+        // `u64` millisecond count, so values above its range stay rejected.
+        Some(number) if number > 0.0 && number <= u64::MAX as f64 => Ok(Some(number as u64)),
         _ => Err("PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS must be a positive integer.".into()),
     }
 }
@@ -342,10 +378,16 @@ impl TurnHostFactory {
                         "Leased token accounting resource is not native.",
                     )
                 })?;
+            // TS `AgentTurnCapabilities.model.budget.estimateUsageCost` calls
+            // `router.estimateUsageCost`, which reads the router's
+            // `stats.modelPricing` (`RouterRuntime.ts:1065-1067`,
+            // `TokenStatsCollector.ts:90-96,183-190`). The lease's router owns
+            // that parsed table, so the budget port must use the same rates.
+            let pricing = router.router.config().stats.model_pricing.clone();
             result.budget = budget::Handler {
                 ports: Some(budget::Ports::for_accounting(
                     accounting.accounting.clone(),
-                    None,
+                    pricing,
                 )),
                 signal: Some(signal.clone()),
             };

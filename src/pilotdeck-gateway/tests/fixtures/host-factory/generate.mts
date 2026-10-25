@@ -1,27 +1,24 @@
 // Real TS constructors only. No Rust output is used to manufacture expectations.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const sources = [
   'src/cli/AgentLoopDeploymentProfile.ts',
   'src/cli/ProjectRuntimeRegistry.ts',
   'src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts',
+  'src/router/stats/TokenStatsCollector.ts',
+  'src/router/utils/modelPricing.ts',
 ];
-assert.equal(execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), commit);
-assert.equal(execFileSync('git', ['-C', baseline, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }), '', 'baseline must be clean');
-const sourceSha256: Record<string, string> = {};
-for (const source of sources) {
-  sourceSha256[source] = createHash('sha256').update(await readFile(join(baseline, source))).digest('hex');
-}
+const commit = assertBaseline(baseline);
+const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const load = (source: string) => import(pathToFileURL(join(baseline, source)).href);
 
 // -- Deployment profile selection -------------------------------------------------
@@ -34,9 +31,26 @@ const deploymentSpecs = [
   { name: 'stdio-empty-command', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'stdio', PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND: '   ' } },
   { name: 'tcp-missing-port', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp' } },
   { name: 'tcp-invalid-port', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '0' } },
+  { name: 'tcp-port-plus', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '+80' } },
+  { name: 'tcp-port-float', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '80.0' } },
+  { name: 'tcp-port-exponent', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '1e3' } },
+  { name: 'tcp-port-hex', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '0x50' } },
+  { name: 'tcp-port-padded', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: ' 80 ' } },
+  { name: 'tcp-port-empty', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '' } },
+  { name: 'tcp-port-blank', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '   ' } },
+  { name: 'tcp-port-fraction', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '80.5' } },
+  { name: 'tcp-port-max', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '65535' } },
+  { name: 'tcp-port-overflow', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '65536' } },
   { name: 'tcp', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000' } },
   { name: 'tcp-timeout', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000', PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS: '25' } },
   { name: 'tcp-invalid-timeout', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000', PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS: '0' } },
+  { name: 'tcp-timeout-plus', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000', PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS: '+80' } },
+  { name: 'tcp-timeout-float', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000', PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS: '80.0' } },
+  { name: 'tcp-timeout-exponent', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000', PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS: '1e3' } },
+  { name: 'tcp-timeout-hex', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000', PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS: '0x50' } },
+  { name: 'tcp-timeout-padded', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000', PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS: ' 80 ' } },
+  { name: 'tcp-timeout-empty', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000', PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS: '' } },
+  { name: 'tcp-timeout-fraction', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'tcp', PILOTDECK_AGENT_LOOP_TCP_PORT: '4000', PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS: '80.5' } },
   { name: 'invalid', env: { PILOTDECK_AGENT_LOOP_TRANSPORT: 'bogus' } },
 ];
 const deployment = deploymentSpecs.map((spec) => {
@@ -110,6 +124,29 @@ const lease: any[] = [];
   await tick();
 }
 
+// -- Configured router pricing through the turn budget ---------------------------
+// `AgentTurnCapabilities.model.budget.estimateUsageCost` forwards to
+// `RouterRuntime.estimateUsageCost`, whose `TokenStatsCollector` holds the
+// parsed `router.stats.modelPricing` table (`RouterRuntime.ts:1065-1067`).
+const { TokenStatsCollector } = await load('src/router/stats/TokenStatsCollector.ts');
+const pricing = (() => {
+  const modelPricing = { 'test/mock': { input: 7, output: 11, cacheRead: 3 } };
+  const usage = {
+    inputTokens: 1_000_000,
+    outputTokens: 2_000_000,
+    cacheReadTokens: 3_000_000,
+    cacheWriteTokens: 4_000_000,
+  };
+  const collector = new TokenStatsCollector({ enabled: false, modelPricing });
+  return {
+    modelPricing,
+    usage,
+    provider: 'test',
+    model: 'mock',
+    costUsd: collector.estimateCost(usage, 'test', 'mock'),
+  };
+})();
+
 // -- stdio connection errors ------------------------------------------------------
 const { createStdioAgentLoopSidecarConnectionFactory } = await load(sources[2]);
 const connection: any[] = [];
@@ -131,7 +168,7 @@ const connection: any[] = [];
   await open.close();
 }
 
-const oracle = { commit, sourceSha256, deployment, lease, connection };
+const oracle = { commit, sourceSha256, deployment, lease, pricing, connection };
 await mkdir(output, { recursive: true });
 const flag = 'wx';
 await writeFile(join(output, 'oracle.json'), `${JSON.stringify(oracle, null, 2)}\n`, { flag });
