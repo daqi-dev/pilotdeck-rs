@@ -3,8 +3,11 @@
 import argparse
 import hashlib
 from pathlib import Path
-import re
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources
 
 ROOT = Path(__file__).resolve().parents[5]
 SRC = ROOT / 'src/pilotdeck-gateway/src'
@@ -32,35 +35,47 @@ def main():
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    # Reintroduce the actual pre-fix formatter, including its missing year sign.
+    # Reintroduce the actual pre-fix formatter (the body replaced in
+    # 025b31f8), including its missing extended-year sign. HEAD already carries
+    # the fix, so reading HEAD here made this control a no-op: attempt 1 logged
+    # "extended-year: mutation survived" while the test still passed.
     name = 'runtime/context/prompt.rs'
-    previous = subprocess.check_output(['git', 'show', f'HEAD:src/pilotdeck-gateway/src/{name}'], cwd=ROOT, text=True)
-    match = re.search(r'pub\(crate\) fn iso_timestamp\(timestamp_ms: f64\) -> String \{\n(.*?)\n\}', previous, re.S)
-    assert match
+    old_body = '''    let ms = timestamp_ms as i64;
+    let days = ms.div_euclid(86_400_000);
+    let day_ms = ms.rem_euclid(86_400_000);
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        day_ms / 3_600_000,
+        day_ms / 60_000 % 60,
+        day_ms / 1_000 % 60,
+        day_ms % 1_000
+    )'''
     cases = CASES + [('extended-year', name,
                       '    pilotdeck_transport::system_clock::format_epoch_iso(timestamp_ms as i64)',
-                      match[1], 'extended_year_timestamps_match_real_ts')]
+                      old_body, 'extended_year_timestamps_match_real_ts')]
     for label, name, before, after, test in cases:
         path = SRC / name
-        saved = path.read_bytes()
-        text = saved.decode()
-        assert text.count(before) == 1, (label, 'mutation anchor')
-        slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], cwd=ROOT, capture_output=True, text=True)
-        # Exit 1 means no slot. Do not mutate or launch cargo while full.
-        assert slots.returncode == 0, slots.stdout + slots.stderr
-        try:
-            path.write_text(text.replace(before, after))
-            suite = ['--test', 'diff_backfill'] if label.endswith('-syntax') else ['--lib']
-            cmd = ['cargo', 'test', '-p', 'pilotdeck-gateway', *suite, test]
-            run = subprocess.run(cmd, cwd=ROOT / 'src', capture_output=True, text=True)
-            log = slots.stdout + slots.stderr + '$ ' + ' '.join(cmd) + '\n' + run.stdout + run.stderr
-            (args.output / f'negative-{label}.log').write_text(log)
-            assert run.returncode != 0, f'{label}: mutation survived'
-            assert f'{test} ... FAILED' in log and 'test result: FAILED' in log, f'{label}: not a runtime assertion failure'
-            print(f'{label}: KILLED (exit {run.returncode}); {test}')
-        finally:
-            path.write_bytes(saved)
-            assert hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(saved).digest()
+        with mutating_sources(ROOT, [path]) as snapshots:
+            saved = snapshots[path]
+            text = saved.decode()
+            assert text.count(before) == 1, (label, 'mutation anchor')
+            slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], cwd=ROOT, capture_output=True, text=True)
+            # Exit 1 means no slot. Do not mutate or launch cargo while full.
+            assert slots.returncode == 0, slots.stdout + slots.stderr
+            try:
+                path.write_text(text.replace(before, after))
+                suite = ['--test', 'diff_backfill'] if label.endswith('-syntax') else ['--lib']
+                cmd = ['cargo', 'test', '-p', 'pilotdeck-gateway', *suite, test]
+                run = subprocess.run(cmd, cwd=ROOT / 'src', capture_output=True, text=True)
+                log = slots.stdout + slots.stderr + '$ ' + ' '.join(cmd) + '\n' + run.stdout + run.stderr
+                (args.output / f'negative-{label}.log').write_text(log)
+                assert run.returncode != 0, f'{label}: mutation survived'
+                assert f'{test} ... FAILED' in log and 'test result: FAILED' in log, f'{label}: not a runtime assertion failure'
+                print(f'{label}: KILLED (exit {run.returncode}); {test}')
+            finally:
+                path.write_bytes(saved)
+                assert hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(saved).digest()
 
 
 if __name__ == '__main__':

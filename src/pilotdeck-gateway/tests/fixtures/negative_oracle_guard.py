@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from negative_process import run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 
 CASES = [
@@ -47,38 +47,39 @@ def main():
         if args.fixture and args.fixture != name:
             continue
         path = fixtures / name / "oracle.json"
-        original = path.read_bytes()
-        source, recorded = next(iter(json.loads(original)["sourceSha256"].items()))
-        assert len(recorded) == 64 and original.count(recorded.encode()) == 1
-        forged = "0" * 64 if recorded != "0" * 64 else "1" * 64
-        command = ["cargo", "test", "--offline", "-p", "pilotdeck-gateway", *target,
-                   test, "--", "--exact", "--nocapture", "--test-threads=4"]
-        try:
-            for phase in ("baseline", "tampered"):
-                if phase == "tampered":
-                    assert path.read_bytes() == original, "fixture changed during baseline test"
-                    path.write_bytes(original.replace(recorded.encode(), forged.encode(), 1))
-                gate = wait_for_slot(slots)
-                result = run_owned(command, cwd=workspace, timeout=600)
-                raw = result.stdout + result.stderr
-                (output / f"{name}-{phase}.log").write_text(
-                    gate.stdout + gate.stderr + raw + f"\nexit={result.returncode}\n")
-                if phase == "baseline":
-                    valid = result.returncode == 0 and "1 passed" in raw
-                else:
-                    valid = (result.returncode == 101 and "1 failed" in raw
-                             and f"oracle hash for {source} does not match" in raw
-                             and "could not compile" not in raw)
-                summary.append({"fixture": name, "phase": phase, "exit": result.returncode,
-                                "source": source, "valid": valid,
-                                "originalSha256": hashlib.sha256(original).hexdigest()})
-                (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-                print(name, phase, "PASS" if valid else "INVALID", flush=True)
-                if not valid:
-                    raise SystemExit(1)
-        finally:
-            path.write_bytes(original)
-            assert path.read_bytes() == original, "failed to restore fixture bytes"
+        with mutating_sources(fixtures.parents[3], [path]) as snapshots:
+            original = snapshots[path]
+            source, recorded = next(iter(json.loads(original)["sourceSha256"].items()))
+            assert len(recorded) == 64 and original.count(recorded.encode()) == 1
+            forged = "0" * 64 if recorded != "0" * 64 else "1" * 64
+            command = ["cargo", "test", "--offline", "-p", "pilotdeck-gateway", *target,
+                       test, "--", "--exact", "--nocapture", "--test-threads=4"]
+            try:
+                for phase in ("baseline", "tampered"):
+                    if phase == "tampered":
+                        assert path.read_bytes() == original, "fixture changed during baseline test"
+                        path.write_bytes(original.replace(recorded.encode(), forged.encode(), 1))
+                    gate = wait_for_slot(slots)
+                    result = run_owned(command, cwd=workspace, timeout=600)
+                    raw = result.stdout + result.stderr
+                    (output / f"{name}-{phase}.log").write_text(
+                        gate.stdout + gate.stderr + raw + f"\nexit={result.returncode}\n")
+                    if phase == "baseline":
+                        valid = result.returncode == 0 and "1 passed" in raw
+                    else:
+                        valid = (result.returncode == 101 and "1 failed" in raw
+                                 and f"oracle hash for {source} does not match" in raw
+                                 and "could not compile" not in raw)
+                    summary.append({"fixture": name, "phase": phase, "exit": result.returncode,
+                                    "source": source, "valid": valid,
+                                    "originalSha256": hashlib.sha256(original).hexdigest()})
+                    (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+                    print(name, phase, "PASS" if valid else "INVALID", flush=True)
+                    if not valid:
+                        raise SystemExit(1)
+            finally:
+                path.write_bytes(original)
+                assert path.read_bytes() == original, "failed to restore fixture bytes"
 
 
 if __name__ == "__main__":

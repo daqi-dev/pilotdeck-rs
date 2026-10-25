@@ -63,6 +63,42 @@ fn map_record(v: JsValue) -> Result<JsValue> {
 fn ids_input(ids: Vec<JsValue>, key: &str) -> JsObject {
     object(&[(key, JsValue::Array(ids))])
 }
+/// `ids.filter(...)` at the TS repository boundary. A missing or non-array ids
+/// argument throws `TypeError` before the first store call; array elements are
+/// returned verbatim for the caller's own element checks.
+fn batch_ids(ids: &JsValue) -> Result<&[JsValue]> {
+    match ids {
+        JsValue::Array(items) => Ok(items),
+        JsValue::Undefined => Err(FileMemoryError::Type(
+            "Cannot read properties of undefined (reading 'filter')".into(),
+        )),
+        JsValue::Null => Err(FileMemoryError::Type(
+            "Cannot read properties of null (reading 'filter')".into(),
+        )),
+        _ => Err(FileMemoryError::Type("ids.filter is not a function".into())),
+    }
+}
+/// `deleteMemoryEntries` / `deprecateMemoryEntries` / `restoreMemoryEntries`
+/// call `isGlobalRelativePath(id)` through `Array.prototype.filter`, whose
+/// `normalizeRelativePath` reaches `String.prototype.replace`. Validate every
+/// element before any snapshot or store work, in TS element order.
+fn mutation_ids(ids: &JsValue) -> Result<Vec<JsString>> {
+    batch_ids(ids)?
+        .iter()
+        .map(|value| match value {
+            JsValue::String(id) => Ok(id.clone()),
+            JsValue::Undefined => Err(FileMemoryError::Type(
+                "Cannot read properties of undefined (reading 'replace')".into(),
+            )),
+            JsValue::Null => Err(FileMemoryError::Type(
+                "Cannot read properties of null (reading 'replace')".into(),
+            )),
+            _ => Err(FileMemoryError::Type(
+                "relativePath.replace is not a function".into(),
+            )),
+        })
+        .collect()
+}
 
 impl EdgeClawFileStores {
     /// The both-store query shared by `listMemoryEntries` /
@@ -93,7 +129,21 @@ impl EdgeClawFileStores {
         Ok(entries)
     }
     /// Filter/dedupe only for reading, then replay original ids (duplicates retained).
-    pub fn get_memory_records_by_ids(&self, ids: &[JsString], max_lines: f64) -> Result<JsValue> {
+    /// `ids` is the raw JS argument: `ids.filter` throws before any read when it
+    /// is not an array; non-string elements are ignored exactly as TS.
+    pub fn get_memory_records_by_ids(&self, ids: &JsValue, max_lines: f64) -> Result<JsValue> {
+        let ids = batch_ids(ids)?
+            .iter()
+            .filter_map(JsValue::as_string)
+            .cloned()
+            .collect::<Vec<_>>();
+        self.get_memory_records_by_id_strings(&ids, max_lines)
+    }
+    fn get_memory_records_by_id_strings(
+        &self,
+        ids: &[JsString],
+        max_lines: f64,
+    ) -> Result<JsValue> {
         let mut seen = HashSet::new();
         let unique = ids
             .iter()
@@ -226,14 +276,17 @@ impl EdgeClawFileStores {
             ])))
         })
     }
-    pub fn delete_memory_entries(&self, ids: &[JsString]) -> Result<JsValue> {
-        self.mutate_entries(ids, "deleteEntries")
+    pub fn delete_memory_entries(&self, ids: &JsValue) -> Result<JsValue> {
+        let ids = mutation_ids(ids)?;
+        self.mutate_entries(&ids, "deleteEntries")
     }
-    pub fn deprecate_memory_entries(&self, ids: &[JsString]) -> Result<JsValue> {
-        self.mutate_entries(ids, "markEntriesDeprecated")
+    pub fn deprecate_memory_entries(&self, ids: &JsValue) -> Result<JsValue> {
+        let ids = mutation_ids(ids)?;
+        self.mutate_entries(&ids, "markEntriesDeprecated")
     }
-    pub fn restore_memory_entries(&self, ids: &[JsString]) -> Result<JsValue> {
-        self.mutate_entries(ids, "restoreEntries")
+    pub fn restore_memory_entries(&self, ids: &JsValue) -> Result<JsValue> {
+        let ids = mutation_ids(ids)?;
+        self.mutate_entries(&ids, "restoreEntries")
     }
     pub fn archive_tmp_entries(&self, input: &JsObject) -> Result<JsValue> {
         let mut next = input.clone();
@@ -356,11 +409,14 @@ impl EdgeClawFileStores {
             let mut entries = self.entry_query(&options)?;
             super::accessors::sort_entry_values(&mut entries)?;
             entries.truncate(5000);
-            let ids = entries
-                .iter()
-                .filter(|e| field(e, "sourceSessionKey") == &s(session))
-                .filter_map(|e| field(e, "relativePath").as_string().cloned())
-                .collect::<Vec<_>>();
+            let ids = JsValue::Array(
+                entries
+                    .iter()
+                    .filter(|e| field(e, "sourceSessionKey") == &s(session))
+                    .filter_map(|e| field(e, "relativePath").as_string().cloned())
+                    .map(JsValue::String)
+                    .collect(),
+            );
             let deleted = self.delete_memory_entries(&ids)?;
             self.storage
                 .conn()?

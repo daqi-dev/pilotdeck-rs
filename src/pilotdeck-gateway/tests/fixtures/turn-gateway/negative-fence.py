@@ -14,6 +14,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources
+
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
 repo = workspace.parent
@@ -29,136 +32,134 @@ assert Path(env['CARGO_TARGET_DIR']).resolve() == workspace / 'target'
 assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
 for key in ['PDRS_GATEWAY_CASE', 'PDRS_SUBMIT_CAPABILITY']:
     env.pop(key, None)
-original = {p: p.read_bytes() for p in [gateway, submit, tests, session]}
-text = original[gateway].decode()
-start = text.index('            let wait_for = {')
-end = text.index('            if let Some(mut done) = wait_for {', start)
-lookup = text[start:end]
-yield_step = text[text.index('            // Router.abort has returned.'):start]
-assert text.count(yield_step) == 1
-fence_test = 'abort_waits_for_latest_real_ts_session_fence'
-ws_test = 'real_ts_gateway_frames_registry_replay_and_concurrency'
-cap_test = 'unavailable_capabilities_are_explicitly_refused'
+with mutating_sources(repo, [gateway, submit, tests, session]) as snapshots:
+    original = {p: snapshots[p] for p in [gateway, submit, tests, session]}
+    text = original[gateway].decode()
+    start = text.index('            let wait_for = {')
+    end = text.index('            if let Some(mut done) = wait_for {', start)
+    lookup = text[start:end]
+    yield_step = text[text.index('            // Router.abort has returned.'):start]
+    assert text.count(yield_step) == 1
+    fence_test = 'abort_waits_for_latest_real_ts_session_fence'
+    ws_test = 'real_ts_gateway_frames_registry_replay_and_concurrency'
+    cap_test = 'unavailable_capabilities_are_explicitly_refused'
 
-def mutation(name, path, before, after, marker, test=fence_test):
-    assert original[path].decode().count(before) == 1, (name, 'anchor not unique')
-    return dict(name=name, path=path, modified=original[path].decode().replace(before, after, 1).encode(), marker=marker, test=test)
+    def mutation(name, path, before, after, marker, test=fence_test):
+        assert original[path].decode().count(before) == 1, (name, 'anchor not unique')
+        return dict(name=name, path=path, modified=original[path].decode().replace(before, after, 1).encode(), marker=marker, test=test)
 
-mutants = [
-    mutation('max-not-current-slot', gateway,
-        'drains\n                    .current\n                    .get(key)\n                    .and_then(|id| drains.active.get(id))',
-        'drains.active.iter().filter(|(_, (run, _))| run.as_ref().is_some_and(|run| &run.session_key == key)).max_by_key(|(id, _)| *id).map(|(_, entry)| entry)',
-        'completed-slot-does-not-refill'),
-    mutation('begin-keeps-old-slot', gateway, 'self.current.insert(run.session_key.clone(), id);',
-        'self.current.entry(run.session_key.clone()).or_insert(id);', 'latest-session-fence-only'),
-    mutation('obsolete-drop-clears-current-slot', gateway,
-        '&& drains.current.get(&run.session_key) == Some(&self.id)', '',
-        'obsolete-drop-preserves-current-slot'),
-    mutation('other-session-selected', gateway, 'drains\n                    .current\n                    .get(key)',
-        'drains.current.values().max()', 'other-session-does-not-replace'),
-    mutation('snapshot-before-router-await', gateway, yield_step + lookup,
-        lookup + yield_step, 'replacement-during-abort'),
-    mutation('snapshot-after-owner-drain', gateway, yield_step,
-        '            self.0.submitter.owner.abort_turn(key, run, reason).await.map_err(|error| RequestError::new(error.to_string()))?;\n' ,
-        'ungated-cleanup-replacement', 'abort_snapshots_before_ungated_cleanup_replacement'),
-    mutation('admission-only-matching', session,
-        'run_id.is_none() || cancelled || active.as_ref() == run_id',
-        'run_id.is_none() || (cancelled && false) || active.as_ref() == run_id',
-        'admission-cleared-before-consumer'),
-    mutation('stale-run-check-skipped', session,
-        'run_id.is_none() || cancelled || active.as_ref() == run_id',
-        '(run_id.is_none() || cancelled || active.as_ref() == run_id) || true',
-        'stale-run-does-not-wait'),
-    mutation('pre-admission-overwrites-slot', submit,
-        '        admitted(&run);', '', 'rejected-run-does-not-replace-fence'),
-    mutation('requested-run-filter', gateway,
-        '.and_then(|id| drains.active.get(id))',
-        '.and_then(|id| drains.active.get(id)).filter(|(identity, _)| run.is_none_or(|run| identity.as_ref().is_some_and(|submitted| &submitted.run_id == run)))',
-        'replacement-during-abort'),
-    mutation('consumer-wait-skipped', gateway, 'let _ = done.wait_for(|done| *done).await;',
-        'let _ = &mut done;', 'admission-cleared-before-consumer'),
-    mutation('observation-does-not-wait', tests,
-        'if self.0.lock().unwrap().len() >= frames && (!ended || consumer.load(Ordering::SeqCst))',
-        'if true || (self.0.lock().unwrap().len() >= frames && (!ended || consumer.load(Ordering::SeqCst)))',
-        'observation.as_mut().poll', 'transport_observation_waits_for_delivery_and_receive_completion'),
-]
-# Move the observer to identity resolution, before acceptance/admission, so a
-# busy/preflight submission can overwrite a valid current consumer slot.
-m = next(m for m in mutants if m['name'] == 'pre-admission-overwrites-slot')
-s = m['modified'].decode()
-anchor = '        let acceptance = RunAcceptInput {'
-assert s.count(anchor) == 1
-m['modified'] = s.replace(anchor, '        admitted(&run);\n' + anchor, 1).encode()
-# That mutation is exercised through the real WS busy case as well: manual
-# fence replay deliberately calls only the completion-begin observer.
-m['test'] = ws_test
-m['marker'] = 'abort-after-busy'
+    mutants = [
+        mutation('max-not-current-slot', gateway,
+            'drains\n                    .current\n                    .get(key)\n                    .and_then(|id| drains.active.get(id))',
+            'drains.active.iter().filter(|(_, (run, _))| run.as_ref().is_some_and(|run| &run.session_key == key)).max_by_key(|(id, _)| *id).map(|(_, entry)| entry)',
+            'completed-slot-does-not-refill'),
+        mutation('begin-keeps-old-slot', gateway, 'self.current.insert(run.session_key.clone(), id);',
+            'self.current.entry(run.session_key.clone()).or_insert(id);', 'latest-session-fence-only'),
+        mutation('obsolete-drop-clears-current-slot', gateway,
+            '&& drains.current.get(&run.session_key) == Some(&self.id)', '',
+            'obsolete-drop-preserves-current-slot'),
+        mutation('other-session-selected', gateway, 'drains\n                    .current\n                    .get(key)',
+            'drains.current.values().max()', 'other-session-does-not-replace'),
+        mutation('snapshot-before-router-await', gateway, yield_step + lookup,
+            lookup + yield_step, 'replacement-during-abort'),
+        mutation('snapshot-after-owner-drain', gateway, yield_step,
+            '            self.0.submitter.owner.abort_turn(key, run, reason).await.map_err(|error| RequestError::new(error.to_string()))?;\n' ,
+            'ungated-cleanup-replacement', 'abort_snapshots_before_ungated_cleanup_replacement'),
+        mutation('admission-only-matching', session,
+            'run_id.is_none() || cancelled || active.as_ref() == run_id',
+            'run_id.is_none() || (cancelled && false) || active.as_ref() == run_id',
+            'admission-cleared-before-consumer'),
+        mutation('stale-run-check-skipped', session,
+            'run_id.is_none() || cancelled || active.as_ref() == run_id',
+            '(run_id.is_none() || cancelled || active.as_ref() == run_id) || true',
+            'stale-run-does-not-wait'),
+        mutation('pre-admission-overwrites-slot', submit,
+            '        admitted(&run);', '', 'rejected-run-does-not-replace-fence'),
+        mutation('requested-run-filter', gateway,
+            '.and_then(|id| drains.active.get(id))',
+            '.and_then(|id| drains.active.get(id)).filter(|(identity, _)| run.is_none_or(|run| identity.as_ref().is_some_and(|submitted| &submitted.run_id == run)))',
+            'replacement-during-abort'),
+        mutation('consumer-wait-skipped', gateway, 'let _ = done.wait_for(|done| *done).await;',
+            'let _ = &mut done;', 'admission-cleared-before-consumer'),
+        mutation('observation-does-not-wait', tests,
+            'if self.0.lock().unwrap().len() >= frames && (!ended || consumer.load(Ordering::SeqCst))',
+            'if true || (self.0.lock().unwrap().len() >= frames && (!ended || consumer.load(Ordering::SeqCst)))',
+            'observation.as_mut().poll', 'transport_observation_waits_for_delivery_and_receive_completion'),
+    ]
+    # Move the observer to identity resolution, before acceptance/admission, so a
+    # busy/preflight submission can overwrite a valid current consumer slot.
+    m = next(m for m in mutants if m['name'] == 'pre-admission-overwrites-slot')
+    s = m['modified'].decode()
+    anchor = '        let acceptance = RunAcceptInput {'
+    assert s.count(anchor) == 1
+    m['modified'] = s.replace(anchor, '        admitted(&run);\n' + anchor, 1).encode()
+    # That mutation is exercised through the real WS busy case as well: manual
+    # fence replay deliberately calls only the completion-begin observer.
+    m['test'] = ws_test
+    m['marker'] = 'abort-after-busy'
 
-selected = [dict(name='baseline', test=fence_test, marker=None)] + mutants
-for key, test in [('PDRS_GATEWAY_CASE', ws_test), ('PDRS_SUBMIT_CAPABILITY', cap_test)]:
-    for label, value in [('unknown', 'does-not-exist'), ('empty', '')]:
-        selected.append(dict(name=f'{key.lower()}-{label}', test=test,
-            marker=f'{key} matched no scenario', filter=(key, value)))
-if len(sys.argv) > 2:
-    selected = [m for m in selected if m['name'] in sys.argv[2:]]
-    assert selected, 'unknown controls'
-command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'),
-           '-p', 'pilotdeck-gateway', '--lib']
-summary = []
-lock = out / 'negative.lock'
-lock.mkdir()
-try:
-    for control in selected:
-        assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
-        slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
-        slot_deadline = time.monotonic() + 1800
-        while slots.returncode == 1:
-            assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
-            time.sleep(20)
+    selected = [dict(name='baseline', test=fence_test, marker=None)] + mutants
+    for key, test in [('PDRS_GATEWAY_CASE', ws_test), ('PDRS_SUBMIT_CAPABILITY', cap_test)]:
+        for label, value in [('unknown', 'does-not-exist'), ('empty', '')]:
+            selected.append(dict(name=f'{key.lower()}-{label}', test=test,
+                marker=f'{key} matched no scenario', filter=(key, value)))
+    if len(sys.argv) > 2:
+        selected = [m for m in selected if m['name'] in sys.argv[2:]]
+        assert selected, 'unknown controls'
+    command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'),
+               '-p', 'pilotdeck-gateway', '--lib']
+    summary = []
+    try:
+        for control in selected:
+            assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
             slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
-        assert slots.returncode == 0
-        modified = dict(original)
-        if 'path' in control:
-            modified[control['path']] = control['modified']
-            control['path'].write_bytes(control['modified'])
-        run_env = dict(env)
-        if 'filter' in control:
-            key, value = control['filter']
-            run_env[key] = value
-        module = 'submit' if control['test'] == cap_test else 'gateway'
-        test_name = f"runtime::turn::{module}::tests::{control['test']}"
-        cmd = command + [test_name, '--', '--exact', '--nocapture']
-        process = subprocess.Popen(cmd, cwd=repo, env=run_env, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True, start_new_session=True)
-        timed_out = False
-        try:
-            raw, _ = process.communicate(timeout=300)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            os.killpg(process.pid, signal.SIGKILL)
-            raw, _ = process.communicate()
-        finally:
-            for path, data in original.items():
-                assert path.read_bytes() == modified[path], f'concurrent edit preserved: {path}'
-                if modified[path] != data:
-                    path.write_bytes(data)
-        marker = control['marker']
-        result = re.search(r'^test result: ok\. (\d+) passed; 0 failed;', raw, re.MULTILINE)
-        baseline_ok = (process.returncode == 0 and result is not None
-            and int(result.group(1)) == 1
-            and re.search(r'^test ' + re.escape(test_name) + r' \.\.\. ok$', raw, re.MULTILINE) is not None)
-        valid = not timed_out and (baseline_ok if marker is None else (
-            process.returncode == 101 and 'test result: FAILED' in raw and marker in raw
-            and 'could not compile' not in raw))
-        (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr
-            + raw + f'\nexit={process.returncode} timed_out={timed_out}\n')
-        summary.append(dict(name=control['name'], exit=process.returncode, timed_out=timed_out, valid=valid, marker=marker))
-        (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-        print(f'{control["name"]}: {"PASS" if valid else "INVALID"} exit={process.returncode} timed_out={timed_out}', flush=True)
-        # Continue after an invalid/timeout control, retaining all evidence.
-finally:
-    lock.rmdir()
-    assert all(p.read_bytes() == data for p, data in original.items()), 'original bytes not restored'
-    (out / 'restored-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest()
-        for p, data in original.items()}, indent=2) + '\n')
-raise SystemExit(0 if all(row['valid'] for row in summary) else 1)
+            slot_deadline = time.monotonic() + 1800
+            while slots.returncode == 1:
+                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
+                time.sleep(20)
+                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
+            assert slots.returncode == 0
+            modified = dict(original)
+            if 'path' in control:
+                modified[control['path']] = control['modified']
+                control['path'].write_bytes(control['modified'])
+            run_env = dict(env)
+            if 'filter' in control:
+                key, value = control['filter']
+                run_env[key] = value
+            module = 'submit' if control['test'] == cap_test else 'gateway'
+            test_name = f"runtime::turn::{module}::tests::{control['test']}"
+            cmd = command + [test_name, '--', '--exact', '--nocapture']
+            process = subprocess.Popen(cmd, cwd=repo, env=run_env, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            timed_out = False
+            try:
+                raw, _ = process.communicate(timeout=300)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                os.killpg(process.pid, signal.SIGKILL)
+                raw, _ = process.communicate()
+            finally:
+                for path, data in original.items():
+                    assert path.read_bytes() == modified[path], f'concurrent edit preserved: {path}'
+                    if modified[path] != data:
+                        path.write_bytes(data)
+            marker = control['marker']
+            result = re.search(r'^test result: ok\. (\d+) passed; 0 failed;', raw, re.MULTILINE)
+            baseline_ok = (process.returncode == 0 and result is not None
+                and int(result.group(1)) == 1
+                and re.search(r'^test ' + re.escape(test_name) + r' \.\.\. ok$', raw, re.MULTILINE) is not None)
+            valid = not timed_out and (baseline_ok if marker is None else (
+                process.returncode == 101 and 'test result: FAILED' in raw and marker in raw
+                and 'could not compile' not in raw))
+            (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr
+                + raw + f'\nexit={process.returncode} timed_out={timed_out}\n')
+            summary.append(dict(name=control['name'], exit=process.returncode, timed_out=timed_out, valid=valid, marker=marker))
+            (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+            print(f'{control["name"]}: {"PASS" if valid else "INVALID"} exit={process.returncode} timed_out={timed_out}', flush=True)
+            # Continue after an invalid/timeout control, retaining all evidence.
+    finally:
+        assert all(p.read_bytes() == data for p, data in original.items()), 'original bytes not restored'
+        (out / 'restored-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest()
+            for p, data in original.items()}, indent=2) + '\n')
+    raise SystemExit(0 if all(row['valid'] for row in summary) else 1)

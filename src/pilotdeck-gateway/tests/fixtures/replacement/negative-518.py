@@ -10,6 +10,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources
+
 ROOT = Path(__file__).resolve().parents[5]
 PRODUCT = ROOT / 'src/pilotdeck-gateway/src/runtime/replacement.rs'
 ORACLE = ROOT / 'src/pilotdeck-gateway/tests/fixtures/replacement/oracle.json'
@@ -90,58 +93,59 @@ def main():
         return 2
     evidence = Path(sys.argv[1]).resolve()
     evidence.mkdir(parents=True, exist_ok=True)
-    original = {p: p.read_bytes() for p in (PRODUCT, ORACLE)}
-    for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
-        assert original[path].count(before.encode()) == count, name
-        assert FAILURE_TEXT[name], name
-    summary = []
-    for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
-        while True:
-            slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
-            if slots.returncode == 0:
-                break
-            if slots.returncode != 1:
-                raise RuntimeError(slots.stdout + slots.stderr)
-            time.sleep(5)
-        assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
-        mutated = original[path].replace(before.encode(), after.encode())
-        log = evidence / f'{name}.log'
-        print(f'RUN {name}', flush=True)
-        record = {'mutation': name, 'status': 'INVALID', 'before': before, 'after': after,
-                  'anchorCount': count, 'expectedFailureText': FAILURE_TEXT[name],
-                  'originalSha256': hashlib.sha256(original[path]).hexdigest()}
-        try:
-            path.write_bytes(mutated)
-            command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', PREFIX + pattern, '--']
-            if ignored:
-                command.append('--ignored')
-            with log.open('w') as output:
-                output.write(slots.stdout + slots.stderr)
-                output.flush()
-                proc = subprocess.run(command, cwd=ROOT / 'src', stdout=output,
-                                      stderr=subprocess.STDOUT, timeout=300)
-            output = log.read_text(errors='replace')
-            reason = invalid_reason(name, tests, proc.returncode, output)
-            record['exit'] = proc.returncode
-            if reason:
-                record['reason'] = reason
-                print(f'INVALID {name}: {reason}; {log}', flush=True)
-            else:
-                record.update(status='CONFIRMED', testsFailed=tests)
-                print(f'RED {name}: {len(tests)} targeted failures with expected diagnostics', flush=True)
-        except subprocess.TimeoutExpired:
-            record['reason'] = 'test timed out'
-            print(f'INVALID {name}: test timed out; {log}', flush=True)
-        finally:
-            assert path.read_bytes() == mutated, f'concurrent edit: {path}'
-            path.write_bytes(original[path])
-            assert path.read_bytes() == original[path]
-            summary.append(record)
-            (evidence / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-        if record['status'] != 'CONFIRMED':
-            return 1
-    print(f'CONFIRMED {len(summary)} compiled mutations; all original bytes restored', flush=True)
-    return 0
+    with mutating_sources(ROOT, [PRODUCT, ORACLE]) as snapshots:
+        original = {p: snapshots[p] for p in (PRODUCT, ORACLE)}
+        for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
+            assert original[path].count(before.encode()) == count, name
+            assert FAILURE_TEXT[name], name
+        summary = []
+        for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
+            while True:
+                slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True)
+                if slots.returncode == 0:
+                    break
+                if slots.returncode != 1:
+                    raise RuntimeError(slots.stdout + slots.stderr)
+                time.sleep(5)
+            assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
+            mutated = original[path].replace(before.encode(), after.encode())
+            log = evidence / f'{name}.log'
+            print(f'RUN {name}', flush=True)
+            record = {'mutation': name, 'status': 'INVALID', 'before': before, 'after': after,
+                      'anchorCount': count, 'expectedFailureText': FAILURE_TEXT[name],
+                      'originalSha256': hashlib.sha256(original[path]).hexdigest()}
+            try:
+                path.write_bytes(mutated)
+                command = ['cargo', 'test', '--offline', '-p', 'pilotdeck-gateway', '--lib', PREFIX + pattern, '--']
+                if ignored:
+                    command.append('--ignored')
+                with log.open('w') as output:
+                    output.write(slots.stdout + slots.stderr)
+                    output.flush()
+                    proc = subprocess.run(command, cwd=ROOT / 'src', stdout=output,
+                                          stderr=subprocess.STDOUT, timeout=300)
+                output = log.read_text(errors='replace')
+                reason = invalid_reason(name, tests, proc.returncode, output)
+                record['exit'] = proc.returncode
+                if reason:
+                    record['reason'] = reason
+                    print(f'INVALID {name}: {reason}; {log}', flush=True)
+                else:
+                    record.update(status='CONFIRMED', testsFailed=tests)
+                    print(f'RED {name}: {len(tests)} targeted failures with expected diagnostics', flush=True)
+            except subprocess.TimeoutExpired:
+                record['reason'] = 'test timed out'
+                print(f'INVALID {name}: test timed out; {log}', flush=True)
+            finally:
+                assert path.read_bytes() == mutated, f'concurrent edit: {path}'
+                path.write_bytes(original[path])
+                assert path.read_bytes() == original[path]
+                summary.append(record)
+                (evidence / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+            if record['status'] != 'CONFIRMED':
+                return 1
+        print(f'CONFIRMED {len(summary)} compiled mutations; all original bytes restored', flush=True)
+        return 0
 
 
 if __name__ == '__main__':

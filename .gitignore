@@ -41,3 +41,6 @@ node_modules/
 .claude/dev-launch.review.md
 # Rust 构建产物
 target/
+# Negative-control tree lock: a persistent flock file, never deleted while a
+# runner may still hold it (see tests/fixtures/negative_process.py).
+.negative-source.lock

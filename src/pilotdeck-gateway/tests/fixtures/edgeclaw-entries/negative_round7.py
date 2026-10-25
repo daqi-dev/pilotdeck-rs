@@ -7,13 +7,12 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
 path = root/'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/snapshots.rs'
-original = path.read_bytes()
 mutations = [
     ('lstat', 'fs::symlink_metadata(src).map_err(|e| crate::node_io::path_error(e, "lstat", src))?',
      'fs::symlink_metadata(src)?', 'round7_lstat_matches_real_ts_fallback'),
@@ -36,26 +35,30 @@ target = root/'src/target'
 assert Path(env.get('CARGO_TARGET_DIR', target)).resolve() == target.resolve(), 'one build directory only'
 env['CARGO_TARGET_DIR'] = str(target)
 rows = []
-try:
-    for name, old, new, test in mutations:
-        text = original.decode()
-        assert text.count(old) == 1, (name, text.count(old))
-        path.write_text(text.replace(old, new))
-        try:
-            slot = wait_for_slot(Path('/Users/da/ws/pilotdeck-rs/scripts/cargo-slots.sh'))
-            command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '--locked', '--offline',
-                       '-p', 'pilotdeck-gateway', '--lib', test, '--', '--nocapture']
-            run = run_owned(command, env=env, cwd=root, timeout=240)
-            log = slot.stdout + slot.stderr + '$ ' + ' '.join(command) + '\n' + run.stdout + run.stderr
-            (out/(name+'.log')).write_text(log)
-            assert run.returncode == 101 and 'test result: FAILED. 0 passed; 1 failed;' in log and 'could not compile' not in log, log[-2000:]
-            failures = [line for line in log.splitlines() if 'panicked at' in line or 'left:' in line or 'right:' in line]
-            rows.append({'name': name, 'test': test, 'exit': run.returncode, 'failures': failures})
-            print(name+': detected runtime assertion; exit 101; '+'; '.join(failures), flush=True)
-        finally:
-            path.write_bytes(original)
-finally:
-    path.write_bytes(original)
-    assert path.read_bytes() == original
-    (out/'summary.json').write_text(json.dumps({'results': rows, 'restoredSha256': hashlib.sha256(original).hexdigest()}, indent=2)+'\n')
+# Read the pristine bytes only under the same flock as every other in-place
+# negative runner, and reserve the Cargo slot before exposing each mutation.
+with mutating_sources(root, [path]) as snapshots:
+    original = snapshots[path]
+    try:
+        for name, old, new, test in mutations:
+            text = original.decode()
+            assert text.count(old) == 1, (name, text.count(old))
+            slot = wait_for_slot(root/'scripts/cargo-slots.sh')
+            path.write_text(text.replace(old, new))
+            try:
+                command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '--locked', '--offline',
+                           '-p', 'pilotdeck-gateway', '--lib', test, '--', '--nocapture']
+                run = run_owned(command, env=env, cwd=root, timeout=240)
+                log = slot.stdout + slot.stderr + '$ ' + ' '.join(command) + '\n' + run.stdout + run.stderr
+                (out/(name+'.log')).write_text(log)
+                assert run.returncode == 101 and 'test result: FAILED. 0 passed; 1 failed;' in log and 'could not compile' not in log, log[-2000:]
+                failures = [line for line in log.splitlines() if 'panicked at' in line or 'left:' in line or 'right:' in line]
+                rows.append({'name': name, 'test': test, 'exit': run.returncode, 'failures': failures})
+                print(name+': detected runtime assertion; exit 101; '+'; '.join(failures), flush=True)
+            finally:
+                path.write_bytes(original)
+    finally:
+        path.write_bytes(original)
+        assert path.read_bytes() == original
+        (out/'summary.json').write_text(json.dumps({'results': rows, 'restoredSha256': hashlib.sha256(original).hexdigest()}, indent=2)+'\n')
 assert len(rows) == len(mutations), 'partial negative suite'

@@ -593,6 +593,552 @@
       "diskUnchanged": true
     }
   ],
+  "idBatchAudit": [
+    {
+      "method": "getMemoryRecordsByIds",
+      "label": "valid+number",
+      "ids": [
+        "Feedback/feedback-95851f8a4e.md",
+        5
+      ],
+      "result": [
+        {
+          "name": "feedback",
+          "description": "feedback description",
+          "type": "feedback",
+          "scope": "project",
+          "projectId": "current_project",
+          "updatedAt": "2026-10-22T00:00:00.000Z",
+          "capturedAt": "2026-10-22T00:00:00.000Z",
+          "sourceSessionKey": "session-feedback",
+          "file": "feedback-95851f8a4e.md",
+          "relativePath": "Feedback/feedback-95851f8a4e.md",
+          "absolutePath": "$ROOT/memory/Feedback/feedback-95851f8a4e.md",
+          "content": "## Rule\nfeedback description",
+          "preview": "Rule feedback description"
+        }
+      ],
+      "diskUnchanged": true
+    },
+    {
+      "method": "getMemoryRecordsByIds",
+      "label": "null+number",
+      "ids": [
+        null,
+        5
+      ],
+      "result": [],
+      "diskUnchanged": true
+    },
+    {
+      "method": "getMemoryRecordsByIds",
+      "label": "empty",
+      "ids": [],
+      "result": [],
+      "diskUnchanged": true
+    },
+    {
+      "method": "deleteMemoryEntries",
+      "label": "valid+number",
+      "ids": [
+        "Feedback/feedback-95851f8a4e.md",
+        5
+      ],
+      "result": {
+        "error": "TypeError",
+        "message": "relativePath.replace is not a function"
+      },
+      "diskUnchanged": true
+    },
+    {
+      "method": "deleteMemoryEntries",
+      "label": "null+number",
+      "ids": [
+        null,
+        5
+      ],
+      "result": {
+        "error": "TypeError",
+        "message": "Cannot read properties of null (reading 'replace')"
+      },
+      "diskUnchanged": true
+    },
+    {
+      "method": "deleteMemoryEntries",
+      "label": "empty",
+      "ids": [],
+      "result": {
+        "mutatedIds": [],
+        "deletedProjectIds": []
+      },
+      "diskUnchanged": false,
+      "diskAfter": [
+        {
+          "relativePath": "control.sqlite",
+          "rows": [
+            {
+              "state_key": "indexingSettings",
+              "state_json": "{\"reasoningMode\":\"low\",\"autoIndexIntervalMinutes\":17,\"autoDreamIntervalMinutes\":33}",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "lastDreamAt",
+              "state_json": "\" 2026-before \"",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "lastDreamStatus",
+              "state_json": "\"success\"",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "lastDreamSummary",
+              "state_json": "\" before summary \"",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "null-state",
+              "state_json": "null",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "unrelated",
+              "state_json": "{\"keep\":true}",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "workspaceDir",
+              "state_json": "\" /fixture/workspace \"",
+              "updated_at": "<CLOCK>"
+            }
+          ],
+          "l0Rows": [
+            {
+              "l0_index_id": "retained-l0",
+              "session_key": "retained-session",
+              "timestamp": "2026-10-22T00:00:00.000Z",
+              "messages_json": "[{\"role\":\"user\",\"content\":\"retained\"}]",
+              "source": "openclaw",
+              "indexed": 0,
+              "created_at": "2026-10-22T00:00:00.000Z"
+            }
+          ],
+          "schema": [
+            {
+              "name": "idx_l0_sessions_pending",
+              "type": "index",
+              "sql": "CREATE INDEX idx_l0_sessions_pending ON l0_sessions(indexed, timestamp)"
+            },
+            {
+              "name": "idx_l0_sessions_session",
+              "type": "index",
+              "sql": "CREATE INDEX idx_l0_sessions_session ON l0_sessions(session_key)"
+            },
+            {
+              "name": "l0_sessions",
+              "type": "table",
+              "sql": "CREATE TABLE l0_sessions (\n        l0_index_id TEXT PRIMARY KEY,\n        session_key TEXT NOT NULL,\n        timestamp TEXT NOT NULL,\n        messages_json TEXT NOT NULL,\n        source TEXT NOT NULL,\n        indexed INTEGER NOT NULL DEFAULT 0,\n        created_at TEXT NOT NULL\n      )"
+            },
+            {
+              "name": "pipeline_state",
+              "type": "table",
+              "sql": "CREATE TABLE pipeline_state (\n        state_key TEXT PRIMARY KEY,\n        state_json TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      )"
+            }
+          ]
+        },
+        {
+          "relativePath": "global",
+          "dir": true
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "dir": true
+        },
+        {
+          "relativePath": "global/UserIdentityNotes",
+          "dir": true
+        },
+        {
+          "relativePath": "global/UserIdentityNotes/user-5d923d9eac.md",
+          "content": "---\nname: user\ndescription: user description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-user\n---\n## 身份背景\n- user profile\n"
+        },
+        {
+          "relativePath": "memory",
+          "dir": true
+        },
+        {
+          "relativePath": "memory/Feedback",
+          "dir": true
+        },
+        {
+          "relativePath": "memory/Feedback/feedback-95851f8a4e.md",
+          "content": "---\nname: feedback\ndescription: feedback description\ntype: feedback\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-feedback\n---\n## Rule\nfeedback description\n"
+        },
+        {
+          "relativePath": "memory/MEMORY.md",
+          "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [project](project.meta.md) — project description\n\n## Project Memory\n- [project](Project/project-3d8e09b7f2.md) — project description\n\n## Feedback Memory\n- [feedback](Feedback/feedback-95851f8a4e.md) — feedback description\n\n## User Memory\n- [user](../global/UserIdentityNotes/user-5d923d9eac.md) — user description\n"
+        },
+        {
+          "relativePath": "memory/Project",
+          "dir": true
+        },
+        {
+          "relativePath": "memory/Project/project-3d8e09b7f2.md",
+          "content": "---\nname: project\ndescription: project description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-project\n---\n## Summary\nproject summary\n"
+        },
+        {
+          "relativePath": "memory/project.meta.md",
+          "content": "---\nproject_id: current_project\nproject_name: project\ndescription: project description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nproject description\n"
+        }
+      ]
+    },
+    {
+      "method": "deprecateMemoryEntries",
+      "label": "valid+number",
+      "ids": [
+        "Feedback/feedback-95851f8a4e.md",
+        5
+      ],
+      "result": {
+        "error": "TypeError",
+        "message": "relativePath.replace is not a function"
+      },
+      "diskUnchanged": true
+    },
+    {
+      "method": "deprecateMemoryEntries",
+      "label": "null+number",
+      "ids": [
+        null,
+        5
+      ],
+      "result": {
+        "error": "TypeError",
+        "message": "Cannot read properties of null (reading 'replace')"
+      },
+      "diskUnchanged": true
+    },
+    {
+      "method": "deprecateMemoryEntries",
+      "label": "empty",
+      "ids": [],
+      "result": {
+        "mutatedIds": [],
+        "deletedProjectIds": []
+      },
+      "diskUnchanged": false,
+      "diskAfter": [
+        {
+          "relativePath": "control.sqlite",
+          "rows": [
+            {
+              "state_key": "indexingSettings",
+              "state_json": "{\"reasoningMode\":\"low\",\"autoIndexIntervalMinutes\":17,\"autoDreamIntervalMinutes\":33}",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "lastDreamAt",
+              "state_json": "\" 2026-before \"",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "lastDreamStatus",
+              "state_json": "\"success\"",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "lastDreamSummary",
+              "state_json": "\" before summary \"",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "null-state",
+              "state_json": "null",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "unrelated",
+              "state_json": "{\"keep\":true}",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "workspaceDir",
+              "state_json": "\" /fixture/workspace \"",
+              "updated_at": "<CLOCK>"
+            }
+          ],
+          "l0Rows": [
+            {
+              "l0_index_id": "retained-l0",
+              "session_key": "retained-session",
+              "timestamp": "2026-10-22T00:00:00.000Z",
+              "messages_json": "[{\"role\":\"user\",\"content\":\"retained\"}]",
+              "source": "openclaw",
+              "indexed": 0,
+              "created_at": "2026-10-22T00:00:00.000Z"
+            }
+          ],
+          "schema": [
+            {
+              "name": "idx_l0_sessions_pending",
+              "type": "index",
+              "sql": "CREATE INDEX idx_l0_sessions_pending ON l0_sessions(indexed, timestamp)"
+            },
+            {
+              "name": "idx_l0_sessions_session",
+              "type": "index",
+              "sql": "CREATE INDEX idx_l0_sessions_session ON l0_sessions(session_key)"
+            },
+            {
+              "name": "l0_sessions",
+              "type": "table",
+              "sql": "CREATE TABLE l0_sessions (\n        l0_index_id TEXT PRIMARY KEY,\n        session_key TEXT NOT NULL,\n        timestamp TEXT NOT NULL,\n        messages_json TEXT NOT NULL,\n        source TEXT NOT NULL,\n        indexed INTEGER NOT NULL DEFAULT 0,\n        created_at TEXT NOT NULL\n      )"
+            },
+            {
+              "name": "pipeline_state",
+              "type": "table",
+              "sql": "CREATE TABLE pipeline_state (\n        state_key TEXT PRIMARY KEY,\n        state_json TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      )"
+            }
+          ]
+        },
+        {
+          "relativePath": "global",
+          "dir": true
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "dir": true
+        },
+        {
+          "relativePath": "global/UserIdentityNotes",
+          "dir": true
+        },
+        {
+          "relativePath": "global/UserIdentityNotes/user-5d923d9eac.md",
+          "content": "---\nname: user\ndescription: user description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-user\n---\n## 身份背景\n- user profile\n"
+        },
+        {
+          "relativePath": "memory",
+          "dir": true
+        },
+        {
+          "relativePath": "memory/Feedback",
+          "dir": true
+        },
+        {
+          "relativePath": "memory/Feedback/feedback-95851f8a4e.md",
+          "content": "---\nname: feedback\ndescription: feedback description\ntype: feedback\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-feedback\n---\n## Rule\nfeedback description\n"
+        },
+        {
+          "relativePath": "memory/MEMORY.md",
+          "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [project](project.meta.md) — project description\n\n## Project Memory\n- [project](Project/project-3d8e09b7f2.md) — project description\n\n## Feedback Memory\n- [feedback](Feedback/feedback-95851f8a4e.md) — feedback description\n\n## User Memory\n- [user](../global/UserIdentityNotes/user-5d923d9eac.md) — user description\n"
+        },
+        {
+          "relativePath": "memory/Project",
+          "dir": true
+        },
+        {
+          "relativePath": "memory/Project/project-3d8e09b7f2.md",
+          "content": "---\nname: project\ndescription: project description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-project\n---\n## Summary\nproject summary\n"
+        },
+        {
+          "relativePath": "memory/project.meta.md",
+          "content": "---\nproject_id: current_project\nproject_name: project\ndescription: project description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nproject description\n"
+        }
+      ]
+    },
+    {
+      "method": "restoreMemoryEntries",
+      "label": "valid+number",
+      "ids": [
+        "Feedback/feedback-95851f8a4e.md",
+        5
+      ],
+      "result": {
+        "error": "TypeError",
+        "message": "relativePath.replace is not a function"
+      },
+      "diskUnchanged": true
+    },
+    {
+      "method": "restoreMemoryEntries",
+      "label": "null+number",
+      "ids": [
+        null,
+        5
+      ],
+      "result": {
+        "error": "TypeError",
+        "message": "Cannot read properties of null (reading 'replace')"
+      },
+      "diskUnchanged": true
+    },
+    {
+      "method": "restoreMemoryEntries",
+      "label": "empty",
+      "ids": [],
+      "result": {
+        "mutatedIds": [],
+        "deletedProjectIds": []
+      },
+      "diskUnchanged": false,
+      "diskAfter": [
+        {
+          "relativePath": "control.sqlite",
+          "rows": [
+            {
+              "state_key": "indexingSettings",
+              "state_json": "{\"reasoningMode\":\"low\",\"autoIndexIntervalMinutes\":17,\"autoDreamIntervalMinutes\":33}",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "lastDreamAt",
+              "state_json": "\" 2026-before \"",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "lastDreamStatus",
+              "state_json": "\"success\"",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "lastDreamSummary",
+              "state_json": "\" before summary \"",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "null-state",
+              "state_json": "null",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "unrelated",
+              "state_json": "{\"keep\":true}",
+              "updated_at": "<CLOCK>"
+            },
+            {
+              "state_key": "workspaceDir",
+              "state_json": "\" /fixture/workspace \"",
+              "updated_at": "<CLOCK>"
+            }
+          ],
+          "l0Rows": [
+            {
+              "l0_index_id": "retained-l0",
+              "session_key": "retained-session",
+              "timestamp": "2026-10-22T00:00:00.000Z",
+              "messages_json": "[{\"role\":\"user\",\"content\":\"retained\"}]",
+              "source": "openclaw",
+              "indexed": 0,
+              "created_at": "2026-10-22T00:00:00.000Z"
+            }
+          ],
+          "schema": [
+            {
+              "name": "idx_l0_sessions_pending",
+              "type": "index",
+              "sql": "CREATE INDEX idx_l0_sessions_pending ON l0_sessions(indexed, timestamp)"
+            },
+            {
+              "name": "idx_l0_sessions_session",
+              "type": "index",
+              "sql": "CREATE INDEX idx_l0_sessions_session ON l0_sessions(session_key)"
+            },
+            {
+              "name": "l0_sessions",
+              "type": "table",
+              "sql": "CREATE TABLE l0_sessions (\n        l0_index_id TEXT PRIMARY KEY,\n        session_key TEXT NOT NULL,\n        timestamp TEXT NOT NULL,\n        messages_json TEXT NOT NULL,\n        source TEXT NOT NULL,\n        indexed INTEGER NOT NULL DEFAULT 0,\n        created_at TEXT NOT NULL\n      )"
+            },
+            {
+              "name": "pipeline_state",
+              "type": "table",
+              "sql": "CREATE TABLE pipeline_state (\n        state_key TEXT PRIMARY KEY,\n        state_json TEXT NOT NULL,\n        updated_at TEXT NOT NULL\n      )"
+            }
+          ]
+        },
+        {
+          "relativePath": "global",
+          "dir": true
+        },
+        {
+          "relativePath": "global/UserIdentity",
+          "dir": true
+        },
+        {
+          "relativePath": "global/UserIdentityNotes",
+          "dir": true
+        },
+        {
+          "relativePath": "global/UserIdentityNotes/user-5d923d9eac.md",
+          "content": "---\nname: user\ndescription: user description\ntype: user\nscope: global\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-user\n---\n## 身份背景\n- user profile\n"
+        },
+        {
+          "relativePath": "memory",
+          "dir": true
+        },
+        {
+          "relativePath": "memory/Feedback",
+          "dir": true
+        },
+        {
+          "relativePath": "memory/Feedback/feedback-95851f8a4e.md",
+          "content": "---\nname: feedback\ndescription: feedback description\ntype: feedback\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-feedback\n---\n## Rule\nfeedback description\n"
+        },
+        {
+          "relativePath": "memory/MEMORY.md",
+          "content": "# EdgeClaw Memory\n\nUpdated: 2026-10-22T00:00:00.000Z\n\n## Current Project Meta\n- [project](project.meta.md) — project description\n\n## Project Memory\n- [project](Project/project-3d8e09b7f2.md) — project description\n\n## Feedback Memory\n- [feedback](Feedback/feedback-95851f8a4e.md) — feedback description\n\n## User Memory\n- [user](../global/UserIdentityNotes/user-5d923d9eac.md) — user description\n"
+        },
+        {
+          "relativePath": "memory/Project",
+          "dir": true
+        },
+        {
+          "relativePath": "memory/Project/project-3d8e09b7f2.md",
+          "content": "---\nname: project\ndescription: project description\ntype: project\nscope: project\nproject_id: current_project\nupdated_at: 2026-10-22T00:00:00.000Z\ncaptured_at: 2026-10-22T00:00:00.000Z\nsource_session_key: session-project\n---\n## Summary\nproject summary\n"
+        },
+        {
+          "relativePath": "memory/project.meta.md",
+          "content": "---\nproject_id: current_project\nproject_name: project\ndescription: project description\nstatus: in_progress\ncreated_at: 2026-10-22T00:00:00.000Z\nupdated_at: 2026-10-22T00:00:00.000Z\n---\n\n## Summary\nproject description\n"
+        }
+      ]
+    },
+    {
+      "method": "archiveTmpEntries",
+      "label": "valid+number",
+      "ids": [
+        "Feedback/feedback-95851f8a4e.md",
+        5
+      ],
+      "result": {
+        "error": "Error",
+        "message": "archive_tmp is not supported in EdgeClaw current-project memory mode"
+      },
+      "diskUnchanged": true
+    },
+    {
+      "method": "archiveTmpEntries",
+      "label": "null+number",
+      "ids": [
+        null,
+        5
+      ],
+      "result": {
+        "error": "Error",
+        "message": "archive_tmp is not supported in EdgeClaw current-project memory mode"
+      },
+      "diskUnchanged": true
+    },
+    {
+      "method": "archiveTmpEntries",
+      "label": "empty",
+      "ids": [],
+      "result": {
+        "error": "Error",
+        "message": "archive_tmp is not supported in EdgeClaw current-project memory mode"
+      },
+      "diskUnchanged": true
+    }
+  ],
   "concurrent": {
     "results": [
       {

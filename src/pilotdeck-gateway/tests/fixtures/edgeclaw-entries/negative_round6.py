@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Round 6: compile each regression, require its runtime test to fail, restore bytes."""
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
+import runpy
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 p = argparse.ArgumentParser()
 p.add_argument('--out', required=True)
@@ -19,8 +23,9 @@ out = Path(args.out).resolve()
 out.mkdir(parents=True, exist_ok=True)
 base = root/'src/pilotdeck-gateway/src/runtime/memory/edgeclaw'
 e, a, f, s = [base/path for path in ['storage/entries.rs', 'storage/accessors.rs', 'file_memory.rs', 'storage/snapshots.rs']]
-n, n1 = [Path(__file__).with_name(path) for path in ['negative.py', 'negative_fix1.py']]
-originals = {path: path.read_bytes() for path in [e, a, f, s, n, n1]}
+o = base/'storage/overview.rs'
+n, n1, n2 = [Path(__file__).with_name(path)
+             for path in ['negative.py', 'negative_fix1.py', 'negative_ids.py']]
 mutations = [
     ('global-panic', e, 'fn map_record(v: JsValue) -> Result<JsValue> {',
      'fn map_record(v: JsValue) -> Result<JsValue> { let _ = v.as_object().expect("file record");', 'malformed_global_record_returns_internal_error'),
@@ -62,48 +67,107 @@ mutations = [
     ('write-hook', s, 'h(SnapshotIoOperation::Write, p, None).map_err(|e| crate::node_io::path_error(e, "open", p))?;',
      'h(SnapshotIoOperation::Write, p, None)?;', 'write_hook_matches_real_node_error'),
 ]
-for path, test in [(n, 'test_negative'), (n1, 'test_negative_fix1')]:
-    mutations.extend([
-        (path.stem+'-unowned', path, 'run_owned(cmd,', '__import__("subprocess").run(cmd,', test),
-        (path.stem+'-slot', path, "wait_for_slot(root/'scripts/cargo-slots.sh')",
-         "__import__('subprocess').run([str(root/'scripts/cargo-slots.sh')])", test),
+# The runner meta-controls mutate the runner scripts themselves. They run
+# outside the tree lock on purpose: the invoked runner (test_negative_runners
+# -> negative*.py) acquires that same lock, so holding it here would deadlock.
+# They never touch the four product sources protected by the lock.
+runner_mutations = []
+for path, test, run_anchor, slot_anchor in [
+    (n, 'test_negative', 'run_owned(cmd,',
+     "wait_for_slot(root/'scripts/cargo-slots.sh')"),
+    (n1, 'test_negative_fix1', 'run_owned(cmd,',
+     "wait_for_slot(root/'scripts/cargo-slots.sh')"),
+    (n2, 'test_negative_ids',
+     'target.write_text(text.replace(old, new))\n            try:\n                run = run_owned(command,',
+     "assert text.count(old) == 1, (name, text.count(old))\n            slot = wait_for_slot(root/'scripts/cargo-slots.sh')"),
+]:
+    runner_mutations.extend([
+        (path.stem+'-unowned', path, run_anchor,
+         run_anchor.replace('run_owned(', '__import__("subprocess").run('), test),
+        (path.stem+'-slot', path, slot_anchor,
+         slot_anchor.replace("wait_for_slot(root/'scripts/cargo-slots.sh')",
+                             "__import__('subprocess').run([str(root/'scripts/cargo-slots.sh')])"),
+         test),
     ])
 rows = []
 env = os.environ.copy()
 target = root/'src/target'
 assert Path(env.get('CARGO_TARGET_DIR', target)).resolve() == target.resolve(), 'use this worktree src/target only'
 env['CARGO_TARGET_DIR'] = str(target)
-try:
+originals = {}
+runner_originals = {}
+
+
+def record(name, run, log):
+    (out/(name+'.log')).write_text(log)
+    failures = [line for line in log.splitlines()
+                if 'panicked at' in line or 'left:' in line or 'right:' in line
+                or 'unowned subprocess.run' in line]
+    rows.append({'name': name, 'exit': run.returncode, 'failures': failures})
+    print(f'{name}: detected at runtime; exit {run.returncode}; '+ '; '.join(failures)[:500],
+          flush=True)
+
+
+def runner_control(test):
+    # Execute the meta-control in this process, not as a child. The control
+    # runs the mutated runner through runpy; that runner re-enters
+    # mutating_sources for the same tree. TreeLock is reentrant for the owning
+    # thread, so the outer snapshot (which includes the runner bytes) stays
+    # authoritative and the inner runner cannot deadlock on a second flock.
+    script = str(Path(__file__).with_name('test_negative_runners.py'))
+    argv = [script, 'RunnerControls.' + test]
+    stream = io.StringIO()
+    previous = sys.argv
+    code = 0
+    with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
+        sys.argv = argv
+        try:
+            runpy.run_path(script, run_name='__main__')
+        except SystemExit as error:
+            code = error.code if isinstance(error.code, int) else 1
+        finally:
+            sys.argv = previous
+    return subprocess.CompletedProcess(argv, code, stream.getvalue(), '')
+
+
+# One lock and one baseline check cover product sources *and* the runner
+# scripts mutated by the meta-controls. The runner takes the same lock
+# reentrantly in this process (see runner_control), so holding the outer
+# snapshot cannot deadlock the inner runner.
+selected_runner_paths = [n, n1, n2] if not args.only or any(m[0] == args.only for m in runner_mutations) else []
+with mutating_sources(root, [e, a, f, s, o] + selected_runner_paths) as originals:
     for name, path, old, new, test in mutations:
+        if args.only and args.only != name:
+            continue
+        text = originals[path].decode()
+        assert text.count(old) == 1, (name, text.count(old))
+        # Reserve the Cargo slot before exposing the mutation.
+        slot = wait_for_slot(root/'scripts/cargo-slots.sh')
+        path.write_text(text.replace(old, new))
+        try:
+            command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '--locked', '--offline',
+                       '-p', 'pilotdeck-gateway', '--lib', test, '--', '--nocapture']
+            run = run_owned(command, env=env, cwd=root, timeout=180)
+            log = slot.stdout + slot.stderr + run.stdout + run.stderr
+            assert run.returncode == 101 and 'test result: FAILED. 0 passed; 1 failed;' in log and 'could not compile' not in log, log[-2000:]
+            record(name, run, log)
+        finally:
+            path.write_bytes(originals[path])
+    for name, path, old, new, test in runner_mutations:
         if args.only and args.only != name:
             continue
         text = originals[path].decode()
         assert text.count(old) == 1, (name, text.count(old))
         path.write_text(text.replace(old, new))
         try:
-            if path in [n, n1]:
-                command = [sys.executable, str(Path(__file__).with_name('test_negative_runners.py')), 'RunnerControls.'+test]
-                run = run_owned(command, env=env, cwd=root, timeout=30)
-                log = run.stdout + run.stderr
-                assert run.returncode and 'unowned subprocess.run' in log and 'FAILED (failures=1)' in log, log[-2000:]
-            else:
-                slot = wait_for_slot(root/'scripts/cargo-slots.sh')
-                command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml', '--locked', '--offline',
-                           '-p', 'pilotdeck-gateway', '--lib', test, '--', '--nocapture']
-                run = run_owned(command, env=env, cwd=root, timeout=180)
-                log = slot.stdout + slot.stderr + run.stdout + run.stderr
-                assert run.returncode == 101 and 'test result: FAILED. 0 passed; 1 failed;' in log and 'could not compile' not in log, log[-2000:]
-            (out/(name+'.log')).write_text(log)
-            failures = [line for line in log.splitlines() if 'panicked at' in line or 'left:' in line or 'right:' in line or 'unowned subprocess.run' in line]
-            rows.append({'name': name, 'exit': run.returncode, 'failures': failures})
-            print(f'{name}: detected at runtime; exit {run.returncode}; '+ '; '.join(failures)[:500], flush=True)
+            run = runner_control(test)
+            log = run.stdout + run.stderr
+            assert run.returncode and 'unowned subprocess.run' in log and 'FAILED (failures=1)' in log, log[-2000:]
+            record(name, run, log)
         finally:
             path.write_bytes(originals[path])
-finally:
-    for path, content in originals.items():
-        path.write_bytes(content)
-        assert path.read_bytes() == content
     (out/'summary.json').write_text(json.dumps({'results': rows, 'restoredSha256': {
-        str(path.relative_to(root)): hashlib.sha256(content).hexdigest() for path, content in originals.items()
+        str(path.relative_to(root)): hashlib.sha256(content).hexdigest()
+        for path, content in originals.items()
     }}, indent=2)+'\n')
-assert len(rows) == (1 if args.only else len(mutations)), 'empty or partial negative suite'
+assert len(rows) == (1 if args.only else len(mutations) + len(runner_mutations)), 'empty or partial negative suite'

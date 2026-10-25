@@ -84,3 +84,33 @@ export function auditIds(Repo:any,root:string){
  }
  r.close();return out;
 }
+
+// Multi-element batches. Each case gets a fresh seed: an empty-array mutation
+// succeeds and repairs manifests, so sharing one repository would make a later
+// "throws before any write" case look dirty for the wrong reason.
+export function auditIdBatches(Repo:any,root:string){
+ const cases=[
+  {label:'valid+number',ids:['Feedback/feedback-95851f8a4e.md',5]},
+  {label:'null+number',ids:[null,5]},
+  {label:'empty',ids:[]},
+ ];
+ const out=[];
+ for(const method of ['getMemoryRecordsByIds','deleteMemoryEntries','deprecateMemoryEntries','restoreMemoryEntries','archiveTmpEntries']){
+  for(const c of cases){
+   const caseRoot=join(root,method+'-'+c.label.replace('+','-'));
+   fs.mkdirSync(caseRoot,{recursive:true});
+   const r=open(Repo,caseRoot);seed(r);const before=JSON.stringify(disk(caseRoot));
+   let result;
+   try{result=method==='archiveTmpEntries'?r[method]({ids:c.ids}):r[method](c.ids);}
+   catch(e:any){result={error:e.code??e.name,message:e.message};}
+   const after=disk(caseRoot);
+   const record:any={method,label:c.label,ids:c.ids,result:clean(result,caseRoot),diskUnchanged:JSON.stringify(after)===before};
+   // An empty batch still repairs manifests in TS. Record the whole residual
+   // tree so Rust must write the same bytes, not merely "touched the disk".
+   if(!record.diskUnchanged)record.diskAfter=clean(after,caseRoot);
+   out.push(record);
+   r.close();
+  }
+ }
+ return out;
+}

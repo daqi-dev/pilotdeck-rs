@@ -13,6 +13,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources
+
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
@@ -92,47 +95,48 @@ if selected:
 env = os.environ.copy()
 env.setdefault('CARGO_TARGET_DIR', str(root / 'target'))
 summary = []
-for name, filename, old, new in mutations:
-    path = source / filename
-    original = path.read_bytes()
-    before = hashlib.sha256(original).hexdigest()
-    content = original.decode()
-    expected = 2 if name in ['reject-live-reentry', 'deny-dispose-detached'] else 1
-    assert content.count(old) == expected, (name, content.count(old))
-    changed = new.join(content.rsplit(old, 1)) if name == 'deny-dispose-detached' else content.replace(old, new, 1)
-    (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(content.splitlines(True), changed.splitlines(True), fromfile=filename, tofile=filename)))
-    try:
-        # Required resource check; do not interpret the output as a concurrency
-        # guarantee if the sandbox denies ps. Its raw output is retained.
-        while True:
-            slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True)
-            (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
-            if slots.returncode != 1:
-                assert slots.returncode == 0
-                break
-            time.sleep(5)
-        path.write_text(changed)
-        # Each mutation names the test whose assertion it must turn red.
-        test = {
-            'late-cross-thread-response': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
-            'cross-thread-bulk': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
-            'reject-window-final-delete-removed': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
-            'reject-window-delete-before-loop': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
-            'injected-port-ignored': 'interaction_injected_options_share_the_supplied_components',
-            'injected-grants-ignored': 'interaction_injected_options_share_the_supplied_components',
-            'injected-elicitation-ignored': 'interaction_injected_options_share_the_supplied_components',
-        }.get(name, 'interaction_real_ts_stepwise_oracle')
-        result = subprocess.run(['cargo','test','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',
-            f'runtime::interaction::tests::{test}'], cwd=root, env=env, capture_output=True, text=True)
-        log = result.stdout + result.stderr
-        (out / f'{name}.log').write_text(log)
-        killed = result.returncode == 101 and f'{test} ... FAILED' in log and ('assertion `left == right` failed' in log or 'late response:' in log)
-        failure = next((line.strip() for line in log.splitlines() if 'assertion `left == right` failed' in line or 'late response:' in line), '')
-        summary.append(dict(name=name, killed=killed, returncode=result.returncode, failure=failure, sourceSha256=before))
-        print(f'{name}: {"KILLED" if killed else "NOT KILLED"} rc={result.returncode} {failure}', flush=True)
-        assert killed, f'{name}: compile/signal failure or surviving mutant is not evidence'
-    finally:
-        path.write_bytes(original)
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == before
-        (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
-print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte',flush=True)
+with mutating_sources(root, sorted({source / filename for _, filename, _, _ in mutations})) as snapshots:
+    for name, filename, old, new in mutations:
+        path = source / filename
+        original = snapshots[path]
+        before = hashlib.sha256(original).hexdigest()
+        content = original.decode()
+        expected = 2 if name in ['reject-live-reentry', 'deny-dispose-detached'] else 1
+        assert content.count(old) == expected, (name, content.count(old))
+        changed = new.join(content.rsplit(old, 1)) if name == 'deny-dispose-detached' else content.replace(old, new, 1)
+        (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(content.splitlines(True), changed.splitlines(True), fromfile=filename, tofile=filename)))
+        try:
+            # Required resource check; do not interpret the output as a concurrency
+            # guarantee if the sandbox denies ps. Its raw output is retained.
+            while True:
+                slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True)
+                (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
+                if slots.returncode != 1:
+                    assert slots.returncode == 0
+                    break
+                time.sleep(5)
+            path.write_text(changed)
+            # Each mutation names the test whose assertion it must turn red.
+            test = {
+                'late-cross-thread-response': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
+                'cross-thread-bulk': 'interaction_reject_cross_thread_response_and_bulk_have_one_winner',
+                'reject-window-final-delete-removed': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
+                'reject-window-delete-before-loop': 'interaction_register_racing_reject_window_matches_ts_map_semantics',
+                'injected-port-ignored': 'interaction_injected_options_share_the_supplied_components',
+                'injected-grants-ignored': 'interaction_injected_options_share_the_supplied_components',
+                'injected-elicitation-ignored': 'interaction_injected_options_share_the_supplied_components',
+            }.get(name, 'interaction_real_ts_stepwise_oracle')
+            result = subprocess.run(['cargo','test','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',
+                f'runtime::interaction::tests::{test}'], cwd=root, env=env, capture_output=True, text=True)
+            log = result.stdout + result.stderr
+            (out / f'{name}.log').write_text(log)
+            killed = result.returncode == 101 and f'{test} ... FAILED' in log and ('assertion `left == right` failed' in log or 'late response:' in log)
+            failure = next((line.strip() for line in log.splitlines() if 'assertion `left == right` failed' in line or 'late response:' in line), '')
+            summary.append(dict(name=name, killed=killed, returncode=result.returncode, failure=failure, sourceSha256=before))
+            print(f'{name}: {"KILLED" if killed else "NOT KILLED"} rc={result.returncode} {failure}', flush=True)
+            assert killed, f'{name}: compile/signal failure or surviving mutant is not evidence'
+        finally:
+            path.write_bytes(original)
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+            (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
+    print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte',flush=True)

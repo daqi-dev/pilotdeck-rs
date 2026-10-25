@@ -390,6 +390,7 @@ fn replay(root: &Path, c: &Value) -> Value {
             .iter()
             .map(|s| JsString::from(s.as_str()))
             .collect::<Vec<_>>();
+        let selected_ids = JsValue::Array(selected.iter().cloned().map(JsValue::String).collect());
         let input = if op["input"].is_object() {
             obj(&op["input"])
         } else {
@@ -421,9 +422,8 @@ fn replay(root: &Path, c: &Value) -> Value {
                 peer.close()?;
                 Ok(JsValue::Null)
             }
-            "records" => {
-                repo.get_memory_records_by_ids(&selected, op["maxLines"].as_f64().unwrap_or(80.0))
-            }
+            "records" => repo
+                .get_memory_records_by_ids(&selected_ids, op["maxLines"].as_f64().unwrap_or(80.0)),
             "editMemoryEntry" => {
                 let mut input = input.clone();
                 if op["select"].is_array() {
@@ -431,9 +431,9 @@ fn replay(root: &Path, c: &Value) -> Value {
                 }
                 repo.edit_memory_entry(&input)
             }
-            "deleteMemoryEntries" => repo.delete_memory_entries(&selected),
-            "deprecateMemoryEntries" => repo.deprecate_memory_entries(&selected),
-            "restoreMemoryEntries" => repo.restore_memory_entries(&selected),
+            "deleteMemoryEntries" => repo.delete_memory_entries(&selected_ids),
+            "deprecateMemoryEntries" => repo.deprecate_memory_entries(&selected_ids),
+            "restoreMemoryEntries" => repo.restore_memory_entries(&selected_ids),
             "getProjectMeta" => repo.get_project_meta(),
             "ensureProjectMeta" => repo.ensure_project_meta(&input),
             "editProjectMeta" => repo.edit_project_meta(&input),
@@ -616,6 +616,94 @@ fn malformed_archive_ids_match_real_ts() {
     }
     assert_eq!(n, 11);
     r.close().unwrap();
+}
+#[test]
+fn malformed_batch_ids_match_real_ts() {
+    let o = oracle();
+    let s = Scratch::new();
+    seed_rust(&s.0, false);
+    let r = open(&s.0, false);
+    let before = disk(&s.0);
+    let mut n = 0;
+    for audit in o["idAudit"].as_array().unwrap() {
+        let method = audit["method"].as_str().unwrap();
+        if !matches!(
+            method,
+            "getMemoryRecordsByIds"
+                | "deleteMemoryEntries"
+                | "deprecateMemoryEntries"
+                | "restoreMemoryEntries"
+        ) {
+            continue;
+        }
+        let id = js(&audit["input"])
+            .get("id")
+            .cloned()
+            .unwrap_or(JsValue::Undefined);
+        let ids = if audit["container"] == true {
+            id
+        } else {
+            JsValue::Array(vec![id])
+        };
+        let actual = match method {
+            "getMemoryRecordsByIds" => r.get_memory_records_by_ids(&ids, 80.0),
+            "deleteMemoryEntries" => r.delete_memory_entries(&ids),
+            "deprecateMemoryEntries" => r.deprecate_memory_entries(&ids),
+            _ => r.restore_memory_entries(&ids),
+        }
+        .map(value)
+        .unwrap_or_else(error);
+        assert_eq!(actual, audit["result"], "{audit}");
+        assert_eq!(
+            disk(&s.0) == before,
+            audit["diskUnchanged"].as_bool().unwrap()
+        );
+        n += 1;
+    }
+    assert_eq!(n, 44);
+    r.close().unwrap();
+}
+#[test]
+fn malformed_batch_ids_multi_element_match_real_ts() {
+    let o = oracle();
+    let mut n = 0;
+    for audit in o["idBatchAudit"].as_array().unwrap() {
+        // A fresh seed per case: `[]` mutations repair manifests, so a shared
+        // repository would make a later no-write case look dirty.
+        let s = Scratch::new();
+        seed_rust(&s.0, false);
+        let r = open(&s.0, false);
+        let before = disk(&s.0);
+        let ids = js(&audit["ids"]);
+        let actual = match audit["method"].as_str().unwrap() {
+            "getMemoryRecordsByIds" => r.get_memory_records_by_ids(&ids, 80.0),
+            "deleteMemoryEntries" => r.delete_memory_entries(&ids),
+            "deprecateMemoryEntries" => r.deprecate_memory_entries(&ids),
+            "restoreMemoryEntries" => r.restore_memory_entries(&ids),
+            "archiveTmpEntries" => {
+                let mut input = JsObject::new();
+                input.insert("ids".into(), ids.clone());
+                r.archive_tmp_entries(&input)
+            }
+            method => panic!("unexpected method {method}"),
+        }
+        .map(value)
+        .unwrap_or_else(error);
+        assert_eq!(clean(&actual, &s.0), audit["result"], "{audit}");
+        assert_eq!(
+            disk(&s.0) == before,
+            audit["diskUnchanged"].as_bool().unwrap(),
+            "{audit}"
+        );
+        if let Some(expected) = audit.get("diskAfter") {
+            // `[]` mutations repair the manifest: compare the complete
+            // residual tree, not only the boolean "disk changed".
+            assert_eq!(clean(&disk(&s.0), &s.0), *expected, "{audit}");
+        }
+        n += 1;
+        r.close().unwrap();
+    }
+    assert_eq!(n, 15);
 }
 #[test]
 fn ts_entries_and_failure_residue_replay() {
@@ -931,7 +1019,7 @@ fn entry_paths_reject_escape_without_touching_outside_files() {
                 } else {
                     path.clone()
                 };
-                let ids = [JsString::from(id.clone())];
+                let ids = JsValue::Array(vec![JsValue::from(id.as_str())]);
                 let before = disk(&scratch.0);
                 let result = match operation {
                     "read" => r.get_memory_records_by_ids(&ids, 80.0),

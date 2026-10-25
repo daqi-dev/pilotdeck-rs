@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/accessors.rs'
@@ -101,23 +101,25 @@ cases = [
     # A verifier timeout must signal the whole owned group, not just the leader.
     ('group-kill', tests, '            let group = rustix::process::kill_process_group(\n                rustix::process::Pid::from_raw(child.id() as i32).expect("child pid"),\n                rustix::process::Signal::KILL,\n            );', '            let group: std::io::Result<()> = Ok(());', 'subprocess_timeout_kills_the_whole_process_group'),
 ]
-originals = {p: p.read_bytes() for _, p, _, _, _ in cases}
-try:
-    for name, path, before, after, test in cases:
-        text = originals[path].decode()
-        assert text.count(before) == 1, (name, text.count(before))
-        path.write_text(text.replace(before, after))
-        try:
+with mutating_sources(root, sorted({p for _, p, _, _, _ in cases})) as originals:
+    try:
+        for name, path, before, after, test in cases:
+            text = originals[path].decode()
+            assert text.count(before) == 1, (name, text.count(before))
+            # Reserve the Cargo slot before exposing the mutation.
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-            cmd = ['cargo','test','--manifest-path',str(root/'src/Cargo.toml'),'-p','pilotdeck-gateway','--test','edgeclaw_accessors',test,'--','--exact']
-            run = run_owned(cmd, cwd=root, timeout=180)
-            log = run.stdout+run.stderr
-            (out/f'{name}.log').write_text(slots.stdout+slots.stderr+log)
-            assert run.returncode != 0 and 'test result: FAILED.' in log and 'could not compile' not in log, name+' did not fail a runtime assertion'
-            lines = [line for line in log.splitlines() if 'failed:' in line or 'panicked at' in line or 'test result:' in line]
-            print(name+': '+ ' | '.join(lines),flush=True)
-        finally:
-            path.write_bytes(originals[path])
-finally:
-    for path, data in originals.items():
-        assert path.read_bytes() == data, 'restoration failed: '+str(path)
+            path.write_text(text.replace(before, after))
+            try:
+                cmd = ['cargo','test','--manifest-path',str(root/'src/Cargo.toml'),'-p','pilotdeck-gateway','--test','edgeclaw_accessors',test,'--','--exact']
+                run = run_owned(cmd, cwd=root, timeout=180)
+                log = run.stdout+run.stderr
+                (out/f'{name}.log').write_text(slots.stdout+slots.stderr+log)
+                assert run.returncode != 0 and 'test result: FAILED.' in log and 'could not compile' not in log, name+' did not fail a runtime assertion'
+                lines = [line for line in log.splitlines() if 'failed:' in line or 'panicked at' in line or 'test result:' in line]
+                print(name+': '+ ' | '.join(lines),flush=True)
+            finally:
+                path.write_bytes(originals[path])
+    finally:
+        for path, data in originals.items():
+            path.write_bytes(data)
+            assert path.read_bytes() == data, 'restoration failed: '+str(path)

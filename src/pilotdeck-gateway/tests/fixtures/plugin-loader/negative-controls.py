@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 ROOT = Path(__file__).resolve().parents[5]
 OUTPUT = Path(sys.argv[1]).resolve()
@@ -425,50 +425,51 @@ selected = set(sys.argv[2:])
 if selected:
     assert selected <= {c[0] for c in CASES}, selected
     CASES = [c for c in CASES if c[0] in selected]
-originals = {p:(ROOT/p).read_bytes() for p in {c[1] for c in CASES}}
-assert all(originals[p].decode().count(old) == 1 and old != new for _,p,old,new,_ in CASES), 'mutation anchor must be unique'
-env = dict(os.environ)
-# The generator's guard was already run twice; replay metadata validation stays
-# enabled, but avoid 650 baseline git subprocesses after every recompilation.
-env.pop('PDRS_BASELINE', None)
-summary = []
-try:
-    for name, relative, old, new, test in CASES:
-        path = ROOT/relative
-        assert path.read_bytes() == originals[relative], f'concurrent modification: {relative}'
-        gate = wait_for_slot(ROOT/'scripts/cargo-slots.sh', interval=5)
-        (OUTPUT/(name+'.slots.log')).write_text(gate.stdout + gate.stderr)
-        path.write_text(originals[relative].decode().replace(old,new))
-        try:
-            if ':' in test:
-                target, test_name = test.split(':', 1)
-                if target == 'lib':
-                    target_args = ['--lib']
-                    # Unit tests already have a full module path if `::` appears.
-                    if '::' not in test_name:
-                        test_name = 'runtime::plugins::tests::' + test_name
+with mutating_sources(ROOT, [ROOT/p for p in {c[1] for c in CASES}]) as snapshots:
+    originals = {p: snapshots[ROOT/p] for p in {c[1] for c in CASES}}
+    assert all(originals[p].decode().count(old) == 1 and old != new for _,p,old,new,_ in CASES), 'mutation anchor must be unique'
+    env = dict(os.environ)
+    # The generator's guard was already run twice; replay metadata validation stays
+    # enabled, but avoid 650 baseline git subprocesses after every recompilation.
+    env.pop('PDRS_BASELINE', None)
+    summary = []
+    try:
+        for name, relative, old, new, test in CASES:
+            path = ROOT/relative
+            assert path.read_bytes() == originals[relative], f'concurrent modification: {relative}'
+            gate = wait_for_slot(ROOT/'scripts/cargo-slots.sh', interval=5)
+            (OUTPUT/(name+'.slots.log')).write_text(gate.stdout + gate.stderr)
+            path.write_text(originals[relative].decode().replace(old,new))
+            try:
+                if ':' in test:
+                    target, test_name = test.split(':', 1)
+                    if target == 'lib':
+                        target_args = ['--lib']
+                        # Unit tests already have a full module path if `::` appears.
+                        if '::' not in test_name:
+                            test_name = 'runtime::plugins::tests::' + test_name
+                    else:
+                        target_args = ['--test', {'regressions':'plugin_regressions','runtime':'plugin_runtime','traversal':'plugin_traversal'}[target]]
                 else:
-                    target_args = ['--test', {'regressions':'plugin_regressions','runtime':'plugin_runtime','traversal':'plugin_traversal'}[target]]
-            else:
-                target_args, test_name = ['--test','plugin_loader'], test
-            result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact','--test-threads=4'],cwd=ROOT,env=env,timeout=600 if test_name == 'plugin_markdown_real_node_modules' else 180)
-            (OUTPUT/(name+'.log')).write_text(result.stdout + result.stderr)
-            output = (OUTPUT/(name+'.log')).read_text()
-            markers = EXPECTED_FAILURES[name]
-            matched_markers = all(marker in output for marker in markers)
-            target_failed = f'test {test_name} ... FAILED' in output
-            killed = result.returncode != 0 and 'test result: FAILED.' in output and 'error[E' not in output and matched_markers and target_failed
-            row = {'mutation':name,'test':test,'exit':result.returncode,'killed':killed,'expectedMarkers':markers,'matchedMarkers':matched_markers,'targetFailed':target_failed,'failure':next((line for line in output.splitlines() if 'failed:' in line or "panicked at" in line),''),'summary':next((line for line in output.splitlines() if line.startswith('test result:')), '')}
-            summary.append(row)
-            print(json.dumps(row), flush=True)
-            # Finish the suite even if a case is not killed; report all failures
-            # together below, without counting infrastructure failures as kills.
-        finally:
-            path.write_bytes(originals[relative])
-finally:
-    assert all((ROOT/p).read_bytes() == b for p,b in originals.items()), 'implementation bytes not restored'
-    counts = {'configured':len(CASES), 'attempted':len(summary), 'killed':sum(row['killed'] for row in summary)}
-    print(json.dumps({'counts':counts}), flush=True)
-    (OUTPUT/'summary.json').write_text(json.dumps({'counts':counts,'results':summary,'restoredSha256':{p:hashlib.sha256(b).hexdigest() for p,b in originals.items()}},indent=2)+'\n')
+                    target_args, test_name = ['--test','plugin_loader'], test
+                result = run_owned(['cargo','test','--manifest-path',str(ROOT/'src/Cargo.toml'),'-p','pilotdeck-gateway',*target_args,test_name,'--','--exact','--test-threads=4'],cwd=ROOT,env=env,timeout=600 if test_name == 'plugin_markdown_real_node_modules' else 180)
+                (OUTPUT/(name+'.log')).write_text(result.stdout + result.stderr)
+                output = (OUTPUT/(name+'.log')).read_text()
+                markers = EXPECTED_FAILURES[name]
+                matched_markers = all(marker in output for marker in markers)
+                target_failed = f'test {test_name} ... FAILED' in output
+                killed = result.returncode != 0 and 'test result: FAILED.' in output and 'error[E' not in output and matched_markers and target_failed
+                row = {'mutation':name,'test':test,'exit':result.returncode,'killed':killed,'expectedMarkers':markers,'matchedMarkers':matched_markers,'targetFailed':target_failed,'failure':next((line for line in output.splitlines() if 'failed:' in line or "panicked at" in line),''),'summary':next((line for line in output.splitlines() if line.startswith('test result:')), '')}
+                summary.append(row)
+                print(json.dumps(row), flush=True)
+                # Finish the suite even if a case is not killed; report all failures
+                # together below, without counting infrastructure failures as kills.
+            finally:
+                path.write_bytes(originals[relative])
+    finally:
+        assert all((ROOT/p).read_bytes() == b for p,b in originals.items()), 'implementation bytes not restored'
+        counts = {'configured':len(CASES), 'attempted':len(summary), 'killed':sum(row['killed'] for row in summary)}
+        print(json.dumps({'counts':counts}), flush=True)
+        (OUTPUT/'summary.json').write_text(json.dumps({'counts':counts,'results':summary,'restoredSha256':{p:hashlib.sha256(b).hexdigest() for p,b in originals.items()}},indent=2)+'\n')
 
-assert len(summary) == len(CASES) and all(row['killed'] for row in summary), 'negative controls not all killed; inspect summary.json and individual logs'
+    assert len(summary) == len(CASES) and all(row['killed'] for row in summary), 'negative controls not all killed; inspect summary.json and individual logs'

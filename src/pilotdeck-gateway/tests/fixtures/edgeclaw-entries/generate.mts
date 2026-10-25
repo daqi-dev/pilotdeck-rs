@@ -8,7 +8,7 @@ import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {bindSourceTree,sourceClosureSha256} from '../../baseline_source_guard.mjs';
 import {runConcurrent} from './concurrency.mts';
-import {source,scenarios,freezeClock,open,seed,disk,observe,writable,auditIds} from './observe.mts';
+import {source,scenarios,freezeClock,open,seed,disk,observe,writable,auditIds,auditIdBatches} from './observe.mts';
 assert.equal(process.version,'v22.22.0');assert.equal(Intl.DateTimeFormat().resolvedOptions().locale,'en-US');assert.ok(process.env.PDRS_BASELINE);assert.ok(process.argv[2]);
 const baseline=resolve(process.env.PDRS_BASELINE!),out=resolve(process.argv[2]!);
 const commit='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
@@ -20,5 +20,6 @@ const cases=[];
 for(const scenario of scenarios){const root=join(scratch,scenario.name);mkdirSync(root,{recursive:true});const r=open(MemoryRepository,root,scenario.general);seed(r);r.close();const seedDisk=disk(root),database=readFileSync(join(root,'control.sqlite')).toString('base64');const observations=observe(MemoryRepository,root,scenario);if(scenario.name.endsWith('-fail'))assert.ok(observations.at(-1).result?.error,scenario.name+' did not exercise its failure');cases.push({...scenario,seedDisk,database,observations});writable(root);}
 const concurrent=await runConcurrent(MemoryRepository,baseline,join(scratch,'concurrent'));
 const idAudit=auditIds(MemoryRepository,join(scratch,'id-audit'));
-const oracle={idAudit,concurrent,sourceCommit:provenance.ref,sourceSha256,nodeVersion:process.version,cases};
+const idBatchAudit=auditIdBatches(MemoryRepository,join(scratch,'id-batches'));
+const oracle={idAudit,idBatchAudit,concurrent,sourceCommit:provenance.ref,sourceSha256,nodeVersion:process.version,cases};
 const bytes=JSON.stringify(oracle,null,2)+'\n';mkdirSync(out,{recursive:true});writeFileSync(join(out,'oracle.json'),bytes);console.log(`sha256 ${createHash('sha256').update(bytes).digest('hex')}; ${cases.length} scenarios; ${cases.reduce((n,c)=>n+c.ops.length,0)} observations`);rmSync(scratch,{recursive:true,force:true});

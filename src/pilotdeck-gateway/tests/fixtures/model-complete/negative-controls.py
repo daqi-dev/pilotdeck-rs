@@ -19,6 +19,12 @@ Recovery protocol (concurrency P2):
   primary probe; when the sandbox denies `ps`, `pgrep -x` for the known cargo
   entry points is the fallback, and a failure of both probes is fatal (never
   treated as zero).
+- Every in-place run also enters `negative_process.mutating_sources`: it takes
+  the shared `.negative-source.lock` and refuses to start unless the whole
+  gateway product tree matches HEAD, so a residue from any SIGKILLed control
+  (not just this script) blocks the next run instead of being adopted as the
+  original. `--recover` is the deliberate exception: it restores a recorded
+  mutant whose hash matches its own sidecar, not HEAD.
 - Cargo runs in its own process group; on timeout the whole group is signalled
   (SIGTERM, then SIGKILL) and reaped before the source is restored. The group
   currently running is tracked, so a SIGTERM/SIGINT/SIGHUP while a test child is
@@ -38,6 +44,9 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
 HTTP = ROOT / "src/pilotdeck-gateway/src/runtime/model/http.rs"
@@ -894,10 +903,11 @@ def self_test_hold() -> int:
         raise SystemExit(f"negctl: hold anchor count {text.count(anchor)}")
     mutated = text.replace(anchor, anchor + " (negctl recovery hold)", 1)
     wait_for_slot()
-    begin_mutation("self-test-hold", mutated.encode())
-    print(f"HELD sha256={sha256(HTTP.read_bytes())}", flush=True)
-    while True:
-        time.sleep(1)
+    with mutating_sources(ROOT, [HTTP]):
+        begin_mutation("self-test-hold", mutated.encode())
+        print(f"HELD sha256={sha256(HTTP.read_bytes())}", flush=True)
+        while True:
+            time.sleep(1)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -923,57 +933,61 @@ def main(argv: list[str] | None = None) -> int:
         return self_test_hold()
 
     install_signal_handlers()
-    baseline_sha = sha256(HTTP.read_bytes())
-    failures: list[str] = []
-    for name, old, new, test_name in CONTROLS:
-        text = HTTP.read_text()
-        anchor_count = text.count(old)
-        if anchor_count != 1:
-            failures.append(f"{name}: mutation anchor count {anchor_count}")
-            continue
-        mutated = text.replace(old, new, 1)
-        if mutated == text:
-            failures.append(f"{name}: mutation did not change source")
-            continue
-        # Slot check must precede the mutation so a waiting script never leaves
-        # mutated source visible to another cargo invocation in this worktree.
-        wait_for_slot()
-        begin_mutation(name, mutated.encode())
-        try:
-            code, output = run_test(test_name, name in LIB_TESTS)
-            caught = "test result: FAILED" in output and code != 0
-            target = TARGET_CASE.get(name)
-            if caught and target is not None:
-                caught = target in output
-            print(f"{name}: {'caught' if caught else 'NOT CAUGHT'} (exit {code})")
-            if target is not None:
-                print(f"  target case in output: {target in output}")
-            if caught and target is not None:
-                # Keep the real target FAILED / panic lines in the log; a bare
-                # "caught" is not by itself evidence of which assertion failed.
-                lines = output.splitlines()
-                for index, line in enumerate(lines):
-                    if target in line or "panicked at" in line:
-                        print("  " + line.strip())
-                        if "panicked at" in line:
-                            for extra in lines[index + 1 : index + 5]:
-                                print("  " + extra.strip())
-            if not caught:
-                tail = "\n".join(output.splitlines()[-25:])
-                print(tail)
-                failures.append(f"{name}: mutated build did not fail the assertion")
-        finally:
-            restored = restore_active()
-        if not restored:
-            failures.append(f"{name}: restore refused; recovery state kept")
-            break
-    if sha256(HTTP.read_bytes()) != baseline_sha:
-        failures.append("final source SHA-256 does not match the pre-run bytes")
-    if failures:
-        print("NEGATIVE CONTROLS FAILED:", *failures, sep="\n  ")
-        return 1
-    print(f"NEGATIVE CONTROLS PASS ({len(CONTROLS)}/{len(CONTROLS)})")
-    return 0
+    # The model-complete controls write the same product tree as every
+    # other in-place negative control: take the shared flock and prove
+    # every product byte is HEAD before the first mutation.
+    with mutating_sources(ROOT, [HTTP]):
+        baseline_sha = sha256(HTTP.read_bytes())
+        failures: list[str] = []
+        for name, old, new, test_name in CONTROLS:
+            text = HTTP.read_text()
+            anchor_count = text.count(old)
+            if anchor_count != 1:
+                failures.append(f"{name}: mutation anchor count {anchor_count}")
+                continue
+            mutated = text.replace(old, new, 1)
+            if mutated == text:
+                failures.append(f"{name}: mutation did not change source")
+                continue
+            # Slot check must precede the mutation so a waiting script never leaves
+            # mutated source visible to another cargo invocation in this worktree.
+            wait_for_slot()
+            begin_mutation(name, mutated.encode())
+            try:
+                code, output = run_test(test_name, name in LIB_TESTS)
+                caught = "test result: FAILED" in output and code != 0
+                target = TARGET_CASE.get(name)
+                if caught and target is not None:
+                    caught = target in output
+                print(f"{name}: {'caught' if caught else 'NOT CAUGHT'} (exit {code})")
+                if target is not None:
+                    print(f"  target case in output: {target in output}")
+                if caught and target is not None:
+                    # Keep the real target FAILED / panic lines in the log; a bare
+                    # "caught" is not by itself evidence of which assertion failed.
+                    lines = output.splitlines()
+                    for index, line in enumerate(lines):
+                        if target in line or "panicked at" in line:
+                            print("  " + line.strip())
+                            if "panicked at" in line:
+                                for extra in lines[index + 1 : index + 5]:
+                                    print("  " + extra.strip())
+                if not caught:
+                    tail = "\n".join(output.splitlines()[-25:])
+                    print(tail)
+                    failures.append(f"{name}: mutated build did not fail the assertion")
+            finally:
+                restored = restore_active()
+            if not restored:
+                failures.append(f"{name}: restore refused; recovery state kept")
+                break
+        if sha256(HTTP.read_bytes()) != baseline_sha:
+            failures.append("final source SHA-256 does not match the pre-run bytes")
+        if failures:
+            print("NEGATIVE CONTROLS FAILED:", *failures, sep="\n  ")
+            return 1
+        print(f"NEGATIVE CONTROLS PASS ({len(CONTROLS)}/{len(CONTROLS)})")
+        return 0
 
 
 if __name__ == "__main__":

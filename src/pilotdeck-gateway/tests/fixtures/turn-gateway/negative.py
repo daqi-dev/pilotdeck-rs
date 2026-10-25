@@ -14,6 +14,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources
+
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
 repo = workspace.parent
@@ -81,80 +84,78 @@ mutants.append(dict(name='notification-after-event', case='permission-before-eve
     (connection, 'self.notify("permission_changed", Some(JsValue::Object(payload)));\n            }\n            let mut out', 'delayed_notification = Some(JsValue::Object(payload));\n            }\n            let mut out'),
     (connection, 'self.send(JsValue::Object(out));\n            stream.0 += 1;', 'self.send(JsValue::Object(out)); if let Some(payload) = delayed_notification { self.notify("permission_changed", Some(payload)); }\n            stream.0 += 1;'),
 ]))
-original = {path: path.read_bytes() for path in [gateway, connection, registry]}
-for mutant in mutants:
-    for path, before, after in mutant['changes']:
-        assert original[path].decode().count(before) == 1, (mutant['name'], 'anchor not unique', before)
-if sys.argv[2:] == ['--list']:
-    print('\n'.join(m['name'] for m in mutants))
-    raise SystemExit(0)
-selected = [dict(name='baseline', changes=[], case=None, marker='test result: ok.')] + mutants
-if len(sys.argv) > 2:
-    selected = [m for m in selected if m['name'] in sys.argv[2:]]
-    assert selected, 'unknown controls'
-lock = repo / '_tmp/20261023-a72-pr5-gateway/negative.lock'
-lock.mkdir()
-summary = []
-env = dict(os.environ, CARGO_NET_OFFLINE='true')
-assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
-assert Path(env['CARGO_TARGET_DIR']).resolve() == workspace / 'target', 'use this tree src/target'
-# Current non-ignored tests selected by the gateway module filter. New tests may
-# increase the total; each existing behavior must still execute successfully.
-baseline_tests = [
-    'transport_observation_waits_for_delivery_and_receive_completion',
-    'real_ts_gateway_frames_registry_replay_and_concurrency',
-    'serial_retention_matches_real_ts_host_steps_and_dispose',
-    'serial_timer_cancels_queued_callbacks_and_replacements',
-    'abort_waits_for_latest_real_ts_session_fence',
-    'abort_snapshots_before_ungated_cleanup_replacement',
-    'concurrent_external_emits_are_serialized_on_the_serial_host',
-]
-command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::gateway::tests', '--', '--nocapture', '--test-threads=1']
-(out / 'original-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest() for p, data in original.items()}, indent=2)+'\n')
-try:
-    for mutant in selected:
-        assert all(p.read_bytes() == data for p, data in original.items()), 'source changed outside this run'
-        slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
-        slot_deadline = time.monotonic() + 1800
-        while slots.returncode == 1:
-            assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
-            time.sleep(20)
-            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
-        assert slots.returncode == 0
-        modified = dict(original)
+with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
+    original = {path: snapshots[path] for path in [gateway, connection, registry]}
+    for mutant in mutants:
         for path, before, after in mutant['changes']:
-            modified[path] = modified[path].decode().replace(before, after, 1).encode()
-        for path in original:
-            if modified[path] != original[path]: path.write_bytes(modified[path])
-        run_env = dict(env)
-        if mutant['case']: run_env['PDRS_GATEWAY_CASE'] = mutant['case']
-        else: run_env.pop('PDRS_GATEWAY_CASE', None)
-        process = subprocess.Popen(command, cwd=repo, env=run_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-        timed_out = False
-        try:
-            raw, _ = process.communicate(timeout=180)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            os.killpg(process.pid, signal.SIGKILL)
-            raw, _ = process.communicate()
-        finally:
-            for path, data in original.items():
-                assert path.read_bytes() == modified[path], f'concurrent source edit: {path}; preserve it'
-                if modified[path] != data: path.write_bytes(data)
-        result = re.search(r'^test result: ok\. (\d+) passed; 0 failed;', raw, re.MULTILINE)
-        baseline_ok = (process.returncode == 0 and result is not None
-            and int(result.group(1)) >= len(baseline_tests)
-            and all(re.search(r'^test runtime::turn::gateway::tests::' + re.escape(name) + r' \.\.\. ok$',
-                raw, re.MULTILINE) for name in baseline_tests))
-        valid = not timed_out and (baseline_ok if mutant['name'] == 'baseline' else (
-            process.returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and mutant['marker'] in raw))
-        (out / (mutant['name']+'.log')).write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={process.returncode}\n')
-        summary.append(dict(name=mutant['name'], case=mutant['case'], exit=process.returncode, marker=mutant['marker'], valid=valid))
-        (out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
-        print(f'{mutant["name"]}: {"KILLED" if valid and mutant["changes"] else "PASS" if valid else "INVALID"} exit={process.returncode}', flush=True)
-        # Retain every control even after an INVALID result.
-finally:
-    assert all(path.read_bytes() == data for path, data in original.items()), 'original bytes not restored'
-    lock.rmdir()
-print(f'{len(summary)} controls checked; original bytes restored', flush=True)
-raise SystemExit(0 if all(row['valid'] for row in summary) else 1)
+            assert original[path].decode().count(before) == 1, (mutant['name'], 'anchor not unique', before)
+    if sys.argv[2:] == ['--list']:
+        print('\n'.join(m['name'] for m in mutants))
+        raise SystemExit(0)
+    selected = [dict(name='baseline', changes=[], case=None, marker='test result: ok.')] + mutants
+    if len(sys.argv) > 2:
+        selected = [m for m in selected if m['name'] in sys.argv[2:]]
+        assert selected, 'unknown controls'
+    summary = []
+    env = dict(os.environ, CARGO_NET_OFFLINE='true')
+    assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
+    assert Path(env['CARGO_TARGET_DIR']).resolve() == workspace / 'target', 'use this tree src/target'
+    # Current non-ignored tests selected by the gateway module filter. New tests may
+    # increase the total; each existing behavior must still execute successfully.
+    baseline_tests = [
+        'transport_observation_waits_for_delivery_and_receive_completion',
+        'real_ts_gateway_frames_registry_replay_and_concurrency',
+        'serial_retention_matches_real_ts_host_steps_and_dispose',
+        'serial_timer_cancels_queued_callbacks_and_replacements',
+        'abort_waits_for_latest_real_ts_session_fence',
+        'abort_snapshots_before_ungated_cleanup_replacement',
+    'concurrent_external_emits_are_serialized_on_the_serial_host',
+    ]
+    command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::gateway::tests', '--', '--nocapture', '--test-threads=1']
+    (out / 'original-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest() for p, data in original.items()}, indent=2)+'\n')
+    try:
+        for mutant in selected:
+            assert all(p.read_bytes() == data for p, data in original.items()), 'source changed outside this run'
+            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+            slot_deadline = time.monotonic() + 1800
+            while slots.returncode == 1:
+                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
+                time.sleep(20)
+                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+            assert slots.returncode == 0
+            modified = dict(original)
+            for path, before, after in mutant['changes']:
+                modified[path] = modified[path].decode().replace(before, after, 1).encode()
+            for path in original:
+                if modified[path] != original[path]: path.write_bytes(modified[path])
+            run_env = dict(env)
+            if mutant['case']: run_env['PDRS_GATEWAY_CASE'] = mutant['case']
+            else: run_env.pop('PDRS_GATEWAY_CASE', None)
+            process = subprocess.Popen(command, cwd=repo, env=run_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            timed_out = False
+            try:
+                raw, _ = process.communicate(timeout=180)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                os.killpg(process.pid, signal.SIGKILL)
+                raw, _ = process.communicate()
+            finally:
+                for path, data in original.items():
+                    assert path.read_bytes() == modified[path], f'concurrent source edit: {path}; preserve it'
+                    if modified[path] != data: path.write_bytes(data)
+            result = re.search(r'^test result: ok\. (\d+) passed; 0 failed;', raw, re.MULTILINE)
+            baseline_ok = (process.returncode == 0 and result is not None
+                and int(result.group(1)) >= len(baseline_tests)
+                and all(re.search(r'^test runtime::turn::gateway::tests::' + re.escape(name) + r' \.\.\. ok$',
+                    raw, re.MULTILINE) for name in baseline_tests))
+            valid = not timed_out and (baseline_ok if mutant['name'] == 'baseline' else (
+                process.returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and mutant['marker'] in raw))
+            (out / (mutant['name']+'.log')).write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={process.returncode}\n')
+            summary.append(dict(name=mutant['name'], case=mutant['case'], exit=process.returncode, marker=mutant['marker'], valid=valid))
+            (out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
+            print(f'{mutant["name"]}: {"KILLED" if valid and mutant["changes"] else "PASS" if valid else "INVALID"} exit={process.returncode}', flush=True)
+            # Retain every control even after an INVALID result.
+    finally:
+        assert all(path.read_bytes() == data for path, data in original.items()), 'original bytes not restored'
+    print(f'{len(summary)} controls checked; original bytes restored', flush=True)
+    raise SystemExit(0 if all(row['valid'] for row in summary) else 1)
