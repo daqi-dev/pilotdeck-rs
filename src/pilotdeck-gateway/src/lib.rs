@@ -46,16 +46,23 @@ pub type HttpClient = Client<HttpConnector, Incoming>;
 
 /// Node/libuv `Error.message` for a one-path syscall
 /// (`code: description, syscall 'path'`), when the generated table knows the
-/// errno. A descriptor read carries no path in Node (see `node_io::read_file`:
-/// reading a directory is `EISDIR: illegal operation on a directory, read`),
-/// while an open/stat/mkdir/... error names its path. The CLI shares this
-/// formatter and the libuv table instead of keeping its own copies.
+/// errno. Descriptor reads and writes carry no path in Node (see
+/// `node_io::read_file`: reading a directory is `EISDIR: illegal operation on
+/// a directory, read`; node v22.22.0 under `ulimit -f` gives
+/// `EFBIG: file too large, write` with `syscall: 'write'` and no path,
+/// `_tmp/20261025-issue-621-takeover/xfsz-probe/`), while an
+/// open/stat/mkdir/... error names its path. The CLI shares this formatter and
+/// the libuv table instead of keeping its own copies.
 pub fn node_fs_message(
     error: &std::io::Error,
     syscall: &str,
     path: Option<&str>,
 ) -> Option<String> {
-    let path = if syscall == "read" { None } else { path };
+    let path = if matches!(syscall, "read" | "write") {
+        None
+    } else {
+        path
+    };
     node_io::diagnostic(error, syscall, path).map(|(_, message)| message)
 }
 
