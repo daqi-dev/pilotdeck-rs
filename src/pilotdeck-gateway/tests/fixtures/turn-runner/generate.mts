@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict';
 import {probeSidecar} from './sidecar.mts';
 import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
-import {join, resolve} from 'node:path';
+import {dirname, join, relative, resolve} from 'node:path';
+import {createRequire} from 'node:module';
+import {existsSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 import {assertBaseline, baselineSourceHashes} from '../_shared/baseline.mts';
 const root = resolve(process.env.PDRS_BASELINE!);
@@ -12,12 +14,45 @@ const sources = ['agent/turn/TurnRunner.ts', 'agent/turn/TurnInputProcessor.ts',
   'agent/session/AgentSessionEventRecorder.ts', 'session/transcript/JsonlTranscriptWriter.ts',
   'session/events/SessionRuntime.ts', 'session/persistence/JsonlSessionPersistence.ts',
   'agent/loop/AgentLoop.ts', 'agent/loop/AgentTurnCapabilities.ts'];
-const sourceSha256 = await baselineSourceHashes(root, [...sources,
+// Hash the complete local runtime import closure, including the spawned CLI.
+// Transpilation removes type-only imports; package/node imports are pinned by
+// the baseline installation. The CLI's env-selected factory is unset by sidecar.mts.
+const ts = createRequire(join(root, 'package.json'))('typescript');
+function runtimeSources(entries: string[]): string[] {
+  const seen = new Set<string>();
+  const visit = (path: string) => {
+    if (seen.has(path)) return;
+    assert.ok(path.startsWith('src/'), `source outside baseline src: ${path}`);
+    seen.add(path);
+    const code = ts.transpileModule(readFileSync(join(root,path),'utf8'), {
+      compilerOptions: {target:ts.ScriptTarget.ESNext,module:ts.ModuleKind.ESNext}
+    }).outputText;
+    const tree = ts.createSourceFile(path,code,ts.ScriptTarget.Latest,true);
+    const scan = (node: any) => {
+      const specifier = (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) ? node.moduleSpecifier
+        : ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || node.expression.getText(tree) === 'require')
+          ? node.arguments[0] : undefined;
+      if (specifier && ts.isStringLiteral(specifier) && specifier.text.startsWith('.')) {
+        const base = resolve(root,dirname(path),specifier.text);
+        const candidates = [base.replace(/\.js$/,'.ts'),base,`${base}.ts`,join(base,'index.ts')];
+        const found = candidates.find(p=>existsSync(p) && !p.endsWith('/'));
+        assert.ok(found, `unresolved import ${path}: ${specifier.text}`);
+        visit(relative(root,found));
+      }
+      ts.forEachChild(node,scan);
+    };
+    scan(tree);
+  };
+  entries.forEach(visit);
+  return [...seen].sort();
+}
+const sourceSha256 = await baselineSourceHashes(root, runtimeSources([...sources,
   'agent/modules/transport/agentLoopSidecarClient.ts', 'agent/modules/transport/agentLoopSidecarServer.ts',
   'agent/modules/transport/stdioAgentLoopSidecarConnection.ts', 'cli/pilotdeck-agent-loop-default-factory.ts',
+  'cli/pilotdeck-agent-loop-sidecar.ts', 'permission/index.ts',
   'agent/session/createAgentSession.ts', 'session/transcript/InMemoryTranscriptWriter.ts',
   'session/events/SessionDomainValidation.ts', 'agent/protocol/errors.ts', 'status/agentStatus.ts'
-].map(p => `src/${p}`));
+].map(p => `src/${p}`)));
 const load = (p: string) => import(pathToFileURL(join(root, 'src', p)).href);
 const [{TurnRunner}, , {AgentSessionEventRecorder}, {JsonlTranscriptWriter}, {SessionRuntime},
   {JsonlSessionPersistence}, {AgentLoop}, {createSidecarAgentTurnCapabilities}] = await Promise.all(sources.map(load));
@@ -87,15 +122,22 @@ for (const name of ['success','start-fails','accepted-fails','abort-before-execu
 }
 // Recorder completion is independently replayable in Rust, including retry state.
 const recorderCases:any[]=[];
-for(const name of ['success','error','aborted','max_turns','no-step','unstarted','step-once','result-once','result-always','new-turn','restore','restart-fails']) {
+for(const name of ['success','error','aborted','max_turns','no-step','unstarted','step-once','result-once','result-always','new-turn','restore','restart-fails',
+  ...['null','undefined','number'].flatMap(kind=>['fresh','started','completed'].map(phase=>`invalid-${kind}-${phase}`))]) {
   const fault=name==='step-once'?'step_completed':name.startsWith('result-')?'turn_result':'';
   const ctx=writerFor(`recorder-${name}`,fault,name==='result-always'?99:1);
   let recorder=new AgentSessionEventRecorder(ctx.writer);
   const operations:any[]=[];
-  if(name!=='unstarted')operations.push({op:'start',turn:'t'});
-  if(!['no-step','unstarted'].includes(name))operations.push({op:'request',turn:'t'});
+  if(name!=='unstarted' && !name.endsWith('-fresh'))operations.push({op:'start',turn:'t'});
+  if(!['no-step','unstarted'].includes(name) && !name.endsWith('-fresh'))operations.push({op:'request',turn:'t'});
   const value=result(['error','aborted','max_turns'].includes(name)?name:'success');
-  operations.push({op:'complete',result:value},{op:'complete',result:value});
+  if(name.startsWith('invalid-')) {
+    if(name.endsWith('-completed'))operations.push({op:'complete',result:value});
+    const kind=name.split('-')[1];
+    operations.push({op:'invalid-complete',kind});
+    // A failed/no-op malformed call must not close the step or poison retry.
+    if(name.endsWith('-started'))operations.push({op:'complete',result:value});
+  } else operations.push({op:'complete',result:value},{op:'complete',result:value});
   if(name==='new-turn')operations.push({op:'start',turn:'other'},{op:'complete',result:value},{op:'complete',result:result('success','other')});
   if(name==='restart-fails')operations.push({op:'start',turn:'t'},{op:'complete',result:value});
   if(name==='restore')operations.push({op:'restore'},{op:'complete',result:value});
@@ -104,12 +146,33 @@ for(const name of ['success','error','aborted','max_turns','no-step','unstarted'
     if(op.op==='start')await recorder.startTurn('s',op.turn);
     if(op.op==='request')await recorder.recordModelRequest('s',op.turn,{request:{messages:[]}});
     if(op.op==='complete')await recorder.completeTurn(op.result);
+    if(op.op==='invalid-complete')await recorder.completeTurn(op.kind==='null'?null:op.kind==='undefined'?undefined:42);
     if(op.op==='restore')recorder=new AgentSessionEventRecorder(ctx.writer);
     outcomes.push('ok');
   }catch(e:any){outcomes.push(e.message);}}
   recorderCases.push({name,fault,failures:name==='result-always'?99:1,operations,outcomes,transcript:ctx.bytes()});
 }
 const sidecar = await probeSidecar(root, output);
+const matrixConsumers: Record<string,string> = {
+  "success": "runner_success",
+  "start-fails": "runner_start_write_failure",
+  "accepted-fails": "runner_accepted_write_failure",
+  "loop-fails-twice": "runner_repeated_loop_failure",
+  "loop-throws": "runner_loop_exception",
+  "consumer-drop": "runner_consumer_drop",
+  "complete-once": "runner_completion_retry",
+  "complete-always": "runner_completion_persistent_failure",
+  "input-text": "runner_input_text_boundaries",
+  "input-blocks": "runner_input_blocks_boundaries",
+  "accepted-duplicate": "runner_accepted_validation_error",
+  "loop-aborted-error": "runner_aborted_exception",
+  "status-fails": "runner_best_effort_status",
+  "loop-null-hint": "runner_nullish_hint"
+};
+for(const row of matrix) row.consumption = matrixConsumers[row.name]
+  ? {status:'pr2 已消费',test:matrixConsumers[row.name],scope:'runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational'}
+  : {status:'仅记录，由 pr3 消费',test:`live_runner_${row.name.replaceAll('-','_')}`,scope:'LiveSessionAdapter + AgentLoop host integration'};
+for(const row of sidecar) row.consumption = {status:'仅记录，由 pr3 消费',test:`live_sidecar_${row.name.replaceAll('-','_')}`,scope:'real TS sidecar + Rust host; approved differences require separate acceptance'};
 assertBaseline(root);
 writeFileSync(join(output,'oracle.json'), JSON.stringify({sourceCommit,sourceSha256,matrix,recorderCases,sidecar},null,2)+'\n',{flag:'wx'});
 for(const row of matrix)console.log(JSON.stringify({name:row.name,events:row.events.map((e:any)=>e.type),error:row.error,

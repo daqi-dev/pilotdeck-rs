@@ -35,6 +35,45 @@ PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
 python3 src/pilotdeck-gateway/tests/fixtures/turn-runner/runner_negative.py /tmp/new-runner-negative
 ```
 
-runner 负控默认19项，可在输出目录后传具体变异名。与旧 recorder 负控一样使用共享保护器，不能在变异期间另起同树 cargo 或改源码。`test_sources` 仅在 cfg(test) 存在，让 recorder 与直接 writer 调用共用同一确定性来源。
+runner 负控默认20项（两个 terminal 分支分别变异，每个锚点 count == 1），可在输出目录后传具体变异名。与旧 recorder 负控一样使用共享保护器，不能在变异期间另起同树 cargo 或改源码。`test_sources` 仅在 cfg(test) 存在，让 recorder 与直接 writer 调用共用同一确定性来源。
 
 待接续：LiveSessionAdapter 注入/接线、active slot 与不可取消 I/O 的共同所有权、AgentLoop-only integrity、真实 TS sidecar 的 Rust 宿主验收、旧 Python peer 与兄弟测试同步、已有可见 failure status 回调去重、hooks/steer/artifact/session 元数据收尾。取消/early-final 实测差异见 specs/gateway-parity/diffs/A7.2-TURN-{ABORT,EARLYFINAL}-001.md（未批准）。本切片不关闭 #741/#589。
+
+## fix-r1 消费账本
+
+`matrix` 的以下 14 行由 `runtime/turn/runner_tests.rs` 的非 ignore 用例消费；断言仅覆盖 runner 所有的事件子序列、错误与 JSONL 字节（两条 input 还比较 loopMessages），lease 另行断言。`loopCalls/modelCalls/returns/completes/closes/writeAttempts` 仍是 TS 观测记录，完整宿主计数由 pr3 同名场景接手。所有 `live_*` 名称均为 pr3 待实现的接手用例，不代表本包已有该测试。
+
+| 节 | 行 | 当前消费 / 接手用例 |
+|---|---|---|
+| matrix | `success` | pr2 已消费：`runner_success` |
+| matrix | `start-fails` | pr2 已消费：`runner_start_write_failure` |
+| matrix | `accepted-fails` | pr2 已消费：`runner_accepted_write_failure` |
+| matrix | `abort-before-execute` | 仅记录，由 pr3 消费：`live_runner_abort_before_execute` |
+| matrix | `abort-after-accepted` | 仅记录，由 pr3 消费：`live_runner_abort_after_accepted` |
+| matrix | `loop-fails-twice` | pr2 已消费：`runner_repeated_loop_failure` |
+| matrix | `loop-throws` | pr2 已消费：`runner_loop_exception` |
+| matrix | `early-completed` | 仅记录，由 pr3 消费：`live_runner_early_completed` |
+| matrix | `consumer-drop` | pr2 已消费：`runner_consumer_drop` |
+| matrix | `complete-once` | pr2 已消费：`runner_completion_retry` |
+| matrix | `complete-always` | pr2 已消费：`runner_completion_persistent_failure` |
+| matrix | `input-text` | pr2 已消费：`runner_input_text_boundaries` |
+| matrix | `input-blocks` | pr2 已消费：`runner_input_blocks_boundaries` |
+| matrix | `accepted-duplicate` | pr2 已消费：`runner_accepted_validation_error` |
+| matrix | `loop-aborted-error` | pr2 已消费：`runner_aborted_exception` |
+| matrix | `status-fails` | pr2 已消费：`runner_best_effort_status` |
+| matrix | `loop-null-hint` | pr2 已消费：`runner_nullish_hint` |
+| sidecar | `success` | 仅记录，由 pr3 消费：`live_sidecar_success` |
+| sidecar | `gap` | 仅记录，由 pr3 消费：`live_sidecar_gap` |
+| sidecar | `duplicate` | 仅记录，由 pr3 消费：`live_sidecar_duplicate` |
+| sidecar | `early-final` | 仅记录，由 pr3 消费：`live_sidecar_early_final` |
+| sidecar | `drop` | 仅记录，由 pr3 消费：`live_sidecar_drop` |
+| sidecar | `abort-before` | 仅记录，由 pr3 消费：`live_sidecar_abort_before` |
+| sidecar | `abort-after` | 仅记录，由 pr3 消费：`live_sidecar_abort_after` |
+
+以上 pr3 行在 oracle 内也逐行标注「仅记录，由 pr3 消费」。sidecar 的 gap/duplicate/early-final 与 abort 仍须遵守 StreamIntegrity 及已登记差异的审批状态；本轮只登记接手测试，不更改接受行为。
+
+`sourceSha256` 从真实导入入口（包括 `cli/pilotdeck-agent-loop-sidecar.ts` 与 `permission/index.ts`）递归计算运行时 import/export/literal import() 的相对依赖闭包，当前为 455 个源码；TypeScript 转译先消除 type-only 引用，排序后逐文件对固定 commit 校验。唯一非字面量动态导入是 CLI 的外部 factory，探针子进程仅传 PATH/HOME、未设置 factory 环境变量，故走已纳入闭包的默认 factory。node 内建与 npm 包不属于 sourceSha256，使用固定基线的本地安装。
+
+`recorderCases` 新增 null/undefined/number × fresh/started/completed 九格真实 TS 金样。null/undefined 在去重前抛 TypeError；数字在完成标记为 undefined 时 no-op，已有完成标记时抛 `Durable turn undefined has not started.`；这些调用都不追加 JSONL，started 格随后成功完成证明可重试。Rust 保留显式 session/turn 参数的既有对象调用合同，仅对齐本轮非对象边界。
+
+两套负控先定位函数作用域，再替换不带前导缩进、不跨行的短语句锚点，每个锚点严格 `count == 1`；recorder 10 项、runner 20 项，均要求运行时断言失败且恢复后正控通过。
