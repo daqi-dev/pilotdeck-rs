@@ -146,11 +146,16 @@ impl Handler {
             ))
         })
     }
+    /// ID-only TS parity adapter; never use for production event wiring.
+    /// Production consumers must use `TurnSteer::persist_and_apply`, which owns
+    /// the generation/session/run binding and drained item identity.
     pub fn apply_steer_authorization(&self, item_id: &JsString) {
         if let Some(authorizations) = &self.authorizations {
             authorizations.apply(item_id);
         }
     }
+    /// ID-only TS parity adapter, not a production wiring entry point. Use
+    /// `crate::runtime::project::interaction_steer::TurnSteer::persist_and_apply`.
     /// Sidecar's steer_applied ordering: claim -> durable transcript -> grant ->
     /// append the original drained message and ack. A failed write stops here.
     pub fn persist_and_apply_steer(

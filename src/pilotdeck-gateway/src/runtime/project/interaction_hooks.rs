@@ -47,7 +47,7 @@ struct Run {
     external: Cancellation,
     closed: AtomicBool,
     releases: AtomicUsize,
-    done: watch::Sender<bool>,
+    done: watch::Sender<Option<Result<(), HostError>>>,
     jobs: watch::Sender<usize>,
     executor: Handle,
     pending: Mutex<Vec<PendingAsyncHookDescriptor>>,
@@ -57,38 +57,51 @@ impl Run {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
-        self.cancelled.cancel();
-        if let Some(permission) = &self.permission {
-            permission.close();
-        }
-        if let Some(registration) = &self.registration {
-            registration.dispose();
-        }
-        lock(&self.pending).clear();
         let run = self.clone();
         // Cleanup survives a dropped/timed-out caller's dispose future.
-        self.executor.spawn(async move {
-            let mut jobs = run.jobs.subscribe();
-            let _ = jobs.wait_for(|count| *count == 0).await;
-            run.runtime.dispose().await;
-            run.releases.fetch_add(1, Ordering::SeqCst);
-            if let Some(owner) = run.owner.upgrade() {
-                let mut state = lock(&owner);
-                if state
-                    .turns
-                    .get(&run.session)
-                    .is_some_and(|current| Arc::ptr_eq(current, &run))
-                {
-                    state.turns.remove(&run.session);
+        crate::runtime::cleanup_task::spawn_after(
+            &self.executor,
+            self.done.clone(),
+            || {
+                // These synchronous callbacks can panic too (for example a
+                // poisoned callback registry). They must already own completion.
+                self.cancelled.cancel();
+                if let Some(permission) = &self.permission {
+                    permission.close();
                 }
-                state.draining.retain(|current| !Arc::ptr_eq(current, &run));
-            }
-            run.done.send_replace(true);
-        });
+                if let Some(registration) = &self.registration {
+                    registration.dispose();
+                }
+                lock(&self.pending).clear();
+            },
+            async move {
+                let mut jobs = run.jobs.subscribe();
+                let _ = jobs.wait_for(|count| *count == 0).await;
+                run.runtime.dispose_checked().await?;
+                run.releases.fetch_add(1, Ordering::SeqCst);
+                if let Some(owner) = run.owner.upgrade() {
+                    let mut state = lock(&owner);
+                    if state
+                        .turns
+                        .get(&run.session)
+                        .is_some_and(|current| Arc::ptr_eq(current, &run))
+                    {
+                        state.turns.remove(&run.session);
+                    }
+                    state.draining.retain(|current| !Arc::ptr_eq(current, &run));
+                }
+                Ok(())
+            },
+        );
     }
-    async fn wait_closed(&self) {
+    async fn wait_closed(&self) -> Result<(), HostError> {
         let mut done = self.done.subscribe();
-        let _ = done.wait_for(|done| *done).await;
+        loop {
+            if let Some(result) = done.borrow_and_update().clone() {
+                return result;
+            }
+            done.changed().await.map_err(|_| stale())?;
+        }
     }
 }
 
@@ -201,12 +214,14 @@ impl InteractionHooks {
             external: binding.signal.take().unwrap_or_default(),
             closed: AtomicBool::new(false),
             releases: AtomicUsize::new(0),
-            done: watch::channel(false).0,
+            done: watch::channel(None).0,
             jobs: watch::channel(0).0,
             executor,
             pending: Mutex::default(),
         });
-        state.draining.retain(|run| !*run.done.borrow());
+        state
+            .draining
+            .retain(|run| !matches!(&*run.done.borrow(), Some(Ok(()))));
         if let Some(previous) = state.turns.insert(run.session.clone(), run.clone()) {
             previous.close();
             state.draining.push(previous);
@@ -272,10 +287,13 @@ impl FamilyResource for InteractionHooks {
                 .collect()
         };
         Box::pin(async move {
+            let mut failures = Vec::new();
             for run in runs {
-                run.wait_closed().await;
+                if let Err(error) = run.wait_closed().await {
+                    failures.push(RuntimeError::new(error.to_string()));
+                }
             }
-            Ok(())
+            RuntimeError::aggregate("Failed to dispose interaction hooks.", failures)
         })
     }
     fn as_any(&self) -> &dyn std::any::Any {
@@ -330,14 +348,16 @@ impl TurnHooks {
             .is_some_and(|run| Arc::ptr_eq(run, &self.run))
         {
             state.turns.remove(&self.run.session);
-            state.draining.retain(|run| !*run.done.borrow());
-            if !*self.run.done.borrow() {
+            state
+                .draining
+                .retain(|run| !matches!(&*run.done.borrow(), Some(Ok(()))));
+            if !matches!(&*self.run.done.borrow(), Some(Ok(()))) {
                 state.draining.push(self.run.clone());
             }
         }
     }
-    pub async fn wait_closed(&self) {
-        self.run.wait_closed().await;
+    pub async fn wait_closed(&self) -> Result<(), HostError> {
+        self.run.wait_closed().await
     }
     pub fn release_count(&self) -> usize {
         self.run.releases.load(Ordering::SeqCst)
@@ -432,10 +452,7 @@ impl lifecycle::LifecyclePort for TurnHooks {
     fn dispose(&self) -> HostFuture<()> {
         self.close();
         let turn = self.clone();
-        Box::pin(async move {
-            turn.wait_closed().await;
-            Ok(())
-        })
+        Box::pin(async move { turn.wait_closed().await })
     }
 }
 

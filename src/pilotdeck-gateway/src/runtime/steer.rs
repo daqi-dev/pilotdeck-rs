@@ -140,6 +140,13 @@ struct Inner {
 #[derive(Clone, Default)]
 pub struct SteerMailbox(Arc<Inner>);
 impl SteerMailbox {
+    #[cfg(test)]
+    pub(crate) fn poison_state_for_test(&self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _state = self.0.state.lock().unwrap();
+            panic!("injected mailbox mutex poison");
+        }));
+    }
     pub fn new(recorder: Option<Arc<dyn MutationRecorder>>) -> Self {
         Self(Arc::new(Inner {
             recorder,

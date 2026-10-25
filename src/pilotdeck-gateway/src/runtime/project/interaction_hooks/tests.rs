@@ -43,6 +43,107 @@ fn binding() -> lifecycle::Binding {
         signal: None,
     }
 }
+
+#[test]
+fn interaction_hooks_cleanup_runtime_shutdown_is_observable() {
+    for close_before_shutdown in [false, true] {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let resource = InteractionHooks::new(InteractionPermission::default());
+        let turn = {
+            let _entered = executor.enter();
+            let turn = resource
+                .bind_turn(
+                    binding(),
+                    "run".into(),
+                    vec![],
+                    None,
+                    &mut ModuleRouter::default(),
+                )
+                .unwrap();
+            if close_before_shutdown {
+                turn.close();
+            }
+            turn
+        };
+        drop(executor);
+        turn.close();
+        let observer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        observer.block_on(async {
+            let error = tokio::time::timeout(Duration::from_secs(3), turn.wait_closed())
+                .await
+                .unwrap()
+                .unwrap_err();
+            assert!(error.to_string().contains("cleanup task"));
+            assert!(resource.dispose().await.is_err());
+            assert!(resource.dispose().await.is_err());
+        });
+    }
+}
+
+#[tokio::test]
+async fn interaction_hooks_nested_cleanup_panic_is_observable() {
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let turn = resource
+        .bind_turn(
+            binding(),
+            "run".into(),
+            vec![],
+            None,
+            &mut ModuleRouter::default(),
+        )
+        .unwrap();
+    turn.run.runtime.hooks().poison_cleanup_bus_for_test();
+    turn.close();
+    let error = tokio::time::timeout(Duration::from_secs(3), turn.wait_closed())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(error.to_string().contains("cleanup task"));
+    assert!(resource.dispose().await.is_err());
+    assert!(resource.dispose().await.is_err());
+    assert_eq!(turn.release_count(), 0);
+}
+
+#[tokio::test]
+async fn interaction_hooks_synchronous_cleanup_panic_is_observable() {
+    let permission = InteractionPermission::default();
+    let resource = InteractionHooks::new(permission.clone());
+    let port = bind_permission(
+        &permission,
+        Arc::default(),
+        Arc::new(|_| true),
+        RuleSetHandle::empty(),
+        InteractionProfileName::Interactive,
+    );
+    let turn = resource
+        .bind_turn(
+            binding(),
+            "same".into(),
+            vec![],
+            Some(port),
+            &mut ModuleRouter::default(),
+        )
+        .unwrap();
+    assert!(turn.run.registration.is_some());
+    turn.run
+        .runtime
+        .hooks()
+        .callback_executor()
+        .poison_state_for_test();
+    turn.close(); // no unwind, and closed=true must have an error completion
+    let error = tokio::time::timeout(Duration::from_secs(3), turn.wait_closed())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(error.to_string().contains("cleanup task"));
+    assert!(resource.dispose().await.is_err());
+}
 fn call(event: &str, payload: JsValue) -> JsValue {
     object(&[
         ("module", "lifecycle".into()),
@@ -284,7 +385,7 @@ async fn async_receipts_match_ts_and_reject_duplicates_old_runs_and_generations(
             .is_err()
     );
     old.close();
-    old.wait_closed().await;
+    old.wait_closed().await.unwrap();
     assert_eq!(old.release_count(), 1);
     let other_generation = InteractionHooks::new(InteractionPermission::default());
     let (new, new_router) = bind(&other_generation);
@@ -387,6 +488,7 @@ async fn permission_wait_is_cancelled_once_and_foreign_permission_is_rejected() 
     router.dispose().await.unwrap();
     tokio::time::timeout(Duration::from_secs(2), turn.wait_closed())
         .await
+        .unwrap()
         .unwrap();
     assert_eq!(turn.release_count(), 1);
     assert!(!coordinator.decide_permission(
@@ -440,7 +542,7 @@ async fn profiles_do_not_install_gateway_callback_and_handler_dispose_revokes_ru
                 .await
                 .is_err()
         );
-        turn.wait_closed().await;
+        turn.wait_closed().await.unwrap();
         assert_eq!(turn.release_count(), 1);
         resource.dispose().await.unwrap();
     }
@@ -512,6 +614,7 @@ async fn dropped_dispatch_drains_and_keeps_host_environment() {
     );
     tokio::time::timeout(Duration::from_secs(2), turn.wait_closed())
         .await
+        .unwrap()
         .unwrap();
     assert_eq!(drops.load(Ordering::SeqCst), 1);
     assert_eq!(turn.release_count(), 1);
@@ -555,6 +658,7 @@ async fn replacing_permission_revokes_hooks_before_next_hooks_bind() {
     );
     tokio::time::timeout(Duration::from_secs(2), turn.wait_closed())
         .await
+        .unwrap()
         .unwrap();
     assert!(current_permission.prepare(JsValue::Undefined).await.is_ok());
     let weak = Arc::downgrade(&turn.run);
@@ -597,7 +701,7 @@ async fn real_shell_cancel_runs_term_trap_before_runtime_drain() {
     std::fs::remove_dir_all(&root).unwrap();
     ready.unwrap();
     assert!(result.unwrap().unwrap().is_err());
-    drained.unwrap();
+    drained.unwrap().unwrap();
     assert_eq!(terminated.unwrap(), "done");
     assert_eq!(turn.release_count(), 1);
     resource.dispose().await.unwrap();

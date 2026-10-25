@@ -1672,6 +1672,13 @@ impl Drop for CallbackInFlightGuard {
 #[derive(Clone, Default)]
 pub struct CallbackHookExecutor(Arc<CallbackInner>);
 impl CallbackHookExecutor {
+    #[cfg(test)]
+    pub(crate) fn poison_state_for_test(&self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _state = self.0.state.lock().unwrap();
+            panic!("injected callback registry poison");
+        }));
+    }
     pub fn new() -> Self {
         Self::default()
     }

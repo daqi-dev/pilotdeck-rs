@@ -1,0 +1,101 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/session/AgentSession.ts": "1d1f929fb6f08a5f0957b900cd0a1bfb65ae14080d7f26e971c141d2c5f1d789",
+    "src/agent/session/SteerMailbox.ts": "2c8cfdd37728fac21c2b4839a549403f58c2e9c07b5108890c07e7fe409ee743",
+    "src/agent/turn/TurnRunner.ts": "8bf4dab4c8e40bba78781e6ad7352dda79e3fc52adf99b9504f1213e0157a5ac",
+    "src/agent/loop/AgentLoop.ts": "d9949a78b6396e58060f5b19d32d51ba15139bc9900de8bf9fe1c1231621aff2",
+    "src/agent/loop/AgentTurnCapabilities.ts": "573db659bdc8c26702b15d01ce8fc499d0505272fdcf5e482e9b8e895530ddcb"
+  },
+  "abortDrain": [
+    {
+      "operation": "drain",
+      "first": {
+        "messages": [
+          {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            },
+            "allowedReadFiles": [
+              "/safe"
+            ]
+          }
+        ]
+      },
+      "terminal": {
+        "messages": [],
+        "closed": true
+      }
+    },
+    {
+      "operation": "drainOrClose",
+      "first": {
+        "messages": [
+          {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            },
+            "allowedReadFiles": [
+              "/safe"
+            ]
+          }
+        ],
+        "closed": false
+      },
+      "terminal": {
+        "messages": [],
+        "closed": true
+      }
+    }
+  ],
+  "durableThenAbort": {
+    "trace": [
+      [
+        "mutation",
+        "insert",
+        "a"
+      ],
+      [
+        "mutation",
+        "claim",
+        "a"
+      ],
+      [
+        "durable",
+        "a"
+      ],
+      [
+        "abort",
+        true
+      ],
+      [
+        "ack",
+        "a",
+        true
+      ]
+    ],
+    "events": [
+      "turn_started",
+      "input_accepted",
+      "user_prompt_submitted",
+      "steer_applied"
+    ],
+    "allowedReadFiles": [
+      "/safe"
+    ],
+    "closeCalls": [
+      []
+    ],
+    "modelCalls": 0
+  }
+}
