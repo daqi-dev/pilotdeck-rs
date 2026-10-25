@@ -9,8 +9,20 @@ out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=True)
 f=root/'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs'
 e=root/'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage/entries.rs'
 originals={p:p.read_bytes() for p in [f,e]}
-text=originals[f].decode();a=text.index('    fn within(&self, relative:');b=text.index('    fn ensure_layout',a)
-unsafe=text[:a]+'    fn within(&self, _relative: &str) -> Result<bool> { Ok(true) }\n'+text[b:]
+text=originals[f].decode()
+# #597 moved every escape/symlink check from `within` into `checked_path` (the
+# fd-based mutations pin through it too), so the no-validation regression now
+# stubs `checked_path`'s own body; the old `within`..`ensure_layout` span would
+# also swallow mkdir/write_bytes/unlink/read_file outright (E0599).
+for anchor in ('    fn checked_path(&self, relative: &str) -> Result<(PathBuf, PathBuf)> {','    fn mutation_error('):
+    assert text.count(anchor)==1,anchor
+a=text.index('    fn checked_path(&self, relative: &str) -> Result<(PathBuf, PathBuf)> {');b=text.index('    fn mutation_error(',a)
+unsafe=text[:a]+'''    fn checked_path(&self, relative: &str) -> Result<(PathBuf, PathBuf)> {
+        // regression: trust the joined path, like the old within() stub
+        let path = absolute(&self.root.join(relative))?;
+        Ok((fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone()), path))
+    }
+'''+text[b:]
 rows=[]
 def run(name,path,changed,target,test,env_extra=None):
     if args.only and name != args.only: return
@@ -30,7 +42,13 @@ def run(name,path,changed,target,test,env_extra=None):
 try:
     for op in ['read','store-read','edit','delete','deprecate','restore']:
         run('path-'+op,f,unsafe,['--test','edgeclaw_entries'],'entry_paths_reject_escape_without_touching_outside_files',{'PDRS_ENTRY_SECURITY_OPERATION':op})
-    canonical_only = originals[f].decode().replace('Ok(path) if path.starts_with(root) => Ok(true),', 'Ok(_) => Ok(true),').replace('            Ok(_) => Err(denied()),\n', '')
+    # #597 moved the resolved-vs-root comparison into `checked_path`'s match;
+    # the mutant must accept the resolved target without the boundary check.
+    old='''            Ok(path) if path.starts_with(&root) => Ok((root, path)),
+            Ok(_) => Err(denied()),
+'''
+    canonical_only = originals[f].decode();assert canonical_only.count(old)==1
+    canonical_only = canonical_only.replace(old,'            Ok(path) => Ok((root, path)),\n')
     run('path-symlink',f,canonical_only,['--test','edgeclaw_entries'],'entry_paths_reject_escape_without_touching_outside_files')
     run('path-write',f,unsafe,['--lib'],'runtime::memory::edgeclaw::file_memory::entry_write_security_tests::direct_entry_write_rejects_unsafe_paths')
     text=originals[f].decode();old='                            | std::io::ErrorKind::PermissionDenied';assert text.count(old)==1

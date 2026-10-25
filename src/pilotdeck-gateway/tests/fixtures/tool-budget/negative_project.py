@@ -69,13 +69,29 @@ try:
     restore()
 
     files = ORIGINAL[FILES].decode()
+    for anchor in ('pub(crate) fn create_directories_beneath(',
+                   'pub(crate) fn create_directories_at(', 'fn directory_flags()'):
+        assert files.count(anchor) == 1, anchor
     start = files.index('pub(crate) fn create_directories_beneath(')
-    end = files.index('\nfn directory_flags()', start)
+    # End the span at the wrapper's own closing brace, not at `directory_flags`:
+    # #597 added `create_directories_at` between the two, and swapping the whole
+    # span would delete it (E0425 at the file_memory/projector call sites).
+    depth = 0
+    end = files.index('{', start)
+    while True:
+        depth += (files[end] == '{') - (files[end] == '}')
+        end += 1
+        if depth == 0:
+            break
+    assert files[start:end].count('fn ') == 1
     FILES.write_text(files[:start] + '''pub(crate) fn create_directories_beneath(_root: &Path, target: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(target)
-}
-''' + files[end:])
+}''' + files[end:])
+    mutated = FILES.read_text()
+    for anchor in ('pub(crate) fn create_directories_beneath(',
+                   'pub(crate) fn create_directories_at(', 'fn directory_flags()'):
+        assert mutated.count(anchor) == 1, ('path-mkdir', anchor)
     run('path-mkdir', ['--lib', 'runtime::context::tool_budget::tests::spill_project_mkdir_swap_'])
     restore()
 
