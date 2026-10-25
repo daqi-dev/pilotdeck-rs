@@ -45,6 +45,10 @@ pub trait EventSink: Send + Sync {
     fn drain(&self) -> Vec<JsObject> {
         Vec::new()
     }
+    /// Checked host composition path for ports with a finite lifetime.
+    fn drain_checked(&self) -> Result<Vec<JsObject>, HostError> {
+        Ok(self.drain())
+    }
 }
 
 #[derive(Clone)]
@@ -106,6 +110,13 @@ impl Handler {
             .as_ref()
             .map(|ports| ports.sink.drain())
             .unwrap_or_default()
+    }
+    /// Finite-lifetime ports expose stale/closed errors through this path.
+    pub fn drain_checked(&self) -> Result<Vec<JsObject>, HostError> {
+        match &self.ports {
+            Some(ports) => ports.sink.drain_checked(),
+            None => Err(ModuleError::new("Unsupported sidecar host module: event").into()),
+        }
     }
     pub fn dispose(&self) -> HostFuture<()> {
         Box::pin(async { Ok(()) })

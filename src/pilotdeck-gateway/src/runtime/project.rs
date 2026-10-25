@@ -110,6 +110,7 @@ pub mod custom_routers;
 /// staging with the baseline's rollback order.
 mod factory;
 pub mod interaction;
+pub mod interaction_events;
 pub mod memory_bundle;
 pub mod model;
 pub mod plugins;
