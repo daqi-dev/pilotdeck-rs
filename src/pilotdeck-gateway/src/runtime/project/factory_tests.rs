@@ -856,6 +856,7 @@ async fn tools_without_interaction_has_no_interaction_marker() {
 
     let families = Families::unwired().with_tools_mcp();
     stage_tools_and_execution_world(&families, &context, &mut group.sink());
+    assert!(context.resource(Resource::InteractionSteer).is_none());
 
     assert_no_interaction_resources(&context);
     assert!(context.resource(Resource::ExecutionWorld).is_some());
@@ -3519,6 +3520,8 @@ async fn interaction_event_factory_binds_real_buffer_in_both_builder_orders() {
             .stage(&context, &mut group.sink())
             .unwrap();
         let events = event_resource(&context);
+        let steer = steer_resource(&context);
+        let steer_turn = bind_steer(&steer);
         let mut router = ModuleRouter::default();
         let port = events
             .bind_turn(
@@ -3569,6 +3572,9 @@ async fn interaction_event_factory_binds_real_buffer_in_both_builder_orders() {
         group.dispose().await.unwrap();
         group.dispose().await.unwrap();
         assert!(events.is_closed());
+        assert!(steer.is_closed());
+        assert_eq!(steer.release_count(), 1);
+        assert_eq!(steer_turn.release_count(), 1);
         assert_eq!(events.release_count(), 1);
         assert!(
             router
@@ -3932,7 +3938,16 @@ async fn interaction_hooks_factory_binds_and_rolls_back_in_both_builder_orders()
     }
     // A later family failure invokes the same concrete resource cleanup.
     use super::super::interaction_hooks::{InteractionHooks, TurnHooks};
-    type Captured = Arc<Mutex<Option<(InteractionHooks, TurnHooks)>>>;
+    type Captured = Arc<
+        Mutex<
+            Option<(
+                InteractionHooks,
+                TurnHooks,
+                super::super::interaction_steer::InteractionSteer,
+                super::super::interaction_steer::TurnSteer,
+            )>,
+        >,
+    >;
     struct FailAfterHooks(Captured);
     impl ResourceFamilySource for FailAfterHooks {
         fn family(&self) -> Family {
@@ -3941,7 +3956,9 @@ async fn interaction_hooks_factory_binds_and_rolls_back_in_both_builder_orders()
         fn stage(&self, context: &StageContext, _: &mut StageSink<'_>) -> RuntimeResult {
             let hooks = hooks_resource(context);
             let (turn, _) = bind_hooks(&hooks);
-            *self.0.lock().unwrap() = Some((hooks, turn));
+            let steer = steer_resource(context);
+            let steer_turn = bind_steer(&steer);
+            *self.0.lock().unwrap() = Some((hooks, turn, steer, steer_turn));
             Err(RuntimeError::new("injected after hooks"))
         }
     }
@@ -3981,13 +3998,17 @@ async fn interaction_hooks_factory_binds_and_rolls_back_in_both_builder_orders()
         .err()
         .expect("injected stage error");
     assert_eq!(error, RuntimeError::new("injected after hooks"));
-    let (resource, turn) = captured.lock().unwrap().take().unwrap();
+    let (resource, turn, steer, steer_turn) = captured.lock().unwrap().take().unwrap();
     until(|| resource.is_closed()).await;
     bounded(turn.wait_closed()).await;
     assert_eq!(resource.release_count(), 1);
     assert_eq!(turn.release_count(), 1);
     assert!(turn.pending_receipts().is_err());
     bounded(registry.dispose()).await.unwrap();
+    bounded(steer_turn.close()).await.unwrap();
+    assert!(steer.is_closed());
+    assert_eq!(steer.release_count(), 1);
+    assert_eq!(steer_turn.release_count(), 1);
 }
 #[tokio::test]
 async fn interaction_hooks_registry_keeps_old_generation_until_lease_drain() {
@@ -4006,6 +4027,15 @@ async fn interaction_hooks_registry_keeps_old_generation_until_lease_drain() {
             .context(),
     );
     let (old_turn, _) = bind_hooks(&old);
+    let steer = steer_resource(
+        &lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .unwrap()
+            .context(),
+    );
+    let steer_turn = bind_steer(&steer);
     bounded(registry.reload()).await.unwrap();
     let current = registry.resolve(Some(&root)).unwrap();
     let current_lease = current.acquire().unwrap();
@@ -4019,8 +4049,12 @@ async fn interaction_hooks_registry_keeps_old_generation_until_lease_drain() {
     );
     let (new_turn, _) = bind_hooks(&new);
     assert!(old_turn.pending_receipts().is_ok());
+    assert!(!steer.is_closed());
     lease.release().await.unwrap();
     assert!(old.is_closed());
+    assert!(steer.is_closed());
+    assert_eq!(steer_turn.release_count(), 1);
+    assert!(steer.bind_session("late".into(), None).is_err());
     assert_eq!(old.release_count(), 1);
     assert_eq!(old_turn.release_count(), 1);
     assert!(old_turn.pending_receipts().is_err());
@@ -4030,4 +4064,29 @@ async fn interaction_hooks_registry_keeps_old_generation_until_lease_drain() {
     assert!(new.is_closed());
     assert_eq!(new.release_count(), 1);
     assert_eq!(new_turn.release_count(), 1);
+}
+
+fn steer_resource(context: &StageContext) -> super::super::interaction_steer::InteractionSteer {
+    context
+        .resource(Resource::InteractionSteer)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<super::super::interaction_steer::InteractionSteer>()
+        .unwrap()
+        .clone()
+}
+fn bind_steer(
+    resource: &super::super::interaction_steer::InteractionSteer,
+) -> super::super::interaction_steer::TurnSteer {
+    resource
+        .bind_session("s".into(), None)
+        .unwrap()
+        .start_turn(
+            "t".into(),
+            "same".into(),
+            vec![],
+            crate::runtime::hooks::Cancellation::new(),
+            &mut crate::host::modules::ModuleRouter::default(),
+        )
+        .unwrap()
 }

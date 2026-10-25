@@ -207,6 +207,10 @@ pub struct SteerAuthorizations {
     pending: Arc<Mutex<HashMap<JsString, Vec<JsString>>>>,
 }
 impl SteerAuthorizations {
+    /// Keep applied checkpoint grants, but never inherit another run's offers.
+    pub fn fresh_for_turn(&self) -> Self {
+        Self::new(self.checkpoint.clone())
+    }
     pub fn new(checkpoint: HostToolCheckpoint) -> Self {
         Self {
             checkpoint,
