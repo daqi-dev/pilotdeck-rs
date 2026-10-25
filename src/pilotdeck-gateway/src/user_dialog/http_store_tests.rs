@@ -1465,6 +1465,7 @@ async fn empty_response_body_arms_idle_timer_without_a_body_poll() {
     let timer = Arc::new(KeepAliveTimer::new(
         Duration::from_secs(5),
         Duration::from_millis(200),
+        Arc::new(AtomicBool::new(false)),
     ));
     let (client, server_io) = tokio::io::duplex(8 * 1024);
     let service_timer = timer.clone();
@@ -1598,6 +1599,7 @@ async fn dropping_a_fully_polled_body_does_not_rearm_the_idle_deadline() {
     let timer = Arc::new(KeepAliveTimer::new(
         Duration::from_secs(5),
         Duration::from_secs(1),
+        Arc::new(AtomicBool::new(false)),
     ));
     timer.request_started();
     let mut body = KeepAliveBody::new(Full::new(Bytes::from_static(b"x")), timer.clone());
@@ -1639,6 +1641,58 @@ fn default_connection_timeouts_match_node_v22() {
     );
 }
 
+/// #702 S2/S3 boundary: a close decision must use bytes that actually reached
+/// the socket. hyper can report the body as finished while the whole body is
+/// still in its write buffer, so `response_finished` alone is not enough.
+#[test]
+fn keep_alive_close_race_uses_wire_bytes_not_body_completion() {
+    let timer = Arc::new(KeepAliveTimer::new(
+        Duration::from_secs(5),
+        Duration::from_secs(1),
+        Arc::new(AtomicBool::new(false)),
+    ));
+    {
+        let mut lifecycle = timer.lifecycle.lock().unwrap();
+        lifecycle.advertised_keep_alive = true;
+        lifecycle.response_write.expected_body = 5;
+    }
+    // Head only: the advertisement is on the wire but the body is not.
+    timer.record_response_write(b"HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\n");
+    assert!(
+        timer.close_raced_with_advertised_keep_alive(),
+        "a partially written advertised response must not be gracefully closed"
+    );
+    timer.record_response_write(b"hello");
+    assert!(
+        !timer.close_raced_with_advertised_keep_alive(),
+        "a fully flushed advertisement may be closed as an idle connection"
+    );
+    // close after the response is on the wire: response_finished must not
+    // defer the close even though shutdown started.
+    timer.shutdown_started.store(true, Ordering::SeqCst);
+    timer.response_finished();
+    assert!(
+        !timer.close_raced_with_advertised_keep_alive(),
+        "close after a fully flushed response is an idle-connection close"
+    );
+    // close while the body was only pulled into hyper's buffer: the wire
+    // tracker still says not flushed, so the advertisement must be honoured.
+    {
+        let mut lifecycle = timer.lifecycle.lock().unwrap();
+        lifecycle.advertised_keep_alive = true;
+        lifecycle.close_after_response = false;
+        lifecycle.response_write = ResponseWrite {
+            expected_body: 5,
+            ..ResponseWrite::default()
+        };
+    }
+    timer.response_finished();
+    assert!(
+        timer.close_raced_with_advertised_keep_alive(),
+        "a body-complete event before the bytes leave must still defer the close"
+    );
+}
+
 /// A header deadline that expires after `server.close()` started must become
 /// Node's silent `socket.destroy()` EOF, not a fabricated 408 (Node clears its
 /// connections checker on close and never writes 408 during shutdown).
@@ -1647,6 +1701,7 @@ async fn shutdown_folds_header_deadline_into_silent_eof() {
     let timer = Arc::new(KeepAliveTimer::new(
         Duration::from_millis(20),
         Duration::from_secs(1),
+        Arc::new(AtomicBool::new(false)),
     ));
     let past = tokio::time::Instant::now() + Duration::from_millis(50);
     assert_eq!(timer.expired(past), ExpiredTimer::Headers);
@@ -2795,5 +2850,312 @@ async fn close_waits_for_in_flight_requests() {
         .expect("close() hung after the in-flight request finished")
         .unwrap();
     assert!(finished.load(Ordering::SeqCst));
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+// ---------------------------------------------------------------------------
+// #702: shutdown vs keep-alive advertisement, and early-close RST
+// ---------------------------------------------------------------------------
+
+/// Read the response head (through the blank line) plus any body bytes that
+/// arrived with it.
+async fn read_response_head(stream: &mut TcpStream, note: &str) -> (Vec<u8>, Vec<u8>) {
+    let mut buffer = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        if let Some(position) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+            return (
+                buffer[..position + 4].to_vec(),
+                buffer[position + 4..].to_vec(),
+            );
+        }
+        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk))
+            .await
+            .unwrap_or_else(|_| panic!("{note}: response head never arrived"))
+            .unwrap_or_else(|error| panic!("{note}: response head read failed: {error}"));
+        assert!(
+            read > 0,
+            "{note}: EOF before the response head: {:?}",
+            String::from_utf8_lossy(&buffer)
+        );
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+}
+
+fn response_content_length(head: &[u8]) -> usize {
+    let head = String::from_utf8_lossy(head);
+    head.lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse().ok())
+                .flatten()
+        })
+        .unwrap_or_else(|| panic!("response has no content-length: {head}"))
+}
+
+/// Read exactly `length` body bytes, carrying over any bytes read with the head.
+async fn read_exact_body(
+    stream: &mut TcpStream,
+    mut body: Vec<u8>,
+    length: usize,
+    note: &str,
+) -> Vec<u8> {
+    let mut chunk = [0u8; 8192];
+    while body.len() < length {
+        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk))
+            .await
+            .unwrap_or_else(|_| panic!("{note}: response body stalled at {}/{length}", body.len()))
+            .unwrap_or_else(|error| panic!("{note}: response body read failed: {error}"));
+        assert!(
+            read > 0,
+            "{note}: EOF before the response body completed: {}/{length}",
+            body.len()
+        );
+        body.extend_from_slice(&chunk[..read]);
+    }
+    body.truncate(length);
+    body
+}
+
+/// #702 P1: once a response head advertising `Connection: keep-alive` has
+/// reached the client, `server.close()` while the large body is still flushing
+/// must not turn that advertisement into a lie. Node keeps the in-flight
+/// connection and serves a follow-up request on it
+/// (`lifecycle-matrix/node-lifecycle-matrix.json`,
+/// `s3_body_flushing_close_reuses_same_socket`).
+///
+/// The 40 iterations are the measured trigger rate: before the fix every
+/// iteration ended in EOF after the body, so the follow-up request was lost.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_during_large_response_reuses_advertised_keep_alive() {
+    let (store, directory) = file_store("shutdown-large-keep-alive");
+    // Twelve ~1.5 MiB dialogs make the list response ~18 MiB, larger than the
+    // loopback socket buffers observed on macOS, so hyper still has body
+    // frames queued when the client reads the head. A 2-6 MiB response can
+    // otherwise be buffered completely before `close()`, which Node also
+    // treats as an idle connection and destroys (ad-hoc probe output:
+    // `_tmp/20261026-issue-702/node/node-fast-buffered.out.txt`).
+    let prompt = "a".repeat(1500 * 1024);
+    for index in 0..12 {
+        let request = parse_json(&format!(
+            r#"{{"type":"user_dialog_request","requestId":"r{index}","dialogKind":"form","toolCallId":"t{index}","toolName":"request_user_form","prompt":"{prompt}"}}"#
+        ))
+        .unwrap();
+        store
+            .put(
+                &test_key(),
+                &StoredDialog {
+                    request,
+                    created_at: "2026-01-01T00:00:00.000Z".into(),
+                },
+            )
+            .unwrap();
+    }
+    let limits = ServeLimits {
+        keep_alive_timeout: Duration::from_secs(2),
+        keep_alive_timeout_buffer: Duration::ZERO,
+        ..ServeLimits::default()
+    };
+    let mut observed = Vec::new();
+    for iteration in 0..40 {
+        let note = format!(
+            "shutdown_during_large_response_reuses_advertised_keep_alive iteration {iteration}"
+        );
+        let (server, port) = start_limited(store.clone(), limits).await;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let request = http_request(
+            "POST",
+            &format!("{STORE_PATH_PREFIX}list"),
+            &[
+                ("Authorization", &format!("Bearer {TOKEN}")),
+                ("Content-Type", "application/json"),
+            ],
+            &list_body(),
+        );
+        stream.write_all(&request).await.unwrap();
+        let (head, leftover) = read_response_head(&mut stream, &note).await;
+        let head_text = String::from_utf8_lossy(&head).to_ascii_lowercase();
+        assert!(
+            head_text.contains("connection: keep-alive"),
+            "{note}: the persistent response must advertise keep-alive: {head_text}"
+        );
+        let length = response_content_length(&head);
+        assert!(
+            length > 12 * 1024 * 1024,
+            "{note}: the response body must be large enough to still be flushing: {length}"
+        );
+        let close_task = tokio::spawn(async move { server.close().await });
+        // close() is observed while the body is still in the write path; the
+        // client deliberately has not read a body byte yet.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let body = read_exact_body(&mut stream, leftover, length, &note).await;
+        assert_eq!(body.len(), length, "{note}: complete body");
+        // The advertised connection must still accept the follow-up request.
+        stream
+            .write_all(&http_get(false))
+            .await
+            .unwrap_or_else(|error| panic!("{note}: follow-up write failed: {error}"));
+        let follow_note = format!("{note}: follow-up request");
+        let (follow_head, _) = read_response_head(&mut stream, &follow_note).await;
+        assert_eq!(
+            status(&follow_head),
+            405,
+            "{note}: the advertised keep-alive connection was closed before a follow-up request"
+        );
+        let follow_text = String::from_utf8_lossy(&follow_head).to_ascii_lowercase();
+        assert!(
+            follow_text.contains("connection: close"),
+            "{note}: the follow-up response runs during shutdown and must close: {follow_text}"
+        );
+        tokio::time::timeout(Duration::from_secs(5), close_task)
+            .await
+            .unwrap_or_else(|_| panic!("{note}: close() hung"))
+            .unwrap();
+        observed.push(length);
+    }
+    assert_eq!(observed.len(), 40, "40 iteration trigger-rate sample");
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #702 P2: a rejection written before the request body is read must survive a
+/// peer that dribbles that body. hyper's `poll_drain_or_close_read` gives up
+/// after one poll and closes the read half; closing the socket with unread
+/// bytes sends an RST that can discard the already-written 413. The fix drains
+/// the unread body for a bounded window after the response, like
+/// `reject_over_capacity`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn early_close_response_survives_byte_at_a_time_sender() {
+    let (store, directory) = file_store("early-close-slow-sender");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let declared = 3 * 1024 * 1024;
+    let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    let head = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n\
+         Content-Length: {declared}\r\n\r\n"
+    );
+    writer.write_all(head.as_bytes()).await.unwrap();
+    // Leave a backlog of unread body in the server's receive queue, then keep
+    // dribbling. The client deliberately does not read the response until the
+    // server has already closed: an RST at that point discards the queued 413.
+    writer.write_all(&[b'x'; 512 * 1024]).await.unwrap();
+    let writer_task = tokio::spawn(async move {
+        let chunk = [b'x'; 1024];
+        loop {
+            if writer.write_all(&chunk).await.is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let reader_task = tokio::spawn(async move {
+        let mut response = Vec::new();
+        let result =
+            tokio::time::timeout(Duration::from_secs(8), reader.read_to_end(&mut response)).await;
+        (result, response)
+    });
+    let (result, response) = reader_task.await.unwrap();
+    writer_task.abort();
+    let result = result.unwrap_or_else(|_| {
+        panic!(
+            "early_close_response_survives_byte_at_a_time_sender: response never completed; \
+             got {} bytes: {:?}",
+            response.len(),
+            String::from_utf8_lossy(&response)
+        )
+    });
+    result.unwrap_or_else(|error| {
+        panic!(
+            "early_close_response_survives_byte_at_a_time_sender: the early close response was \
+             reset before delivery ({error}); got {} bytes: {:?}",
+            response.len(),
+            String::from_utf8_lossy(&response)
+        )
+    });
+    assert_eq!(
+        status(&response),
+        413,
+        "the early rejection must survive a slow sender: {:?}",
+        String::from_utf8_lossy(&response)
+    );
+    let text = String::from_utf8_lossy(&response).to_ascii_lowercase();
+    assert!(
+        text.contains("connection: close") && !text.contains("keep-alive:"),
+        "the early rejection must be a coherent close: {text}"
+    );
+    assert!(
+        text.contains("payload_too_large"),
+        "the early rejection body must be delivered: {text}"
+    );
+    server.close().await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #702 S4×E1: `server.close()` while an early `Connection: close` response
+/// has been written but the request body is still unread. Node keeps draining
+/// the body and the already-written response survives
+/// (`lifecycle-matrix/node-lifecycle-matrix.json`, `s4_early_401_close`). Rust
+/// must answer the 401 completely and then end the connection; the bounded
+/// drain covers the same unread-body close path as the slow-sender test.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn early_close_response_survives_shutdown_with_unread_body() {
+    let (store, directory) = file_store("early-close-shutdown");
+    let (server, port) = start_limited(store, ServeLimits::default()).await;
+    let declared = 3 * 1024 * 1024;
+    let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    let head = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+         Content-Type: application/json\r\nContent-Length: {declared}\r\n\r\n"
+    );
+    writer.write_all(head.as_bytes()).await.unwrap();
+    writer.write_all(&[b'x'; 64 * 1024]).await.unwrap();
+    // Let the unauthenticated precheck write its 401 before close() lands.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let close_task = tokio::spawn(async move { server.close().await });
+    let writer_task = tokio::spawn(async move {
+        let chunk = [b'x'; 1024];
+        loop {
+            if writer.write_all(&chunk).await.is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    });
+    let mut response = Vec::new();
+    let read = tokio::time::timeout(Duration::from_secs(8), reader.read_to_end(&mut response))
+        .await
+        .expect("early_close_response_survives_shutdown_with_unread_body: response never ended");
+    writer_task.abort();
+    read.unwrap_or_else(|error| {
+        panic!(
+            "early_close_response_survives_shutdown_with_unread_body: response was reset ({error}); \
+             got {} bytes: {:?}",
+            response.len(),
+            String::from_utf8_lossy(&response)
+        )
+    });
+    assert_eq!(
+        status(&response),
+        401,
+        "the early 401 must survive close(): {:?}",
+        String::from_utf8_lossy(&response)
+    );
+    let text = String::from_utf8_lossy(&response).to_ascii_lowercase();
+    assert!(
+        text.contains("connection: close") && !text.contains("keep-alive:"),
+        "the early 401 must be a coherent close: {text}"
+    );
+    assert!(
+        text.contains("unauthorized"),
+        "the early 401 body must be delivered: {text}"
+    );
+    tokio::time::timeout(Duration::from_secs(5), close_task)
+        .await
+        .expect("early_close_response_survives_shutdown_with_unread_body: close() hung")
+        .unwrap();
     let _ = std::fs::remove_dir_all(directory);
 }

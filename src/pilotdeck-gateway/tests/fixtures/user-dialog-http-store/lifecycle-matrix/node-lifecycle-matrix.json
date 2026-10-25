@@ -1,0 +1,119 @@
+{
+  "node": "v22.22.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "generatedAt": "2026-10-25T16:48:24.447Z",
+  "cells": {
+    "s3_body_flushing_close_reuses_same_socket": {
+      "advertisedKeepAlive": true,
+      "bodyDelivered": 2081789,
+      "secondRequest": {
+        "length": 260,
+        "sha256": "4e03e75a0985cd1882bedcf1808ee953be0b2c70291f9d982f9478213d22b825",
+        "head": "HTTP/1.1 404 Not Found\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:47:58 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n40\r\n{\"version\":1,\"error\":{\"code\":\"not_found\",\"message\":\"Not Found\"}}\r\n0",
+        "tail": "/1.1 404 Not Found\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:47:58 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n40\r\n{\"version\":1,\"error\":{\"code\":\"not_found\",\"message\":\"Not Found\"}}\r\n0\r\n\r\n"
+      },
+      "secondRequestTerminal": "deadline",
+      "closeOutcome": "pending",
+      "note": "second request travels on the same socket that saw Connection: keep-alive"
+    },
+    "s4_early_401_slow_sender": {
+      "requestBodyDeclared": 3145728,
+      "requestBodySentAtRead": 1231872,
+      "writerOutcome": "pending",
+      "response": {
+        "length": 269,
+        "sha256": "effa287d33f0b52acad66d42e419e7c14fe16e72b11dbdac57a8a0b9c129a3e5",
+        "hex": "485454502f312e312034303120556e617574686f72697a65640d0a636f6e74656e742d747970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a446174653a2053756e2c203235204f637420323032362031363a34383a303220474d540d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4b6565702d416c6976653a2074696d656f75743d350d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a0d0a34360d0a7b2276657273696f6e223a312c226572726f72223a7b22636f6465223a22756e617574686f72697a6564222c226d657373616765223a22556e617574686f72697a6564227d7d0d0a300d0a0d0a",
+        "text": "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:48:02 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n46\r\n{\"version\":1,\"error\":{\"code\":\"unauthorized\",\"message\":\"Unauthorized\"}}\r\n0\r\n\r\n"
+      },
+      "terminal": "deadline",
+      "note": "early 401 with an unread body; Node writes the response before draining"
+    },
+    "s4_early_401_close": {
+      "requestBodyDeclared": 3145728,
+      "requestBodySentAtRead": 879616,
+      "response": {
+        "length": 269,
+        "sha256": "7ca864c4dfb10f1cc64c9aaa86791689123d384a4095f22c1481abc21c4ff164",
+        "hex": "485454502f312e312034303120556e617574686f72697a65640d0a636f6e74656e742d747970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a446174653a2053756e2c203235204f637420323032362031363a34383a313020474d540d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4b6565702d416c6976653a2074696d656f75743d350d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a0d0a34360d0a7b2276657273696f6e223a312c226572726f72223a7b22636f6465223a22756e617574686f72697a6564222c226d657373616765223a22556e617574686f72697a6564227d7d0d0a300d0a0d0a",
+        "text": "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:48:10 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n46\r\n{\"version\":1,\"error\":{\"code\":\"unauthorized\",\"message\":\"Unauthorized\"}}\r\n0\r\n\r\n"
+      },
+      "terminal": "deadline",
+      "writerOutcome": "pending",
+      "closeOutcome": "pending"
+    },
+    "s4_early_401_client_fin": {
+      "requestBodyDeclared": 3145728,
+      "requestBodySent": 1024,
+      "response": {
+        "length": 316,
+        "sha256": "840253119a06fad6e38afde0fa34739603025eb2edd44a862cfae130a59a243f",
+        "hex": "485454502f312e312034303120556e617574686f72697a65640d0a636f6e74656e742d747970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a446174653a2053756e2c203235204f637420323032362031363a34383a313620474d540d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4b6565702d416c6976653a2074696d656f75743d350d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a0d0a34360d0a7b2276657273696f6e223a312c226572726f72223a7b22636f6465223a22756e617574686f72697a6564222c226d657373616765223a22556e617574686f72697a6564227d7d0d0a300d0a0d0a485454502f312e31203430302042616420526571756573740d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a",
+        "text": "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:48:16 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n46\r\n{\"version\":1,\"error\":{\"code\":\"unauthorized\",\"message\":\"Unauthorized\"}}\r\n0\r\n\r\nHTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+      },
+      "terminal": "eof"
+    },
+    "s4_early_401_client_rst": {
+      "requestBodyDeclared": 3145728,
+      "bytesRead": 0,
+      "note": "client RST: by construction no response bytes can be observed"
+    },
+    "s3_body_flushing_client_fin": {
+      "head": {
+        "length": 16570,
+        "sha256": "da81ef13c83e874f367a1b1df901d510bbc1ffb058e2077e954158f082403549",
+        "head": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:48:16 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4000\r\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tail": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n"
+      },
+      "rest": {
+        "length": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "head": "",
+        "tail": ""
+      },
+      "terminal": "eof",
+      "note": "half-close after the head; Node still flushes the complete body"
+    },
+    "s3_body_flushing_client_rst": {
+      "head": {
+        "length": 16570,
+        "sha256": "da81ef13c83e874f367a1b1df901d510bbc1ffb058e2077e954158f082403549",
+        "head": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:48:16 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4000\r\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tail": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n"
+      },
+      "note": "RST after the head: the remaining body cannot arrive"
+    },
+    "s1_close_in_handler_before_head": {
+      "handlerInvocations": 2,
+      "firstHead": {
+        "length": 178,
+        "sha256": "6042376baa107ef74d9f2525a72bd7171905c8a453ec52fd87de46ace1c65c0b",
+        "hex": "485454502f312e3120323030204f4b0d0a636f6e74656e742d747970653a206170706c69636174696f6e2f6a736f6e3b20636861727365743d7574662d380d0a446174653a2053756e2c203235204f637420323032362031363a34383a313620474d540d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a4b6565702d416c6976653a2074696d656f75743d350d0a5472616e736665722d456e636f64696e673a206368756e6b65640d0a0d0a",
+        "text": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:48:16 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n"
+      },
+      "advertisedKeepAlive": true,
+      "secondRequest": {
+        "length": 214,
+        "sha256": "05c31df6c3f3288861af0f6290507f75b0ffd64c6e6fb38f9d97d621cccefd08",
+        "head": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:48:16 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n19\r\n{\"version\":1,\"result\":[]}\r\n0\r\n\r\n",
+        "tail": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:48:16 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n19\r\n{\"version\":1,\"result\":[]}\r\n0\r\n\r\n"
+      },
+      "secondRequestTerminal": "deadline",
+      "closeOutcome": "pending",
+      "note": "close() inside the handler before writeHead; node:http still advertises keep-alive and reuses the socket"
+    },
+    "s1_close_while_slow_body": {
+      "handlerInvocations": 1,
+      "response": {
+        "length": 2098359,
+        "sha256": "23665f621f5e66ad00711ba66d5d446209320faebda34a6d9a288873113d9a2b",
+        "head": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 16:48:20 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4000\r\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tail": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n0\r\n\r\n"
+      },
+      "terminal": "deadline",
+      "closeOutcome": "pending",
+      "note": "close() before the body completes: node:http invokes the handler at head time and streams the 200 response; the TS baseline itself waits for the body"
+    }
+  }
+}
