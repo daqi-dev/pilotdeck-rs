@@ -136,43 +136,14 @@ fn required_text(value: Option<&str>, default: &str, name: &str) -> Result<Strin
 /// JS `Number(value)` restricted to the integer forms the deployment profile
 /// consumes. TS parses both numbers with `Number()` + `Number.isInteger`
 /// (`AgentLoopDeploymentProfile.ts:127-141`), so `+80`, `80.0`, `1e3` and
-/// `0x50` are all accepted. `Number()` rejects a sign on either side of the
-/// radix prefix (`+0x50` and `0x+50` are NaN), and Rust's `f64` parser accepts
-/// `inf`/`NaN` spellings that JS rejects, so both cases are filtered explicitly.
-/// Keep the radix digit gate in sync with `js_value::string_to_number`.
+/// `0x50` are accepted while `+0x50`, `0x+50` and `80.5` are not.
+///
+/// The grammar (JS whitespace, radix-prefix recognition and the digit gate that
+/// rejects `0x+50`) lives in [`crate::js_value::string_to_number`]; keeping a
+/// second copy here is what let the two drift apart before #744 fix-r2. Only
+/// `Number.isInteger` remains: finite and without a fractional part.
 fn js_integral_number(value: &str) -> Option<f64> {
-    let value = value.trim();
-    if value.is_empty() {
-        return None;
-    }
-    let radix = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-        .map(|digits| (digits, 16))
-        .or_else(|| {
-            value
-                .strip_prefix("0b")
-                .or_else(|| value.strip_prefix("0B"))
-                .map(|digits| (digits, 2))
-        })
-        .or_else(|| {
-            value
-                .strip_prefix("0o")
-                .or_else(|| value.strip_prefix("0O"))
-                .map(|digits| (digits, 8))
-        });
-    let number = match radix {
-        Some((digits, radix)) => {
-            // `Number()` only has a radix literal when at least one valid digit
-            // follows the prefix; `from_str_radix` would also accept signs,
-            // which JS does not (`0x+50` is NaN).
-            if digits.is_empty() || !digits.chars().all(|digit| digit.is_digit(radix)) {
-                return None;
-            }
-            u128::from_str_radix(digits, radix).ok()? as f64
-        }
-        None => value.parse::<f64>().ok()?,
-    };
+    let number = crate::js_value::string_to_number(value);
     (number.is_finite() && number.fract() == 0.0).then_some(number)
 }
 
