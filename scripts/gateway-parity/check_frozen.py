@@ -6,6 +6,13 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+
+# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
+# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
+# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
+sys.dont_write_bytecode = True
 
 # python3 -I removes the script directory from sys.path; the apparatus directory
 # is the only trusted import root.

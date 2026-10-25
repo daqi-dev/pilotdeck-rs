@@ -13,13 +13,20 @@ import tempfile
 import time
 import unittest
 
+# Never read a repository __pycache__ before the scan: a crafted unchecked-hash
+# pyc executes on import and could subvert the checker itself (fix-r5).  -B only
+# stops writes, so redirect the bytecode search to a fresh temp prefix as well.
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
+sys.dont_write_bytecode = True
+
 # python3 -I removes the script directory from sys.path; the apparatus directory
 # is the only trusted import root.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (APPARATUS_PROBES, DATA_FILES, MAX_AGE, apparatus_whitelist,
-                    baseline_dependency_hashes, cargo_config_problems, guard,
-                    node_modules_entry, owner, parity_lock, save, unknown_apparatus_files)
+from common import (APPARATUS_PROBES, DATA_FILES, MAX_AGE, ProbeSkipped,
+                    apparatus_whitelist, baseline_dependency_hashes, cargo_config_problems,
+                    guard, materialize_probe, node_modules_entry, owner, parity_lock,
+                    remove_probe, save, unknown_apparatus_files)
 from compare import Normalizer, compare, wire_frame
 from observer import Decoder
 
@@ -215,40 +222,9 @@ class ApparatusInputs(unittest.TestCase):
         self.root = Path(self.tmp.name)
 
     # Shared probes (common.APPARATUS_PROBES): the kind says how to materialize
-    # the shape, and every one must be rejected.  The same table drives
+    # the shape, and every one must be rejected.  The same table and the same
+    # materialize_probe()/remove_probe() implementation drive
     # controls/prerequisites.py, so the two machine controls cannot drift apart.
-    def _materialize(self, kind, name, outside):
-        path = self.root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if kind == 'dir-link':
-            path.symlink_to(outside, target_is_directory=True)
-        elif kind == 'file-link':
-            path.symlink_to(outside / 'evil.py')
-        elif kind == 'dir':
-            path.mkdir()
-        elif kind == 'nested-modules':
-            path.mkdir()
-            (path / 'evil.py').write_text('unregistered nested dependency')
-        elif kind == 'nested-modules-empty':
-            path.mkdir()
-        elif kind == 'unreadable-dir':
-            path.mkdir()
-            (path / 'evil.py').write_text('unregistered file in an unreadable tree')
-            os.chmod(path, 0)
-        else:
-            path.write_text('unregistered apparatus input')
-        return path
-
-    def _remove(self, kind, path):
-        if kind in ('nested-modules', 'nested-modules-empty', 'unreadable-dir'):
-            if kind == 'unreadable-dir':
-                os.chmod(path, 0o700)
-            shutil.rmtree(path)
-        elif kind == 'dir':
-            path.rmdir()
-        else:
-            path.unlink()
-
     def test_every_shared_probe_is_rejected(self):
         outside = Path(tempfile.mkdtemp(prefix='pdrs-apparatus-outside-', dir=self.root.parent))
         self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
@@ -256,18 +232,34 @@ class ApparatusInputs(unittest.TestCase):
         (outside / 'evil.py').write_text('shadow module')
         for kind, name in APPARATUS_PROBES:
             with self.subTest(kind=kind, name=name):
-                if kind == 'unreadable-dir' and os.geteuid() == 0:
-                    continue  # root can read mode-000 directories
-                path = self._materialize(kind, name, outside)
+                try:
+                    path = materialize_probe(self.root, kind, name, outside)
+                except ProbeSkipped as error:
+                    self.skipTest(str(error))
+                # The scan reports a __pycache__ directory itself, not each
+                # file below it (it never descends into one).
+                expected = '__pycache__' if name.startswith('__pycache__/') else name
                 try:
                     if kind == 'unreadable-dir':
                         # onerror must surface the failure, never skip the tree.
                         with self.assertRaises(OSError):
                             unknown_apparatus_files(self.root)
                     else:
-                        self.assertEqual(unknown_apparatus_files(self.root), [name])
+                        self.assertEqual(unknown_apparatus_files(self.root), [expected])
                 finally:
-                    self._remove(kind, path)
+                    remove_probe(kind, path)
+        self.assertEqual(unknown_apparatus_files(self.root), [])
+
+    def test_unknown_probe_kind_is_an_error(self):
+        # A new table kind must fail loudly in both consumers instead of being
+        # silently materialized as a plain file (the old else-branch drift).
+        outside = Path(tempfile.mkdtemp(prefix='pdrs-probe-kind-', dir=self.root.parent))
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        with self.assertRaises(ValueError):
+            materialize_probe(self.root, 'fifo', 'pipe', outside)
+        with self.assertRaises(ValueError):
+            remove_probe('fifo', self.root / 'pipe')
+        self.assertFalse((self.root / 'pipe').exists())
         self.assertEqual(unknown_apparatus_files(self.root), [])
 
     def test_whitelisted_and_data_files_are_accepted_by_path(self):
@@ -300,23 +292,39 @@ class ApparatusInputs(unittest.TestCase):
         self.assertNotEqual(node_modules_entry(self.root), first)
         self.assertEqual(unknown_apparatus_files(self.root), [])
 
-    def test_bytecode_cache_is_tolerated_only_for_a_registered_source(self):
+    def test_python_cache_is_always_unregistered(self):
+        # fix-r5 P0: unchecked-hash (PEP 552) bytecode is loaded without
+        # re-reading the source, so no .pyc/.pyo gets a tolerance class even
+        # beside a registered source.  An empty __pycache__ is rejected too:
+        # the scanner reports the directory itself and never descends into it.
+        (self.root / 'common.py').write_text('registered member')
         (self.root / '__pycache__').mkdir()
+        self.assertEqual(unknown_apparatus_files(self.root), ['__pycache__'])
         cache = self.root / '__pycache__/common.cpython-314.pyc'
         cache.write_bytes(b'x')
-        self.assertEqual(unknown_apparatus_files(self.root), ['__pycache__/common.cpython-314.pyc'])
-        (self.root / 'common.py').write_text('registered member')
-        self.assertEqual(unknown_apparatus_files(self.root), [])
-        orphan = self.root / '__pycache__/orphan.cpython-314.pyc'
-        orphan.write_bytes(b'x')
-        self.assertEqual(unknown_apparatus_files(self.root), ['__pycache__/orphan.cpython-314.pyc'])
-        orphan.unlink()
-        (self.root / '__pycache__/evil.py').write_text('not cache bytecode')
-        self.assertEqual(unknown_apparatus_files(self.root), ['__pycache__/evil.py'])
-        (self.root / '__pycache__/evil.py').unlink()
-        cache.unlink()
+        self.assertEqual(unknown_apparatus_files(self.root), ['__pycache__'])
+        self.root.joinpath('__pycache__/evil.py').write_text('not cache bytecode')
+        self.assertEqual(unknown_apparatus_files(self.root), ['__pycache__'])
+        shutil.rmtree(self.root / '__pycache__')
         (self.root / 'legacy.pyc').write_bytes(b'x')
-        self.assertEqual(unknown_apparatus_files(self.root), ['legacy.pyc'])
+        (self.root / 'legacy.pyo').write_bytes(b'x')
+        self.assertEqual(unknown_apparatus_files(self.root), ['legacy.pyc', 'legacy.pyo'])
+
+    def test_ds_store_is_tolerated_only_as_a_regular_file(self):
+        # Same exemption as scripts/ui-server-parity/apparatus.py: ordinary
+        # Finder metadata only.  Links/directories stay rejected (the shared
+        # probe table covers those shapes).
+        (self.root / '.DS_Store').write_text('finder metadata')
+        (self.root / 'fixtures').mkdir()
+        (self.root / 'fixtures/.DS_Store').write_text('finder metadata')
+        self.assertEqual(unknown_apparatus_files(self.root), [])
+        (self.root / 'fixtures/.DS_Store').unlink()
+        (self.root / 'fixtures/.DS_Store').mkdir()
+        self.assertEqual(unknown_apparatus_files(self.root), ['fixtures/.DS_Store'])
+        (self.root / 'fixtures/.DS_Store').rmdir()
+        (self.root / 'common.py').write_text('registered member')
+        (self.root / 'fixtures/.DS_Store').symlink_to(self.root / 'common.py')
+        self.assertEqual(unknown_apparatus_files(self.root), ['fixtures/.DS_Store'])
 
     def test_registered_path_case_variant_requires_the_same_inode(self):
         (self.root / 'common.py').write_text('registered member')

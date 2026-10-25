@@ -40,7 +40,6 @@ def digest(path):
 # an explicit negative control and documents what the apparatus may execute.
 SCRIPT_SUFFIXES = ('.py', '.pyw', '.sh', '.bash', '.zsh', '.js', '.mjs', '.cjs',
                    '.jsx', '.ts', '.mts', '.cts', '.tsx')
-BYTECODE_SUFFIXES = ('.pyc', '.pyo')
 # CPython probes these before falling back to a same-directory ``.py``, so an
 # unregistered extension module shadows the registered source at import time.
 # importlib.machinery is the authoritative list for this interpreter
@@ -83,15 +82,21 @@ def apparatus_whitelist():
     return tuple(sorted(set(A2_SCRIPTS) | set(A3_SCRIPTS) | set(DATA_FILES)))
 
 
-# Case-insensitive lookup because APFS is case-insensitive by default;
-# _registered() still confirms a case variant is the same inode.
+# Case-insensitive lookup because APFS presents one inode under one stored
+# spelling; _registered() still requires os.path.samefile, so a distinct
+# upper/lower-case file on a case-sensitive volume is unregistered.  This is
+# not a claim that CPython resolves a different-case module: measured on
+# Python 3.14.3, ``import weird`` does not find ``WEIRD.PY`` (find_spec None),
+# while Node CJS/ESM did load ``WEIRD.JS`` (fix-r4 log case-resolution.log).
 _REGISTERED = {name.casefold(): name for name in apparatus_whitelist()}
 NATIVE_SUFFIX = EXTENSION_SUFFIXES[0] if EXTENSION_SUFFIXES else '.so'
 
 # One shared negative-control table: test_safety.py and controls/prerequisites.py
-# both import APPARATUS_PROBES, so a newly rejected shape gets one machine
-# control instead of two hand-maintained lists that can drift apart.
-# kinds: file | dir | dir-link | file-link | nested-modules |
+# both call materialize_probe()/remove_probe() below, so a newly rejected shape
+# gets one machine control and one implementation instead of two hand-maintained
+# lists/if-chains that can drift apart.  An unknown kind raises ValueError in
+# both functions: adding a shape to this table forces the materializer to change.
+# kinds: file | dir | dir-link | file-link | case-variant | nested-modules |
 #        nested-modules-empty | unreadable-dir.
 APPARATUS_PROBES = tuple(dict.fromkeys((
     *(('file', f'probe{suffix}') for suffix in SCRIPT_SUFFIXES),
@@ -113,6 +118,20 @@ APPARATUS_PROBES = tuple(dict.fromkeys((
     ('file', 'notes.txt'),
     ('file', 'notes'),
     ('file', '.hidden'),
+    # fix-r5: Python bytecode is never tolerated.  A cache whose stem names a
+    # *registered* source, an orphan cache and a non-bytecode file inside
+    # __pycache__ are all unregistered (an empty __pycache__ is reported as the
+    # directory).  A case variant is a distinct inode only on a case-sensitive
+    # volume; on APFS it is skipped as degenerate (see materialize_probe).
+    ('file', '__pycache__/common.cpython-314.pyc'),
+    ('file', '__pycache__/orphan.cpython-314.pyc'),
+    ('file', '__pycache__/evil.py'),
+    ('case-variant', 'COMMON.PY'),
+    # macOS Finder metadata is tolerated only as a regular file (same rule as
+    # ui-server-parity/apparatus.py); a link or directory of that name stays
+    # rejected.
+    ('file-link', '.DS_Store'),
+    ('dir', '.DS_Store'),
     # Only SCRIPT/node_modules is covered by node_modules_entry()'s digest; a
     # nested node_modules at any depth (or in any case) is unregistered.
     ('nested-modules', 'nested/node_modules'),
@@ -127,6 +146,80 @@ APPARATUS_PROBES = tuple(dict.fromkeys((
     # An unreadable subtree must fail the scan, never be skipped.
     ('unreadable-dir', 'unreadable'),
 )))
+
+
+class ProbeSkipped(RuntimeError):
+    """The current environment cannot materialize this probe shape."""
+
+
+def materialize_probe(root, kind, name, outside):
+    """Create one rejected apparatus shape; unknown kinds raise ValueError.
+
+    Shared by test_safety.py and controls/prerequisites.py so both machine
+    controls always exercise the same shape.  ``outside`` is a directory
+    outside the apparatus holding link targets (``evil.py``/``__init__.py``).
+    A mode-000 directory cannot be built as root; callers must treat
+    ``ProbeSkipped`` as a documented degenerate case, never as a pass.
+    """
+    path = Path(root) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if kind == 'file':
+        path.write_text('unregistered apparatus input')
+    elif kind == 'dir':
+        path.mkdir()
+    elif kind == 'dir-link':
+        path.symlink_to(outside, target_is_directory=True)
+    elif kind == 'file-link':
+        path.symlink_to(Path(outside) / 'evil.py')
+    elif kind == 'case-variant':
+        # A distinct upper-case spelling exists only on a case-sensitive
+        # volume.  Where the filesystem folds case, creating COMMON.PY would
+        # alias (or overwrite/delete) a registered common.py, so skip instead
+        # of silently testing the wrong inode.
+        registered = path.parent / Path(name).name.casefold()
+        if registered.exists() and _same_inode(registered, path):
+            raise ProbeSkipped('case-insensitive volume: case variant is the same inode')
+        path.write_text('unregistered apparatus input')
+        if registered.exists() and _same_inode(registered, path):
+            path.unlink()
+            raise ProbeSkipped('case-insensitive volume: case variant is the same inode')
+    elif kind == 'nested-modules':
+        path.mkdir()
+        (path / 'evil.py').write_text('unregistered nested dependency')
+    elif kind == 'nested-modules-empty':
+        path.mkdir()
+    elif kind == 'unreadable-dir':
+        if os.geteuid() == 0:
+            raise ProbeSkipped('root can read mode-000 directories')
+        path.mkdir()
+        (path / 'evil.py').write_text('unregistered file in an unreadable tree')
+        os.chmod(path, 0)
+    else:
+        raise ValueError(f'unknown apparatus probe kind: {kind!r}')
+    return path
+
+
+def remove_probe(kind, path):
+    """Remove a shape created by materialize_probe(); unknown kinds raise."""
+    path = Path(path)
+    if kind in ('file', 'case-variant', 'dir-link', 'file-link'):
+        path.unlink()
+        if path.parent.name == '__pycache__':
+            # Keep repeated probe runs on a clean tree: the probe's own
+            # __pycache__ directory is empty after the file is gone.
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass
+    elif kind in ('dir', 'nested-modules-empty'):
+        path.rmdir()
+    elif kind == 'nested-modules':
+        shutil.rmtree(path)
+    elif kind == 'unreadable-dir':
+        os.chmod(path, 0o700)
+        shutil.rmtree(path)
+    else:
+        raise ValueError(f'unknown apparatus probe kind: {kind!r}')
 
 
 def _raise(error):
@@ -152,21 +245,6 @@ def _registered(script, rel):
     # when it is the same inode.  On a case-sensitive filesystem the variant is
     # a distinct, unregistered file.
     return _same_inode(script / name, script / rel)
-
-
-def _cache_bytecode(script, rel):
-    """Bytecode generated from a registered source, e.g. ``__pycache__/a.pyc``."""
-    parts = rel.parts
-    # Exact names only: CPython writes ``__pycache__/<stem>.pyc`` and reads no
-    # case variant, so widening here would accept bytes nothing can load.
-    if len(parts) < 2 or parts[-2] != '__pycache__':
-        return False
-    if rel.suffix not in BYTECODE_SUFFIXES:
-        return False
-    source = rel.parent.parent / (parts[-1].split('.', 1)[0] + '.py')
-    # The source must still exist: a cache for a removed module is not covered
-    # by any registered hash row and is treated as unregistered.
-    return (script / source).is_file() and _registered(script, source)
 
 
 def tree_digest(folder):
@@ -215,19 +293,36 @@ def unknown_apparatus_files(script=None):
     keeps the other direction honest: ``check_frozen`` requires a hash row for
     every A2 member that exists.
 
-    Generated bytecode is the one tolerated class: a ``.pyc``/``.pyo`` directly
-    inside ``__pycache__`` whose stem names a registered source (for example
-    ``__pycache__/common.cpython-314.pyc`` beside ``common.py``).  CPython only
-    reads that cache together with the source, so its bytes are not an
-    independent input; an orphan cache or any other file under ``__pycache__``
-    is still unregistered, and a ``.pyc``/``.pyo`` beside the sources could be
-    imported on its own, so it is rejected too.
+    Python bytecode is never tolerated.  ``.pyc``/``.pyo`` bytes are executable
+    and are not covered by any FROZEN row; a PEP 552 unchecked-hash cache is
+    loaded without re-reading the source (measured: fix-r5 negative control
+    imports a crafted ``__pycache__/common.cpython-314.pyc`` and runs its
+    code while ``common.py`` keeps its registered hash), so a source-adjacent
+    cache is not covered by the source hash.  Every apparatus entry
+    sets ``sys.dont_write_bytecode = True`` and points ``sys.pycache_prefix`` at
+    a fresh temp directory before importing apparatus modules, so a normal run
+    cannot create a cache and an existing repository cache is never read.
+    ``-B``/dont_write_bytecode only stops writes: without the prefix redirect, a
+    crafted unchecked-hash cache is imported before the scan and can override
+    this function, making ``check_frozen`` PASS (measured in the fix-r5
+    negative control; with the redirect it FAILs and the payload does not run).
+    A ``__pycache__`` directory anywhere in
+    the apparatus is reported unregistered (an empty one included), as is any
+    ``.pyc``/``.pyo`` file, an orphan cache, or a non-bytecode file inside
+    ``__pycache__``.
 
-    Paths compare case-insensitively because APFS is case-insensitive by
-    default: ``WEIRD.PY`` is what ``import weird`` resolves.  A registered name
-    presented in another case is accepted only when ``os.path.samefile`` shows
-    it is the very same inode, so on a case-sensitive filesystem a distinct case
-    variant remains unregistered.
+    macOS ``.DS_Store`` is the one explicit metadata exemption, matching
+    ``scripts/ui-server-parity/apparatus.py``: only a regular file with that
+    exact basename is accepted; a link, directory, FIFO or socket of that name
+    is still unregistered.
+
+    Paths compare case-insensitively because APFS presents one inode under one
+    stored spelling.  A registered name presented in another case is accepted
+    only when ``os.path.samefile`` shows it is the very same inode, so on a
+    case-sensitive filesystem a distinct case variant remains unregistered.
+    (Measured on Python 3.14.3, ``import weird`` does not resolve ``WEIRD.PY``;
+    a case-sensitive suffix test is not what protects this file — the path
+    whitelist is.)
 
     Only the top-level ``node_modules`` is exempt: ``node_modules_entry`` binds
     that whole tree by digest.  A ``node_modules`` at any deeper level is
@@ -271,6 +366,11 @@ def unknown_apparatus_files(script=None):
                     continue
                 found.add(rel.as_posix())
                 continue
+            if folded == '__pycache__' or name == '.DS_Store':
+                # Bytecode never gets a tolerance class (fix-r5).  A directory
+                # named .DS_Store is not the regular-file metadata exemption.
+                found.add(rel.as_posix())
+                continue
             if path.is_symlink() or folded in module_names:
                 found.add(rel.as_posix())
             else:
@@ -286,7 +386,8 @@ def unknown_apparatus_files(script=None):
             elif not path.is_file():
                 # FIFO/socket/device: never a registered data or script file.
                 found.add(rel.as_posix())
-            elif _cache_bytecode(script, rel):
+            elif name == '.DS_Store':
+                # Exact basename + regular file only, same as ui-server.
                 continue
             elif not _registered(script, rel):
                 found.add(rel.as_posix())
