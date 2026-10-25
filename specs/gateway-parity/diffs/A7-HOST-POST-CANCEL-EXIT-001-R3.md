@@ -13,7 +13,7 @@ cc7c4e6 `src/agent/modules/transport/agentLoopSidecarClient.ts:931-958`：abort 
 
 ## Rust 行为
 
-`src/pilotdeck-gateway/src/host/execution.rs` 的取消期限（`POST_CANCEL_EXIT_TIMEOUT` = 5 s，唯一绝对期限）到点时执行 `callbacks.shutdown(); events.clear();`。消费方停顿期间执行 future 不被 poll，墙钟期限照常推进。下列情况在到点时会丢掉合法 lifecycle 并报 `terminal without proper lifecycle` 或 Timeout（fail-closed，不会假成功）：应用回调需要多步才完成；会话通道 `mpsc::channel(1)` 前面还有非 final 事件；帧已在连接缓冲中但尚未 `receive()`；配置了 `execution_deadline` 时它在 `biased` 下先于 `join_next`；重连内层的 `select!` 没有调整取件顺序，期限照旧可能先于已完成的应用被选中。以上五种即 R2「覆盖不到」清单的全部。
+`src/pilotdeck-gateway/src/host/execution.rs` 的取消期限（`POST_CANCEL_EXIT_TIMEOUT` = 5 s，唯一绝对期限）到点时执行 `callbacks.shutdown(); events.clear();`。消费方停顿期间执行 future 不被 poll，墙钟期限照常推进。下列情况在到点时会丢掉合法 lifecycle 并报 `terminal without proper lifecycle` 或 Timeout（fail-closed，不会假成功）：应用回调需要多步才完成；会话通道 `mpsc::channel(1)` 前面还有非 final 事件；帧已在连接缓冲中但尚未 `receive()`；配置了 `execution_deadline` 时它在 `biased` 下先于 `join_next`；重连内层的 `select!` 没有调整取件顺序，期限照旧可能先于已完成的应用被选中。以上五种即 R2「覆盖不到」清单中的全部行为项。R2 清单另有一条测试项（慢消费方三个用例假定帧在第二次 `next()` 时已入队，CI 慢时会偶发失败）不属于行为偏离，由分支 `claude/fix-slow-consumer-flake` 给这三个用例补确定性同步点处理，不随 #643 关闭。
 
 ## 范围
 

@@ -29,7 +29,7 @@
 
 ## 人定 · 2026-10-25 · #643 取消退出到点后的有界收尾：选 A
 - **原话**：「#643 选 A」
-- **决定**：维持现状。「用户已取消，且消费方停顿超过 5 s」时，多步回调、会话通道背压、连接缓冲帧、`execution_deadline` 取件顺序这几种情况下取消期限到点会丢掉合法 lifecycle 并报错（fail-closed，不会假成功）。这些情况登记为已接受的已知偏离，归入 A7-HOST-POST-CANCEL-EXIT-001（TS 取消后无限等待，Rust 有界）。R1 的「唯一绝对期限，不重算」不变。
+- **决定**：维持现状（选项 A）。取消被观察到后 5 s 期限到点时仍有未交付的合法 lifecycle、因而报错（fail-closed，不会假成功）的情况，登记为已接受的已知偏离，归入 A7-HOST-POST-CANCEL-EXIT-001（TS 取消后无限等待，Rust 有界）。R1 的「唯一绝对期限，不重算」不变。**受影响情况的机制与清单以 `specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R3.md` 为唯一正本**，本卡不另列，避免两处不同步。
 - **落地**：账本更正 `specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R3.md`；#590 四格矩阵中涉及「取消 + 慢消费方」的场景按此偏离判定；#643 随本记录合入后关闭。选项分析见 #643 评论（`_tmp/20261025-claude-loop/issue-643-options.md`）。
 - **可复用原则**：有界期限只防对端拖延；消费方自身导致的延迟造成的 fail-closed 结果，登记为已知偏离，不为它重算期限。
 
