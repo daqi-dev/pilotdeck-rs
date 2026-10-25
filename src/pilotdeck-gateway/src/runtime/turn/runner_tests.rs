@@ -153,21 +153,23 @@ async fn replay(name: &str) {
         .collect();
     let mut events = vec![];
     let result: RecorderResult<()> = async {
-        let (runner, start) = f.runner().start().await?;
-        events.extend(start);
+        let mut recording = Recording::new(f.runner(), Arc::new(()));
+        events.extend(advance(&mut recording, RecordingAction::Start).await?);
         let mut prepared = input();
         if let Some(raw) = row.get("rawInput") {
-            prepared.history = array(row.get("history").unwrap());
-            prepared.synthetic = array(row.get("synthetic").unwrap());
-            prepared.metadata = object([("allowPlanModeTools", JsValue::Bool(false))])
-                .as_object()
-                .cloned();
-            if let Some(content) = raw.get("content") {
-                prepared.input = AgentInput::Blocks(array(content));
-            }
+            prepared = TurnInput::from_agent_input(
+                raw,
+                row.get("submitOptions").unwrap_or(&object([("allowPlanModeTools", JsValue::Bool(false))])),
+                array(row.get("history").unwrap()),
+                array(row.get("synthetic").unwrap()),
+            )?;
+            let accepted = text(row.get("transcript").unwrap()).lines()
+                .map(|line| parse_json(line).unwrap())
+                .find(|entry| entry.get("type") == Some(&"accepted_input".into())).unwrap();
+            assert_eq!(prepared.metadata.clone().map(JsValue::Object), accepted.get("metadata").cloned(), "{name}: projected metadata before writer normalization");
         }
-        let (mut runner, accepted) = runner.accept(prepared).await?;
-        events.extend(accepted);
+        events.extend(advance(&mut recording, RecordingAction::Accept(prepared)).await?);
+        let runner = recording.runner().unwrap();
         if let Some(messages) = row.get("loopMessages") {
             assert_eq!(runner.messages(), array(messages));
         }
@@ -176,24 +178,15 @@ async fn replay(name: &str) {
         }
         if ["loop-fails-twice", "status-fails", "loop-null-hint"].contains(&name) {
             for _ in 0..2 {
-                let (next, failed) = runner
-                    .loop_failed(
-                        if name == "loop-null-hint" {parse_json(r#"{"code":"agent_invalid_state","message":"loop failed","userHint":null}"#).unwrap()} else {parse_json(r#"{"code":"agent_invalid_state","message":"loop failed"}"#).unwrap()},
-                    )
-                    .await?;
-                runner = next;
-                events.extend(failed);
+                events.extend(advance(&mut recording, RecordingAction::LoopFailed(
+                    if name == "loop-null-hint" {parse_json(r#"{"code":"agent_invalid_state","message":"loop failed","userHint":null}"#).unwrap()} else {parse_json(r#"{"code":"agent_invalid_state","message":"loop failed"}"#).unwrap()},
+                )).await?);
             }
         }
-        let (finished, done) = if name == "loop-aborted-error" { runner.fail(parse_json(r#"{"code":"agent_aborted","message":"injected abort"}"#).unwrap()).await? } else if name == "loop-throws" {
-            runner
-                .fail(
-                    parse_json(
-                        r#"{"code":"agent_invalid_state","message":"injected loop failure"}"#,
-                    )
-                    .unwrap(),
-                )
-                .await?
+        let action = if name == "loop-aborted-error" {
+            RecordingAction::Fail(parse_json(r#"{"code":"agent_aborted","message":"injected abort"}"#).unwrap())
+        } else if name == "loop-throws" {
+            RecordingAction::Fail(parse_json(r#"{"code":"agent_invalid_state","message":"injected loop failure"}"#).unwrap())
         } else {
             let result = if name.starts_with("complete-") {
                 rows.iter()
@@ -210,10 +203,10 @@ async fn replay(name: &str) {
             } else {
                 expected.last().unwrap().get("result").unwrap().clone()
             };
-            runner.complete(result).await?
+            RecordingAction::Complete(result)
         };
-        assert!(finished.is_complete());
-        events.extend(done);
+        events.extend(advance(&mut recording, action).await?);
+        assert!(recording.runner().unwrap().is_complete());
         Ok(())
     }
     .await;
@@ -322,4 +315,233 @@ async fn invalid_transitions_and_identity_never_write() {
 #[ignore = "requires Node 22 and pinned TS; spawns real sidecars"]
 fn runner_regenerates_identically() {
     baseline::regenerates_identically("turn-runner");
+}
+
+async fn advance(
+    recording: &mut Recording,
+    action: RecordingAction,
+) -> RecorderResult<Vec<JsValue>> {
+    recording.begin(action)?;
+    recording.settle().await
+}
+case!(recording_original_text, "input-text-original");
+case!(recording_metadata_all, "input-metadata-all");
+case!(recording_metadata_false, "input-metadata-false");
+case!(recording_metadata_null, "input-metadata-null");
+case!(recording_metadata_absent, "input-metadata-absent");
+case!(recording_metadata_array, "input-metadata-array");
+case!(recording_metadata_string, "input-metadata-string");
+case!(recording_metadata_number, "input-metadata-number");
+
+struct Owner(Arc<AtomicUsize>);
+impl Drop for Owner {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+async fn recording_gate(phase: u8, abandon: bool) {
+    let f = Fixture::new("", 0);
+    let released = Arc::new(AtomicUsize::new(0));
+    let owner = Arc::new(Owner(released.clone()));
+    let mut recording = Recording::new(f.runner(), owner.clone());
+    if phase > 0 {
+        advance(&mut recording, RecordingAction::Start)
+            .await
+            .unwrap();
+    }
+    if phase > 1 {
+        advance(&mut recording, RecordingAction::Accept(input()))
+            .await
+            .unwrap();
+    }
+    let before = fs::read_to_string(&f.key.transcript_path).unwrap_or_default();
+    let result =
+        parse_json(r#"{"type":"success","sessionId":"s","turnId":"t","stopReason":"completed"}"#)
+            .unwrap();
+    recording
+        .begin(match phase {
+            0 => RecordingAction::Start,
+            1 => RecordingAction::Accept(input()),
+            _ => RecordingAction::Complete(result),
+        })
+        .unwrap();
+    let (started, entered) = tokio::sync::oneshot::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    *f.store.gate.lock().unwrap() = Some((started, wait));
+    {
+        let waiting = recording.settle();
+        tokio::pin!(waiting);
+        tokio::select! {
+            entered = tokio::time::timeout(Duration::from_secs(5), entered) => entered.unwrap().unwrap(),
+            result = &mut waiting => panic!("write unexpectedly settled: {result:?}"),
+        }
+        // Drop only the waiter, leaving the transition in Recording.
+    }
+    assert_eq!(
+        fs::read_to_string(&f.key.transcript_path).unwrap_or_default(),
+        before
+    );
+    assert!(recording.runner().is_none());
+    assert_eq!(
+        recording
+            .begin(RecordingAction::Start)
+            .unwrap_err()
+            .to_string(),
+        "Recording transition is pending."
+    );
+    // The predecessor has not been released. A cancelled second waiter must
+    // neither detach nor restart it; one explicit poll proves it is pending.
+    {
+        use std::{
+            future::Future,
+            task::{Context, Poll, Waker},
+        };
+        let mut waiting = Box::pin(recording.settle());
+        assert!(matches!(
+            waiting
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+    }
+    let runtime = f.registry.resolve(None).unwrap();
+    f.registry.invalidate(None);
+    drop(owner); // caller's shared active guard
+    if abandon {
+        drop(recording);
+        assert_eq!(
+            released.load(Ordering::SeqCst),
+            0,
+            "worker owns the same guard"
+        );
+        assert_eq!(runtime.lease_count(), 1);
+        release.send(()).unwrap();
+    } else {
+        assert_eq!(released.load(Ordering::SeqCst), 0);
+        release.send(()).unwrap();
+        let events = tokio::time::timeout(Duration::from_secs(5), recording.settle())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].get("type"),
+            Some(&["turn_started", "input_accepted", "turn_completed"][phase as usize].into())
+        );
+        assert_eq!(recording.runner().unwrap().is_complete(), phase == 2);
+        if phase == 2 {
+            assert!(recording.begin(RecordingAction::Start).is_err());
+        }
+        assert!(
+            recording.settle().await.is_err(),
+            "settled transition cannot replay events"
+        );
+        assert_eq!(
+            released.load(Ordering::SeqCst),
+            0,
+            "runner still owns the guard"
+        );
+        drop(recording);
+    }
+    tokio::time::timeout(Duration::from_secs(5), runtime.wait_disposed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(released.load(Ordering::SeqCst), 1);
+    let kind = ["turn_started", "accepted_input", "turn_result"][phase as usize];
+    let entries = fs::read_to_string(&f.key.transcript_path).unwrap();
+    assert_eq!(
+        entries
+            .lines()
+            .filter(|line| parse_json(line).unwrap().get("type") == Some(&kind.into()))
+            .count(),
+        1,
+        "exactly one durable transition"
+    );
+}
+macro_rules! gate_case {
+    ($name:ident, $phase:literal, $drop:literal) => {
+        #[tokio::test]
+        async fn $name() {
+            recording_gate($phase, $drop).await;
+        }
+    };
+}
+gate_case!(recording_cancel_start_then_resume, 0, false);
+gate_case!(recording_cancel_accept_then_resume, 1, false);
+gate_case!(recording_cancel_complete_then_resume, 2, false);
+gate_case!(recording_drop_start_worker, 0, true);
+gate_case!(recording_drop_accept_worker, 1, true);
+gate_case!(recording_drop_complete_worker, 2, true);
+
+#[tokio::test]
+async fn recording_unpolled_drop_and_failed_transition_cannot_restart() {
+    for begin in [false, true] {
+        let f = Fixture::new("", 0);
+        let released = Arc::new(AtomicUsize::new(0));
+        let mut recording = Recording::new(f.runner(), Arc::new(Owner(released.clone())));
+        if begin {
+            recording.begin(RecordingAction::Start).unwrap();
+        }
+        drop(recording);
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        assert!(!f.key.transcript_path.exists());
+        assert_eq!(f.registry.resolve(None).unwrap().lease_count(), 0);
+    }
+    let f = Fixture::new("turn_started", 1);
+    let mut recording = Recording::new(f.runner(), Arc::new(()));
+    assert!(recording.settle().await.is_err());
+    assert!(
+        advance(&mut recording, RecordingAction::Start)
+            .await
+            .is_err()
+    );
+    assert!(recording.runner().is_none());
+    assert!(recording.settle().await.is_err());
+    assert!(
+        recording.begin(RecordingAction::Start).is_err(),
+        "no retry of consumed runner"
+    );
+    assert!(!f.key.transcript_path.exists());
+}
+
+#[test]
+fn recording_input_rejects_non_agent_input_and_drops_model_prototype() {
+    for raw in [
+        r#"{"messages":[]}"#,
+        r#"{"type":"unknown","text":"x"}"#,
+        r#"{"type":"text","text":null}"#,
+        r#"{"type":"blocks","content":{}}"#,
+    ] {
+        assert!(
+            TurnInput::from_agent_input(&parse_json(raw).unwrap(), &object([]), vec![], vec![])
+                .is_err()
+        );
+    }
+    let mut model = JsObject::new();
+    model.insert("model".into(), "chosen".into());
+    model.set_prototype(object([("inherited", JsValue::Bool(true))]));
+    let raw =
+        parse_json(r#"{"type":"text","text":"raw\ud800","metadata":{"permissionMode":"wrong"}}"#)
+            .unwrap();
+    let options = object([
+        ("modelSelection", JsValue::Object(model)),
+        ("allowPlanModeTools", JsValue::Undefined),
+    ]);
+    let parsed = TurnInput::from_agent_input(&raw, &options, vec![], vec![]).unwrap();
+    let metadata = parsed.metadata.unwrap();
+    assert_eq!(metadata.entries().len(), 1);
+    assert_eq!(
+        metadata.get("modelSelection"),
+        Some(&object([("model", "chosen".into())]))
+    );
+    assert!(
+        metadata
+            .get("modelSelection")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .prototype()
+            .is_none()
+    );
 }
