@@ -471,6 +471,8 @@ mod tests {
                 "ENOSPC: no space left on device, write",
             ),
             (
+                // 123456 stays outside libuv's table on both supported
+                // targets (macOS, Linux), so only the fallback can answer.
                 std::io::Error::from_raw_os_error(123456),
                 "UNKNOWN: unknown error, write",
             ),
@@ -495,6 +497,8 @@ mod tests {
                 "ENOENT: no such file or directory, open ''",
             ),
             (
+                // 123456 stays outside libuv's table on both supported
+                // targets (macOS, Linux), so only the fallback can answer.
                 std::io::Error::from_raw_os_error(123456),
                 "UNKNOWN: unknown error, open ''",
             ),
