@@ -462,8 +462,7 @@ impl WorkspaceSnapshotProvider {
                 // writeFile(output) validates after readFile has succeeded,
                 // exactly the order of the TS expression.
                 validate_nul_path(&output_units, "path")?;
-                fs::write(&output_path, contents)
-                    .map_err(|e| io_error(&e, "open", Some(Path::new(&output))))?;
+                write_file(Path::new(&output), &contents)?;
             }
         }
         Ok(RestoredSnapshot {
@@ -845,8 +844,7 @@ fn commit(
     let manifest = manifest_json(input, phase, snapshot_id, entries)?;
     let text = stringify_pretty(&manifest);
     let temporary_manifest = temporary_dir.join("manifest.json");
-    fs::write(&temporary_manifest, text)
-        .map_err(|e| io_message(&e, "open", Some(temporary_manifest.as_path())))?;
+    write_file(&temporary_manifest, text.as_bytes()).map_err(|e| e.to_string())?;
     fs::create_dir_all(&paths.partition)
         .map_err(|e| io_message(&e, "mkdir", Some(&paths.partition)))?;
     fs::rename(&temporary_manifest, &paths.manifest_path).map_err(|e| {
@@ -1107,7 +1105,7 @@ fn atomic_marker(path: &Path, content: &str) -> Result<()> {
             message: e.to_string(),
         })?
     ));
-    fs::write(&temporary, content).map_err(|e| io_error(&e, "open", Some(temporary.as_path())))?;
+    write_file(&temporary, content.as_bytes())?;
     fs::rename(&temporary, path).map_err(|e| two_path_message(&e, "rename", &temporary, path))?;
     Ok(())
 }
@@ -1272,6 +1270,15 @@ fn io_error(error: &io::Error, syscall: &str, path: Option<&Path>) -> WorkspaceS
             message: error.to_string(),
         },
     }
+}
+
+/// `writeFile` (node:fs/promises) behind the snapshot writes: an open error
+/// names its path, a descriptor write error (ENOSPC, EFBIG, ...) does not.
+/// `fs::write` would conflate the two into the open label.
+fn write_file(path: &Path, contents: &[u8]) -> Result<()> {
+    let mut file = fs::File::create(path).map_err(|e| io_error(&e, "open", Some(path)))?;
+    file.write_all(contents)
+        .map_err(|e| io_error(&e, "write", None))
 }
 
 /// Capture-path helper: the failure marker stores only the message, so the

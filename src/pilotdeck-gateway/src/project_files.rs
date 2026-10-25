@@ -292,7 +292,11 @@ pub(crate) fn overwrite_at(root: &File, relative: &Path, bytes: &[u8]) -> io::Re
         return Err(io::Error::from_raw_os_error(libc::EACCES));
     }
     file.set_len(0)?;
+    // The truncate rides the open in Node's `writeFileSync` (`w` implies
+    // O_TRUNC); a descriptor write error carries no path, so stage it for the
+    // callers' Node-style diagnostics.
     file.write_all(bytes)
+        .map_err(|e| crate::node_io::descriptor_error(e, "write"))
 }
 
 #[cfg(unix)]

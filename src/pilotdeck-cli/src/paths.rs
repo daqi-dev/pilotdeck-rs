@@ -112,7 +112,8 @@ pub fn js_trim(text: &str) -> &str {
 }
 
 /// Node fs error message `CODE: description, syscall 'path'`, formatted by the
-/// gateway's libuv template (a read-stage error omits the path).
+/// gateway's libuv template (a descriptor read/write-stage error omits the
+/// path; a staged error from `read_session_bytes` etc. carries its own stage).
 pub fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> Option<String> {
     let path = path.to_string_lossy();
     pilotdeck_gateway::node_fs_message(error, syscall, Some(path.as_ref()))

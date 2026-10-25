@@ -6,8 +6,8 @@
 //! text notice, and that branch is implemented here verbatim.
 use super::{
     ResolvedPath, StatKind, cwd as context_cwd, extname, failed, field, is_absolute, join,
-    js_value_string, lower, normalize, number, object, os_path, record_write_snapshot,
-    resolve_workspace_path, schema, stat, string, text, tool_error, truthy,
+    js_value_string, lower, normalize, number, object, os_path, read_file_bytes,
+    record_write_snapshot, resolve_workspace_path, schema, stat, string, text, tool_error, truthy,
 };
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
@@ -913,7 +913,7 @@ fn read_in_range(
         // No limit is only reached for small files: `text_file` supplies the
         // 2000-line auto-page limit above 200 KiB before calling this function,
         // and the baseline's `readFileFull` reads the whole buffer too.
-        let bytes = std::fs::read(os_path(path)).map_err(|error| failed(error, "open", path))?;
+        let bytes = read_file_bytes(path)?;
         if bytes.contains(&0) {
             return Err(tool_error(
                 "invalid_tool_input",

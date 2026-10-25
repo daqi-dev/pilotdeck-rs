@@ -825,5 +825,10 @@ pub(super) fn io_mkdir(path: impl AsRef<Path>) -> std::io::Result<()> {
 }
 pub(super) fn io_write(path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> std::io::Result<()> {
     let path = path.as_ref();
-    fs::write(path, content).map_err(|e| crate::node_io::path_error(e, "open", path))
+    // `writeFileSync`: an open error names the path, a descriptor write error
+    // (EFBIG, ENOSPC, ...) does not. `fs::write` would conflate the two.
+    let mut file =
+        fs::File::create(path).map_err(|e| crate::node_io::path_error(e, "open", path))?;
+    std::io::Write::write_all(&mut file, content.as_ref())
+        .map_err(|e| crate::node_io::descriptor_error(e, "write"))
 }
