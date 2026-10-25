@@ -515,11 +515,16 @@ impl HostHandler for StreamHandler {
     fn event(&self, event: JsValue) -> HostFuture<()> {
         let final_event = event.get("final").and_then(JsValue::as_bool) == Some(true);
         let payload = event.get("payload").cloned();
-        if !final_event && payload.is_none() {
+        // TS agentLoopSidecarClient.ts:1310-1317,1739-1743 rejects missing or
+        // non-object AgentEvent payloads with this message. Wire shape/type
+        // checks live in protocol/host; this also guards embedded callbacks.
+        // Unlike hostAgentEventBridge.ts:35-49, this boundary rejects instead
+        // of forwarding unchecked: A7.2-INTERACTION-CONSUME-001 (unapproved).
+        if !final_event && payload.as_ref().and_then(JsValue::as_object).is_none() {
             return Box::pin(async {
                 Err(HostError::new(
                     HostErrorKind::Protocol,
-                    "AgentEvent payload is missing.",
+                    "Sidecar event payload is not an AgentEvent.",
                 ))
             });
         }

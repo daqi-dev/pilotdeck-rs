@@ -1846,30 +1846,120 @@ async fn host_error_cuts_off_prevalidated_and_backpressured_deliveries() {
 #[tokio::test]
 async fn non_final_event_missing_payload_is_protocol_error() {
     for raw in ["{}", r#"{"final":false}"#] {
-        let (inner, handler, mut receiver) = buffered_handler(4);
-        let error = handler.event(parse_json(raw).unwrap()).await.unwrap_err();
-        assert_eq!(error.kind, HostErrorKind::Protocol);
-        assert_eq!(error.message, "AgentEvent payload is missing.");
-        assert!(inner.events.lock().unwrap().is_empty());
-        assert!(matches!(
-            receiver.try_recv(),
-            Err(mpsc::error::TryRecvError::Empty)
-        ));
-        println!("missing payload {raw}: {error}");
+        assert_invalid_event_payload(parse_json(raw).unwrap()).await;
     }
+}
+
+async fn assert_invalid_event_payload(event: JsValue) {
     let (inner, handler, mut receiver) = buffered_handler(4);
-    handler
-        .event(parse_json(r#"{"final":true}"#).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(inner.events.lock().unwrap().len(), 1);
+    let error = handler.event(event.clone()).await.unwrap_err();
+    assert_eq!(error.kind, HostErrorKind::Protocol);
+    assert_eq!(error.message, "Sidecar event payload is not an AgentEvent.");
+    assert!(inner.events.lock().unwrap().is_empty());
     assert!(matches!(
         receiver.try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
     ));
-    let payload = host_event("model_event");
-    let mut event = JsObject::new();
-    event.insert("payload".into(), payload.clone());
-    handler.event(JsValue::Object(event)).await.unwrap();
-    assert_eq!(receiver.recv().await, Some(payload));
+    println!("invalid payload {event:?}: {error}");
+}
+
+#[tokio::test]
+async fn non_final_event_null_or_undefined_payload_is_protocol_error() {
+    for payload in [JsValue::Null, JsValue::Undefined] {
+        for explicit_final in [false, true] {
+            let mut event = JsObject::new();
+            event.insert("payload".into(), payload.clone());
+            if explicit_final {
+                event.insert("final".into(), JsValue::Bool(false));
+            }
+            assert_invalid_event_payload(JsValue::Object(event)).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn non_final_event_non_object_payload_is_protocol_error() {
+    for raw in [
+        "false",
+        "true",
+        "0",
+        "42",
+        r#""""#,
+        r#""event""#,
+        "[]",
+        "[{}]",
+    ] {
+        let payload = parse_json(raw).unwrap();
+        for explicit_final in [false, true] {
+            let mut event = JsObject::new();
+            event.insert("payload".into(), payload.clone());
+            if explicit_final {
+                event.insert("final".into(), JsValue::Bool(false));
+            }
+            assert_invalid_event_payload(JsValue::Object(event)).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn final_event_payload_shape_is_left_to_inner_handler() {
+    for raw in [
+        r#"{"final":true}"#,
+        r#"{"final":true,"payload":null}"#,
+        r#"{"final":true,"payload":false}"#,
+        r#"{"final":true,"payload":[]}"#,
+        r#"{"final":true,"payload":{}}"#,
+    ] {
+        let (inner, handler, mut receiver) = buffered_handler(4);
+        let event = parse_json(raw).unwrap();
+        handler.event(event.clone()).await.unwrap();
+        assert_eq!(*inner.events.lock().unwrap(), vec![event]);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+    // The exemption must still apply the terminal through the inner handler.
+    let (events, mut receiver) = mpsc::channel(4);
+    let handler = StreamHandler {
+        inner: Arc::new(Handler {
+            fail_event: true,
+            ..Handler::default()
+        }),
+        events,
+        integrity: Arc::new(StreamIntegrity::new()),
+        forwarding: Mutex::new(Forwarding::default()),
+    };
+    let error = handler
+        .event(parse_json(r#"{"final":true}"#).unwrap())
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, HostErrorKind::Callback);
+    assert_eq!(error.message, "event failed");
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test]
+async fn non_final_event_object_payload_is_applied_and_forwarded() {
+    for payload in [host_event("model_event"), JsValue::Object(JsObject::new())] {
+        for explicit_final in [false, true] {
+            let (inner, handler, mut receiver) = buffered_handler(4);
+            let mut event = JsObject::new();
+            event.insert("payload".into(), payload.clone());
+            if explicit_final {
+                event.insert("final".into(), JsValue::Bool(false));
+            }
+            let event = JsValue::Object(event);
+            handler.event(event.clone()).await.unwrap();
+            assert_eq!(*inner.events.lock().unwrap(), vec![event]);
+            assert_eq!(receiver.try_recv().unwrap(), payload);
+            assert!(matches!(
+                receiver.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+        }
+    }
 }
