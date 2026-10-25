@@ -6,8 +6,10 @@
 //! vendored 包（`vendor/tiktoken-rs`、`data/icu_collator_data`）不在 workspace
 //! lint 继承内，因此其声明/源码包含边与成员同受检查：path 依赖（含 dev/build/
 //! target 与未启用的可选依赖）、build script、proc-macro 及其它非 lib target、
-//! `[lib] path`，以及源码里的 `#[path = ...]` / `include!("...")` 目标都必须
-//! 留在该 vendored 包目录内。vendored 包内部的 unsafe 本身仍不属于本守卫范围。
+//! `[lib] path`，以及从 `[lib] src_path` 出发沿 `#[path = ...]` / `include!("...")`
+//! 字面量目标做传递闭包得到的全部编译源（不按扩展名过滤，`.rs.data` 与无扩展名
+//! 文件同样扫描）；闭包中的每个目标都必须留在该 vendored 包目录内、是文件、
+//! 不是 symlink。vendored 包内部的 unsafe 本身仍不属于本守卫范围。
 //! vendored 源码内容不做哈希 pin：内容本身是否可信属于冻结件/人工评审边界；
 //! 本守卫只锁“声明边与源码包含边不能引出该目录”。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
@@ -243,8 +245,23 @@ fn assert_vendored_source_target(
     source: &Path,
     kind: &str,
     value: &str,
-) {
+) -> PathBuf {
     let target = source.parent().unwrap().join(value);
+    let file_type = fs::symlink_metadata(&target)
+        .unwrap_or_else(|error| {
+            panic!(
+                "vendored package {package} {kind} target cannot be resolved: {} ({error})",
+                target.display()
+            )
+        })
+        .file_type();
+    // Check the link itself before canonicalizing: a symlink whose destination
+    // is inside the package is still an unreviewed second path into the file.
+    assert!(
+        !file_type.is_symlink(),
+        "vendored package {package} {kind} target is a symlink: {}",
+        target.display()
+    );
     let target = target.canonicalize().unwrap_or_else(|error| {
         panic!(
             "vendored package {package} {kind} target cannot be resolved: {} ({error})",
@@ -262,71 +279,76 @@ fn assert_vendored_source_target(
         "vendored package {package} {kind} target is not a file: {}",
         target.display()
     );
+    target
 }
 
 // Fail closed on escaped strings and macro-generated (non-literal) paths:
 // parsing arbitrary macro expansion is out of scope, so a new literal shape
 // must extend this scanner instead of silently skipping an edge.
-fn vendored_source_edges(package: &str, directory: &Path, files: &[PathBuf]) {
-    for file in files {
-        let source = fs::read_to_string(file).unwrap();
-        let tokens = source_tokens(&source);
-        for (index, token) in tokens.iter().enumerate() {
-            let SourceToken::Ident(word) = token else {
-                continue;
-            };
-            // `#[path = "..."]` and the `cfg_attr(..., path = "...")` shape.
-            // A preceding `[` or `,` distinguishes an attribute from an
-            // ordinary `let path = "..."` binding.
-            if word == "path"
-                && matches!(
-                    tokens.get(index.wrapping_sub(1)),
-                    Some(SourceToken::Punct('[')) | Some(SourceToken::Punct(','))
-                )
-                && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
-            {
-                match tokens.get(index + 2) {
-                    Some(SourceToken::Str { value, escaped }) => {
-                        assert!(
-                            !escaped,
-                            "vendored package {package} #[path] must be a plain string literal: {}",
-                            file.display()
-                        );
-                        assert_vendored_source_target(package, directory, file, "#[path]", value);
-                    }
-                    _ => panic!(
+fn vendored_source_edges(package: &str, directory: &Path, file: &Path) -> Vec<PathBuf> {
+    let source = fs::read_to_string(file).unwrap();
+    let tokens = source_tokens(&source);
+    let mut targets = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        let SourceToken::Ident(word) = token else {
+            continue;
+        };
+        // `#[path = "..."]` and the `cfg_attr(..., path = "...")` shape.
+        // A preceding `[` or `,` distinguishes an attribute from an
+        // ordinary `let path = "..."` binding.
+        if word == "path"
+            && matches!(
+                tokens.get(index.wrapping_sub(1)),
+                Some(SourceToken::Punct('[')) | Some(SourceToken::Punct(','))
+            )
+            && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
+        {
+            match tokens.get(index + 2) {
+                Some(SourceToken::Str { value, escaped }) => {
+                    assert!(
+                        !escaped,
                         "vendored package {package} #[path] must be a plain string literal: {}",
                         file.display()
-                    ),
+                    );
+                    targets.push(assert_vendored_source_target(
+                        package, directory, file, "#[path]", value,
+                    ));
                 }
+                _ => panic!(
+                    "vendored package {package} #[path] must be a plain string literal: {}",
+                    file.display()
+                ),
             }
-            // `include!("...")`, including `include ! ( "..." )` spacing.
-            if word == "include"
-                && tokens.get(index + 1) == Some(&SourceToken::Punct('!'))
-                && matches!(
-                    tokens.get(index + 2),
-                    Some(SourceToken::Punct('('))
-                        | Some(SourceToken::Punct('['))
-                        | Some(SourceToken::Punct('{'))
-                )
-            {
-                match tokens.get(index + 3) {
-                    Some(SourceToken::Str { value, escaped }) => {
-                        assert!(
-                            !escaped,
-                            "vendored package {package} include! must be a plain string literal: {}",
-                            file.display()
-                        );
-                        assert_vendored_source_target(package, directory, file, "include!", value);
-                    }
-                    _ => panic!(
+        }
+        // `include!("...")`, including `include ! ( "..." )` spacing.
+        if word == "include"
+            && tokens.get(index + 1) == Some(&SourceToken::Punct('!'))
+            && matches!(
+                tokens.get(index + 2),
+                Some(SourceToken::Punct('('))
+                    | Some(SourceToken::Punct('['))
+                    | Some(SourceToken::Punct('{'))
+            )
+        {
+            match tokens.get(index + 3) {
+                Some(SourceToken::Str { value, escaped }) => {
+                    assert!(
+                        !escaped,
                         "vendored package {package} include! must be a plain string literal: {}",
                         file.display()
-                    ),
+                    );
+                    targets.push(assert_vendored_source_target(
+                        package, directory, file, "include!", value,
+                    ));
                 }
+                _ => panic!(
+                    "vendored package {package} include! must be a plain string literal: {}",
+                    file.display()
+                ),
             }
         }
     }
+    targets
 }
 
 fn collect_vendored_rust_sources(package: &str, directory: &Path, files: &mut Vec<PathBuf>) {
@@ -346,10 +368,35 @@ fn collect_vendored_rust_sources(package: &str, directory: &Path, files: &mut Ve
     }
 }
 
+// Scan the transitive closure of literal `#[path]` / `include!` targets that
+// starts at the `[lib]` source. Extensions carry no meaning to rustc here:
+// `.rs.data` and extensionless files are compiled exactly like `.rs`, so every
+// target is scanned regardless of its name. The recursive `.rs` sweep is kept
+// as a fail-closed superset (an unreferenced Rust file must not introduce an
+// escaping edge either), but it is not the only seed.
+fn vendored_compile_closure(package: &str, directory: &Path, lib_sources: Vec<PathBuf>) {
+    let mut pending = lib_sources;
+    collect_vendored_rust_sources(package, directory, &mut pending);
+    let mut seen = HashSet::new();
+    while let Some(file) = pending.pop() {
+        let file = file.canonicalize().unwrap_or_else(|error| {
+            panic!(
+                "vendored package {package} source cannot be resolved: {} ({error})",
+                file.display()
+            )
+        });
+        if !seen.insert(file.clone()) {
+            continue;
+        }
+        pending.extend(vendored_source_edges(package, directory, &file));
+    }
+}
+
 // A vendored package sits outside `[workspace.lints]`, so any build script,
 // proc-macro, non-lib target, or source include that leaves the vendored
 // directory would be compiled/executed without the workspace `forbid`. Keep
-// the reviewed surface exactly the vendored lib source tree.
+// the reviewed surface to the vendored lib source tree, read through its
+// literal `#[path]` / `include!` graph.
 fn vendored_package_boundary(
     package: &str,
     metadata: &Value,
@@ -360,6 +407,7 @@ fn vendored_package_boundary(
     let targets = metadata["targets"]
         .as_array()
         .expect("vendored package targets");
+    let mut lib_sources = Vec::new();
     for target in targets {
         let kinds: Vec<_> = target["kind"]
             .as_array()
@@ -372,9 +420,16 @@ fn vendored_package_boundary(
             ["lib"],
             "vendored package {package} must expose only a lib target; build scripts, proc-macros, bins, examples, tests and benches are forbidden"
         );
-        let source = Path::new(target["src_path"].as_str().unwrap())
-            .canonicalize()
-            .expect("vendored lib source");
+        let raw_source = Path::new(target["src_path"].as_str().unwrap());
+        let kind = fs::symlink_metadata(raw_source)
+            .expect("vendored lib source")
+            .file_type();
+        assert!(
+            !kind.is_symlink(),
+            "vendored package {package} lib source is a symlink: {}",
+            raw_source.display()
+        );
+        let source = raw_source.canonicalize().expect("vendored lib source");
         assert!(
             source.starts_with(directory),
             "vendored package {package} lib source escapes its package directory: {}",
@@ -385,10 +440,9 @@ fn vendored_package_boundary(
             "vendored package {package} lib source is not a file: {}",
             source.display()
         );
+        lib_sources.push(source);
     }
-    let mut files = Vec::new();
-    collect_vendored_rust_sources(package, directory, &mut files);
-    vendored_source_edges(package, directory, &files);
+    vendored_compile_closure(package, directory, lib_sources);
 }
 
 fn resolved_dependency_boundary(workspace: &Path, members: &[String]) {
