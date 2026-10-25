@@ -310,10 +310,18 @@ impl ToolResultBudget {
                 &JsString::from(format!("result-{index:04}.{extension}")),
             );
             #[cfg(unix)]
-            let root = &workspace_root;
+            let root = workspace_root.clone();
             #[cfg(not(unix))]
-            let root = &refs_dir;
-            if copy_file_if_absent(root, source, &alias)? {
+            let root = refs_dir.clone();
+            // Same #637 offload for the alias's full copy (source read plus
+            // exclusive destination write); the checked paths stay lexical
+            // inside the blocking task so no second resolution is added.
+            let (root, source, target) = (root, source.clone(), alias.clone());
+            let copied =
+                tokio::task::spawn_blocking(move || copy_file_if_absent(&root, &source, &target))
+                    .await
+                    .map_err(|error| ToolBudgetError::new(error.to_string()))??;
+            if copied {
                 return Ok(relative(&workspace_root, &alias));
             }
         }
@@ -343,8 +351,18 @@ impl ToolResultBudget {
         let (_, project) = self.read_file_alias_location();
         #[cfg(not(unix))]
         let project = self.tool_results_dir.clone();
-        write_text_if_absent(&project, path, content)?;
-        Ok(())
+        // #637: the spill write (canonicalize, mkdir walk, exclusive open and
+        // write) is blocking fs work. TS's spill port awaits `node:fs/promises`
+        // (`ToolResultSpillPort.ts`), which runs off the event loop; keep tokio
+        // workers equally free, matching `instructions.rs`. Contents, file
+        // names and the error mapping are unchanged, and once started the
+        // write always completes: dropping this future does not abort the
+        // blocking task, exactly like the previous synchronous call.
+        let (root, path, content) = (project, path.clone(), content.clone());
+        tokio::task::spawn_blocking(move || write_text_if_absent(&root, &path, &content))
+            .await
+            .map_err(|error| ToolBudgetError::new(error.to_string()))?
+            .map(|_| ())
     }
 
     async fn maybe_replace_media(
@@ -851,11 +869,7 @@ fn ensure_directory(
         .map_err(|_| permission_denied("mkdir", target))?;
     let directory = project.join(relative);
     #[cfg(test)]
-    BEFORE_SPILL_MKDIR.with(|hook| {
-        if let Some(hook) = hook.borrow_mut().as_mut() {
-            hook(target);
-        }
-    });
+    fire_spill_hook(&BEFORE_SPILL_MKDIR, target);
     crate::project_files::create_directories_beneath(&project, &directory).map_err(|error| {
         // A refused link in the mkdir walk keeps the same public diagnostic as
         // the pre-existing-link case (see `spill_open_error` for the open leg).
@@ -946,11 +960,7 @@ fn ensure_directory(
 // descendant again after a replacement would trust the attacker's link.
 fn create_spill_file(checked: &(PathBuf, PathBuf), path: &JsString) -> io::Result<fs::File> {
     #[cfg(all(test, unix))]
-    BEFORE_SPILL_OPEN.with(|hook| {
-        if let Some(hook) = hook.borrow_mut().as_mut() {
-            hook(path);
-        }
-    });
+    fire_spill_hook(&BEFORE_SPILL_OPEN, path);
     #[cfg(unix)]
     let opened = crate::project_files::create_new_beneath(
         &checked.0,
@@ -987,12 +997,77 @@ fn spill_open_error(
     io_error(error, syscall, Some(io_path))
 }
 
+// Test hooks are process-global, not thread-local: since #637 the spill
+// write and alias copy run on blocking-pool threads, so the hook must be
+// visible from any tokio worker or blocking thread. Hook tests serialize on
+// SPILL_HOOK_ORDER (installations would otherwise silently overwrite each
+// other) and every installation filters by path so another test's concurrent
+// spill write never triggers a foreign replacement.
 #[cfg(all(test, unix))]
-type BeforeSpillOpen = Box<dyn FnMut(&JsString)>;
+type SpillHook = std::sync::Arc<dyn Fn(&JsString) + Send + Sync>;
 #[cfg(all(test, unix))]
-thread_local! {
-    static BEFORE_SPILL_MKDIR: std::cell::RefCell<Option<BeforeSpillOpen>> = const { std::cell::RefCell::new(None) };
-    static BEFORE_SPILL_OPEN: std::cell::RefCell<Option<BeforeSpillOpen>> = const { std::cell::RefCell::new(None) };
+static BEFORE_SPILL_MKDIR: Mutex<Option<SpillHook>> = Mutex::new(None);
+#[cfg(all(test, unix))]
+static BEFORE_SPILL_OPEN: Mutex<Option<SpillHook>> = Mutex::new(None);
+#[cfg(all(test, unix))]
+static SPILL_HOOK_ORDER: Mutex<()> = Mutex::new(());
+
+#[cfg(all(test, unix))]
+fn fire_spill_hook(registry: &Mutex<Option<SpillHook>>, path: &JsString) {
+    // Call outside the registry lock so two concurrent spills can both be
+    // inside the slow-I/O probe below without serializing each other.
+    let Some(hook) = registry.lock().unwrap().clone() else {
+        return;
+    };
+    hook(path);
+}
+
+/// #637 test probe: controlled slow I/O on the real spill path. Every spill
+/// open (spill write and alias copy destination) under `root` first blocks
+/// for `delay` inside the original I/O path, then the real exclusive open and
+/// write still run — the delay stands in for a slow filesystem device, it
+/// does not replace the real calls. `fires()` counts the stalled opens.
+#[cfg(all(test, unix))]
+pub(crate) struct SlowSpillIo {
+    fires: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    _order: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn slow_spill_io_under(
+    root: &std::path::Path,
+    delay: std::time::Duration,
+) -> SlowSpillIo {
+    let prefix = String::from(root.to_string_lossy());
+    let fires = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let stalled = fires.clone();
+    let hook: SpillHook = std::sync::Arc::new(move |path: &JsString| {
+        if !String::from_utf16_lossy(path.units()).starts_with(&prefix) {
+            return;
+        }
+        stalled.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::thread::sleep(delay);
+    });
+    let order = SPILL_HOOK_ORDER.lock().unwrap();
+    BEFORE_SPILL_OPEN.lock().unwrap().replace(hook);
+    SlowSpillIo {
+        fires,
+        _order: order,
+    }
+}
+
+#[cfg(all(test, unix))]
+impl SlowSpillIo {
+    pub(crate) fn fires(&self) -> usize {
+        self.fires.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[cfg(all(test, unix))]
+impl Drop for SlowSpillIo {
+    fn drop(&mut self) {
+        *BEFORE_SPILL_OPEN.lock().unwrap() = None;
+    }
 }
 
 fn write_text_if_absent(
@@ -1081,15 +1156,22 @@ mod tests {
     #[cfg(unix)]
     impl Drop for ResetSpillHook {
         fn drop(&mut self) {
-            BEFORE_SPILL_OPEN.with(|hook| *hook.borrow_mut() = None);
-            BEFORE_SPILL_MKDIR.with(|hook| *hook.borrow_mut() = None);
+            *BEFORE_SPILL_OPEN.lock().unwrap() = None;
+            *BEFORE_SPILL_MKDIR.lock().unwrap() = None;
         }
     }
 
     #[cfg(unix)]
     fn raced_destination(copy: bool) {
         use crate::test_scratch::Scratch;
-        use std::{cell::Cell, os::unix::fs::symlink, rc::Rc};
+        use std::{
+            os::unix::fs::symlink,
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
+        };
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
         let scratch = Scratch::new("spill-toctou");
         let outside = Scratch::new("spill-toctou-outside");
         let root_path = scratch.path().join("spill");
@@ -1101,20 +1183,24 @@ mod tests {
         fs::write(&source, b"payload").unwrap();
         let root = JsString::from(root_path.to_str().unwrap());
         let path = JsString::from(parent.join("payload.txt").to_str().unwrap());
-        let fired = Rc::new(Cell::new(false));
+        let fired = Arc::new(AtomicBool::new(false));
         let fired_hook = fired.clone();
         let target = path.clone();
         let outside_path = outside.path().to_owned();
-        BEFORE_SPILL_OPEN.with(|hook| {
-            *hook.borrow_mut() = Some(Box::new(move |path| {
+        BEFORE_SPILL_OPEN
+            .lock()
+            .unwrap()
+            .replace(std::sync::Arc::new(move |path: &JsString| {
                 if path != &target {
                     return;
                 }
-                assert!(!fired_hook.replace(true), "hook must fire exactly once");
+                assert!(
+                    !fired_hook.swap(true, Ordering::SeqCst),
+                    "hook must fire exactly once"
+                );
                 fs::rename(&intermediate, intermediate.with_extension("saved")).unwrap();
                 symlink(&outside_path, &intermediate).unwrap();
             }));
-        });
         let _reset = ResetSpillHook;
         write_text_if_absent(
             &root,
@@ -1122,13 +1208,19 @@ mod tests {
             &JsString::from("unrelated"),
         )
         .unwrap();
-        assert!(!fired.get(), "hook must ignore unrelated target paths");
+        assert!(
+            !fired.load(Ordering::SeqCst),
+            "hook must ignore unrelated target paths"
+        );
         let result = if copy {
             copy_file_if_absent(&root, &JsString::from(source.to_str().unwrap()), &path)
         } else {
             write_text_if_absent(&root, &path, &JsString::from("payload"))
         };
-        assert!(fired.get(), "target-filtered hook did not run");
+        assert!(
+            fired.load(Ordering::SeqCst),
+            "target-filtered hook did not run"
+        );
         assert!(
             !outside.path().join("leaf/payload.txt").exists(),
             "raced open wrote outside the spill root"
@@ -1196,13 +1288,67 @@ mod tests {
         raced_destination(true);
     }
 
+    /// #637 error path: a panic inside the offloaded blocking write surfaces
+    /// as the caller's `ToolBudgetError` (the JoinError mapping), not as an
+    /// aborting worker, and the diagnostic channel stays the one
+    /// `apply_tool_results` already uses.
     #[cfg(unix)]
+    #[tokio::test]
+    // The order guard must stay held for the whole awaited spill: it is what
+    // keeps this test's process-global hook installation exclusive.
+    #[allow(clippy::await_holding_lock)]
+    async fn spill_blocking_panic_becomes_persistence_error() {
+        use crate::test_scratch::Scratch;
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
+        let scratch = Scratch::new("spill-panic");
+        let prefix = scratch.path().to_string_lossy().into_owned();
+        BEFORE_SPILL_OPEN
+            .lock()
+            .unwrap()
+            .replace(std::sync::Arc::new(move |path: &JsString| {
+                if String::from_utf16_lossy(path.units()).starts_with(&prefix) {
+                    panic!("spill device broke");
+                }
+            }));
+        let _reset = ResetSpillHook;
+        let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: scratch.path().join("spill"),
+            max_result_size_chars: Some(1),
+            max_result_size_tokens: Some(100),
+            preview_bytes: None,
+        });
+        let error = budget
+            .persist_artifact(
+                &JsString::from(scratch.path().join("spill/call.txt").to_str().unwrap()),
+                &JsString::from("payload"),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("panicked"), "{}", error.message);
+        assert!(
+            !scratch.path().join("spill/call.txt").exists(),
+            "a panicked write must not report success"
+        );
+    }
+
+    #[cfg(unix)]
+    // Same as `spill_blocking_panic_becomes_persistence_error`: the order
+    // guard intentionally spans the awaited spill under test.
+    #[allow(clippy::await_holding_lock)]
     async fn project_destination(copy: bool, component: &str, race: Option<bool>) {
         use crate::test_scratch::Scratch;
-        use std::{cell::Cell, os::unix::fs::symlink, rc::Rc};
+        use std::{
+            os::unix::fs::symlink,
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
+        };
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
         let scratch = Scratch::new("spill-project");
         let outside = Scratch::new("spill-project-outside");
         let project = scratch.path().join("project");
+        let project_text = project.to_string_lossy().into_owned();
         fs::create_dir(&project).unwrap();
         let spill = project.join(".pilotdeck/tool-results/session");
         let refs = project.join(".pilotdeck/tool-results/refs");
@@ -1216,11 +1362,18 @@ mod tests {
         fs::create_dir_all(changed.parent().unwrap()).unwrap();
         let source = project.join("source.txt");
         fs::write(&source, b"payload").unwrap();
-        let fired = Rc::new(Cell::new(false));
+        let fired = Arc::new(AtomicBool::new(false));
         let fired_hook = fired.clone();
         let outside_path = outside.path().to_owned();
-        let replace = move |_: &JsString| {
-            assert!(!fired_hook.replace(true));
+        let replace = move |path: &JsString| {
+            // The hooks are process-global: ignore other tests' spill writes.
+            if !String::from_utf16_lossy(path.units()).starts_with(&project_text) {
+                return;
+            }
+            assert!(
+                !fired_hook.swap(true, Ordering::SeqCst),
+                "hook must fire exactly once"
+            );
             if changed.exists() {
                 fs::rename(&changed, changed.with_extension("saved")).unwrap();
             }
@@ -1231,12 +1384,20 @@ mod tests {
                 fs::create_dir_all(parent).unwrap();
             }
             if before_mkdir {
-                BEFORE_SPILL_MKDIR.with(|hook| *hook.borrow_mut() = Some(Box::new(replace)));
+                BEFORE_SPILL_MKDIR
+                    .lock()
+                    .unwrap()
+                    .replace(std::sync::Arc::new(replace));
             } else {
-                BEFORE_SPILL_OPEN.with(|hook| *hook.borrow_mut() = Some(Box::new(replace)));
+                BEFORE_SPILL_OPEN
+                    .lock()
+                    .unwrap()
+                    .replace(std::sync::Arc::new(replace));
             }
         } else {
-            replace(&JsString::from(""));
+            // Preexisting-link case: no hook, the replacement is already in
+            // place; the path argument only has to pass this test's filter.
+            replace(&JsString::from(parent.to_str().unwrap()));
         }
         let _reset = ResetSpillHook;
         let budget = ToolResultBudget::new(ToolResultBudgetOptions {
@@ -1258,7 +1419,7 @@ mod tests {
                 )
                 .await
         };
-        assert!(fired.get(), "replacement hook did not run");
+        assert!(fired.load(Ordering::SeqCst), "replacement hook did not run");
         assert!(!outside_file.exists(), "spill wrote outside project");
         let error = result.unwrap_err();
         assert!(error.message.contains("EACCES"), "{}", error.message);
@@ -1306,19 +1467,35 @@ mod tests {
     #[test]
     fn spill_project_mkdir_swap_has_no_outside_directory_side_effect() {
         use crate::test_scratch::Scratch;
-        use std::{cell::Cell, os::unix::fs::symlink, rc::Rc};
+        use std::{
+            os::unix::fs::symlink,
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
+        };
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
         let project = Scratch::new("spill-project-mkdir");
         let outside = Scratch::new("spill-project-mkdir-outside");
         let changed = project.path().join(".pilotdeck");
+        let project_text = project.path().to_string_lossy().into_owned();
         let external = outside.path().to_owned();
-        let fired = Rc::new(Cell::new(false));
+        let fired = Arc::new(AtomicBool::new(false));
         let hook_fired = fired.clone();
-        BEFORE_SPILL_MKDIR.with(|hook| {
-            *hook.borrow_mut() = Some(Box::new(move |_| {
-                assert!(!hook_fired.replace(true));
+        BEFORE_SPILL_MKDIR
+            .lock()
+            .unwrap()
+            .replace(Arc::new(move |path: &JsString| {
+                // The hooks are process-global: ignore other tests' spill writes.
+                if !String::from_utf16_lossy(path.units()).starts_with(&project_text) {
+                    return;
+                }
+                assert!(
+                    !hook_fired.swap(true, Ordering::SeqCst),
+                    "hook must fire exactly once"
+                );
                 symlink(&external, &changed).unwrap();
-            }))
-        });
+            }));
         let _reset = ResetSpillHook;
         let result = write_text_if_absent(
             &JsString::from(project.path().to_str().unwrap()),
@@ -1331,7 +1508,7 @@ mod tests {
             ),
             &JsString::from("payload"),
         );
-        assert!(fired.get());
+        assert!(fired.load(Ordering::SeqCst));
         assert!(
             !outside.path().join("tool-results").exists(),
             "mkdir escaped project"
