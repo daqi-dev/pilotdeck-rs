@@ -243,10 +243,15 @@ async fn host_manifest_uses_each_resource_not_marker_and_preserves_native_checks
                 },
             ),
         );
+        let mut reused = router();
+        reused.turn.ports = reused.turn.ports.with_persist_compaction(Arc::new(|_, _| {
+            panic!("old generation compaction port must never run")
+        }));
+        assert_eq!(reused.turn.methods(), Some(vec!["persist_compaction"]));
         let turn = InteractionTurn::bind(
             registry.acquire(None).unwrap(),
             &identity(),
-            router(),
+            reused,
             options(),
         )
         .await
@@ -262,6 +267,13 @@ async fn host_manifest_uses_each_resource_not_marker_and_preserves_native_checks
                 missing != Some(resource) && missing != Some(Resource::ExecutionWorld)
             );
         }
+        let stale_compaction = turn.module_call(parse_json(
+            r#"{"module":"turn","payload":{"operation":"persist_compaction","boundary":{},"messages":[]}}"#,
+        ).unwrap()).await;
+        assert!(
+            stale_compaction.is_err(),
+            "stale compaction must not remain callable"
+        );
         if let Some(permission) = turn.ports().permission {
             use crate::host::modules::permission::{PermissionContext, PermissionDecision};
             let context = permission
@@ -342,28 +354,37 @@ async fn host_missing_bounded_recorder_rolls_back_all_bound_ports() {
     let scratch = Scratch::new();
     let registry = interaction_registry(&scratch);
     let runtime = registry.resolve(None).unwrap();
-    let mut input = options();
-    input.steer_recorder = None;
-    let error = InteractionTurn::bind(
-        registry.acquire(None).unwrap(),
-        &identity(),
-        router(),
-        input,
-    )
-    .await
-    .err()
-    .unwrap();
-    assert!(error.message.contains("bounded I/O"));
-    until(|| runtime.lease_count() == 0).await;
-    let next = InteractionTurn::bind(
-        registry.acquire(None).unwrap(),
-        &identity(),
-        router(),
-        options(),
-    )
-    .await
-    .unwrap();
-    bounded(next.dispose()).await.unwrap();
+    for missing_message in [false, true] {
+        let mut input = options();
+        let expected = if missing_message {
+            input.record_message = None;
+            "bounded durable message recorder"
+        } else {
+            input.steer_recorder = None;
+            "bounded I/O"
+        };
+        let error = InteractionTurn::bind(
+            registry.acquire(None).unwrap(),
+            &identity(),
+            router(),
+            input,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(error.message.contains(expected), "{error:?}");
+        until(|| runtime.lease_count() == 0).await;
+        assert_eq!(runtime.lease_count(), 0);
+        let next = InteractionTurn::bind(
+            registry.acquire(None).unwrap(),
+            &identity(),
+            router(),
+            options(),
+        )
+        .await
+        .unwrap();
+        bounded(next.dispose()).await.unwrap();
+    }
     bounded(registry.dispose()).await.unwrap();
 }
 
@@ -392,4 +413,43 @@ fn interaction_registry(scratch: &Scratch) -> ProjectRuntimeRegistry {
         CONFIG_YAML_NO_MEMORY,
         silent_families().with_interaction().with_context_memory(),
     )
+}
+
+#[tokio::test]
+async fn host_manifest_preserves_ts_property_order_and_live_tools() {
+    let scratch = Scratch::new();
+    let registry = interaction_registry(&scratch);
+    let turn = InteractionTurn::bind(
+        registry.acquire(None).unwrap(),
+        &identity(),
+        router(),
+        options(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        turn.manifest()
+            .entries()
+            .iter()
+            .map(|(key, _)| key.to_utf8().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "tools",
+            "permissionContext",
+            "hostModules",
+            "interactionCapabilities"
+        ],
+    );
+    let tools = capability::ToolCatalog::list(&Ports).await.unwrap();
+    assert_eq!(
+        turn.manifest().get("tools"),
+        Some(&JsValue::Array(
+            tools
+                .iter()
+                .map(|tool| JsValue::Object(capability::serialize_tool_descriptor(tool.as_ref())))
+                .collect()
+        ))
+    );
+    bounded(turn.dispose()).await.unwrap();
+    bounded(registry.dispose()).await.unwrap();
 }

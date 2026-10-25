@@ -444,7 +444,11 @@ impl StreamHandler {
                 Ok(events)
             })
             .inspect_err(|error| {
-                *self.integrity.host_error.lock().unwrap() = Some(error.message.clone());
+                self.integrity
+                    .host_error
+                    .lock()
+                    .unwrap()
+                    .get_or_insert_with(|| error.message.clone());
             });
         if buffered.as_ref().is_ok_and(Vec::is_empty) && payload.is_none() && delivery.is_none() {
             return applied; // pending model/tool calls must not stall wire events
@@ -454,6 +458,7 @@ impl StreamHandler {
         let (previous, done) =
             delivery.unwrap_or_else(|| self.forwarding.lock().unwrap().reserve());
         let events = self.events.clone();
+        let integrity = self.integrity.clone();
         Box::pin(async move {
             let _done = done; // drop wakes the next sender on every exit
             let buffered = buffered?;
@@ -462,9 +467,17 @@ impl StreamHandler {
                 let _ = previous.await;
             }
             for event in buffered.into_iter().map(JsValue::Object).chain(payload) {
-                events.send(event).await.map_err(|_| {
+                let permit = events.reserve().await.map_err(|_| {
                     HostError::new(HostErrorKind::Callback, "LiveTurn event receiver closed.")
                 })?;
+                // A callback may have passed validation before a later host
+                // drain failed, then waited for ordering or channel capacity.
+                // Check and send atomically with respect to recording failure.
+                let error = integrity.host_error.lock().unwrap();
+                if let Some(error) = error.as_ref() {
+                    return Err(HostError::new(HostErrorKind::Protocol, error));
+                }
+                permit.send(event);
             }
             Ok(result)
         })
@@ -567,6 +580,9 @@ impl StreamIntegrity {
     /// position relative to the lifecycle events and the terminal is
     /// constrained.
     fn observe_event(&self, event: &JsValue) -> Result<(), RuntimeError> {
+        if let Some(error) = self.host_error.lock().unwrap().as_ref() {
+            return Err(RuntimeError::new(error));
+        }
         let Some(event_type) = event.get("type").and_then(JsValue::as_string) else {
             return Err(RuntimeError::new(
                 "Stream integrity violation: AgentEvent without a type.",
