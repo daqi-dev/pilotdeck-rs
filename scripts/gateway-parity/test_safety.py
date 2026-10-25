@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Bounded offline regressions for lock lifecycle, corrupt evidence and observer."""
 import json
+import importlib.machinery
 import multiprocessing
 import os
 from pathlib import Path
@@ -222,6 +223,21 @@ class ApparatusInputs(unittest.TestCase):
                 self.assertEqual(unknown_apparatus_files(self.root), [name])
                 path.unlink()
         (self.root / 'common.py').write_text('registered member')
+        self.assertEqual(unknown_apparatus_files(self.root), [])
+
+    def test_extension_modules_and_pth_are_rejected_unless_registered(self):
+        # CPython resolves a same-directory extension module before .py, so the
+        # shadow runs while the registered source hash is unchanged.  Node loads
+        # .node addons explicitly; site reads .pth only from site-packages (and
+        # never under -I), but it is still unregistered executable input.
+        native = f'compare{importlib.machinery.EXTENSION_SUFFIXES[0]}'
+        for name in (native, 'probe.abi3.so', 'probe.so', 'probe.pyd',
+                     'probe.dylib', 'probe.node', 'evil.pth'):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.write_bytes(b'')
+                self.assertEqual(unknown_apparatus_files(self.root), [name])
+                path.unlink()
         self.assertEqual(unknown_apparatus_files(self.root), [])
 
     def test_bytecode_and_node_modules_classification(self):
