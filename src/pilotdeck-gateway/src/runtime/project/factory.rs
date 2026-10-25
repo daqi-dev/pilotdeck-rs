@@ -297,6 +297,7 @@ pub enum Resource {
     InteractionEvents,
     InteractionPermission,
     InteractionHooks,
+    InteractionSteer,
     InstructionStorage,
     ToolResultSpill,
     PromptCacheCoordinator,
@@ -319,6 +320,7 @@ impl Resource {
             Self::InteractionEvents => "interactionEvents",
             Self::InteractionPermission => "interactionPermission",
             Self::InteractionHooks => "interactionHooks",
+            Self::InteractionSteer => "interactionSteer",
             Self::InstructionStorage => "instructionStorage",
             Self::ToolResultSpill => "toolResultSpill",
             Self::PromptCacheCoordinator => "promptCacheCoordinator",
@@ -646,6 +648,7 @@ struct Slots {
     interaction_events: Option<Arc<dyn FamilyResource>>,
     interaction_permission: Option<Arc<dyn FamilyResource>>,
     interaction_hooks: Option<Arc<dyn FamilyResource>>,
+    interaction_steer: Option<Arc<dyn FamilyResource>>,
     instruction_storage: Option<Arc<dyn FamilyResource>>,
     tool_result_spill: Option<Arc<dyn FamilyResource>>,
     prompt_cache_coordinator: Option<Arc<dyn FamilyResource>>,
@@ -723,6 +726,7 @@ impl StageContext {
             Resource::InteractionEvents => slots.interaction_events.clone(),
             Resource::InteractionPermission => slots.interaction_permission.clone(),
             Resource::InteractionHooks => slots.interaction_hooks.clone(),
+            Resource::InteractionSteer => slots.interaction_steer.clone(),
             Resource::InstructionStorage => slots.instruction_storage.clone(),
             Resource::ToolResultSpill => slots.tool_result_spill.clone(),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator.clone(),
@@ -776,6 +780,7 @@ impl StageSink<'_> {
             Resource::InteractionEvents => slots.interaction_events = Some(handle),
             Resource::InteractionPermission => slots.interaction_permission = Some(handle),
             Resource::InteractionHooks => slots.interaction_hooks = Some(handle),
+            Resource::InteractionSteer => slots.interaction_steer = Some(handle),
             Resource::InstructionStorage => slots.instruction_storage = Some(handle),
             Resource::ToolResultSpill => slots.tool_result_spill = Some(handle),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator = Some(handle),
@@ -835,6 +840,7 @@ impl ProjectResources {
                 interaction_events: None,
                 interaction_permission: None,
                 interaction_hooks: None,
+                interaction_steer: None,
                 instruction_storage: None,
                 tool_result_spill: None,
                 prompt_cache_coordinator: None,
@@ -883,6 +889,7 @@ impl RuntimeResources for ProjectResources {
         let interaction_events = slots.interaction_events.clone();
         let interaction_permission = slots.interaction_permission.clone();
         let interaction_hooks = slots.interaction_hooks.clone();
+        let interaction_steer = slots.interaction_steer.clone();
         drop(slots);
         // The single group of a generation: `ResourceBundle::aggregate`
         // returns this error unchanged, so the group's own single- or
@@ -907,9 +914,21 @@ impl RuntimeResources for ProjectResources {
             if let Err(error) = super::interaction_events::close_resource(interaction_events) {
                 failures.push(error);
             }
+            let steer = match super::interaction_steer::close_resource(interaction_steer) {
+                Ok(steer) => steer,
+                Err(error) => {
+                    failures.push(error);
+                    None
+                }
+            };
             // Revoke the synchronous interaction ports before awaiting hook
             // jobs: a draining command must not leave sibling ports usable.
             if let Err(error) = super::interaction_hooks::close_resource(interaction_hooks).await {
+                failures.push(error);
+            }
+            if let Some(steer) = steer
+                && let Err(error) = steer.dispose().await
+            {
                 failures.push(error);
             }
             if let Err(error) = dispose_one(mcp_provider).await {
