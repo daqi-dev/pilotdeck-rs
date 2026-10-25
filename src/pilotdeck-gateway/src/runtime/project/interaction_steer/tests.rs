@@ -651,6 +651,28 @@ async fn interaction_steer_start_turn_while_run_open_or_cancelled_is_rejected() 
     resource.dispose().await.unwrap();
 }
 
+/// Wait for the first `close_events` entry matching `keep`. The yield loop lets
+/// the current-thread scheduler deliver monitor/check events; `None` means the
+/// 3s deadline expired without a match.
+async fn next_event(
+    received: &std::sync::mpsc::Receiver<&'static str>,
+    keep: impl Fn(&'static str) -> bool,
+) -> Option<&'static str> {
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            while let Ok(event) = received.try_recv() {
+                if keep(event) {
+                    return Some(event);
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// #708 matrix A-S2×E4 (pre-durable half): after external cancellation but
 /// before the durable write, `persist_and_apply` refuses to claim, record,
 /// grant or append, and the item is later discarded with `turn_ended`. The
@@ -659,6 +681,13 @@ async fn interaction_steer_start_turn_while_run_open_or_cancelled_is_rejected() 
 /// boundary. TS applies the drained message anyway (fixture
 /// turn-lifecycle-matrix `A2_apply_after_abort`: claim -> durable -> ack all
 /// complete after abort, `modelCalls=0`); divergence registered, not fixed here.
+///
+/// Which half of the pre-durable `check` rejected is observed, not assumed:
+/// `check` reports `reject-cancelled`/`reject-closed` through the
+/// `close_events` hook, so a scheduler that polls the monitor before the
+/// spawned applying task turns the cancel-side assertion red instead of
+/// silently degrading both halves into closed-side rejections (which would
+/// also let the NC-2 negative control pass).
 #[tokio::test]
 async fn interaction_steer_persist_and_apply_after_cancel_rejects_and_discards() {
     let resource = InteractionSteer::default();
@@ -671,16 +700,23 @@ async fn interaction_steer_persist_and_apply_after_cancel_rejects_and_discards()
     router.turn.authorizations = Some(SteerAuthorizations::new(checkpoint.clone()));
     let signal = Cancellation::new();
     let turn = bind(&session, &mut router, signal.clone());
+    let (events, received) = std::sync::mpsc::channel();
+    *turn.run.close_events.lock().unwrap() = Some(events);
     turn.enqueue(item("a")).await.unwrap();
     drain(&router, false).await.unwrap();
-    // Spawn before cancelling: on the current-thread runtime the applying task
-    // is queued ahead of the cancel-woken monitor, so the pre-durable `check`
-    // (`interaction_steer.rs` persist_and_apply) observes external
-    // cancellation while the run is still open.
+    // Spawn before cancelling: the pre-durable `check` must observe external
+    // cancellation while the run is still open. The `reject-cancelled` event
+    // proves the rejection came from the cancel half (the monitor had not
+    // closed at that moment); the queue order behind it is not relied on.
     let applying = turn.persist_and_apply("a".into(), item("a").message, |_| {
         Box::pin(async { Ok(()) })
     });
     signal.cancel();
+    assert_eq!(
+        next_event(&received, |event| event.starts_with("reject-")).await,
+        Some("reject-cancelled"),
+        "pre-durable rejection came from the closed side, not the cancel side"
+    );
     assert!(applying.await.is_err());
     assert!(turn.messages().is_empty());
     assert!(grants(&checkpoint).is_empty());
@@ -704,21 +740,32 @@ async fn interaction_steer_persist_and_apply_after_cancel_rejects_and_discards()
     );
     assert!(turn.messages().is_empty());
     assert!(grants(&checkpoint).is_empty());
-    // Cancel first, then spawn: the monitor close already executed, so the
-    // same pre-durable check rejects from the closed side of the boundary.
+    // Cancel first, then spawn: the monitor's close is observed through the
+    // `closed` event before the applying task even exists, so the same
+    // pre-durable check provably rejects from the closed side of the boundary
+    // regardless of scheduler order.
     let mut fresh = ModuleRouter::default();
     let signal = Cancellation::new();
     let turn = bind(&session, &mut fresh, signal.clone());
+    let (events, received) = std::sync::mpsc::channel();
+    *turn.run.close_events.lock().unwrap() = Some(events);
     turn.enqueue(item("b")).await.unwrap();
     drain(&fresh, false).await.unwrap();
     signal.cancel();
-    assert!(
-        turn.persist_and_apply("b".into(), item("b").message, |_| {
-            Box::pin(async { Ok(()) })
-        })
-        .await
-        .is_err()
+    assert_eq!(
+        next_event(&received, |event| event == "closed").await,
+        Some("closed"),
+        "monitor did not close the cancelled run"
     );
+    let applying = turn.persist_and_apply("b".into(), item("b").message, |_| {
+        Box::pin(async { Ok(()) })
+    });
+    assert_eq!(
+        next_event(&received, |event| event.starts_with("reject-")).await,
+        Some("reject-closed"),
+        "post-close rejection came from the cancel side, not the closed side"
+    );
+    assert!(applying.await.is_err());
     assert!(turn.messages().is_empty());
     assert_eq!(turn.close().await.unwrap().len(), 1);
     resource.dispose().await.unwrap();

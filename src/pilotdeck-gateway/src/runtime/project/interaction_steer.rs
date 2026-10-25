@@ -371,6 +371,16 @@ impl TurnSteer {
     fn check(&self, state: &mut State) -> Result<(), HostError> {
         self.check_identity(state)?;
         if self.run.closed.load(Ordering::SeqCst) || self.run.external.is_cancelled() {
+            #[cfg(test)]
+            // Test-only observation point: report which half of the boundary
+            // rejected, so tests assert the side instead of assuming that a
+            // spawned task is polled before the cancel-woken monitor.
+            self.run
+                .close_event(if self.run.closed.load(Ordering::SeqCst) {
+                    "reject-closed"
+                } else {
+                    "reject-cancelled"
+                });
             return Err(stale());
         }
         Ok(())

@@ -42,7 +42,7 @@
 |---|---|---|
 | E1 重提交 | 差异已登记 A6.9-STEER-RUN-001（同 S1×E1；取消未清理时同样拒绝） | Rust `tests.rs:568` 第二段 |
 | E2 steer | 已实测对齐（abort 后拒绝；错误形式 HostError vs reason 属 A6.9-STEER-RUN-001 已登记范围） | TS `A2_abort_gate`（abort 后 session.steer → no_active_turn，错误 turnId → turn_mismatch）；Rust `tests.rs:71`、`:329`（取消后 enqueue 拒绝） |
-| E4 前半（durable 前） | 待开单（差异已登记 A6.9-STEER-RUN-002，本单新增） | TS `A2_apply_after_abort`（abort 注入 drain 与 apply 之间仍完成 claim→durable→ack 并 yield steer_applied，modelCalls=0）；Rust pre-durable check 拒绝、无 claim/授权/append，条目随后 `turn_ended` discard（`tests.rs:627`，负控 `nc2-red.txt`：删 `TurnSteer::check` 的 external 取消子句即红） |
+| E4 前半（durable 前） | 待开单（差异已登记 A6.9-STEER-RUN-002，本单新增） | TS `A2_apply_after_abort`（abort 注入 drain 与 apply 之间仍完成 claim→durable→ack 并 yield steer_applied，modelCalls=0）；Rust pre-durable check 拒绝、无 claim/授权/append，条目随后 `turn_ended` discard（`tests.rs:656`，负控 `nc2-red.txt`：删 `TurnSteer::check` 的 external 取消子句即红） |
 | E4 后半（applying 已入锁 / durable 成功边界后） | 已实测对齐 | TS `tests/fixtures/interaction-steer/cancel-oracle.json`（durableThenAbort：成功边界后 ack/grant 照常）；Rust `tests.rs:329`（成功边界仍 grant/ack，close 等写完，cancel 等待 writer） |
 | E5 drain | 已实测对齐 | TS cancel-oracle（abortDrain：取消后先 drain 后 close 均按 mailbox 实际状态返回，不转 HostError）；Rust `tests.rs:105` 对拍同一 oracle |
 | E6 取消 monitor | 差异已登记 A6.9-STEER-RUN-001（Rust 取消 monitor 与 mutation admission 共用 State 锁，check 与入队临界区之间 close 不得越过；TS finally 串行无此竞争） | Rust `tests.rs:71`（`closed != blocked` 判据为 A6.9 机器判据的一部分） |
@@ -128,4 +128,4 @@ wire 预留机制（validate_event 预留槽、EventGuard 释放、Delivery 前�
 ## 本单新增用例与负控
 
 - `tests.rs:568` `interaction_steer_start_turn_while_run_open_or_cancelled_is_rejected`（A-S1×E1/A-S2×E1）。负控 NC-1：删 `interaction_steer.rs` start_turn 的 session.run 存活检查 → 首个断言红（`_tmp/20261025-issue-708/nc1-red.txt`），逐字节还原（SHA256 一致）后绿（`nc1-green.txt`）。
-- `tests.rs:627` `interaction_steer_persist_and_apply_after_cancel_rejects_and_discards`（A-S2×E4 前半；含 spawn-先于-cancel 与 cancel-先于-spawn 两个确定性顺序）。负控 NC-2：删 `TurnSteer::check` 的 `|| self.run.external.is_cancelled()` → no-claim 断言红（`nc2-red.txt`），逐字节还原后绿（`nc2-green.txt`）。
+- `tests.rs:656` `interaction_steer_persist_and_apply_after_cancel_rejects_and_discards`（A-S2×E4 前半；含 spawn-先于-cancel 与 cancel-先于-spawn 两序，拒绝侧经 `close_events` 的 `reject-cancelled`/`reject-closed` 测试 cfg 观测点断言，不依赖调度顺序——fix-r1）。负控 NC-2：删 `TurnSteer::check` 的 `|| self.run.external.is_cancelled()` → 取消侧断言红（`_tmp/20261025-issue-708/fix-r1/nc2-red.txt`），逐字节还原后绿（`_tmp/20261025-issue-708/fix-r1/nc2-green.txt`）。
