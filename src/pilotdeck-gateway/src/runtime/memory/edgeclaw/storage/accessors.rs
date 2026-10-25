@@ -62,7 +62,7 @@ impl RepositoryContext {
 /// `os.homedir()`: `$HOME` wins even when empty; otherwise libuv falls back to
 /// `getpwuid_r` (NSS). The workspace forbids `unsafe`, so the fallback asks the
 /// platform passwd lookup instead of calling libc directly.
-fn homedir() -> Result<PathBuf> {
+pub(crate) fn homedir() -> Result<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         return Ok(PathBuf::from(home));
     }

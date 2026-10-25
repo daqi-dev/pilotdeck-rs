@@ -1,0 +1,792 @@
+//! Pure text, id, General-workspace, trace and recall-context helpers.
+//!
+//! Ports the fixed TS baseline pieces owned by A6.6-edgeclaw-1:
+//!
+//! * `core/utils/text.ts` (`truncate`, escaped-unicode decoding,
+//!   `normalizeText`, `scoreMatch`, `safeJsonParse`)
+//! * `core/utils/id.ts` (sha1-based ids and `nowIso`)
+//! * `core/general-projects.ts` (the `~/.pilotdeck` General workspace and
+//!   external record/project ids)
+//! * `core/trace-i18n.ts`
+//! * `service.ts:429-541` (raw recall section parsing, recall system context,
+//!   raw-context detection and case-trace preview normalization)
+//!
+//! JavaScript strings carry UTF-16 code units, including unpaired surrogates,
+//! so every string input/output is a [`JsString`] instead of `&str`.
+
+use crate::{
+    js_value::number_string,
+    runtime::memory::{js_is_space_unit, js_trim_units},
+};
+use icu_casemap::CaseMapper;
+use icu_locale_core::LanguageIdentifier;
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+
+// -- `core/utils/text.ts` ---------------------------------------------------
+
+pub fn truncate(text: &JsString, max_length: f64) -> JsString {
+    if text.is_empty() {
+        return JsString::default();
+    }
+    if max_length <= 0.0 || (text.len_utf16() as f64) <= max_length {
+        return text.clone();
+    }
+    // `String.prototype.slice` applies ToIntegerOrInfinity: NaN becomes 0 and
+    // fractions truncate. A lone surrogate may be split off deliberately.
+    let end = if max_length.is_nan() {
+        0
+    } else if max_length.is_infinite() {
+        text.len_utf16()
+    } else {
+        max_length.trunc() as usize
+    };
+    let mut units = text.units()[..end.min(text.len_utf16())].to_vec();
+    units.extend("...".encode_utf16());
+    JsString::from_utf16(units)
+}
+
+pub fn decode_escaped_unicode_text(text: &JsString, decode_common_escapes: bool) -> JsString {
+    let units = text.units();
+    let unicode = (0..units.len()).any(|i| is_unicode_escape(&units[i..]));
+    let common = decode_common_escapes && (0..units.len()).any(|i| is_common_escape(&units[i..]));
+    if !unicode && !common {
+        return text.clone();
+    }
+    let mut next = if unicode {
+        let mut out = Vec::with_capacity(units.len());
+        let mut i = 0;
+        while i < units.len() {
+            if is_unicode_escape(&units[i..]) {
+                let hex = &units[i + 2..i + 6];
+                out.push(hex_value(hex));
+                i += 6;
+            } else {
+                out.push(units[i]);
+                i += 1;
+            }
+        }
+        out
+    } else {
+        units.to_vec()
+    };
+    if common {
+        // The TS replacements run in this order and each pass is global.
+        for (from, to) in [
+            ('r', '\r'),
+            ('n', '\n'),
+            ('t', '\t'),
+            ('"', '"'),
+            ('\\', '\\'),
+        ] {
+            next = replace_pair(&next, from as u16, to as u16);
+        }
+    }
+    JsString::from_utf16(next)
+}
+
+pub fn decode_escaped_unicode_value(value: &JsValue, decode_common_escapes: bool) -> JsValue {
+    match value {
+        JsValue::String(text) => {
+            JsValue::String(decode_escaped_unicode_text(text, decode_common_escapes))
+        }
+        JsValue::Array(items) => JsValue::Array(
+            items
+                .iter()
+                .map(|item| decode_escaped_unicode_value(item, decode_common_escapes))
+                .collect(),
+        ),
+        JsValue::Object(object) => {
+            let mut decoded = JsObject::new();
+            for (key, item) in object.entries() {
+                decoded.insert(
+                    key.clone(),
+                    decode_escaped_unicode_value(item, decode_common_escapes),
+                );
+            }
+            JsValue::Object(decoded)
+        }
+        other => other.clone(),
+    }
+}
+
+/// `text.replace(/\s+/g, " ").trim()` over ECMAScript whitespace units.
+pub fn normalize_text(text: &JsString) -> JsString {
+    let mut out = Vec::with_capacity(text.units().len());
+    let mut i = 0;
+    let units = text.units();
+    while i < units.len() {
+        if js_is_space_unit(units[i]) {
+            while i < units.len() && js_is_space_unit(units[i]) {
+                i += 1;
+            }
+            out.push(u16::from(b' '));
+        } else {
+            out.push(units[i]);
+            i += 1;
+        }
+    }
+    JsString::from_utf16(js_trim_units(&out).to_vec())
+}
+
+pub fn score_match(query: &JsString, text: &JsString) -> f64 {
+    let q = lowercase(&normalize_text(query));
+    let t = lowercase(&normalize_text(text));
+    let (q, t) = (q.units(), t.units());
+    if q.is_empty() || t.is_empty() {
+        return 0.0;
+    }
+    if t == q {
+        return 1.0;
+    }
+    if t.starts_with(q) {
+        return 0.92;
+    }
+    if contains(t, q) {
+        return 0.82;
+    }
+    let words: Vec<&[u16]> = q.split(|unit| *unit == u16::from(b' ')).collect();
+    let words: Vec<&[u16]> = words.into_iter().filter(|word| !word.is_empty()).collect();
+    if words.is_empty() {
+        return 0.0;
+    }
+    let hits = words.iter().filter(|word| contains(t, word)).count();
+    let word_score = hits as f64 / words.len() as f64 * 0.7;
+    let q_compact = without_space(q);
+    let t_compact = without_space(t);
+    if q_compact.len() < 2 || t_compact.len() < 2 {
+        return word_score;
+    }
+    let mut gram_hits = 0usize;
+    let mut grams = 0usize;
+    for i in 0..q_compact.len() - 1 {
+        grams += 1;
+        if contains(&t_compact, &q_compact[i..i + 2]) {
+            gram_hits += 1;
+        }
+    }
+    let gram_score = if grams > 0 {
+        gram_hits as f64 / grams as f64 * 0.75
+    } else {
+        0.0
+    };
+    word_score.max(gram_score)
+}
+
+pub fn safe_json_parse(raw: &JsString, fallback: JsValue) -> JsValue {
+    parse_json(&json_text(raw.units())).unwrap_or(fallback)
+}
+
+// -- `core/utils/id.ts` -----------------------------------------------------
+
+pub fn hash_text(input: &JsString) -> String {
+    // Node hashes the UTF-8 encoding, which replaces each unpaired surrogate
+    // with U+FFFD; `from_utf16_lossy` performs the same replacement.
+    super::file_memory::helpers::hash(&String::from_utf16_lossy(input.units()))
+}
+
+pub fn now_iso() -> String {
+    super::file_memory::now_iso()
+}
+
+/// `new Date(ms).toISOString()`, exposed for the frozen-clock fixture.
+pub fn now_iso_at(epoch_ms: i64) -> String {
+    pilotdeck_transport::system_clock::format_epoch_iso(epoch_ms)
+}
+
+pub fn build_l0_index_id(
+    session_key: &JsString,
+    timestamp: &JsString,
+    payload: &JsString,
+) -> JsString {
+    let key = if session_key.is_empty() {
+        JsString::from("session")
+    } else {
+        session_key.clone()
+    };
+    let mut seed = timestamp.units().to_vec();
+    seed.push(u16::from(b':'));
+    seed.extend(payload.units());
+    let hash = hash_text(&JsString::from_utf16(seed));
+    concat(&[&key, &JsString::from(format!("_{hash}_raw"))])
+}
+
+pub fn build_l1_index_id(timestamp: &JsString, source_ids: &[JsString]) -> JsString {
+    let mut sorted: Vec<&JsString> = source_ids.iter().collect();
+    // Array.prototype.sort default order is UTF-16 code-unit lexicographic.
+    sorted.sort_by(|a, b| a.units().cmp(b.units()));
+    let mut joined = Vec::new();
+    for (i, id) in sorted.iter().enumerate() {
+        if i > 0 {
+            joined.push(u16::from(b','));
+        }
+        joined.extend(id.units());
+    }
+    let mut seed = timestamp.units().to_vec();
+    seed.push(u16::from(b':'));
+    seed.extend(joined);
+    JsString::from(format!("l1_{}", hash_text(&JsString::from_utf16(seed))))
+}
+
+pub fn build_l2_time_index_id(date_key: &JsString) -> JsString {
+    JsString::from(format!("time_{}", hash_text(date_key)))
+}
+
+pub fn build_l2_project_index_id(project_key: &JsString) -> JsString {
+    JsString::from(format!("project_{}", hash_text(&lowercase(project_key))))
+}
+
+pub fn build_fact_id(fact_key: &JsString) -> JsString {
+    JsString::from(format!("fact_{}", hash_text(&lowercase(fact_key))))
+}
+
+pub fn build_link_id(
+    from_level: &JsString,
+    from_id: &JsString,
+    to_level: &JsString,
+    to_id: &JsString,
+) -> JsString {
+    let mut seed = Vec::new();
+    seed.extend(from_level.units());
+    seed.push(u16::from(b':'));
+    seed.extend(from_id.units());
+    seed.extend("->".encode_utf16());
+    seed.extend(to_level.units());
+    seed.push(u16::from(b':'));
+    seed.extend(to_id.units());
+    JsString::from(format!("link_{}", hash_text(&JsString::from_utf16(seed))))
+}
+
+// -- `core/general-projects.ts` ---------------------------------------------
+
+pub const GENERAL_PROJECT_META_DIR: &str = "GeneralProjects";
+pub const GENERAL_PROJECT_MEMORY_DIR: &str = "Project";
+pub const GENERAL_FEEDBACK_MEMORY_DIR: &str = "Feedback";
+pub const EXTERNAL_RECORD_PREFIX: &str = "external:";
+pub const EXTERNAL_PROJECT_PREFIX: &str = "external-project:";
+
+/// `GENERAL_WORKSPACE_DIR = join(homedir(), ".pilotdeck")`, computed lazily so
+/// an isolated `HOME` (or the passwd fallback) is observed per call.
+pub fn general_workspace_dir() -> Result<JsString, super::file_memory::FileMemoryError> {
+    Ok(general_workspace_dir_in(
+        &super::storage::accessors::homedir()?,
+    ))
+}
+
+/// The same constant for an explicit `$HOME`, including an empty one.
+pub fn general_workspace_dir_in(home: &std::path::Path) -> JsString {
+    JsString::from(home.join(".pilotdeck").to_string_lossy().into_owned())
+}
+
+/// `path.resolve(workspacePath)` on POSIX, preserving UTF-16 units.
+pub fn normalize_workspace_path(workspace_path: &JsString) -> JsString {
+    let mut combined = if workspace_path.units().first() == Some(&u16::from(b'/')) {
+        Vec::new()
+    } else {
+        let cwd = std::env::current_dir()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut units = JsString::from(cwd).units().to_vec();
+        units.push(u16::from(b'/'));
+        units
+    };
+    combined.extend(workspace_path.units());
+    // process.cwd() is absolute, so a relative argument resolves absolutely.
+    let absolute = combined.first() == Some(&u16::from(b'/'));
+    let mut parts: Vec<Vec<u16>> = Vec::new();
+    for part in combined.split(|unit| *unit == u16::from(b'/')) {
+        if part.is_empty() || is_units(part, ".") {
+            continue;
+        }
+        if is_units(part, "..") {
+            let above_root = parts.last().is_none_or(|last| is_units(last, ".."));
+            if !absolute && above_root {
+                parts.push(part.to_vec());
+            } else {
+                parts.pop();
+            }
+        } else {
+            parts.push(part.to_vec());
+        }
+    }
+    let mut out = Vec::new();
+    if absolute {
+        out.push(u16::from(b'/'));
+    }
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push(u16::from(b'/'));
+        }
+        out.extend(part);
+    }
+    if out.is_empty() {
+        out.push(u16::from(b'.'));
+    }
+    JsString::from_utf16(out)
+}
+
+pub fn is_general_workspace_dir(workspace_dir: &JsString) -> bool {
+    let general = match general_workspace_dir() {
+        Ok(general) => general,
+        Err(_) => return false,
+    };
+    normalize_workspace_path(workspace_dir).units() == normalize_workspace_path(&general).units()
+}
+
+pub fn is_general_workspace_dir_in(workspace_dir: &JsString, home: &std::path::Path) -> bool {
+    let general = general_workspace_dir_in(home);
+    normalize_workspace_path(workspace_dir).units() == normalize_workspace_path(&general).units()
+}
+
+/// `getWorkspaceMemoryMode`: `"general"` for `~/.pilotdeck`, else `"single"`.
+pub fn get_workspace_memory_mode(workspace_dir: &JsString) -> &'static str {
+    if is_general_workspace_dir(workspace_dir) {
+        "general"
+    } else {
+        "single"
+    }
+}
+
+pub fn get_workspace_memory_mode_in(
+    workspace_dir: &JsString,
+    home: &std::path::Path,
+) -> &'static str {
+    if is_general_workspace_dir_in(workspace_dir, home) {
+        "general"
+    } else {
+        "single"
+    }
+}
+
+pub fn build_external_project_logical_id(
+    workspace_path: &JsString,
+    project_id: &JsString,
+) -> JsString {
+    let mut seed = normalize_workspace_path(workspace_path).units().to_vec();
+    seed.extend("::".encode_utf16());
+    seed.extend(project_id.units());
+    JsString::from(format!(
+        "{EXTERNAL_PROJECT_PREFIX}{}",
+        hash_text(&JsString::from_utf16(seed))
+    ))
+}
+
+pub fn build_external_record_id(workspace_path: &JsString, relative_path: &JsString) -> JsString {
+    let hash = hash_text(&normalize_workspace_path(workspace_path));
+    let prefix = JsString::from(format!("{EXTERNAL_RECORD_PREFIX}{hash}:"));
+    let relative = JsString::from_utf16(
+        relative_path
+            .units()
+            .iter()
+            .map(|unit| {
+                if *unit == u16::from(b'\\') {
+                    u16::from(b'/')
+                } else {
+                    *unit
+                }
+            })
+            .collect(),
+    );
+    concat(&[&prefix, &relative])
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalRecordId {
+    pub workspace_key: JsString,
+    pub relative_path: JsString,
+}
+
+pub fn parse_external_record_id(value: &JsString) -> Option<ExternalRecordId> {
+    let units = value.units();
+    let prefix = EXTERNAL_RECORD_PREFIX.encode_utf16().collect::<Vec<_>>();
+    if !units.starts_with(&prefix) {
+        return None;
+    }
+    let payload = &units[prefix.len()..];
+    let separator = payload.iter().position(|unit| *unit == u16::from(b':'))?;
+    if separator == 0 {
+        return None;
+    }
+    let workspace_key = JsString::from_utf16(js_trim_units(&payload[..separator]).to_vec());
+    let relative_path = JsString::from_utf16(
+        js_trim_units(&payload[separator + 1..])
+            .iter()
+            .map(|unit| {
+                if *unit == u16::from(b'\\') {
+                    u16::from(b'/')
+                } else {
+                    *unit
+                }
+            })
+            .collect(),
+    );
+    if workspace_key.is_empty() || relative_path.is_empty() {
+        return None;
+    }
+    Some(ExternalRecordId {
+        workspace_key,
+        relative_path,
+    })
+}
+
+pub fn is_external_record_id(value: &JsString) -> bool {
+    value
+        .units()
+        .starts_with(&EXTERNAL_RECORD_PREFIX.encode_utf16().collect::<Vec<_>>())
+}
+
+// -- `core/trace-i18n.ts` ---------------------------------------------------
+
+pub fn trace_i18n(key: &JsString, fallback: &JsString, args: &[JsValue]) -> JsObject {
+    let mut out = JsObject::new();
+    out.insert("key".into(), JsValue::String(key.clone()));
+    if !args.is_empty() {
+        out.insert(
+            "args".into(),
+            JsValue::Array(args.iter().map(to_js_string).collect()),
+        );
+    }
+    // Insertion order matters: key, optional args, fallback.
+    out.insert("fallback".into(), JsValue::String(fallback.clone()));
+    out
+}
+
+fn to_js_string(value: &JsValue) -> JsValue {
+    JsValue::String(match value {
+        JsValue::String(text) => text.clone(),
+        JsValue::Number(number) => JsString::from(number_string(*number)),
+        JsValue::Bool(value) => JsString::from(if *value { "true" } else { "false" }),
+        JsValue::Null => JsString::from("null"),
+        JsValue::Undefined => JsString::from("undefined"),
+        // Array.prototype.toString joins recursively; plain objects use the
+        // default tag (no own `toString` reaches this typed argument list).
+        JsValue::Array(items) => {
+            let mut units = Vec::new();
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    units.push(u16::from(b','));
+                }
+                if let JsValue::String(ref text) = to_js_string(item) {
+                    units.extend(text.units());
+                }
+            }
+            JsString::from_utf16(units)
+        }
+        JsValue::Object(_) => JsString::from("[object Object]"),
+    })
+}
+
+// -- `service.ts:429-541` ---------------------------------------------------
+
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct CleanedRecallSections {
+    pub user_profile: Vec<JsString>,
+    pub project_meta: Vec<JsString>,
+    pub project_memory: Vec<JsString>,
+    pub feedback_memory: Vec<JsString>,
+}
+
+#[derive(Clone, Copy)]
+enum RecallSection {
+    User,
+    ProjectMeta,
+    Project,
+    Feedback,
+}
+
+pub fn parse_raw_recall_sections(value: &JsString) -> CleanedRecallSections {
+    let mut sections = CleanedRecallSections::default();
+    let mut current: Option<RecallSection> = None;
+    let mut buffer: Vec<JsString> = Vec::new();
+    let flush = |sections: &mut CleanedRecallSections,
+                 current: Option<RecallSection>,
+                 buffer: &mut Vec<JsString>| {
+        if let Some(section) = current {
+            let content = trim_js(&join_lines(buffer.iter()));
+            if !content.is_empty() {
+                match section {
+                    RecallSection::User => sections.user_profile.push(content),
+                    RecallSection::ProjectMeta => sections.project_meta.push(content),
+                    RecallSection::Project => sections.project_memory.push(content),
+                    RecallSection::Feedback => sections.feedback_memory.push(content),
+                }
+            }
+        }
+        buffer.clear();
+    };
+    for raw_line in split_lines(value) {
+        let line = trim_js(&raw_line);
+        let header = if starts_with(&line, "### [user]") {
+            Some(RecallSection::User)
+        } else if starts_with(&line, "### [project_meta]") {
+            Some(RecallSection::ProjectMeta)
+        } else if starts_with(&line, "### [project]") {
+            Some(RecallSection::Project)
+        } else if starts_with(&line, "### [feedback]") {
+            Some(RecallSection::Feedback)
+        } else {
+            None
+        };
+        if let Some(section) = header {
+            flush(&mut sections, current, &mut buffer);
+            current = Some(section);
+            continue;
+        }
+        if !matches!(current, Some(_)) {
+            continue;
+        }
+        if line.is_empty() {
+            buffer.push(JsString::default());
+            continue;
+        }
+        if line.equals_str("## ClawXMemory Recall")
+            || starts_with(&line, "route=")
+            || line.equals_str(
+                "Treat these file memories as the authoritative long-term memory for this turn when relevant.",
+            )
+        {
+            continue;
+        }
+        buffer.push(raw_line);
+    }
+    flush(&mut sections, current, &mut buffer);
+    sections
+}
+
+fn join_recall_bodies(bodies: &[JsString]) -> Option<JsString> {
+    let bodies: Vec<JsString> = bodies
+        .iter()
+        .map(trim_js)
+        .filter(|body| !body.is_empty())
+        .collect();
+    if bodies.is_empty() {
+        return None;
+    }
+    Some(join_text(&bodies, "\n\n---\n\n"))
+}
+
+pub fn build_memory_recall_system_context(evidence_block: &JsString) -> JsString {
+    let sections = parse_raw_recall_sections(&trim_js(evidence_block));
+    let mut blocks: Vec<JsString> = Vec::new();
+    for (header, bodies) in [
+        ("## User Profile", &sections.user_profile),
+        ("## Project Meta", &sections.project_meta),
+        ("## Project Memory", &sections.project_memory),
+        ("## Feedback Memory", &sections.feedback_memory),
+    ] {
+        if bodies.is_empty() {
+            continue;
+        }
+        let body = join_recall_bodies(bodies).expect("non-empty section");
+        blocks.push(join_text(&[JsString::from(header), body], "\n\n"));
+    }
+    if blocks.is_empty() {
+        return JsString::default();
+    }
+    let mut parts = vec![
+        JsString::from("## ClawXMemory Recall"),
+        JsString::from("These are retrieved long-term memory references for the current turn."),
+        JsString::from("Some content may be relevant while some may not be directly useful."),
+        JsString::from("Use only the parts that are relevant to the current question."),
+        JsString::from(
+            "If retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.",
+        ),
+    ];
+    parts.extend(blocks);
+    join_text(&parts, "\n\n")
+}
+
+pub fn looks_like_raw_recall_context(value: Option<&JsString>) -> bool {
+    let normalized = trim_js(value.unwrap_or(&JsString::default()));
+    if normalized.is_empty() {
+        return false;
+    }
+    line_starts_with(&normalized, "route=")
+        || [
+            "### [user]",
+            "### [project_meta]",
+            "### [project]",
+            "### [feedback]",
+        ]
+        .iter()
+        .any(|header| line_starts_with(&normalized, header))
+}
+
+pub fn normalize_case_trace_context_preview(record: &JsObject) -> JsObject {
+    let retrieval = record.get("retrieval").and_then(JsValue::as_object);
+    let preview = retrieval
+        .and_then(|retrieval| retrieval.get("contextPreview"))
+        .and_then(JsValue::as_string)
+        .filter(|preview| !preview.is_empty());
+    let (Some(retrieval), Some(preview)) = (retrieval, preview) else {
+        return record.clone();
+    };
+    if !looks_like_raw_recall_context(Some(preview)) {
+        return record.clone();
+    }
+    let mut next_retrieval = retrieval.clone();
+    next_retrieval.insert(
+        "contextPreview".into(),
+        JsValue::String(build_memory_recall_system_context(preview)),
+    );
+    let mut next = record.clone();
+    next.insert("retrieval".into(), JsValue::Object(next_retrieval));
+    next
+}
+
+// -- UTF-16 helpers ---------------------------------------------------------
+
+fn is_unicode_escape(units: &[u16]) -> bool {
+    units.len() >= 6
+        && units[0] == u16::from(b'\\')
+        && units[1] == u16::from(b'u')
+        && units[2..6]
+            .iter()
+            .all(|unit| matches!(unit, 0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66))
+}
+
+fn is_common_escape(units: &[u16]) -> bool {
+    units.len() >= 2
+        && units[0] == u16::from(b'\\')
+        && matches!(units[1], 0x6e | 0x72 | 0x74 | 0x22 | 0x5c)
+}
+
+fn hex_value(units: &[u16]) -> u16 {
+    u16::from_str_radix(&String::from_utf16_lossy(units), 16).expect("four hex digits")
+}
+
+fn replace_pair(units: &[u16], from: u16, to: u16) -> Vec<u16> {
+    let mut out = Vec::with_capacity(units.len());
+    let mut i = 0;
+    while i < units.len() {
+        if units[i] == u16::from(b'\\') && units.get(i + 1) == Some(&from) {
+            out.push(to);
+            i += 2;
+        } else {
+            out.push(units[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// `String.prototype.toLowerCase` (locale-independent), preserving unpaired
+/// surrogates instead of replacing them like ICU would.
+fn lowercase(value: &JsString) -> JsString {
+    let mapper = CaseMapper::new();
+    let locale = LanguageIdentifier::UNKNOWN;
+    let mut out = Vec::with_capacity(value.units().len());
+    let mut run = String::new();
+    for unit in char::decode_utf16(value.units().iter().copied()) {
+        match unit {
+            Ok(c) => run.push(c),
+            Err(error) => {
+                out.extend(mapper.lowercase_to_string(&run, &locale).encode_utf16());
+                run.clear();
+                out.push(error.unpaired_surrogate());
+            }
+        }
+    }
+    out.extend(mapper.lowercase_to_string(&run, &locale).encode_utf16());
+    JsString::from_utf16(out)
+}
+
+fn without_space(units: &[u16]) -> Vec<u16> {
+    units
+        .iter()
+        .copied()
+        .filter(|unit| !js_is_space_unit(*unit))
+        .collect()
+}
+
+fn contains(haystack: &[u16], needle: &[u16]) -> bool {
+    needle.is_empty()
+        || haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+fn starts_with(value: &JsString, prefix: &str) -> bool {
+    value
+        .units()
+        .starts_with(&prefix.encode_utf16().collect::<Vec<_>>())
+}
+
+fn trim_js(value: &JsString) -> JsString {
+    JsString::from_utf16(js_trim_units(value.units()).to_vec())
+}
+
+fn concat(parts: &[&JsString]) -> JsString {
+    let mut units = Vec::new();
+    for part in parts {
+        units.extend(part.units());
+    }
+    JsString::from_utf16(units)
+}
+
+fn join_lines<'a>(parts: impl Iterator<Item = &'a JsString>) -> JsString {
+    let mut units = Vec::new();
+    for (i, part) in parts.enumerate() {
+        if i > 0 {
+            units.push(u16::from(b'\n'));
+        }
+        units.extend(part.units());
+    }
+    JsString::from_utf16(units)
+}
+
+fn join_text(parts: &[JsString], separator: &str) -> JsString {
+    let mut units = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            units.extend(separator.encode_utf16());
+        }
+        units.extend(part.units());
+    }
+    JsString::from_utf16(units)
+}
+
+fn split_lines(value: &JsString) -> Vec<JsString> {
+    let units = value.units();
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, unit) in units.iter().enumerate() {
+        if *unit == u16::from(b'\n') {
+            let end = if i > start && units[i - 1] == u16::from(b'\r') {
+                i - 1
+            } else {
+                i
+            };
+            out.push(JsString::from_utf16(units[start..end].to_vec()));
+            start = i + 1;
+        }
+    }
+    out.push(JsString::from_utf16(units[start..].to_vec()));
+    out
+}
+
+fn line_starts_with(value: &JsString, prefix: &str) -> bool {
+    let prefix = prefix.encode_utf16().collect::<Vec<_>>();
+    let units = value.units();
+    for i in 0..units.len() {
+        let line_start = i == 0 || matches!(units[i - 1], 0x000a | 0x000d | 0x2028 | 0x2029);
+        if line_start && units[i..].starts_with(&prefix) {
+            return true;
+        }
+    }
+    false
+}
+
+fn json_text(units: &[u16]) -> String {
+    let mut out = String::with_capacity(units.len());
+    for unit in char::decode_utf16(units.iter().copied()) {
+        match unit {
+            Ok(c) => out.push(c),
+            Err(error) => out.push_str(&format!("\\u{:04x}", error.unpaired_surrogate())),
+        }
+    }
+    out
+}
+
+fn is_units(part: &[u16], value: &str) -> bool {
+    part == value.encode_utf16().collect::<Vec<_>>().as_slice()
+}
