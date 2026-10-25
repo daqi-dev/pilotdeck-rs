@@ -15,7 +15,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, run_owned
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
@@ -113,21 +113,22 @@ with mutating_sources(repo, [source, connection]) as snapshots:
                 time.sleep(30)
                 slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
             command = ['cargo','test','--offline','--manifest-path',str(rust / 'Cargo.toml'),'-p','pilotdeck-gateway','--lib',prefix+test,'--','--nocapture']
-            process = subprocess.Popen(command, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
             try:
-                raw, _ = process.communicate(timeout=240)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                raw, _ = process.communicate()
+                run = run_owned(command, cwd=repo, env=env, timeout=240)
+                raw = run.stdout + run.stderr
+                returncode = run.returncode
+            except subprocess.TimeoutExpired as error:
+                raw = (error.output or '') + (error.stderr or '')
+                returncode = -signal.SIGKILL
             finally:
                 if path: path.write_bytes(originals[path])
-            valid = (process.returncode == 0 and 'test result: ok' in raw) if name == 'baseline' else (
-                process.returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and prefix+test in raw
+            valid = (returncode == 0 and 'test result: ok' in raw) if name == 'baseline' else (
+                returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and prefix+test in raw
                 and ('panicked at' in raw or 'assertion' in raw))
-            (output / f'negative-{name}.log').write_text('COMMAND '+ ' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={process.returncode}\n')
-            summary.append(dict(name=name, file=str(path.relative_to(repo)) if path else None, test=prefix+test, before=before, after=after, exit=process.returncode, valid=valid))
+            (output / f'negative-{name}.log').write_text('COMMAND '+ ' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={returncode}\n')
+            summary.append(dict(name=name, file=str(path.relative_to(repo)) if path else None, test=prefix+test, before=before, after=after, exit=returncode, valid=valid))
             (output/'negative-summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
-            print(f'{name}: {"PASS" if valid else "INVALID"} exit={process.returncode}', flush=True)
+            print(f'{name}: {"PASS" if valid else "INVALID"} exit={returncode}', flush=True)
             if not valid: raise SystemExit(1)
     finally:
         for path, original in originals.items():

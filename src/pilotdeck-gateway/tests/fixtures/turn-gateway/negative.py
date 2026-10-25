@@ -15,7 +15,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, run_owned
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
@@ -131,29 +131,30 @@ with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
             run_env = dict(env)
             if mutant['case']: run_env['PDRS_GATEWAY_CASE'] = mutant['case']
             else: run_env.pop('PDRS_GATEWAY_CASE', None)
-            process = subprocess.Popen(command, cwd=repo, env=run_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
             timed_out = False
             try:
-                raw, _ = process.communicate(timeout=180)
-            except subprocess.TimeoutExpired:
+                run = run_owned(command, cwd=repo, env=run_env, timeout=180)
+                raw = run.stdout + run.stderr
+                returncode = run.returncode
+            except subprocess.TimeoutExpired as error:
                 timed_out = True
-                os.killpg(process.pid, signal.SIGKILL)
-                raw, _ = process.communicate()
+                raw = (error.output or '') + (error.stderr or '')
+                returncode = -signal.SIGKILL
             finally:
                 for path, data in original.items():
                     assert path.read_bytes() == modified[path], f'concurrent source edit: {path}; preserve it'
                     if modified[path] != data: path.write_bytes(data)
             result = re.search(r'^test result: ok\. (\d+) passed; 0 failed;', raw, re.MULTILINE)
-            baseline_ok = (process.returncode == 0 and result is not None
+            baseline_ok = (returncode == 0 and result is not None
                 and int(result.group(1)) >= len(baseline_tests)
                 and all(re.search(r'^test runtime::turn::gateway::tests::' + re.escape(name) + r' \.\.\. ok$',
                     raw, re.MULTILINE) for name in baseline_tests))
             valid = not timed_out and (baseline_ok if mutant['name'] == 'baseline' else (
-                process.returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and mutant['marker'] in raw))
-            (out / (mutant['name']+'.log')).write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={process.returncode}\n')
-            summary.append(dict(name=mutant['name'], case=mutant['case'], exit=process.returncode, marker=mutant['marker'], valid=valid))
+                returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw and mutant['marker'] in raw))
+            (out / (mutant['name']+'.log')).write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={returncode}\n')
+            summary.append(dict(name=mutant['name'], case=mutant['case'], exit=returncode, marker=mutant['marker'], valid=valid))
             (out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
-            print(f'{mutant["name"]}: {"KILLED" if valid and mutant["changes"] else "PASS" if valid else "INVALID"} exit={process.returncode}', flush=True)
+            print(f'{mutant["name"]}: {"KILLED" if valid and mutant["changes"] else "PASS" if valid else "INVALID"} exit={returncode}', flush=True)
             # Retain every control even after an INVALID result.
     finally:
         assert all(path.read_bytes() == data for path, data in original.items()), 'original bytes not restored'

@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, run_owned
 
 ROOT = Path(__file__).resolve().parents[5]
 SRC = ROOT / 'src/pilotdeck-gateway/src'
@@ -67,7 +67,7 @@ def main():
                 path.write_text(text.replace(before, after))
                 suite = ['--test', 'diff_backfill'] if label.endswith('-syntax') else ['--lib']
                 cmd = ['cargo', 'test', '-p', 'pilotdeck-gateway', *suite, test]
-                run = subprocess.run(cmd, cwd=ROOT / 'src', capture_output=True, text=True)
+                run = run_owned(cmd, cwd=ROOT / 'src', timeout=300)
                 log = slots.stdout + slots.stderr + '$ ' + ' '.join(cmd) + '\n' + run.stdout + run.stderr
                 (args.output / f'negative-{label}.log').write_text(log)
                 assert run.returncode != 0, f'{label}: mutation survived'

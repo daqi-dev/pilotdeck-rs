@@ -15,7 +15,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, run_owned
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
@@ -130,15 +130,15 @@ with mutating_sources(repo, [gateway, submit, tests, session]) as snapshots:
             module = 'submit' if control['test'] == cap_test else 'gateway'
             test_name = f"runtime::turn::{module}::tests::{control['test']}"
             cmd = command + [test_name, '--', '--exact', '--nocapture']
-            process = subprocess.Popen(cmd, cwd=repo, env=run_env, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True, start_new_session=True)
             timed_out = False
             try:
-                raw, _ = process.communicate(timeout=300)
-            except subprocess.TimeoutExpired:
+                run = run_owned(cmd, cwd=repo, env=run_env, timeout=300)
+                raw = run.stdout + run.stderr
+                returncode = run.returncode
+            except subprocess.TimeoutExpired as error:
                 timed_out = True
-                os.killpg(process.pid, signal.SIGKILL)
-                raw, _ = process.communicate()
+                raw = (error.output or '') + (error.stderr or '')
+                returncode = -signal.SIGKILL
             finally:
                 for path, data in original.items():
                     assert path.read_bytes() == modified[path], f'concurrent edit preserved: {path}'
@@ -146,17 +146,17 @@ with mutating_sources(repo, [gateway, submit, tests, session]) as snapshots:
                         path.write_bytes(data)
             marker = control['marker']
             result = re.search(r'^test result: ok\. (\d+) passed; 0 failed;', raw, re.MULTILINE)
-            baseline_ok = (process.returncode == 0 and result is not None
+            baseline_ok = (returncode == 0 and result is not None
                 and int(result.group(1)) == 1
                 and re.search(r'^test ' + re.escape(test_name) + r' \.\.\. ok$', raw, re.MULTILINE) is not None)
             valid = not timed_out and (baseline_ok if marker is None else (
-                process.returncode == 101 and 'test result: FAILED' in raw and marker in raw
+                returncode == 101 and 'test result: FAILED' in raw and marker in raw
                 and 'could not compile' not in raw))
             (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr
-                + raw + f'\nexit={process.returncode} timed_out={timed_out}\n')
-            summary.append(dict(name=control['name'], exit=process.returncode, timed_out=timed_out, valid=valid, marker=marker))
+                + raw + f'\nexit={returncode} timed_out={timed_out}\n')
+            summary.append(dict(name=control['name'], exit=returncode, timed_out=timed_out, valid=valid, marker=marker))
             (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-            print(f'{control["name"]}: {"PASS" if valid else "INVALID"} exit={process.returncode} timed_out={timed_out}', flush=True)
+            print(f'{control["name"]}: {"PASS" if valid else "INVALID"} exit={returncode} timed_out={timed_out}', flush=True)
             # Continue after an invalid/timeout control, retaining all evidence.
     finally:
         assert all(p.read_bytes() == data for p, data in original.items()), 'original bytes not restored'
