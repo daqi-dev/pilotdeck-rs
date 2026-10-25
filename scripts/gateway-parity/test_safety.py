@@ -21,6 +21,11 @@ import unittest
 import importlib.util, sys, tempfile
 from pathlib import Path
 
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  Without it, exit before loading anything and print the command.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {Path(__file__).resolve()}')
+
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
 
@@ -71,8 +76,17 @@ Decoder = observer_module.Decoder
 
 BOOTSTRAP_START = '# >>> apparatus bootstrap'
 BOOTSTRAP_END = '# <<< apparatus bootstrap'
-APPARATUS_MODULES = ('common', 'compare', 'observer', 'run_round', 'session_domain',
-                     'prerequisites')
+# Derived from the registered-entry table, never hand-maintained: a new A2
+# module (run_all, build_proxy, ...) is covered by the sys.path-import checks
+# without a second edit.
+APPARATUS_MODULES = tuple(sorted({
+    Path(name).stem for name in common.A2_SCRIPTS if name.endswith('.py')
+}))
+# ``import common`` and ``import os, common`` are both bare-name imports that
+# would resolve through sys.path; match the whole import list, not just the
+# first name after ``import``.
+APPARATUS_IMPORT = (r'(?m)^\s*(?:from\s+(?:' + '|'.join(APPARATUS_MODULES) + r')\b'
+                    r'|import\s+[^\n#]*\b(?:' + '|'.join(APPARATUS_MODULES) + r')\b)')
 
 
 def contender(lock, events):
@@ -337,8 +351,7 @@ class ApparatusInputs(unittest.TestCase):
             blocks[name] = text[start:end + len(BOOTSTRAP_END)]
             prefix = text[:start]
             self.assertNotRegex(prefix, r'sys[.]path[.]insert', name)
-            self.assertNotRegex(prefix, r'(?m)^\s*(?:from|import)\s+(?:'
-                                        + '|'.join(APPARATUS_MODULES) + r')\b', name)
+            self.assertNotRegex(prefix, APPARATUS_IMPORT, name)
         self.assertEqual(sorted(blocks), sorted([
             'build_proxy.py', 'check_frozen.py', 'check_ruler.py', 'compare.py',
             'run_round.py', 'session_domain.py', 'test_safety.py',
@@ -346,35 +359,75 @@ class ApparatusInputs(unittest.TestCase):
             'controls/session_domain.py']))
         self.assertEqual(len(set(blocks.values())), 1,
                          'apparatus bootstrap differs between entries')
+        block = next(iter(blocks.values()))
+        self.assertIn('sys.flags.isolated', block)
+        self.assertLess(block.index('sys.flags.isolated'),
+                        block.index('sys.pycache_prefix'),
+                        'isolated-mode guard must precede module loading')
 
     def test_a2_entries_never_resolve_apparatus_through_sys_path(self):
         # Covers entries that do not mention ``common`` but still import a
         # sibling module by name; sys.path lookup is the P1 bypass in both cases.
         folder = Path(__file__).resolve().parent
-        pattern = r'(?m)^\s*(?:from|import)\s+(?:' + '|'.join(APPARATUS_MODULES) + r')\b'
         for name in common.A2_SCRIPTS:
             if not name.endswith('.py') or name == 'common.py':
                 continue
             text = (folder / name).read_text(encoding='utf-8')
             self.assertNotRegex(text, r'sys[.]path[.]insert', name)
-            self.assertNotRegex(text, pattern, name)
+            self.assertNotRegex(text, APPARATUS_IMPORT, name)
+
+    def test_apparatus_import_pattern_covers_import_lists(self):
+        # A hand-maintained tuple can silently miss an A2 module; the
+        # derivation and the comma form of ``import a, b`` both need a machine
+        # check, otherwise this guard stops covering the omitted module.
+        self.assertIn('observer', APPARATUS_MODULES)
+        self.assertIn('run_all', APPARATUS_MODULES)
+        for text in ('import common\n', 'import os, common\n',
+                     'import os, sys, compare as c\n', 'from common import x\n'):
+            self.assertRegex(text, APPARATUS_IMPORT)
+        for text in ('import os, commonish\n', 'import os, mycommon\n'):
+            self.assertNotRegex(text, APPARATUS_IMPORT)
 
     def test_controls_entry_ignores_controls_common_shadow(self):
         # The controls/ entries must resolve common.py from the apparatus dir,
         # never from their own directory: a controls/common.py is not a second
         # canonical module, and preferring it would be the same P1 bypass one
         # level down (fix-r6 P1).
+        #
+        # The shadow is written into a throwaway copy of the apparatus, never
+        # the real tree: addCleanup does not run on SIGKILL, and a stray
+        # controls/common.py would make every later scan report an unregistered
+        # file (false FAIL) until someone deletes it by hand (fix-r7 P1).
         folder = Path(__file__).resolve().parent
-        shadow = folder / 'controls/common.py'
+        git_status = ['git', '-C', str(folder), 'status', '--porcelain', '--', '.']
+        before = subprocess.check_output(git_status, timeout=30)
+        self.assertFalse((folder / 'controls/common.py').exists(),
+                         'real apparatus tree has a controls/common.py residue')
+        tree = self.root / 'apparatus'
+        # Dereference links while copying: a linked controls/ directory must
+        # not turn the shadow write below into a write through to its target.
+        shutil.copytree(folder, tree,
+                        ignore=shutil.ignore_patterns('node_modules', '__pycache__'))
+        shadow = tree / 'controls/common.py'
         marker = self.root / 'controls-common-executed'
         shadow.write_text("from pathlib import Path\n"
                           f"Path({str(marker)!r}).write_text('executed')\n"
                           "raise RuntimeError('controls/common.py must not be loaded')\n",
                           encoding='utf-8')
-        self.addCleanup(lambda: shadow.unlink(missing_ok=True))
-        module = _load('probe_controls_prerequisites', folder / 'controls/prerequisites.py')
-        self.assertEqual(Path(module.common.__file__).resolve(), folder / 'common.py')
-        self.assertFalse(marker.exists())
+        saved = sys.modules.get('common')
+        try:
+            module = _load('probe_controls_prerequisites',
+                           tree / 'controls/prerequisites.py')
+            self.assertEqual(Path(module.common.__file__).resolve(),
+                             (tree / 'common.py').resolve())
+            self.assertFalse(marker.exists())
+        finally:
+            if saved is None:
+                sys.modules.pop('common', None)
+            else:
+                sys.modules['common'] = saved
+        after = subprocess.check_output(git_status, timeout=30)
+        self.assertEqual(after, before, 'test wrote into the real apparatus tree')
 
     def test_skipped_probe_is_not_counted_as_passed(self):
         # Three-state gate (fix-r6 P2): a skipped control is listed but never

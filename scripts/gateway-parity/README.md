@@ -1,6 +1,6 @@
 # Gateway parity ruler（A2 / Issue #23）
 
-在仓根运行。Python 只用标准库；Node 22 + 基线自带 tsx。所有 Python 入口一律 `python3 -I`（隔离模式；各入口按显式文件路径 `importlib.util.spec_from_file_location` 加载装置模块并断言 `module.__file__` 正是该路径，不把装置目录加入 `sys.path`，其余 `PYTHONPATH`/用户站点/cwd 均不参与导入）。基线目录按「`--baseline` > `PDRS_BASELINE` > 本 checkout 的 `resources/PilotDeck`」解析（worktree 里通常没有，需显式指定），缺失时 BLOCKED；必须已构建且只读。Rust bin 来自本 workspace 的 `src/target/debug/pilotdeck-gateway`。
+在仓根运行。Python 只用标准库；Node 22 + 基线自带 tsx。所有 Python 入口一律 `python3 -I`（隔离模式；各入口按显式文件路径 `importlib.util.spec_from_file_location` 加载装置模块并断言 `module.__file__` 正是该路径，不把装置目录加入 `sys.path`，其余 `PYTHONPATH`/用户站点/cwd 均不参与导入）。A2 入口的引导块最前面断言 `sys.flags.isolated`：不带 `-I` 会在加载任何装置模块前退出，并打印应使用的完整命令。基线目录按「`--baseline` > `PDRS_BASELINE` > 本 checkout 的 `resources/PilotDeck`」解析（worktree 里通常没有，需显式指定），缺失时 BLOCKED；必须已构建且只读。Rust bin 来自本 workspace 的 `src/target/debug/pilotdeck-gateway`。
 
 ```sh
 CARGO_HOME="$PWD/_build/cargo-home" cargo build --manifest-path src/Cargo.toml -p pilotdeck-gateway --locked
