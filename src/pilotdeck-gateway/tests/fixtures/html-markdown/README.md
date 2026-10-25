@@ -30,7 +30,7 @@ H1/H2 是 setext，代码块缩进四空格，表格降成块文字，script/sty
 template 内容不输出。不能按常见 Markdown 转换器的偏好改这些行为。
 
 `cases.mjs` 只有输入；`record.mts` 通过真实 `getURLMarkdownContent` 和注入的 fetch hook
-录下 108 条 Markdown、69 条解析器兼容性样例，以及真实 `createWebFetchTool` 的两次 raw 调用
+录下 108 条 Markdown、99 条解析器兼容性样例，以及真实 `createWebFetchTool` 的两次 raw 调用
 （第二次缓存命中）。没有网络请求或硬编码期望值。`oracle.json` 中还绑定两包的版本与
 `lib/`、`package.json` SHA256，以覆盖原有源码闭包守卫不追踪的 npm 外部导入。
 
@@ -71,7 +71,7 @@ cargo test --locked --offline -p pilotdeck-gateway --test web_tools \
 
 ## #677：解析器兼容性对齐（原 pr9c 待办）
 
-`parserGaps` 现为 69 条真实 TS 兼容性样例，全部由 `generate.mts` 从
+`parserGaps` 现为 99 条真实 TS 兼容性样例，全部由 `generate.mts` 从
 `getURLMarkdownContent` 录制，并由 `parser_version_gaps_match_real_ts`
 逐字节回放（名称保留以兼容冻结账本指针，但已不再 `ignore`）。旧版 `accepted-diffs.md:64` 的四类中，三类已在
 token 边界对齐：

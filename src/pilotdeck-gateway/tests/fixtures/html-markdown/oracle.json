@@ -1616,6 +1616,156 @@
    "name": "control-dialog",
    "html": "<p>a<dialog>b</dialog>c</p>",
    "markdown": "a\n\nbc"
+  },
+  {
+   "name": "foreign-svg-select-hr",
+   "html": "<svg><select><hr></select></svg>",
+   "markdown": "* * *"
+  },
+  {
+   "name": "foreign-svg-select-h1",
+   "html": "<svg><select><h1>x</h1></select></svg>",
+   "markdown": "x\n="
+  },
+  {
+   "name": "foreign-svg-select-img",
+   "html": "<svg><select><img src=\"x\" alt=\"i\"></select></svg>",
+   "markdown": "![i](x)"
+  },
+  {
+   "name": "foreign-svg-select-table",
+   "html": "<svg><select><table><tr><td>x</td></tr></table></select></svg>",
+   "markdown": "x"
+  },
+  {
+   "name": "foreign-svg-select-option-hr",
+   "html": "<svg><select><option>a</option><hr></select></svg>",
+   "markdown": "a\n\n* * *"
+  },
+  {
+   "name": "foreign-math-select-hr",
+   "html": "<math><select><hr></select></math>",
+   "markdown": "* * *"
+  },
+  {
+   "name": "foreign-p-svg-select",
+   "html": "<p>a<svg><select><hr></select></svg>b</p>",
+   "markdown": "a\n\n* * *\n\nb"
+  },
+  {
+   "name": "foreign-svg-space-slash",
+   "html": "<svg / ><select><hr></select>",
+   "markdown": "* * *"
+  },
+  {
+   "name": "foreign-svg-unquoted-slash",
+   "html": "<svg a=b/><select><hr></select>",
+   "markdown": "* * *"
+  },
+  {
+   "name": "control-foreign-svg-quoted-slash",
+   "html": "<svg a=\"b\"/><select><hr></select>",
+   "markdown": ""
+  },
+  {
+   "name": "control-foreign-svg-selfclose",
+   "html": "<svg/><select><hr></select>",
+   "markdown": ""
+  },
+  {
+   "name": "control-svg-inside-select",
+   "html": "<select><svg><hr></svg><hr></select>",
+   "markdown": ""
+  },
+  {
+   "name": "foreign-svg-foreignObject-select-hr",
+   "html": "<svg><foreignObject><select><hr></select></foreignObject></svg>",
+   "markdown": ""
+  },
+  {
+   "name": "foreign-math-annotation-select-hr",
+   "html": "<math><annotation-xml encoding=\"text/html\"><select><hr></select></annotation-xml></math>",
+   "markdown": ""
+  },
+  {
+   "name": "script-double-escaped-select-hr",
+   "html": "<div>a<select>b<script><!--<script></script><hr></script>c</select>d</div>",
+   "markdown": "ab<!--<script></script><hr>cd"
+  },
+  {
+   "name": "script-double-escaped-search",
+   "html": "<div>a<script><!--<script></script><search>x</search></script>b</div>",
+   "markdown": "a<!--<script></script><search>x</search>b"
+  },
+  {
+   "name": "script-double-escaped-in-select",
+   "html": "<div>a<select><script><!--<script></script><hr></script>b</select>c</div>",
+   "markdown": "a<!--<script></script><hr>bc"
+  },
+  {
+   "name": "script-double-escaped-h1",
+   "html": "<div>a<select><script><!--<script></script><h1>x</h1></script>c</select>d</div>",
+   "markdown": "a<!--<script></script><h1>x</h1>cd"
+  },
+  {
+   "name": "control-script-comment-only",
+   "html": "<script>var s = \"<!--\";</script><select><hr></select>",
+   "markdown": "var s = \"<!--\";"
+  },
+  {
+   "name": "control-script-comment-closed",
+   "html": "<script><!--x--></script><select><hr></select>",
+   "markdown": "<!--x-->"
+  },
+  {
+   "name": "control-script-comment-ended",
+   "html": "<script><!--x--><script></script><hr></script><select><hr></select>",
+   "markdown": "<!--x--><script>\n\n* * *"
+  },
+  {
+   "name": "control-style-comment-select",
+   "html": "<style><!--<script></script></style><select><hr></select>",
+   "markdown": "<!--<script></script>"
+  },
+  {
+   "name": "plaintext-html-after",
+   "html": "<p>a<plaintext>b</plaintext><select><hr></select>",
+   "markdown": "a\n\nb</plaintext><select><hr></select></x-turndown>"
+  },
+  {
+   "name": "control-plaintext-in-select",
+   "html": "<select><plaintext>b</plaintext><hr>c</select>",
+   "markdown": "bc"
+  },
+  {
+   "name": "plaintext-script-label",
+   "html": "<plaintext>a<script>var s = \"<!--\";</script></plaintext>",
+   "markdown": "a<script>var s = \"<!--\";</script></plaintext></x-turndown>"
+  },
+  {
+   "name": "table-select-colgroup-h1",
+   "html": "<table><tr><td><select>a<colgroup><h1>x</h1></select>c</table>",
+   "markdown": "axc"
+  },
+  {
+   "name": "table-select-colgroup-option",
+   "html": "<table><tr><td><select>a<colgroup><option>o</option></select>c</table>",
+   "markdown": "aoc"
+  },
+  {
+   "name": "table-select-colgroup-nested-select",
+   "html": "<table><tr><td><select>a<colgroup><select>b</select>c</table>",
+   "markdown": "abc"
+  },
+  {
+   "name": "control-table-select-col",
+   "html": "<table><tr><td><select>a<col><h1>x</h1></select>c</table>",
+   "markdown": "axc"
+  },
+  {
+   "name": "control-table-select-caption",
+   "html": "<table><tr><td><select>b<caption>c</caption><tr><td>d</table>",
+   "markdown": "b\n\nc\n\nd"
   }
  ],
  "fetch": {

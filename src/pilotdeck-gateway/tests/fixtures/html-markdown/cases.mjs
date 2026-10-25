@@ -203,6 +203,45 @@ export const parserGaps = [
   ['svg-foreignObject-search', '<svg><foreignObject><search>b</search></foreignObject></svg>'],
   // Negative control for the search rewrite: ordinary blocks still close P.
   ['control-dialog', '<p>a<dialog>b</dialog>c</p>'],
+  // Unmodelled structure: the rewrite stops at foreign content, PLAINTEXT,
+  // script data double escape, or a colgroup token the old in-select-in-table
+  // close set ignores; the remainder goes to html5ever verbatim.
+  ['foreign-svg-select-hr', '<svg><select><hr></select></svg>'],
+  ['foreign-svg-select-h1', '<svg><select><h1>x</h1></select></svg>'],
+  ['foreign-svg-select-img', '<svg><select><img src="x" alt="i"></select></svg>'],
+  ['foreign-svg-select-table', '<svg><select><table><tr><td>x</td></tr></table></select></svg>'],
+  ['foreign-svg-select-option-hr', '<svg><select><option>a</option><hr></select></svg>'],
+  ['foreign-math-select-hr', '<math><select><hr></select></math>'],
+  ['foreign-p-svg-select', '<p>a<svg><select><hr></select></svg>b</p>'],
+  ['foreign-svg-space-slash', '<svg / ><select><hr></select>'],
+  ['foreign-svg-unquoted-slash', '<svg a=b/><select><hr></select>'],
+  ['control-foreign-svg-quoted-slash', '<svg a="b"/><select><hr></select>'],
+  ['control-foreign-svg-selfclose', '<svg/><select><hr></select>'],
+  ['control-svg-inside-select', '<select><svg><hr></svg><hr></select>'],
+  ['foreign-svg-foreignObject-select-hr', '<svg><foreignObject><select><hr></select></foreignObject></svg>'],
+  ['foreign-math-annotation-select-hr', '<math><annotation-xml encoding="text/html"><select><hr></select></annotation-xml></math>'],
+  // Script data escaped/double escaped: `<!--<script` makes the first
+  // `</script>` non-closing, so raw script text must keep later tags.
+  ['script-double-escaped-select-hr', '<div>a<select>b<script><!--<script></script><hr></script>c</select>d</div>'],
+  ['script-double-escaped-search', '<div>a<script><!--<script></script><search>x</search></script>b</div>'],
+  ['script-double-escaped-in-select', '<div>a<select><script><!--<script></script><hr></script>b</select>c</div>'],
+  ['script-double-escaped-h1', '<div>a<select><script><!--<script></script><h1>x</h1></script>c</select>d</div>'],
+  // Negative controls: a plain `<!--` (unterminated, closed, or followed by a
+  // `<script>` after `-->`) does not enter the double-escaped state.
+  ['control-script-comment-only', '<script>var s = "<!--";</script><select><hr></select>'],
+  ['control-script-comment-closed', '<script><!--x--></script><select><hr></select>'],
+  ['control-script-comment-ended', '<script><!--x--><script></script><hr></script><select><hr></select>'],
+  ['control-style-comment-select', '<style><!--<script></script></style><select><hr></select>'],
+  // PLAINTEXT has no end tag.
+  ['plaintext-html-after', '<p>a<plaintext>b</plaintext><select><hr></select>'],
+  ['control-plaintext-in-select', '<select><plaintext>b</plaintext><hr>c</select>'],
+  ['plaintext-script-label', '<plaintext>a<script>var s = "<!--";</script></plaintext>'],
+  // in select in table: colgroup/col are ignored, not select-closing.
+  ['table-select-colgroup-h1', '<table><tr><td><select>a<colgroup><h1>x</h1></select>c</table>'],
+  ['table-select-colgroup-option', '<table><tr><td><select>a<colgroup><option>o</option></select>c</table>'],
+  ['table-select-colgroup-nested-select', '<table><tr><td><select>a<colgroup><select>b</select>c</table>'],
+  ['control-table-select-col', '<table><tr><td><select>a<col><h1>x</h1></select>c</table>'],
+  ['control-table-select-caption', '<table><tr><td><select>b<caption>c</caption><tr><td>d</table>'],
 ].map(([name, html]) => ({ name, html }));
 
 export const fetchHtml = '<h1>😀 title</h1><p>Read <a href="/doc">docs</a> &amp; <strong>code</strong>.</p><pre><code>x_*\n</code></pre>';

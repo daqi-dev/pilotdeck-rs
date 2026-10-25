@@ -275,14 +275,14 @@ fn parser_version_gaps_match_real_ts() {
     baseline::oracle(ORACLE);
     let oracle: serde_json::Value = serde_json::from_str(ORACLE).unwrap();
     let cases = oracle["parserGaps"].as_array().unwrap();
-    assert_eq!(cases.len(), 69);
+    assert_eq!(cases.len(), 99);
     assert_eq!(
         cases
             .iter()
             .map(|case| case["name"].as_str().unwrap())
             .collect::<std::collections::HashSet<_>>()
             .len(),
-        69
+        99
     );
     let mut failures = Vec::new();
     for case in cases {
@@ -745,4 +745,32 @@ fn reparented_wide_subtrees_stay_fast() {
         elapsed.as_secs_f64() < budget,
         "reparent wide subtree: took {elapsed:?}, budget {budget}s"
     );
+}
+
+/// The class-level bail-out in `html_compat` stops rewriting at an unmodelled
+/// construct and hands the remainder to html5ever. These are the residual
+/// differences against domino 2.2.0, kept deliberately and registered in
+/// `specs/gateway-parity/diffs/A6.5-WEBFETCH-HTMLCOMPAT-BAILOUT-001.md`.
+#[test]
+fn unmodelled_bail_out_differences_match_registered_behavior() {
+    // (input, real TS Markdown from fix-r2/ts-probe-r2.json, Rust Markdown)
+    let cases = [
+        ("<svg></svg><select><hr></select>", "", "* * *"),
+        ("<svg></svg><p>a<search>b</search>c</p>", "abc", "a\n\nbc"),
+        (
+            "<script><!--<script></script></script><select><hr></select>",
+            "<!--<script></script>",
+            "<!--<script></script>\n\n* * *",
+        ),
+        (
+            "<div>a<select><script><!--<script></script></script><h1>x</h1></select>d</div>",
+            "a<!--<script></script>xd",
+            "a<!--<script></script>\n\nx\n=\n\nd",
+        ),
+    ];
+    for (html, ts, rust) in cases {
+        let actual = Turndown.convert(html).unwrap();
+        assert_eq!(actual, rust, "conservative output for {html:?}");
+        assert_ne!(actual, ts, "registered difference for {html:?}");
+    }
 }
