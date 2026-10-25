@@ -78,6 +78,10 @@ pub struct PermissionTurnOptions {
     pub rules: RuleSetHandle,
     pub coordinator: Arc<GatewayInteractionCoordinator>,
     /// Gateway-event delivery (not the agent event sink). false auto-denies.
+    /// This infallible callback has no TS exception/Result channel. A Rust
+    /// panic unwinds and drops the pending registration; it is not converted
+    /// into a "Permission prompt delivery failed" decision (see
+    /// A6.9-PERMISSION-RUN-001-R2).
     pub emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync>,
     pub timeout: Duration,
 }
@@ -149,6 +153,21 @@ pub struct TurnPermission {
     run: Arc<Run>,
 }
 impl TurnPermission {
+    /// ProfiledPermissionDecisionPort applies admission only after the native
+    /// provider returns ask. In particular, its existing deny message wins.
+    fn prompt_denial(&self) -> Option<&'static str> {
+        let options = &self.run.options;
+        if options.profile.policy_mode == "disabled" {
+            Some("Interaction is disabled for this profile.")
+        } else if !options.profile.can_prompt || !options.context.can_prompt {
+            Some("Prompts are disabled for this session.")
+        } else if options.profile.permission_provider != "gateway" {
+            Some("No interaction answerer is available.")
+        } else {
+            None
+        }
+    }
+
     fn check(&self, state: &State) -> Result<(), HostError> {
         if state.closed
             || self.run.cancelled.is_cancelled()
@@ -177,6 +196,12 @@ impl TurnPermission {
     }
     /// PermissionRequest callback boundary. Returns behavior/message, ready for
     /// a hook's specific.decision. Request IDs are host minted, never toolCallId.
+    /// `suggestions` must already be extracted from hookInput.permissionSuggestions
+    /// by the caller, following TS extractSessionAllowRules: select the first
+    /// allow_session option with a rules array, keep object candidates, default
+    /// missing/empty toolName to this tool, and retain only nonempty string
+    /// patterns with source=session/behavior=allow. Pass an empty vector when
+    /// none survive; request then remembers its single-tool fallback rule.
     pub fn request(
         &self,
         tool_name: JsString,
@@ -188,19 +213,20 @@ impl TurnPermission {
         let turn = self.clone();
         Box::pin(async move {
             let request_id: JsString = uuid::Uuid::new_v4().to_string().into();
-            let (sender, receiver) = oneshot::channel();
+            let (sender, mut receiver) = oneshot::channel();
             let sender = Arc::new(Mutex::new(Some(sender)));
             let resolve = sender.clone();
             let reject = sender;
             let guard = {
                 let state = lock(&turn.state);
                 turn.check(&state)?;
-                if turn.run.options.profile.permission_provider != "gateway"
-                    || !turn.run.options.profile.can_prompt
-                    || !turn.run.options.context.can_prompt
-                    || turn.run.options.context.policy_can_prompt == Some(false)
-                {
-                    return Ok(denied("Permission prompting is unavailable."));
+                if let Some(message) = turn.prompt_denial() {
+                    return Ok(denied(message));
+                }
+                if turn.run.options.context.policy_can_prompt == Some(false) {
+                    return Ok(denied(
+                        "Permission prompt denied because Gateway policy disables prompts for this session.",
+                    ));
                 }
                 if cancel.is_cancelled() {
                     return Ok(denied("Permission prompt cancelled."));
@@ -249,7 +275,11 @@ impl TurnPermission {
                 ("payload", input),
             ]));
             let answer = if !delivered {
-                denied("Permission prompt could not be delivered to the Web UI.")
+                // TS settle consumes the pending entry: a synchronous answer
+                // wins even if emit subsequently reports no sink.
+                receiver.try_recv().unwrap_or_else(|_| {
+                    denied("Permission prompt could not be delivered to the Web UI.")
+                })
             } else {
                 tokio::select! {
                     biased;
@@ -358,7 +388,6 @@ impl port::PermissionDecision for TurnPermission {
             turn.check(&lock(&turn.state))?;
             let mut context = turn.run.options.context.clone();
             context.rules = turn.run.options.rules.snapshot();
-            context.can_prompt &= turn.run.options.profile.can_prompt;
             let name = tool
                 .fields()
                 .get("name")
@@ -377,6 +406,21 @@ impl port::PermissionDecision for TurnPermission {
                 result = permission::decide(&context, &adapter, &input, &tool_call_id) => result?,
             };
             turn.check(&lock(&turn.state))?;
+            if result
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str("ask"))
+                && let Some(message) = turn.prompt_denial()
+            {
+                return Ok(object([
+                    ("type", "deny".into()),
+                    (
+                        "reason",
+                        object([("type", "runtime".into()), ("message", message.into())]),
+                    ),
+                    ("message", message.into()),
+                ]));
+            }
             Ok(result)
         })
     }

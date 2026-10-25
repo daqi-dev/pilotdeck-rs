@@ -1,0 +1,154 @@
+[
+  {
+    "name": "interactive",
+    "canPrompt": true,
+    "forcedMcp": false,
+    "policyCanPrompt": null,
+    "result": {
+      "type": "ask",
+      "reason": {
+        "type": "mode",
+        "mode": "default",
+        "message": "Mode default requires permission for danger."
+      },
+      "request": {
+        "toolCallId": "call",
+        "toolName": "danger",
+        "inputSummary": "null",
+        "reason": {
+          "type": "mode",
+          "mode": "default",
+          "message": "Mode default requires permission for danger."
+        },
+        "options": [
+          {
+            "id": "allow_once",
+            "label": "Allow once"
+          },
+          {
+            "id": "deny",
+            "label": "Deny"
+          },
+          {
+            "id": "cancel",
+            "label": "Cancel"
+          }
+        ]
+      }
+    },
+    "emitted": 0,
+    "registrations": 1
+  },
+  {
+    "name": "headless",
+    "canPrompt": true,
+    "forcedMcp": false,
+    "policyCanPrompt": null,
+    "result": {
+      "type": "deny",
+      "reason": {
+        "type": "runtime",
+        "message": "No interaction answerer is available."
+      },
+      "message": "No interaction answerer is available."
+    },
+    "emitted": 0,
+    "registrations": 0
+  },
+  {
+    "name": "disabled",
+    "canPrompt": true,
+    "forcedMcp": false,
+    "policyCanPrompt": null,
+    "result": {
+      "type": "deny",
+      "reason": {
+        "type": "runtime",
+        "message": "Interaction is disabled for this profile."
+      },
+      "message": "Interaction is disabled for this profile."
+    },
+    "emitted": 0,
+    "registrations": 0
+  },
+  {
+    "name": "disabled",
+    "canPrompt": false,
+    "forcedMcp": false,
+    "policyCanPrompt": null,
+    "result": {
+      "type": "deny",
+      "reason": {
+        "type": "runtime",
+        "message": "Permission prompt denied because prompts are disabled for this session."
+      },
+      "message": "Permission prompt denied because prompts are disabled for this session."
+    },
+    "emitted": 0,
+    "registrations": 0
+  },
+  {
+    "name": "interactive",
+    "canPrompt": false,
+    "forcedMcp": false,
+    "policyCanPrompt": null,
+    "result": {
+      "type": "deny",
+      "reason": {
+        "type": "runtime",
+        "message": "Permission prompt denied because prompts are disabled for this session."
+      },
+      "message": "Permission prompt denied because prompts are disabled for this session."
+    },
+    "emitted": 0,
+    "registrations": 0
+  },
+  {
+    "name": "interactive",
+    "canPrompt": false,
+    "forcedMcp": true,
+    "policyCanPrompt": null,
+    "result": {
+      "type": "deny",
+      "reason": {
+        "type": "runtime",
+        "message": "Prompts are disabled for this session."
+      },
+      "message": "Prompts are disabled for this session."
+    },
+    "emitted": 0,
+    "registrations": 0
+  },
+  {
+    "name": "disabled",
+    "canPrompt": false,
+    "forcedMcp": true,
+    "policyCanPrompt": null,
+    "result": {
+      "type": "deny",
+      "reason": {
+        "type": "runtime",
+        "message": "Interaction is disabled for this profile."
+      },
+      "message": "Interaction is disabled for this profile."
+    },
+    "emitted": 0,
+    "registrations": 0
+  },
+  {
+    "name": "headless",
+    "canPrompt": true,
+    "forcedMcp": false,
+    "policyCanPrompt": false,
+    "result": {
+      "type": "deny",
+      "reason": {
+        "type": "runtime",
+        "message": "Permission prompt denied because Gateway policy disables prompts for this session."
+      },
+      "message": "Permission prompt denied because Gateway policy disables prompts for this session."
+    },
+    "emitted": 0,
+    "registrations": 0
+  }
+]
