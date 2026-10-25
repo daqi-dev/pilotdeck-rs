@@ -12,8 +12,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 补丁指纹要算 git diff <base>...<head>，浅克隆没有 merge-base
+      - name: 显式取 base 分支与 PR head（不依赖 checkout 的默认 refspec）
+        continue-on-error: true  # 取不到只影响「沿用」（指纹算不出 → 拒收旧块），不挡 head 一致的 PR
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" "${PR_HEAD}"
+          git rev-parse --verify "origin/${BASE_REF}^{commit}"
+          git rev-parse --verify "${PR_HEAD}^{commit}"
       - name: 角色审计结果块与 issue 关联
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          # 用 base 分支当前 tip（事件里的 base.sha 可能过期）；三点 diff 取 merge-base，main 前进不影响指纹
+          PR_BASE: origin/${{ github.base_ref }}
         run: python3 -I scripts/check-pr-gate.py

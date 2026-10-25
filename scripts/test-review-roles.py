@@ -137,6 +137,9 @@ def _run(gate, rrr, out_base: Path) -> int:
             fails.append(f"zai-ok：应全 PASS 且标 runner=zai model=glm-5.3-mb readonly=tools（rc={rc}）")
         if gate_errs(s):
             fails.append(f"zai-ok：闸门应接受：{gate_errs(s)}")
+        fp = gate.patch_fingerprint(str(wt), "HEAD~1", head)
+        if not fp or f" patch={fp} " not in s:
+            fails.append(f"zai-ok：结果块应带整个 PR 的补丁指纹 patch={fp}")
         calls = [json.loads(x) for x in log.read_text().splitlines()]
         if not calls or any(c["base"] != "https://llm-center.modelbest.co" or c["key_is"] != "zai_file" for c in calls):
             fails.append("zai-ok：子进程应拿到智谱接口地址与文件里的 ZAI 密钥（不是父环境的）")
@@ -247,10 +250,173 @@ def _run(gate, rrr, out_base: Path) -> int:
         if (cp.returncode == 0 or not gate_errs(s) or ends != 3 or f"{first}:TIMEOUT" not in s
                 or any(f"{r}:PASS" not in s for r in rest)):
             fails.append(f"serial-timeout：首角色超时后应照跑其余三角色并拒收（rc={cp.returncode}，完成 {ends}）")
+    _carry_tests(gate, fails)
     for f in fails:
         print("FAIL", f)
     print(f"test-review-roles: {'全部通过' if not fails else f'{len(fails)} 项失败'}")
     return 1 if fails else 0
+
+
+
+def _carry_tests(gate, fails: list[str]) -> None:
+    """叠包纯 rebase 沿用结果块：补丁逐字不变才沿用，改一行、上下文变了、无指纹、算不出都拒（负控）。"""
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td)
+        g = ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
+
+        def git(*args: str) -> str:
+            return subprocess.run([*g, *args], check=True, capture_output=True, text=True).stdout.strip()
+
+        def commit(path: str, text: str, msg: str) -> str:
+            (repo / path).write_text(text)
+            git("add", path)
+            git("commit", "-q", "-m", msg)
+            return git("rev-parse", "HEAD")
+
+        lines = [f"line {i}\n" for i in range(1, 21)]
+        git("init", "-q", "-b", "main")
+        commit("f.txt", "".join(lines), "base")
+        commit("g.txt", "g0\n", "g")
+        git("checkout", "-q", "-b", "parent")
+        parent = commit("g.txt", "g1\n", "parent change")
+        git("checkout", "-q", "-b", "child")
+        child_lines = lines.copy()
+        child_lines[14] = "line 15 changed\n"
+        child = commit("f.txt", "".join(child_lines), "child change")
+        old_fp = gate.patch_fingerprint(str(repo), parent, child)
+        # 前一包经 queue 以 REBASE 合入（新 SHA），main 另有无关提交；后一包 rebase 到 main
+        git("checkout", "-q", "main")
+        commit("h.txt", "unrelated\n", "unrelated")
+        git("cherry-pick", parent)
+        git("checkout", "-q", "-b", "child2")
+        git("cherry-pick", child)
+        new_head = git("rev-parse", "HEAD")
+        new_fp = gate.patch_fingerprint(str(repo), "main", new_head)
+        rebased_main = git("rev-parse", "main")  # 负控 2 会再推进 main，后面的变体须对这个固定点比
+
+        def block(head: str, extra: str = "") -> str:
+            scope = "" if "scope=" in extra else " scope=full"
+            return (f"<!-- pr-gate:v1 head={head}{extra}{scope} roles=sibling:PASS,concurrency:PASS,boundary:PASS,simplify:PASS "
+                    f"p0=0 p1=0 runner=zai model=glm-5.3-mb readonly=tools -->\nRefs #1\n")
+
+        if not old_fp or old_fp != new_fp or new_head == child:
+            fails.append(f"carry：纯 rebase 后补丁指纹应不变（旧 {old_fp} 新 {new_fp}）")
+        if gate.check(block(child, f" patch={old_fp}"), new_head, new_fp):
+            fails.append(f"carry：指纹相同应沿用旧 head 的块：{gate.check(block(child, f' patch={old_fp}'), new_head, new_fp)}")
+        # 负控 1：rebase 后又改一行 → 指纹变 → 拒
+        changed = child_lines.copy()
+        changed[14] = "line 15 changed again\n"
+        edited = commit("f.txt", "".join(changed), "edit")
+        edited_fp = gate.patch_fingerprint(str(repo), "main", edited)
+        errs = gate.check(block(child, f" patch={old_fp}"), edited, edited_fp)
+        if edited_fp == old_fp or not any("补丁指纹不同" in e for e in errs):
+            fails.append(f"carry 负控：内容变了必须拒收：{errs}")
+        # 负控 2：上下文变了（main 改了相邻行）→ 指纹变 → 拒（保守：周边代码变了要重审）
+        git("checkout", "-q", "main")
+        ctx = lines.copy()
+        ctx[11] = "line 12 moved by main\n"  # 在第 15 行改动的 3 行上下文内、又不相邻冲突
+        commit("f.txt", "".join(ctx), "context")
+        git("checkout", "-q", "-b", "child3")
+        git("cherry-pick", child)
+        ctx_head = git("rev-parse", "HEAD")
+        ctx_fp = gate.patch_fingerprint(str(repo), "main", ctx_head)
+        if ctx_fp == old_fp or not ctx_fp:
+            fails.append("carry 负控：上下文内的行被 main 改了，指纹应不同")
+        # 负控 3/4/5：块内无指纹、当前指纹算不出、指纹键重复 → 都按旧提交拒收
+        for name, body, patch, want in [
+            ("无指纹", block(child), new_fp, "块内无 patch="),
+            ("算不出", block(child, f" patch={old_fp}"), "", "算不出"),
+            ("重复键", block(new_head, f" patch={old_fp} patch={old_fp}"), new_fp, "patch 至多出现一次"),
+        ]:
+            errs = gate.check(body, new_head, patch)
+            if not any(want in e for e in errs):
+                fails.append(f"carry 负控 {name}：应拒收并说明「{want}」：{errs}")
+        # 负控 6：rebase 后的「看似无害」改动都必须改变指纹——只改缩进 / 行尾空白、只改文件模式、
+        # 新增空文件、删除文件、二进制改动（--stable 会把空白改动判成相同，故用 --verbatim）
+        base_fp = new_fp  # 基准：纯 rebase 后的 head（child2 上已叠了负控 1 的改动，不能用分支名）
+        if gate.patch_fingerprint(str(repo), rebased_main, new_head) != new_fp:
+            fails.append("carry：固定 base 复算应得同一指纹（变体负控的对照）")
+
+        def variant(name: str, act) -> None:
+            git("checkout", "-q", "--detach", new_head)
+            act()
+            git("add", "-A")
+            git("commit", "-q", "-m", name)
+            got = gate.patch_fingerprint(str(repo), rebased_main, "HEAD")
+            if not got or got == base_fp:
+                fails.append(f"carry 负控：{name} 后指纹应改变（{got} vs {base_fp}）")
+
+        def reindent() -> None:
+            text = (repo / "f.txt").read_text().replace("line 15 changed", "    line 15 changed")
+            (repo / "f.txt").write_text(text)
+
+        def trail() -> None:
+            text = (repo / "f.txt").read_text().replace("line 15 changed\n", "line 15 changed  \n")
+            (repo / "f.txt").write_text(text)
+
+        variant("只改缩进", reindent)
+        variant("只加行尾空白", trail)
+        variant("只改文件模式", lambda: (repo / "f.txt").chmod(0o755))
+        variant("新增空文件", lambda: (repo / "empty.txt").write_text(""))
+        variant("删除文件", lambda: (repo / "g.txt").unlink())
+        variant("二进制改动", lambda: (repo / "b.bin").write_bytes(b"\x00\x01\x02"))
+        # 同一 base 上二进制内容 X / Y 两种改法：指纹必须不同，且不依赖 patch-id 是否哈希 index 行
+        # （有二进制改动时指纹应是 patch-id 与 blob id 的合成值，不等于裸 patch-id）
+        fps = []
+        for content in (b"\x00X", b"\x00Y"):
+            git("checkout", "-q", "--detach", new_head)
+            (repo / "b.bin").write_bytes(content)
+            git("add", "-A")
+            git("commit", "-q", "-m", "bin")
+            fps.append(gate.patch_fingerprint(str(repo), rebased_main, "HEAD"))
+            bare = subprocess.run(["git", "-C", str(repo), *gate.FINGERPRINT_DIFF, f"{rebased_main}...HEAD"],
+                                  capture_output=True).stdout
+            pid = subprocess.run(["git", "-C", str(repo), "patch-id", "--verbatim"], input=bare,
+                                 capture_output=True).stdout.split()[0].decode()
+            if fps[-1] == pid:
+                fails.append("carry 负控：有二进制改动时指纹应并入 blob id，不能只是裸 patch-id")
+        if not all(fps) or fps[0] == fps[1]:
+            fails.append(f"carry 负控：二进制内容 X / Y 指纹应不同（{fps}）")
+        # textconv 驱动的文件（主 diff 带 --no-textconv 仍是 Binary files differ）与路径含 tab 的二进制，
+        # 都必须进二进制清单：指纹 ≠ 裸 patch-id，且 X / Y 两种内容指纹不同
+        git("config", "diff.hexdump.textconv", "od -c")
+        (repo / ".gitattributes").write_text("*.dat diff=hexdump\n")
+        for label, path in (("textconv", "conv.dat"), ("tab 路径", "tab\tname.bin"), ("-diff 属性文本", "secret.cfg")):
+            got = []
+            for content in (b"\x00X", b"\x00Y"):
+                git("checkout", "-q", "--detach", new_head)
+                (repo / ".gitattributes").write_text("*.dat diff=hexdump\n*.cfg -diff\n")
+                (repo / path).write_bytes(content if label != "-diff 属性文本" else b"key=" + content[1:] + b"\n")
+                git("add", "-A")
+                git("commit", "-q", "-m", label)
+                fp_now = gate.patch_fingerprint(str(repo), rebased_main, "HEAD")
+                bare = subprocess.run(["git", "-C", str(repo), *gate.FINGERPRINT_DIFF, f"{rebased_main}...HEAD"],
+                                      capture_output=True).stdout
+                pid = subprocess.run(["git", "-C", str(repo), "patch-id", "--verbatim"], input=bare,
+                                     capture_output=True).stdout.split()[0].decode()
+                if not fp_now or fp_now == pid:
+                    fails.append(f"carry 负控：{label} 的二进制改动应并入 blob id（指纹 {fp_now[:12]}，裸 {pid[:12]}）")
+                got.append(fp_now)
+            if got[0] == got[1]:
+                fails.append(f"carry 负控：{label} 二进制 X / Y 指纹应不同")
+        partial = block(child, f" patch={old_fp} scope=partial paths=f.txt")
+        if not any("不是 full" in e for e in gate.check(partial, new_head, new_fp)):
+            fails.append("carry 负控：--paths 分批块（scope=partial）即使指纹相同也不得沿用")
+        if gate.check(block(child, " patch="), new_head, new_fp) == [] or not any(
+                "40 位" in e for e in gate.check(block(child, " patch=xyz"), new_head, new_fp)):
+            fails.append("carry 负控：空或畸形 patch= 必须拒收并说明")
+        if gate.patch_fingerprint(str(repo), "main", "main") or gate.patch_fingerprint(str(repo), "no-such-ref", new_head):
+            fails.append("carry：空 diff 与坏 ref 都应返回空指纹")
+        # CLI 端到端：--head/--base/--repo 与 CI 同路径
+        bf = repo.parent / "carry-body.md"
+        bf.write_text(block(child, f" patch={old_fp}"))
+        gate_py = ROOT / "scripts" / "check-pr-gate.py"
+        ok = subprocess.run([sys.executable, "-I", str(gate_py), "--body-file", str(bf), "--head", new_head,
+                             "--base", "main~1", "--repo", str(repo)], capture_output=True, text=True)
+        bad = subprocess.run([sys.executable, "-I", str(gate_py), "--body-file", str(bf), "--head", edited,
+                              "--base", "main~1", "--repo", str(repo)], capture_output=True, text=True)
+        if ok.returncode != 0 or "沿用" not in ok.stdout or bad.returncode != 1:
+            fails.append(f"carry CLI：同指纹应 0、改过应 1（{ok.returncode}/{bad.returncode}）：{ok.stdout}{bad.stdout}")
 
 
 if __name__ == "__main__":
