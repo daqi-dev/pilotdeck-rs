@@ -1,0 +1,38 @@
+# dsh headless 的模型通道：DeepSeek 官方 API（Anthropic Messages 兼容端点，支持并发）。
+# 用法：dsh --profile headless --patch <repo>/scripts/dsh-headless-deepseek-official.patch.yml - < task.md
+# 凭证：DS_ORI_PARA_API_KEY（人 2026-10-25 提供，放在 .env.local；headless 只认启动环境 / 运行目录 .env / $DSH_HOME/.env，
+#   由调用方在启动环境里导出）。模型 deepseek-flash = DeepSeek-V4.1-Flash（实测 /models）。
+#   2026-10-25 实测：dsh 不认下面 apiKeyEnv 的覆盖，仍读 DEEPSEEK_API_KEY——调用方须在子进程环境里
+#   令 DEEPSEEK_API_KEY=$DS_ORI_PARA_API_KEY（见协调者包装脚本 _tmp/20261021-loop/dsh-official.sh）。
+# 不要把密钥写进 YAML。
+- id: llm-pi-ai
+  config:
+    providers:
+      deepseek-official:
+        displayName: DeepSeek 官方 · Anthropic 兼容
+        apiKeyEnv: DS_ORI_PARA_API_KEY
+        api: anthropic-messages
+        baseURL: https://api.deepseek.com/anthropic
+        defaultContextWindow: 262144
+        defaultMaxTokens: 32768
+        defaultInput: [text, image]
+        models:
+          - id: deepseek-flash
+            name: deepseek-flash
+            contextWindow: 262144
+            maxTokens: 32768
+            input: [text, image]
+            reasoningEfforts:
+              off: null
+              low: low
+              high: high
+              max: max
+            compat:
+              forceAdaptiveThinking: true
+        compat: {}
+
+- id: agent-default-model
+  config:
+    provider: deepseek-official
+    model: deepseek-flash
+    reasoningEffort: high
