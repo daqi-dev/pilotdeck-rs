@@ -12,8 +12,8 @@ pub use handle::{
     SessionSubmission,
 };
 pub use owner::{
-    EvictionReason, MaintenanceReservation, SessionContext, SessionFactory, SessionOwner,
-    SessionOwnerOptions,
+    EvictionReason, MaintenanceReservation, SessionContext, SessionEvictionSnapshot,
+    SessionFactory, SessionOwner, SessionOwnerOptions,
 };
 
 use pilotdeck_protocol::JsString;

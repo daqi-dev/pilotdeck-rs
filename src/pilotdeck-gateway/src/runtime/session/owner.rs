@@ -75,6 +75,17 @@ pub enum EvictionReason {
     Shutdown,
 }
 
+/// Diagnostic data from the evicted record, sampled after disposal and on_evict.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionEvictionSnapshot {
+    pub session_key: JsString,
+    pub last_used_at: i64,
+    pub context: SessionContext,
+    /// Usually a number; preserve JS `messages.length` for dynamic snapshots.
+    pub message_count: Option<JsValue>,
+}
+
+type IdleEvict = Arc<dyn Fn(&JsString, &SessionEvictionSnapshot) + Send + Sync>;
 type Evict = Arc<dyn Fn(&JsString, EvictionReason) + Send + Sync>;
 pub struct SessionOwnerOptions {
     pub factory: Arc<dyn SessionFactory>,
@@ -83,6 +94,9 @@ pub struct SessionOwnerOptions {
     /// Zero disables the periodic sweep (for an externally driven clock).
     pub idle_sweep_interval_ms: u64,
     pub on_evict: Option<Evict>,
+    /// Runs outside owner locks, after on_evict, only for idle eviction (also
+    /// after disposal errors). Callbacks must not panic, as with on_evict.
+    pub on_session_idle_evict: Option<IdleEvict>,
 }
 
 impl SessionOwnerOptions {
@@ -99,6 +113,7 @@ impl SessionOwnerOptions {
             idle_timeout_ms: 30 * 60 * 1000,
             idle_sweep_interval_ms: 60 * 1000,
             on_evict: None,
+            on_session_idle_evict: None,
         }
     }
 }
@@ -334,6 +349,21 @@ impl SessionOwner {
     pub fn has_active_turn(&self, key: &JsString) -> bool {
         let _state = self.0.state.lock().unwrap();
         self.0.turns.admission.has_active_turn(key)
+    }
+
+    /// Project-scoped user admission, excluding Always-On and cron sessions.
+    /// A reservation without a cached record, maintenance, or a handle activity
+    /// alone is not a user turn. This query does not refresh or sweep sessions.
+    pub fn has_active_user_turn(&self, project: &JsString) -> bool {
+        let state = self.0.state.lock().unwrap();
+        let always_on = JsString::from("always-on/");
+        let cron = JsString::from("cron:");
+        state.records.iter().any(|(key, record)| {
+            !key.units().starts_with(always_on.units())
+                && !key.units().starts_with(cron.units())
+                && record.context.project_key.as_ref() == Some(project)
+                && self.0.turns.admission.has_active_turn(key)
+        })
     }
 
     pub fn begin_completion(&self, key: &JsString, run: &JsString) -> TurnCompletionHandle {
@@ -702,6 +732,34 @@ impl SessionOwner {
             .dispose(format!("session_{label}").into())
             .await;
         self.emit(key, reason);
+        if reason == EvictionReason::Idle
+            && let Some(callback) = &self.0.options.on_session_idle_evict
+        {
+            // TS catches a failed snapshot and still emits the other fields.
+            let message_count = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let snapshot = record.handle.snapshot();
+                match snapshot.as_object()?.get_property("messages")? {
+                    JsValue::Array(messages) => Some(JsValue::Number(messages.len() as f64)),
+                    JsValue::String(text) => Some(JsValue::Number(text.units().len() as f64)),
+                    other => other
+                        .as_object()?
+                        .get_property("length")
+                        .filter(|v| !v.is_undefined())
+                        .cloned(),
+                }
+            }))
+            .ok()
+            .flatten();
+            callback(
+                key,
+                &SessionEvictionSnapshot {
+                    session_key: key.clone(),
+                    last_used_at: record.last_used,
+                    context: record.context,
+                    message_count,
+                },
+            );
+        }
         result
     }
 

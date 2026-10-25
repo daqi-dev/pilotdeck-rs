@@ -1,0 +1,528 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/SessionRouter.ts": "90a0dbb46565bae5e2a994cbcd83b8a53a155b9b73cf67d8be1295a35b1afbb6",
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "src/agent/scope/AgentHandle.ts": "b491c291f31a37b188a7ef2f9bd8d35925ada1846b8f28e66052c387b5be1f2a",
+    "src/agent/scope/AgentFactoryProvider.ts": "1486fe22690af6ca410b3ac784c75ecf3ac282c661ab8bce4f54bad0614478c4",
+    "src/agent/scope/AgentRegistry.ts": "9afac0b01b7b290e6e57a7665c7387f247ad5a4b184b491096aacd3b61fb5d80",
+    "src/agent/scope/ScopedServiceRegistry.ts": "c6a70cc92ad955cac97ffdd08135be1be9335a443d0a3276cd48bfb697e1b9b8"
+  },
+  "active": [
+    {
+      "key": "user",
+      "project": "p",
+      "query": "p",
+      "cached": true,
+      "turn": true,
+      "busy": true
+    },
+    {
+      "key": "always-on/x",
+      "project": "p",
+      "query": "p",
+      "cached": true,
+      "turn": true,
+      "busy": false
+    },
+    {
+      "key": "cron:x",
+      "project": "p",
+      "query": "p",
+      "cached": true,
+      "turn": true,
+      "busy": false
+    },
+    {
+      "key": "always-on",
+      "project": "p",
+      "query": "p",
+      "cached": true,
+      "turn": true,
+      "busy": true
+    },
+    {
+      "key": "Cron:x",
+      "project": "p",
+      "query": "p",
+      "cached": true,
+      "turn": true,
+      "busy": true
+    },
+    {
+      "key": "xcron:x",
+      "project": "p",
+      "query": "p",
+      "cached": true,
+      "turn": true,
+      "busy": true
+    },
+    {
+      "key": "user",
+      "project": "p",
+      "query": "other",
+      "cached": true,
+      "turn": true,
+      "busy": false
+    },
+    {
+      "key": "user",
+      "project": "",
+      "query": "",
+      "cached": true,
+      "turn": true,
+      "busy": true
+    },
+    {
+      "key": "user",
+      "project": null,
+      "query": "",
+      "cached": true,
+      "turn": true,
+      "busy": false
+    },
+    {
+      "key": "user",
+      "project": "p",
+      "query": "p",
+      "cached": false,
+      "turn": true,
+      "busy": false
+    },
+    {
+      "key": "user",
+      "project": "p",
+      "query": "p",
+      "cached": true,
+      "turn": false,
+      "busy": false
+    }
+  ],
+  "idle": [
+    {
+      "mode": "normal",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            },
+            "messageCount": 2
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "missing",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            }
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "throw",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            }
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "dispose-error",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            },
+            "messageCount": 2
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "string",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            },
+            "messageCount": 2
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "inherited-messages",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            },
+            "messageCount": 2
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "inherited-length",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            },
+            "messageCount": "two"
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "length",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            },
+            "messageCount": "two"
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "undefined",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            }
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "null",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle",
+        {
+          "key": "user",
+          "snapshot": {
+            "sessionKey": "user",
+            "lastUsedAt": 108,
+            "context": {
+              "sessionKey": "user",
+              "projectKey": "p",
+              "channelKey": "web",
+              "allowedTools": [
+                "read"
+              ],
+              "disallowedTools": []
+            },
+            "messageCount": null
+          },
+          "cached": 0,
+          "busy": false
+        }
+      ],
+      "reads": 1
+    },
+    {
+      "mode": "disabled",
+      "boundary": 1,
+      "during": {
+        "cached": 1,
+        "busy": true
+      },
+      "draining": {
+        "cached": 0,
+        "busy": false,
+        "events": [],
+        "reads": 0
+      },
+      "events": [
+        "dispose",
+        "disposed",
+        "evict:idle"
+      ],
+      "reads": 0
+    }
+  ],
+  "nonIdle": [
+    {
+      "action": "close",
+      "idleCalls": 0,
+      "reads": 0
+    },
+    {
+      "action": "recreate",
+      "idleCalls": 0,
+      "reads": 0
+    },
+    {
+      "action": "shutdown",
+      "idleCalls": 0,
+      "reads": 0
+    }
+  ],
+  "sharedTools": true
+}
