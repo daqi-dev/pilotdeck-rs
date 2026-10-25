@@ -895,7 +895,7 @@ fn google_abort_name_preserves_original_message() {
 
 #[tokio::test]
 async fn undelimited_sse_buffer_over_the_v8_limit_throws_range_error() {
-    SSE_LIMIT.with(|limit| limit.set(64));
+    let _limit = SseLimitGuard::set(64);
     let (request, config) = stream_config();
     // Valid events are consumed; then 65 units without "\n\n" overflow.
     let transport = Scripted(std::sync::Mutex::new(vec![(
@@ -921,7 +921,6 @@ async fn undelimited_sse_buffer_over_the_v8_limit_throws_range_error() {
     )
     .await
     .unwrap_err();
-    SSE_LIMIT.with(|limit| limit.set(super::super::count_http::MAX_STRING_LENGTH));
     assert!(error.name().equals_str("RangeError"), "{error:?}");
     assert!(error.message().equals_str("Invalid string length"));
     assert_eq!(events.len(), 2, "request_started + message_start, no retry");
@@ -2060,6 +2059,87 @@ fn limit_guard_nests_and_drop_restores_the_shared_default() {
         assert_eq!(string_limit(), 4);
     }
     assert_eq!(string_limit(), 0x1fffffe8);
+}
+
+/// Same shared-tail contract for the SSE reader's own bound: pin V8's real
+/// literal, not the constant against itself — a mutation of the shared
+/// default tail (or the thread-local's fallback) must fail here (#642).
+#[test]
+fn sse_limit_defaults_to_v8_max() {
+    assert_eq!(sse_limit(), 0x1fffffe8);
+}
+
+/// The SSE knob is independent of the accumulator knob: shrinking one must
+/// leave the other at the shared default, and nested guards restore it.
+#[test]
+fn sse_limit_guard_nests_and_drop_restores_the_shared_default() {
+    assert_eq!(sse_limit(), 0x1fffffe8);
+    {
+        let _outer = SseLimitGuard::set(64);
+        let _string = LimitGuard::set(4);
+        assert_eq!(sse_limit(), 64);
+        assert_eq!(string_limit(), 4);
+        {
+            let _inner = SseLimitGuard::set(128);
+            assert_eq!(sse_limit(), 128);
+        }
+        assert_eq!(sse_limit(), 64);
+    }
+    assert_eq!(sse_limit(), 0x1fffffe8);
+    assert_eq!(string_limit(), 0x1fffffe8);
+}
+
+/// A panicking test body still restores the default: the guard's Drop runs
+/// while unwinding, so the override cannot leak past the test.
+#[test]
+fn sse_limit_guard_restores_the_default_across_a_panic() {
+    let result = std::panic::catch_unwind(|| {
+        let _limit = SseLimitGuard::set(4);
+        // The override is visible, so this literal assert must panic.
+        assert_eq!(sse_limit(), 0x1fffffe8);
+    });
+    assert!(
+        result.is_err(),
+        "the override must make the inner assert fail"
+    );
+    assert_eq!(sse_limit(), 0x1fffffe8);
+}
+
+/// Exactly the SSE bound is still allowed at the real call site
+/// (`SseBuffer::with_limit(sse_limit())`): an undelimited remainder of
+/// exactly 64 units does not throw RangeError; the stream only ends at EOF
+/// with the remainder's JSON SyntaxError. The 65-unit overflow case is
+/// `undelimited_sse_buffer_over_the_v8_limit_throws_range_error`.
+#[tokio::test]
+async fn undelimited_sse_buffer_exactly_at_the_v8_limit_is_allowed() {
+    let _limit = SseLimitGuard::set(64);
+    let (request, config) = stream_config();
+    // A valid event is consumed; then exactly 64 units without "\n\n".
+    let transport = Scripted(std::sync::Mutex::new(vec![(
+        200,
+        vec![
+            Some(b"data: {\"type\":\"message_start\"}\n\n".as_slice()),
+            Some(b"data: ".as_slice()),
+            Some(b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx".as_slice()),
+        ],
+    )]));
+    let mut events = Vec::new();
+    let mut sink = |output: StreamOutput| {
+        if let StreamOutput::Event(event) = output {
+            events.push(event);
+        }
+    };
+    let error = stream_model(
+        &transport,
+        &request,
+        &config,
+        &StreamOptions::default(),
+        &mut sink,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.name().equals_str("SyntaxError"), "{error:?}");
+    assert_eq!(events.len(), 2, "request_started + message_start, no retry");
 }
 
 // ---------------------------------------------------------------------------

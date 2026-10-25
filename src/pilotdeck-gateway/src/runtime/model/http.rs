@@ -2442,18 +2442,45 @@ impl Drop for LimitGuard {
         STRING_LIMIT.with(|cell| cell.set(self.0));
     }
 }
-#[cfg(not(test))]
+/// The SSE reader's own `buffer += ...` bound, distinct from the accumulator
+/// [`string_limit`]: only its undelimited remainder accumulates here.
+///
+/// There is one function and one default tail expression for both builds. A
+/// test only overrides it explicitly through [`SseLimitGuard`]; with no
+/// override the test build runs the same `count_http::MAX_STRING_LENGTH`
+/// expression as production. The production build does not compile the
+/// override branch.
 fn sse_limit() -> usize {
+    #[cfg(test)]
+    {
+        if let Some(limit) = SSE_LIMIT.with(std::cell::Cell::get) {
+            return limit;
+        }
+    }
     super::count_http::MAX_STRING_LENGTH
 }
 #[cfg(test)]
 thread_local! {
-    /// Separate knob so accumulator tests can keep the SSE buffer unbounded.
-    pub(crate) static SSE_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(super::count_http::MAX_STRING_LENGTH) };
+    /// `None` (the default) means "use the shared V8 limit"; a separate knob
+    /// so accumulator tests can keep the SSE buffer unbounded while
+    /// [`LimitGuard`] shrinks `string_limit`. Only [`SseLimitGuard`] sets an
+    /// override, and nested guards restore the previous value on drop.
+    pub(crate) static SSE_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+/// Restores a test's SSE limit even if its assertion panics.
+#[cfg(test)]
+pub(crate) struct SseLimitGuard(Option<usize>);
+#[cfg(test)]
+impl SseLimitGuard {
+    pub(crate) fn set(limit: usize) -> Self {
+        Self(SSE_LIMIT.with(|cell| cell.replace(Some(limit))))
+    }
 }
 #[cfg(test)]
-fn sse_limit() -> usize {
-    SSE_LIMIT.with(std::cell::Cell::get)
+impl Drop for SseLimitGuard {
+    fn drop(&mut self) {
+        SSE_LIMIT.with(|cell| cell.set(self.0));
+    }
 }
 
 /// `buffer += more` on a JS string: past V8's limit it throws
