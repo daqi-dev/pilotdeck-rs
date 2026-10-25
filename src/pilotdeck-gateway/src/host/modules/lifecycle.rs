@@ -7,10 +7,25 @@ use super::wire;
 use crate::hooks::protocol::is_hook_event;
 use crate::host::{HostFuture, JsObject, JsString, JsValue, ModuleError};
 use crate::runtime::hooks::{
-    Cancellation, LifecycleDispatchInput, LifecycleRuntime, exec::process_env,
-    runtime::serialize_lifecycle_dispatch_result,
+    Cancellation, LifecycleDispatchInput, LifecycleDispatchResult, LifecycleRuntime,
+    exec::process_env, runtime::serialize_lifecycle_dispatch_result,
 };
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+
+/// Host-owned dispatch boundary; production implementations fence the leased run.
+pub trait LifecyclePort: Send + Sync {
+    fn dispatch(&self, input: LifecycleDispatchInput) -> HostFuture<LifecycleDispatchResult>;
+    fn dispose(&self) -> HostFuture<()> {
+        Box::pin(async { Ok(()) })
+    }
+}
+impl LifecyclePort for LifecycleRuntime {
+    fn dispatch(&self, input: LifecycleDispatchInput) -> HostFuture<LifecycleDispatchResult> {
+        let runtime = self.clone();
+        Box::pin(async move { runtime.dispatch(input).await })
+    }
+}
 
 /// Ambient turn fields the dispatcher supplies to `lifecycle.dispatch`.
 #[derive(Clone)]
@@ -27,7 +42,7 @@ pub struct Binding {
 
 #[derive(Clone)]
 struct Ports {
-    runtime: LifecycleRuntime,
+    runtime: Arc<dyn LifecyclePort>,
     binding: Binding,
 }
 
@@ -39,6 +54,9 @@ pub struct Handler {
 }
 impl Handler {
     pub fn new(runtime: LifecycleRuntime, binding: Binding) -> Self {
+        Self::with_port(Arc::new(runtime), binding)
+    }
+    pub fn with_port(runtime: Arc<dyn LifecyclePort>, binding: Binding) -> Self {
         Self {
             ports: Some(Ports { runtime, binding }),
         }
@@ -117,10 +135,13 @@ impl Handler {
     /// TS `sidecarDefaultModuleDispatcher.dispose()` only clears turn-local
     /// model streams/preparations; it never disposes the session-owned
     /// `LifecycleRuntime` (that belongs to `AgentRuntimeScope`, only when it
-    /// owns the lifecycle). This handler is reconstructed each turn, so
-    /// disposing the runtime here would drop pending async hooks and callback
-    /// registrations between turns.
+    /// owns the lifecycle). That legacy constructor retains its no-op dispose.
+    /// A production LifecyclePort may revoke its turn binding here; it owns
+    /// the separate cancellation/drain contract and does not dispose peers.
     pub fn dispose(&self) -> HostFuture<()> {
+        if let Some(ports) = &self.ports {
+            return ports.runtime.dispose();
+        }
         Box::pin(async { Ok(()) })
     }
 }
