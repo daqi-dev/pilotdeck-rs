@@ -195,9 +195,12 @@ fn spawn_artifact_writer() -> Option<mpsc::Sender<ArtifactWriteJob>> {
 /// made for a shared `(session, turn)` root; callers must keep the sanitized
 /// derived name unique and must not rely on unsafe characters to keep
 /// results apart. The `sanitize_colliding_tool_call_ids_*` tests lock the
-/// write sequence on the shared `job_path` and the final on-disk bytes,
-/// both against the measured TS store
-/// (`_tmp/20261025-issue-640/ts-probe/`, #640).
+/// write sequence on the shared `job_path` and the final on-disk bytes for
+/// both shapes — sequential (the first write completes before the second
+/// `persist`) and back-to-back (both advisory writes in flight, where the
+/// single FIFO writer makes the last-enqueued body win deterministically;
+/// the measured TS store flips between bodies there) — against the
+/// measured TS store (`_tmp/20261025-issue-640/ts-probe/`, #640).
 ///
 /// Writer hooks mirror the TS `createDirectory`/`writeText` options so tests
 /// can observe the fire-and-forget contract.
