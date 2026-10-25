@@ -6,18 +6,32 @@
 //! Anthropic protocol adapter and TLS transport the product uses.
 //!
 //! Usage: real-provider-probe <text|stream-cancel|tool> <base-url> <model>
+//!                             <max-output-tokens> <timeout-seconds>
 //! The key is read from PDRS_PROVIDER_KEY and only placed in the in-memory
 //! provider config. Nothing here prints it; the request body cannot contain it
 //! (it is sent as the `x-api-key` header).
+//!
+//! The two numeric arguments are the smoke budget, owned by
+//! `scripts/smoke/real_provider.py` and echoed back in `PROBE_RESULT` so the
+//! report states what was actually sent rather than a second hard-coded copy.
 
 use pilotdeck_gateway::runtime::model::http::{
-    complete_model, stream_model, HyperModelTransport, ModelStreamError, StreamOptions, StreamOutput,
+    HyperModelTransport, ModelStreamError, StreamOptions, StreamOutput, complete_model,
+    stream_model,
 };
 use pilotdeck_gateway::runtime::model::router::AbortFlag;
-use pilotdeck_protocol::{parse_json, stringify_json, JsObject, JsValue};
+use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::time::{Duration, Instant};
 
 static UNDEFINED: JsValue = JsValue::Undefined;
+
+/// Per-run limits, parsed from argv. The Python harness is the owner of the
+/// values; the probe only enforces/echoes them.
+struct Limits {
+    max_output_tokens: f64,
+    timeout_seconds: u64,
+    timeout: Duration,
+}
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
     value.get(key).unwrap_or(&UNDEFINED)
@@ -59,9 +73,16 @@ fn truncate(value: &str, max: usize) -> String {
 }
 
 /// Config mirrors `model.providers.<id>` after config/snapshot.rs:644-672.
+///
+/// `thinking.state = "disabled"` is deliberate: for the Anthropic protocol the
+/// adapter turns it into `"thinking": {"type": "disabled"}`. The smoke prompt
+/// asks for a two-word answer inside a 128-token budget; leaving provider-side
+/// reasoning on is the known `20261018-deepseek-thinking` trap where thinking
+/// consumes the whole budget and the text body arrives empty.
 fn provider_config(base_url: &str, model: &str, key: &str) -> JsValue {
     let model_entry = obj(vec![
         ("id", string(model)),
+        ("thinking", obj(vec![("state", string("disabled"))])),
         (
             "capabilities",
             obj(vec![
@@ -83,20 +104,18 @@ fn provider_config(base_url: &str, model: &str, key: &str) -> JsValue {
         ("apiKey", string(key)),
         (
             "retry",
-            parse_json(r#"{"maxRetries":0,"streamMaxRetries":0}"#).expect("static retry json"),
+            // The product reads requestMaxRetries/streamMaxRetries
+            // (config/snapshot.rs:723-731; http.rs retry_number). `maxRetries`
+            // is not a key the runtime understands.
+            parse_json(r#"{"requestMaxRetries":0,"streamMaxRetries":0}"#)
+                .expect("static retry json"),
         ),
-        (
-            "models",
-            obj(vec![(model, model_entry)]),
-        ),
+        ("models", obj(vec![(model, model_entry)])),
     ]);
-    obj(vec![(
-        "providers",
-        obj(vec![("llmcenter", provider)]),
-    )])
+    obj(vec![("providers", obj(vec![("llmcenter", provider)]))])
 }
 
-fn request(model: &str, prompt: &str, tools: bool) -> JsValue {
+fn request(model: &str, prompt: &str, tools: bool, max_output_tokens: f64) -> JsValue {
     let message = obj(vec![
         ("role", string("user")),
         (
@@ -111,7 +130,7 @@ fn request(model: &str, prompt: &str, tools: bool) -> JsValue {
         ("provider", string("llmcenter")),
         ("model", string(model)),
         ("messages", JsValue::Array(vec![message])),
-        ("maxOutputTokens", number(128.0)),
+        ("maxOutputTokens", number(max_output_tokens)),
     ];
     if tools {
         entries.push((
@@ -151,10 +170,7 @@ fn error_value(error: &ModelStreamError) -> JsValue {
         entries.push(("code", string(&text(&JsValue::String(code.clone())))));
     }
     if let ModelStreamError::Provider(canonical) = error {
-        entries.push((
-            "code",
-            canonical.get("code").unwrap_or(&UNDEFINED).clone(),
-        ));
+        entries.push(("code", canonical.get("code").unwrap_or(&UNDEFINED).clone()));
         entries.push((
             "retryable",
             canonical.get("retryable").unwrap_or(&UNDEFINED).clone(),
@@ -225,14 +241,37 @@ fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
 }
 
-async fn run_text(config: &JsValue, model: &str) -> JsValue {
+fn count_requests(events: &[JsValue]) -> f64 {
+    events
+        .iter()
+        .filter(|event| text(field(event, "type")) == "request_started")
+        .count() as f64
+}
+
+/// Last `usage` event of a stream, if the provider sent one.
+fn stream_usage(events: &[JsValue]) -> JsValue {
+    events
+        .iter()
+        .rev()
+        .find(|event| text(field(event, "type")) == "usage")
+        .map(|event| field(event, "usage").clone())
+        .unwrap_or(JsValue::Undefined)
+}
+
+fn push_defined(entries: &mut Vec<(&'static str, JsValue)>, key: &'static str, value: JsValue) {
+    if !value.is_undefined() {
+        entries.push((key, value));
+    }
+}
+
+async fn run_text(config: &JsValue, model: &str, limits: &Limits) -> JsValue {
     let started = Instant::now();
     let prompt = "This is a synthetic connectivity smoke test with no personal data. \
                   Reply with exactly: SMOKE-OK";
-    let request = request(model, prompt, false);
+    let request = request(model, prompt, false, limits.max_output_tokens);
     let transport = HyperModelTransport::new();
     let outcome = tokio::time::timeout(
-        Duration::from_secs(45),
+        limits.timeout,
         complete_model(&transport, &request, config, &StreamOptions::default()),
     )
     .await;
@@ -241,8 +280,15 @@ async fn run_text(config: &JsValue, model: &str) -> JsValue {
             ("scenario", string("text")),
             ("status", string("FAIL")),
             ("kind", string("timeout")),
-            ("error", string("complete_model exceeded 45s")),
+            (
+                "error",
+                string(&format!(
+                    "complete_model exceeded {}s",
+                    limits.timeout_seconds
+                )),
+            ),
             ("elapsedMs", number(elapsed_ms(started))),
+            ("requests", number(1.0)),
         ]),
         Ok(Err(error)) => obj(vec![
             ("scenario", string("text")),
@@ -250,30 +296,97 @@ async fn run_text(config: &JsValue, model: &str) -> JsValue {
             ("kind", string("provider_error")),
             ("error", error_value(&error)),
             ("elapsedMs", number(elapsed_ms(started))),
+            ("requests", number(1.0)),
         ]),
         Ok(Ok(response)) => {
             let body = content_text(&response);
-            let status = if body.trim().is_empty() { "FAIL" } else { "PASS" };
-            obj(vec![
+            let finish = field(&response, "finishReason").clone();
+            let status = if body.trim().is_empty() {
+                "FAIL"
+            } else {
+                "PASS"
+            };
+            let mut entries = vec![
                 ("scenario", string("text")),
                 ("status", string(status)),
                 ("kind", string("complete")),
                 ("provider", string("anthropic")),
                 ("model", string(model)),
                 ("text", string(&truncate(&body, 200))),
-                ("finishReason", field(&response, "finishReason").clone()),
-                ("usage", field(&response, "usage").clone()),
+                ("finishReason", finish.clone()),
                 ("elapsedMs", number(elapsed_ms(started))),
-            ])
+                ("requests", number(1.0)),
+            ];
+            push_defined(&mut entries, "usage", field(&response, "usage").clone());
+            if status == "FAIL" {
+                // Keep the reason machine-readable: classify_failure() uses
+                // finishReason=length + empty text as a budget/proxy signal.
+                entries.push((
+                    "error",
+                    obj(vec![
+                        ("name", string("EmptyResponse")),
+                        (
+                            "message",
+                            string(&format!(
+                                "empty text response (finishReason={})",
+                                json_text(&finish)
+                            )),
+                        ),
+                    ]),
+                ));
+            }
+            obj(entries)
         }
     }
 }
 
-async fn run_stream_cancel(config: &JsValue, model: &str) -> JsValue {
+#[derive(Debug, Default, Clone, Copy)]
+struct AbortAudit {
+    /// A `message_end` arrived after the abort request.
+    message_end: bool,
+    /// A consumer-visible content event arrived after the abort request.
+    content: bool,
+    /// A terminal `type=error` event whose body names abort/cancel.
+    abort_error: bool,
+}
+
+/// Audit the events that arrived *after* the delta that triggered the abort.
+fn audit_post_abort(events: &[JsValue]) -> AbortAudit {
+    let mut audit = AbortAudit::default();
+    for event in events {
+        match text(field(event, "type")).as_str() {
+            "message_end" => audit.message_end = true,
+            "text_delta" | "thinking_delta" | "tool_call_start" | "tool_call_delta"
+            | "tool_call_end" => audit.content = true,
+            "error" => {
+                let body = json_text(field(event, "error")).to_lowercase();
+                if body.contains("abort") || body.contains("cancel") {
+                    audit.abort_error = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    audit
+}
+
+/// PASS iff the stream really stopped early. An `Ok(())` return means the
+/// consumer loop finished normally; that is only acceptable when a terminal
+/// abort/cancel error event was observed and no content or `message_end`
+/// followed the abort. Without those assertions a runtime that turns
+/// `AbortFlag` into a no-op would still PASS this negative control.
+fn cancel_ok(aborted: bool, returned_ok: bool, audit: &AbortAudit) -> bool {
+    if !aborted || audit.message_end || audit.content {
+        return false;
+    }
+    if returned_ok { audit.abort_error } else { true }
+}
+
+async fn run_stream_cancel(config: &JsValue, model: &str, limits: &Limits) -> JsValue {
     let started = Instant::now();
     let prompt = "Write a 300 word synthetic description of a calm grey cube. \
                   Do not mention people, places, or real products.";
-    let request = request(model, prompt, false);
+    let request = request(model, prompt, false, limits.max_output_tokens);
     let transport = HyperModelTransport::new();
     let abort = AbortFlag::new();
     let options = StreamOptions {
@@ -283,37 +396,40 @@ async fn run_stream_cancel(config: &JsValue, model: &str) -> JsValue {
     let mut events = Vec::new();
     let mut first_delta_chars = 0usize;
     let mut first_delta_kind = String::new();
-    let mut aborted_after_delta = false;
+    // Index of the event whose callback requested the abort. Everything after
+    // it is the post-abort window the verdict inspects.
+    let mut abort_index: Option<usize> = None;
     let outcome = tokio::time::timeout(
-        Duration::from_secs(45),
-        stream_model(
-            &transport,
-            &request,
-            config,
-            &options,
-            &mut |output| {
-                let StreamOutput::Event(event) = output else {
-                    return;
-                };
-                let kind = text(field(&event, "type"));
-                // Reasoning models may emit thinking_delta before any
-                // text_delta; both are consumer-visible stream content, so
-                // either one is a valid mid-stream cancellation point.
-                if (kind == "text_delta" || kind == "thinking_delta")
-                    && !aborted_after_delta
-                {
-                    first_delta_chars = text(field(&event, "text")).chars().count();
-                    first_delta_kind = kind;
-                    abort.abort();
-                    aborted_after_delta = true;
-                }
-                if events.len() < 200 {
-                    events.push(summarize_event(&event));
-                }
-            },
-        ),
+        limits.timeout,
+        stream_model(&transport, &request, config, &options, &mut |output| {
+            let StreamOutput::Event(event) = output else {
+                return;
+            };
+            let kind = text(field(&event, "type"));
+            // Reasoning models may emit thinking_delta before any
+            // text_delta; both are consumer-visible stream content, so
+            // either one is a valid mid-stream cancellation point.
+            if (kind == "text_delta" || kind == "thinking_delta") && abort_index.is_none() {
+                first_delta_chars = text(field(&event, "text")).chars().count();
+                first_delta_kind = kind;
+                abort_index = Some(events.len());
+                abort.abort();
+            }
+            if events.len() < 200 {
+                events.push(summarize_event(&event));
+            }
+        }),
     )
     .await;
+    let aborted = abort_index.is_some();
+    let post: &[JsValue] = match abort_index {
+        Some(index) if index + 1 < events.len() => &events[index + 1..],
+        _ => &[],
+    };
+    let audit = audit_post_abort(post);
+    // Snapshot the derived values before `events` moves into the result.
+    let requests = count_requests(&events);
+    let usage = stream_usage(&events);
     let mut result = vec![
         ("scenario", string("stream-cancel")),
         ("kind", string("stream")),
@@ -321,14 +437,30 @@ async fn run_stream_cancel(config: &JsValue, model: &str) -> JsValue {
         ("model", string(model)),
         ("firstDeltaChars", number(first_delta_chars as f64)),
         ("firstDeltaKind", string(&first_delta_kind)),
-        ("abortRequested", JsValue::Bool(aborted_after_delta)),
+        ("abortRequested", JsValue::Bool(aborted)),
+        (
+            "abortEventIndex",
+            number(abort_index.map_or(-1.0, |i| i as f64)),
+        ),
+        ("postAbortContent", JsValue::Bool(audit.content)),
+        ("postAbortMessageEnd", JsValue::Bool(audit.message_end)),
+        ("postAbortTerminalError", JsValue::Bool(audit.abort_error)),
+        ("postAbortEvents", JsValue::Array(post.to_vec())),
         ("events", JsValue::Array(events)),
         ("elapsedMs", number(elapsed_ms(started))),
+        ("requests", number(requests)),
     ];
+    push_defined(&mut result, "usage", usage);
     match outcome {
         Err(_) => {
             result.push(("status", string("FAIL")));
-            result.push(("error", string("stream_model exceeded 45s after abort")));
+            result.push((
+                "error",
+                string(&format!(
+                    "stream_model exceeded {}s after abort",
+                    limits.timeout_seconds
+                )),
+            ));
         }
         Ok(Err(error)) => {
             let name = text(&JsValue::String(error.name()));
@@ -336,36 +468,57 @@ async fn run_stream_cancel(config: &JsValue, model: &str) -> JsValue {
             let clean = name == "AbortError"
                 || message.to_lowercase().contains("abort")
                 || message.to_lowercase().contains("cancel");
-            result.push(("status", string(if aborted_after_delta && clean {
-                "PASS"
-            } else {
-                "FAIL"
-            })));
-            result.push(("error", error_value(&error)));
+            let pass = cancel_ok(aborted, false, &audit) && clean;
+            result.push(("status", string(if pass { "PASS" } else { "FAIL" })));
+            // Keep the terminal error in the raw record even on PASS: it is
+            // evidence that the stream ended with AbortError rather than a
+            // normal `Ok(())` after ignoring the flag.
+            result.push(("abortError", error_value(&error)));
+            if !pass {
+                if clean && !aborted {
+                    result.push((
+                        "error",
+                        string("stream ended with an abort error but no delta aborted it"),
+                    ));
+                } else if clean && audit.message_end {
+                    result.push(("error", string("abort error arrived after message_end")));
+                } else {
+                    result.push(("error", error_value(&error)));
+                }
+            }
         }
         Ok(Ok(())) => {
-            // A cancel can also surface as a terminal error event; both are
-            // acceptable only if we actually observed a delta first.
-            result.push(("status", string(if aborted_after_delta {
-                "PASS"
-            } else {
-                "FAIL"
-            })));
+            let pass = cancel_ok(aborted, true, &audit);
+            result.push(("status", string(if pass { "PASS" } else { "FAIL" })));
+            if !pass {
+                result.push((
+                    "error",
+                    string(&format!(
+                        "abort did not terminate the stream (aborted={aborted}, \
+                         contentAfterAbort={}, messageEndAfterAbort={}, \
+                         terminalAbortError={}, elapsedMs={:.1})",
+                        audit.content,
+                        audit.message_end,
+                        audit.abort_error,
+                        elapsed_ms(started)
+                    )),
+                ));
+            }
         }
     }
     obj(result)
 }
 
-async fn run_tool(config: &JsValue, model: &str) -> JsValue {
+async fn run_tool(config: &JsValue, model: &str, limits: &Limits) -> JsValue {
     let started = Instant::now();
     let prompt = "Call the record_smoke_value tool exactly once with value \"alpha-42\". \
                   Do not write prose.";
-    let request = request(model, prompt, true);
+    let request = request(model, prompt, true, limits.max_output_tokens);
     let transport = HyperModelTransport::new();
     let mut events = Vec::new();
     let mut calls = Vec::new();
     let outcome = tokio::time::timeout(
-        Duration::from_secs(45),
+        limits.timeout,
         stream_model(
             &transport,
             &request,
@@ -395,13 +548,21 @@ async fn run_tool(config: &JsValue, model: &str) -> JsValue {
         ("provider", string("anthropic")),
         ("model", string(model)),
         ("toolCalls", JsValue::Array(calls.clone())),
-        ("events", JsValue::Array(events)),
+        ("events", JsValue::Array(events.clone())),
         ("elapsedMs", number(elapsed_ms(started))),
+        ("requests", number(count_requests(&events))),
     ];
+    push_defined(&mut result, "usage", stream_usage(&events));
     match outcome {
         Err(_) => {
             result.push(("status", string("FAIL")));
-            result.push(("error", string("stream_model exceeded 45s")));
+            result.push((
+                "error",
+                string(&format!(
+                    "stream_model exceeded {}s",
+                    limits.timeout_seconds
+                )),
+            ));
         }
         Ok(Err(error)) => {
             result.push(("status", string("FAIL")));
@@ -421,21 +582,40 @@ async fn run_tool(config: &JsValue, model: &str) -> JsValue {
 }
 
 fn fail(message: &str) -> JsValue {
-    obj(vec![
-        ("status", string("FAIL")),
-        ("error", string(message)),
-    ])
+    obj(vec![("status", string("FAIL")), ("error", string(message))])
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() != 3 {
-        eprintln!("usage: real-provider-probe <text|stream-cancel|tool> <base-url> <model>");
+    if args.len() != 5 {
+        eprintln!(
+            "usage: real-provider-probe <text|stream-cancel|tool> <base-url> <model> \
+             <max-output-tokens> <timeout-seconds>"
+        );
         std::process::exit(2);
     }
     let scenario = args[0].as_str();
     let base_url = args[1].as_str();
     let model = args[2].as_str();
+    let max_output_tokens = match args[3].parse::<f64>() {
+        Ok(value) if value.is_finite() && value > 0.0 => value,
+        _ => {
+            eprintln!("max-output-tokens must be a positive number");
+            std::process::exit(2);
+        }
+    };
+    let timeout_seconds = match args[4].parse::<u64>() {
+        Ok(value) if value > 0 => value,
+        _ => {
+            eprintln!("timeout-seconds must be a positive integer");
+            std::process::exit(2);
+        }
+    };
+    let limits = Limits {
+        max_output_tokens,
+        timeout_seconds,
+        timeout: Duration::from_secs(timeout_seconds),
+    };
     let key = match std::env::var("PDRS_PROVIDER_KEY") {
         Ok(key) if !key.trim().is_empty() => key,
         _ => {
@@ -458,15 +638,103 @@ fn main() {
     };
     let mut result = runtime.block_on(async {
         match scenario {
-            "text" => run_text(&config, model).await,
-            "stream-cancel" => run_stream_cancel(&config, model).await,
-            "tool" => run_tool(&config, model).await,
+            "text" => run_text(&config, model, &limits).await,
+            "stream-cancel" => run_stream_cancel(&config, model, &limits).await,
+            "tool" => run_tool(&config, model, &limits).await,
             other => fail(&format!("unknown scenario {other}")),
         }
     });
-    // Always label the scenario, even for argument/config failures.
+    // Always label the scenario and echo the harness-owned limits, even for
+    // argument/config failures.
     if let JsValue::Object(record) = &mut result {
         record.insert("scenario".into(), string(scenario));
+        record.insert("maxOutputTokens".into(), number(max_output_tokens));
+        record.insert("timeoutSeconds".into(), number(timeout_seconds as f64));
     }
     println!("PROBE_RESULT {}", json_text(&result));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(raw: &str) -> JsValue {
+        parse_json(raw).expect("test event json")
+    }
+
+    fn audit(raw_events: &[&str]) -> AbortAudit {
+        let events: Vec<JsValue> = raw_events.iter().map(|raw| event(raw)).collect();
+        audit_post_abort(&events)
+    }
+
+    #[test]
+    fn abort_error_without_message_end_passes() {
+        let audit =
+            audit(&[r#"{"type":"error","error":{"name":"AbortError","message":"aborted"}}"#]);
+        assert!(audit.abort_error);
+        assert!(!audit.message_end);
+        assert!(!audit.content);
+        assert!(cancel_ok(true, false, &audit));
+    }
+
+    #[test]
+    fn ok_return_needs_a_terminal_abort_error() {
+        let empty = audit(&[]);
+        assert!(!cancel_ok(true, true, &empty));
+        let terminal =
+            audit(&[r#"{"type":"error","error":{"name":"AbortError","message":"cancelled"}}"#]);
+        assert!(cancel_ok(true, true, &terminal));
+    }
+
+    #[test]
+    fn message_end_after_abort_always_fails() {
+        let audit = audit(&[
+            r#"{"type":"error","error":{"name":"AbortError","message":"aborted"}}"#,
+            r#"{"type":"message_end","finishReason":"stop"}"#,
+        ]);
+        assert!(audit.message_end);
+        assert!(!cancel_ok(true, false, &audit));
+        assert!(!cancel_ok(true, true, &audit));
+    }
+
+    #[test]
+    fn content_after_abort_rejects_an_ok_return() {
+        let audit = audit(&[
+            r#"{"type":"error","error":{"name":"AbortError","message":"aborted"}}"#,
+            r#"{"type":"text_delta","text":"still going"}"#,
+        ]);
+        assert!(audit.content);
+        assert!(!cancel_ok(true, true, &audit));
+    }
+
+    #[test]
+    fn content_after_abort_rejects_an_abort_error() {
+        let audit = audit(&[r#"{"type":"text_delta","text":"still going"}"#]);
+        assert!(audit.content);
+        assert!(!cancel_ok(true, false, &audit));
+    }
+
+    #[test]
+    fn no_abort_request_never_passes() {
+        assert!(!cancel_ok(false, false, &AbortAudit::default()));
+        assert!(!cancel_ok(false, true, &AbortAudit::default()));
+    }
+
+    #[test]
+    fn provider_config_disables_thinking_and_uses_product_retry_keys() {
+        let config = provider_config("https://example.invalid", "m", "k");
+        let provider = field(field(&config, "providers"), "llmcenter");
+        let retry = field(provider, "retry");
+        assert!(field(retry, "requestMaxRetries").as_number() == Some(0.0));
+        assert!(field(retry, "streamMaxRetries").as_number() == Some(0.0));
+        assert!(field(retry, "maxRetries").is_undefined());
+        let model = field(field(provider, "models"), "m");
+        assert_eq!(text(field(field(model, "thinking"), "state")), "disabled");
+    }
+
+    #[test]
+    fn request_uses_the_harness_budget() {
+        let request = request("m", "p", false, 128.0);
+        assert!(field(&request, "maxOutputTokens").as_number() == Some(128.0));
+    }
 }
