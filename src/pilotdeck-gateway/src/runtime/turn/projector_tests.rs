@@ -378,6 +378,52 @@ fn default_store_resolves_dot_segments_like_ts() {
 }
 
 #[test]
+fn default_store_tmp_root_follows_node_tmpdir_and_stays_absolute() {
+    use std::ffi::OsString;
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |key: &str| {
+            pairs
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| OsString::from(*value))
+        }
+    };
+    let cwd = std::env::current_dir().unwrap();
+    // Node's os.tmpdir skips an empty TMPDIR and falls back to TMP, then
+    // `path.resolve` keeps the result absolute; it never becomes cwd-relative.
+    let root = default_artifact_root(env(&[("TMPDIR", ""), ("TMP", "/tmp/pdrs-645-fallback")]));
+    assert_eq!(
+        root,
+        Path::new("/tmp/pdrs-645-fallback").join("pilotdeck-tool-results")
+    );
+    assert!(root.is_absolute());
+    assert_ne!(root, cwd.join("pilotdeck-tool-results"));
+    // All tmpdir variables empty: Node falls back to /tmp.
+    assert_eq!(
+        default_artifact_root(env(&[("TMPDIR", ""), ("TMP", ""), ("TEMP", "")])),
+        Path::new("/tmp").join("pilotdeck-tool-results")
+    );
+    // A relative TMPDIR is resolved against the working directory (TS
+    // `resolve`), with `.`/`..` normalized lexically. A leading `..` must
+    // survive absolutization and point at the parent directory.
+    assert_eq!(
+        default_artifact_root(env(&[("TMPDIR", "relative/../tmp")])),
+        cwd.join("tmp").join("pilotdeck-tool-results")
+    );
+    assert_eq!(
+        default_artifact_root(env(&[("TMPDIR", "../tmp")])),
+        cwd.parent()
+            .expect("worktree cwd has a parent")
+            .join("tmp")
+            .join("pilotdeck-tool-results")
+    );
+    assert_eq!(
+        default_artifact_root(env(&[("TMPDIR", "/tmp/../var/tmp/")])),
+        Path::new("/var/tmp").join("pilotdeck-tool-results")
+    );
+}
+
+#[test]
 fn default_store_only_persists_above_the_byte_threshold() {
     let root = std::env::temp_dir().join(format!("pdrs-projector-store-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
