@@ -1887,23 +1887,37 @@ impl ResponseWrite {
 /// advertisement that is already on the wire (#702).
 ///
 /// `advertised_keep_alive` is set by the service closure in the same lock that
-/// reads the shutdown watch, so the shutdown path can never observe a stale
+/// the shutdown path samples, so the shutdown path can never observe a stale
 /// `false` for a response that already chose keep-alive. It is cleared when the
 /// next request starts (the advertisement was honoured) or by a new response
 /// decision.
 ///
-/// `close_after_response` records that `close()` was observed while such a
-/// response was still in flight. In that case the connection task deliberately
-/// does **not** run hyper's `graceful_shutdown`: the response keeps its
-/// advertised keep-alive and the connection stays reusable until the idle
-/// timer closes it, exactly like Node's in-flight `server.close()` behaviour
+/// `request_in_flight` covers Node's S1: `server.close()` inside a handler
+/// before the response head is decided still advertises keep-alive, and the
+/// same socket serves the next request
 /// (`lifecycle-matrix/node-lifecycle-matrix.json`,
-/// `s3_body_flushing_close_reuses_same_socket`).
+/// `s1_close_in_handler_before_head`). hyper's `graceful_shutdown` would close
+/// after the current response and break that advertisement, so the connection
+/// task skips it whenever a request is in flight.
+///
+/// `close_after_response` records that `close()` was observed while an
+/// advertised response was still in flight. In that case the connection task
+/// deliberately does **not** run hyper's `graceful_shutdown`: the response
+/// keeps its advertised keep-alive and the connection stays reusable until the
+/// idle timer closes it, exactly like Node's in-flight `server.close()`
+/// behaviour (`s3_body_flushing_close_reuses_same_socket`).
+///
+/// `graceful_shutdown_started` records the opposite decision: `close()` found
+/// this connection idle, so hyper will close after the response that is
+/// already being read. The service closure must not advertise keep-alive for
+/// that response.
 #[derive(Debug, Default)]
 struct ConnectionLifecycle {
     advertised_keep_alive: bool,
     close_after_response: bool,
     response_write: ResponseWrite,
+    request_in_flight: bool,
+    graceful_shutdown_started: bool,
 }
 
 /// Node v22.22.0 connection timers, reproduced on top of hyper:
@@ -1961,13 +1975,20 @@ impl KeepAliveTimer {
     }
 
     /// Called by the connection task after `wait_for_shutdown` fired. A `true`
-    /// result means the connection already advertised keep-alive for a
-    /// response that was in flight when `close()` started; hyper must not turn
-    /// that advertisement into a lie.
+    /// result means a request was in flight, or a response that was already
+    /// advertised is still on the wire; hyper must not turn that into a lie.
     fn close_raced_with_advertised_keep_alive(&self) -> bool {
         let lifecycle = self.lifecycle.lock().unwrap();
-        lifecycle.close_after_response
+        lifecycle.request_in_flight
+            || lifecycle.close_after_response
             || (lifecycle.advertised_keep_alive && !lifecycle.response_write.flushed())
+    }
+
+    /// The connection task already chose `graceful_shutdown` because `close()`
+    /// found this connection idle. A response racing that decision must say
+    /// close: hyper will not keep the connection alive for another request.
+    fn mark_graceful_shutdown(&self) {
+        self.lifecycle.lock().unwrap().graceful_shutdown_started = true;
     }
 
     /// Count response bytes as they reach the socket. `KeepAliveBody` reports a
@@ -2065,6 +2086,7 @@ impl KeepAliveTimer {
             state.header_deadline = None;
             state.idle_deadline = None;
         }
+        self.lifecycle.lock().unwrap().request_in_flight = true;
         self.wake();
     }
 
@@ -2081,6 +2103,7 @@ impl KeepAliveTimer {
         }
         {
             let mut lifecycle = self.lifecycle.lock().unwrap();
+            lifecycle.request_in_flight = false;
             // The body completed after close() started, so the response that
             // was already advertised keep-alive is the one being closed.
             // Remember that: the connection task must let the advertisement
@@ -2692,11 +2715,9 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                         ));
                         let shutdown_timer = timer.clone();
                         let service_timer = timer.clone();
-                        let service_shutdown = connection_shutdown.clone();
                         let service = service_fn(move |request: Request<Incoming>| {
                             let handler = handler.clone();
                             let timer = service_timer.clone();
-                            let shutdown = service_shutdown.clone();
                             async move {
                                 // The complete request head is in; only
                                 // `requestTimeout` may bound the body now.
@@ -2714,11 +2735,12 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                 let head_request = request.method() == Method::HEAD;
                                 timer.request_started();
                                 let mut response = serve(handler, request, limits).await;
-                                // The shutdown sample and the keep-alive
-                                // decision are one critical section, so the
-                                // connection task can never observe "no
-                                // advertisement" and then race a response that
-                                // already wrote one (#702 P1).
+                                // The shutdown decision and the keep-alive
+                                // decision share one lifecycle lock, so a
+                                // request that was already in flight keeps
+                                // Node's keep-alive advertisement (S1) while a
+                                // connection that close() found idle still
+                                // says close (#702 P1/S1).
                                 {
                                     let mut lifecycle = timer.lifecycle.lock().unwrap();
                                     lifecycle.advertised_keep_alive = false;
@@ -2739,12 +2761,14 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                         // close.
                                         *response.version_mut() = Version::HTTP_10;
                                         insert_close(&mut response);
-                                    } else if *shutdown.borrow() {
-                                        // `graceful_shutdown` already disabled
-                                        // hyper's keep-alive. Advertising here
-                                        // would leave `connection: close` next
-                                        // to a stale `Keep-Alive: timeout=5`
-                                        // (measured before the fix).
+                                    } else if lifecycle.graceful_shutdown_started {
+                                        // close() found this connection idle
+                                        // and hyper will close after this
+                                        // response, so advertising keep-alive
+                                        // would be a lie. A request that was
+                                        // already in flight when close()
+                                        // started never reaches this branch:
+                                        // it keeps Node's keep-alive (S1).
                                         insert_close(&mut response);
                                     } else if add_keep_alive_headers(
                                         &mut response,
@@ -2825,15 +2849,21 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                 // waiting.
                                 shutdown_timer.begin_shutdown();
                                 if shutdown_timer.close_raced_with_advertised_keep_alive() {
-                                    // The response head already advertised
-                                    // keep-alive. `graceful_shutdown` would
-                                    // close right after that response and turn
-                                    // the advertisement into a lie; let the
+                                    // A request is in flight (its head may
+                                    // still be undecided, Node's S1) or an
+                                    // advertised response is still on the
+                                    // wire. `graceful_shutdown` would close
+                                    // after that response and turn the
+                                    // advertisement into a lie; let the
                                     // existing idle timer close the connection
                                     // once it is genuinely idle, like Node's
                                     // in-flight `server.close()`.
                                     let _ = connection.as_mut().await;
                                 } else {
+                                    // close() found this connection idle: hyper
+                                    // closes it now. Record that decision so a
+                                    // response racing the close says close.
+                                    shutdown_timer.mark_graceful_shutdown();
                                     connection.as_mut().graceful_shutdown();
                                     let _ = connection.as_mut().await;
                                 }
