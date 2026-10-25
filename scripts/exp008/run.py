@@ -26,27 +26,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'scripts/exp008'
-BASELINE = Path(os.environ.get('PDRS_BASELINE')
-                or os.environ.get('EXP008_BASELINE_ROOT')
-                or ROOT / 'resources/PilotDeck')
-BASELINE_FILES = ('dist/src/cli/pilotdeck.js', 'node_modules/tsx/dist/loader.mjs',
-                  'ui/server/index.js', 'ui/vite.config.js')
-
-
-def resolve_baseline(explicit=None):
-    # 显式 --baseline > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck（#187/#195）。
-    # EXP008_BASELINE_ROOT 仅作旧入口兼容；缺失时 BLOCKED，不回落到主仓绝对路径。
-    baseline = Path(explicit or os.environ.get('PDRS_BASELINE')
-                    or os.environ.get('EXP008_BASELINE_ROOT')
-                    or ROOT / 'resources/PilotDeck').resolve()
-    missing = [name for name in BASELINE_FILES if not (baseline / name).is_file()]
-    if missing:
-        print(f'BLOCKED: baseline at {baseline} lacks {missing}; '
-              'pass --baseline or set PDRS_BASELINE', file=sys.stderr)
-        raise SystemExit(2)
-    return baseline
-
-
+BASELINE = Path(os.environ.get('EXP008_BASELINE_ROOT',
+                               '/Users/da/ws/pilotdeck-rs/resources/PilotDeck'))
 TOKEN = 'exp008-isolated-test-token'
 RUST = ROOT / '_build/exp008-target/debug/pdrs-exp008-proxy'
 PROXY_MANIFEST = ROOT / 'scripts/exp008/proxy/Cargo.toml'
@@ -1028,11 +1009,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--out', type=Path, default=ROOT / '_tmp/20261014-exp008')
     parser.add_argument('--only', default='', help='comma-separated scenario names')
-    parser.add_argument('--baseline', type=Path,
-                        help='baseline checkout (default: PDRS_BASELINE or this checkout resources/PilotDeck)')
     args = parser.parse_args()
-    global BASELINE
-    BASELINE = resolve_baseline(args.baseline)
     out = fresh_out(args.out.resolve())
     ensure_proxy_built()
     for port in ALL_PORTS:
