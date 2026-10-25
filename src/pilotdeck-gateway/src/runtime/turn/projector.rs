@@ -22,9 +22,9 @@ pub const MAX_GATEWAY_TOOL_RESULT_PREVIEW_CHARS: usize = 20_000;
 /// `MAX_GATEWAY_TOOL_DATA_STRING_CHARS` (UTF-16 code units).
 pub const MAX_GATEWAY_TOOL_DATA_STRING_CHARS: usize = 4_000;
 const DEFAULT_ARTIFACT_THRESHOLD_BYTES: usize = 4_096;
-/// Default artifact root directory name. The security checks start at this
-/// component: the parent (the OS temp directory) is shared and is not
-/// ownership-checked, while every level from here down must be a real
+/// Default artifact root directory name. This is only the last component of
+/// the default root: the parent (the OS temp directory) is shared and is not
+/// ownership-checked, while every level of `root_dir` and below must be a real
 /// directory owned by the current euid.
 const TOOL_RESULT_DIR_NAME: &str = "pilotdeck-tool-results";
 
@@ -47,6 +47,16 @@ impl ProjectionError {
     fn range_error(message: impl Into<String>) -> Self {
         Self {
             text: format!("RangeError: {}", message.into()),
+        }
+    }
+
+    /// A `..` in `sessionId`/`turnId` can pop the protected root and land the
+    /// write in the shared temp directory with no ownership/symlink checks.
+    /// TS writes there; refusing is the security-direction deviation recorded
+    /// in A6.9-TOOL-RESULT-DIR-SECURE-001.
+    fn artifact_path_escape(path: &Path, root: &Path) -> Self {
+        Self {
+            text: format!("Error: {}", refused_artifact_path(path, root)),
         }
     }
 
@@ -92,6 +102,35 @@ pub trait GatewayToolResultArtifactStorePort: Send + Sync {
 type CreateDirectoryHook = Arc<dyn Fn(&Path) -> io::Result<()> + Send + Sync>;
 type WriteTextHook = Arc<dyn Fn(&Path, &[u8]) -> io::Result<()> + Send + Sync>;
 type ArtifactWriteJob = Box<dyn FnOnce() + Send + 'static>;
+
+/// How one advisory write reaches the filesystem. The default (unix) walks
+/// pinned directory descriptors; `with_io` keeps the TS
+/// `createDirectory`/`writeText` injection points for tests and non-unix hosts.
+#[derive(Clone)]
+enum ArtifactIo {
+    #[cfg(unix)]
+    Secure,
+    Hooks {
+        create_directory: CreateDirectoryHook,
+        write_text: WriteTextHook,
+    },
+}
+
+impl ArtifactIo {
+    fn write(&self, root: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            Self::Secure => write_artifact_secure(root, path, bytes),
+            Self::Hooks {
+                create_directory,
+                write_text,
+            } => {
+                create_directory(path.parent().ok_or(io::ErrorKind::InvalidInput)?)?;
+                write_text(path, bytes)
+            }
+        }
+    }
+}
 
 /// Background advisory writer.
 ///
@@ -159,19 +198,20 @@ fn spawn_artifact_writer() -> Option<mpsc::Sender<ArtifactWriteJob>> {
 pub struct GatewayToolResultArtifactStore {
     root_dir: PathBuf,
     threshold_bytes: usize,
-    create_directory: CreateDirectoryHook,
-    write_text: WriteTextHook,
+    io: ArtifactIo,
     writes: Arc<ArtifactWrites>,
 }
 
 impl GatewayToolResultArtifactStore {
     pub fn new(root_dir: impl Into<PathBuf>, threshold_bytes: usize) -> Self {
-        Self::with_io(
-            root_dir,
-            threshold_bytes,
-            Arc::new(create_directory_private),
-            Arc::new(write_private),
-        )
+        #[cfg(unix)]
+        let io = ArtifactIo::Secure;
+        #[cfg(not(unix))]
+        let io = ArtifactIo::Hooks {
+            create_directory: Arc::new(create_directory_private),
+            write_text: Arc::new(write_private),
+        };
+        Self::build(root_dir, threshold_bytes, io)
     }
 
     /// TS `GatewayToolResultArtifactStoreOptions.createDirectory/writeText`.
@@ -181,6 +221,17 @@ impl GatewayToolResultArtifactStore {
         create_directory: CreateDirectoryHook,
         write_text: WriteTextHook,
     ) -> Self {
+        Self::build(
+            root_dir,
+            threshold_bytes,
+            ArtifactIo::Hooks {
+                create_directory,
+                write_text,
+            },
+        )
+    }
+
+    fn build(root_dir: impl Into<PathBuf>, threshold_bytes: usize, io: ArtifactIo) -> Self {
         let root_dir = root_dir.into();
         let root_dir = if root_dir.is_absolute() {
             root_dir
@@ -192,8 +243,7 @@ impl GatewayToolResultArtifactStore {
         Self {
             root_dir,
             threshold_bytes,
-            create_directory,
-            write_text,
+            io,
             writes: Arc::new(ArtifactWrites::default()),
         }
     }
@@ -250,19 +300,23 @@ impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
         let tool_call_id = safe_path_part_js(&input.tool_call_id)?;
         // TS `resolve(rootDir, safePathPart(sessionId), safePathPart(turnId))`
         // normalizes `.`/`..` segments (safePathPart can emit both).
-        let directory = resolve_lexically(self.root_dir.join(session_id).join(turn_id));
+        let root = resolve_lexically(self.root_dir.clone());
+        let directory = resolve_lexically(root.join(session_id).join(turn_id));
         let path = resolve_lexically(directory.join(format!("{tool_call_id}.txt")));
+        // A `..` path part must not pop the protected root: every security
+        // check below starts at `root`, and a write landing beside it in the
+        // shared temp directory would have none. TS writes there; fail closed
+        // (A6.9-TOOL-RESULT-DIR-SECURE-001, scope).
+        if path.strip_prefix(&root).is_err() {
+            return Err(ProjectionError::artifact_path_escape(&path, &root));
+        }
         // `void this.write(...)`: return the path immediately; the advisory
         // write runs off-thread and failures are swallowed.
         let bytes = String::from_utf16_lossy(input.text.units()).into_bytes();
-        let create_directory = Arc::clone(&self.create_directory);
-        let write_text = Arc::clone(&self.write_text);
+        let io = self.io.clone();
         let job_path = path.clone();
         let accepted = self.writes.enqueue(move || {
-            if create_directory(&directory).is_err() {
-                return;
-            }
-            let _ = write_text(&job_path, &bytes);
+            let _ = io.write(&root, &job_path, &bytes);
         });
         // Never hand out a path whose write was not even queued.
         Ok(accepted.then(|| path.to_string_lossy().into_owned()))
@@ -284,53 +338,97 @@ fn resolve_lexically(path: PathBuf) -> PathBuf {
     normalized
 }
 
-/// Create the artifact directory tree one level at a time with mode 0700.
+/// Create the artifact tree and write the file through pinned directory
+/// descriptors.
 ///
 /// The default root lives under the OS temp directory, which is shared on
 /// Linux (`/tmp`). A predictable `<root>/<session>/<turn>/<call>.txt` path lets
 /// another local user pre-create a symlink or a directory they own, redirecting
-/// the advisory write elsewhere. From the `pilotdeck-tool-results` component
-/// down, every existing level is therefore required to be a real directory
-/// (never a symlink) owned by the current euid; a violation aborts before any
-/// file is written. The temp directory above that component is intentionally
-/// not ownership-checked (it is normally root-owned).
+/// the advisory write elsewhere. The mkdir walk is
+/// [`crate::project_files::create_directories_at`]: every lookup and `mkdirat`
+/// is relative to the pinned parent directory and no symlink is followed (a
+/// concurrent `AlreadyExists` is tolerated there, unlike a bare `create_dir`).
+/// Every level under `root` is then reopened with `O_NOFOLLOW|O_DIRECTORY`,
+/// checked for directory type and euid ownership through the descriptor, and
+/// set to 0700 (mkdir/open modes are masked by the process umask; existing
+/// levels left by an older writer are tightened too). The final file is opened
+/// relative to the last descriptor with `O_NOFOLLOW`, so a level swapped
+/// between the check and the open cannot redirect the write. The temp
+/// directory above `root` is intentionally not ownership-checked.
 #[cfg(unix)]
-fn create_directory_private(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+fn write_artifact_secure(root: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use rustix::fs::{Mode, OFlags, fchmod, openat};
+    use std::io::Write;
 
+    let directory = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    let file_name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+    let base = root.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    let relative = directory
+        .strip_prefix(base)
+        .map_err(|_| refused_artifact_path(path, root))?;
     let euid = rustix::process::geteuid().as_raw();
-    let mut current = PathBuf::new();
-    let mut guarded = false;
-    for component in path.components() {
-        current.push(component.as_os_str());
-        if matches!(component, Component::Normal(name) if name == std::ffi::OsStr::new(TOOL_RESULT_DIR_NAME))
-        {
-            guarded = true;
-        }
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) => {
-                if guarded {
-                    verify_private_directory(&current, &metadata, euid)?;
-                }
-                continue;
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-        // `create_dir` (not `create_dir_all`): this level is missing, and the
-        // parent was just verified or created above.
-        let mut builder = fs::DirBuilder::new();
-        builder.mode(0o700);
-        builder.create(&current)?;
-        // The process umask also masks the mode passed to mkdir; set it
-        // explicitly so a permissive/odd umask cannot weaken a new level.
-        fs::set_permissions(&current, fs::Permissions::from_mode(0o700))?;
-        if guarded {
-            let metadata = fs::symlink_metadata(&current)?;
-            verify_private_directory(&current, &metadata, euid)?;
-        }
+    // The temp directory (default root's parent) always exists; a custom root
+    // may be nested deeper, and the callers expect it to be created.
+    fs::create_dir_all(base)?;
+    let base_fd = fs::File::open(base)?;
+    crate::project_files::create_directories_at(&base_fd, relative, Mode::from_raw_mode(0o700))?;
+
+    let mut current = base.to_path_buf();
+    let mut parent = base_fd;
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            return Err(refused_artifact_path(path, root));
+        };
+        current.push(name);
+        let opened = fs::File::from(
+            openat(&parent, name, artifact_directory_flags(), Mode::empty())
+                .map_err(io::Error::from)?,
+        );
+        verify_private_directory(&current, &opened.metadata()?, euid)?;
+        fchmod(&opened, Mode::from_raw_mode(0o700))?;
+        parent = opened;
     }
-    Ok(())
+
+    let mut file = fs::File::from(
+        openat(
+            &parent,
+            file_name,
+            OFlags::WRONLY
+                | OFlags::CREATE
+                | OFlags::TRUNC
+                | OFlags::CLOEXEC
+                // NONBLOCK: a raced-in FIFO must not hang the writer thread.
+                | OFlags::NONBLOCK
+                | OFlags::NOFOLLOW,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(io::Error::from)?,
+    );
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::from_raw_os_error(libc::EACCES));
+    }
+    file.write_all(bytes)
+}
+
+#[cfg(unix)]
+fn artifact_directory_flags() -> rustix::fs::OFlags {
+    // Read access (not just search) because `fchmod` needs a non-`O_PATH` fd.
+    rustix::fs::OFlags::RDONLY
+        | rustix::fs::OFlags::DIRECTORY
+        | rustix::fs::OFlags::CLOEXEC
+        | rustix::fs::OFlags::NOFOLLOW
+}
+
+/// An artifact path that would land outside the protected root.
+fn refused_artifact_path(path: &Path, root: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "refusing tool-result artifact path {} outside {}",
+            path.display(),
+            root.display()
+        ),
+    )
 }
 
 /// Check one artifact-directory level: a real directory, not a symbolic link,
@@ -379,22 +477,6 @@ fn verify_private_directory(
 #[cfg(not(unix))]
 fn create_directory_private(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)
-}
-
-#[cfg(unix)]
-fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        // A pre-planted final-component symlink must not redirect the write
-        // (and its truncation) to another file.
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
-    file.write_all(bytes)
 }
 
 #[cfg(not(unix))]

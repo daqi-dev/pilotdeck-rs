@@ -352,9 +352,10 @@ fn advisory_persist_returns_before_the_write_completes() {
     assert!(path.ends_with(".txt"));
 }
 
-/// P2: TS uses `path.resolve`, so `..`/`.` path parts are normalized.
+/// P2: TS uses `path.resolve`, so `.` path parts are still normalized away.
+/// The `..` case that leaves the root is refused below (fix-r1, P1).
 #[test]
-fn default_store_resolves_dot_segments_like_ts() {
+fn default_store_resolves_dot_segments_inside_the_root() {
     let store = GatewayToolResultArtifactStore::with_io(
         "/tmp/pdrs-probe-root",
         4,
@@ -362,8 +363,10 @@ fn default_store_resolves_dot_segments_like_ts() {
         Arc::new(|_path, _bytes| Ok(())),
     );
     let input = GatewayToolResultArtifactInput {
-        session_id: text(".."),
+        session_id: text("."),
         turn_id: text("."),
+        // `safePathPart("..")` is `..` itself; the appended `.txt` keeps it a
+        // normal file name (`...txt`), not a parent segment.
         tool_call_id: text(".."),
         text: JsString::from("abcde"),
     };
@@ -372,7 +375,7 @@ fn default_store_resolves_dot_segments_like_ts() {
             .persist(&input)
             .expect("persisted")
             .expect("above threshold"),
-        "/tmp/...txt"
+        "/tmp/pdrs-probe-root/...txt"
     );
     store.wait_for_pending();
 }
@@ -449,46 +452,9 @@ fn default_store_only_persists_above_the_byte_threshold() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// Per-test scratch tree for the private-artifact tests. Mirrors
-/// `tests/common/scratch.rs`: a fresh UUID name, creation refuses an existing
-/// path, an owner token is written inside, and `Drop` deletes the tree only
-/// while this value's token is still there.
+/// Shared owner-token scratch guard (`tests/common/scratch.rs`), not a copy.
 #[cfg(unix)]
-struct ArtifactScratch {
-    path: PathBuf,
-    token: String,
-}
-
-#[cfg(unix)]
-impl ArtifactScratch {
-    fn new(prefix: &str) -> Self {
-        let token = uuid::Uuid::new_v4().to_string();
-        let path = std::env::temp_dir().join(format!("pdrs-{prefix}-{token}"));
-        std::fs::create_dir(&path).expect("scratch directory must be new");
-        std::fs::write(path.join(".pdrs-scratch-owner"), &token).expect("write owner token");
-        Self { path, token }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-#[cfg(unix)]
-impl Drop for ArtifactScratch {
-    fn drop(&mut self) {
-        let owned = std::fs::read_to_string(self.path.join(".pdrs-scratch-owner"))
-            .is_ok_and(|token| token == self.token);
-        if owned {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn private_artifact_store(root: &Path) -> GatewayToolResultArtifactStore {
-    GatewayToolResultArtifactStore::new(root, 4)
-}
+use crate::test_scratch::Scratch;
 
 #[cfg(unix)]
 fn long_artifact_input() -> GatewayToolResultArtifactInput {
@@ -506,13 +472,13 @@ fn long_artifact_input() -> GatewayToolResultArtifactInput {
 #[cfg(unix)]
 #[test]
 fn artifact_root_symlink_is_refused_without_touching_its_target() {
-    let scratch = ArtifactScratch::new("artifact-root-symlink");
+    let scratch = Scratch::new("artifact-root-symlink");
     let target = scratch.path().join("target");
     std::fs::create_dir(&target).expect("target dir");
     let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
     std::os::unix::fs::symlink(&target, &root).expect("plant root symlink");
 
-    let store = private_artifact_store(&root);
+    let store = GatewayToolResultArtifactStore::new(&root, 4);
     let path = store
         .persist(&long_artifact_input())
         .expect("advisory persist never throws")
@@ -536,7 +502,7 @@ fn artifact_root_symlink_is_refused_without_touching_its_target() {
 #[cfg(unix)]
 #[test]
 fn artifact_file_symlink_is_not_followed_or_truncated() {
-    let scratch = ArtifactScratch::new("artifact-file-symlink");
+    let scratch = Scratch::new("artifact-file-symlink");
     let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
     std::fs::create_dir_all(root.join("s").join("t")).expect("artifact dirs");
     let victim = scratch.path().join("victim.txt");
@@ -544,7 +510,7 @@ fn artifact_file_symlink_is_not_followed_or_truncated() {
     let link = root.join("s").join("t").join("c.txt");
     std::os::unix::fs::symlink(&victim, &link).expect("plant file symlink");
 
-    let store = private_artifact_store(&root);
+    let store = GatewayToolResultArtifactStore::new(&root, 4);
     store
         .persist(&long_artifact_input())
         .expect("advisory persist never throws")
@@ -575,7 +541,7 @@ fn artifact_file_symlink_is_not_followed_or_truncated() {
 fn artifact_directory_owner_check_rejects_a_foreign_uid() {
     use std::os::unix::fs::MetadataExt;
 
-    let scratch = ArtifactScratch::new("artifact-owner");
+    let scratch = Scratch::new("artifact-owner");
     let directory = scratch.path().join("owned");
     std::fs::create_dir(&directory).expect("owned dir");
     let metadata = std::fs::symlink_metadata(&directory).expect("dir metadata");
@@ -611,9 +577,9 @@ fn artifact_directory_owner_check_rejects_a_foreign_uid() {
 fn artifact_directories_are_0700_and_the_file_is_0600() {
     use std::os::unix::fs::PermissionsExt;
 
-    let scratch = ArtifactScratch::new("artifact-mode");
+    let scratch = Scratch::new("artifact-mode");
     let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
-    let store = private_artifact_store(&root);
+    let store = GatewayToolResultArtifactStore::new(&root, 4);
     let path = store
         .persist(&long_artifact_input())
         .expect("persisted")
@@ -640,6 +606,122 @@ fn artifact_directories_are_0700_and_the_file_is_0600() {
         .mode()
         & 0o777;
     assert_eq!(mode, 0o600, "the artifact file must be 0600");
+}
+
+/// P1 fix-r1: `sessionId = ".."` pops `pilotdeck-tool-results` and would land
+/// the write beside it in the shared temp directory, where none of the
+/// ownership/symlink checks apply (TS writes there). Refuse instead.
+#[cfg(unix)]
+#[test]
+fn artifact_session_parent_dir_escape_is_refused() {
+    let scratch = Scratch::new("artifact-session-escape");
+    let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
+    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let input = GatewayToolResultArtifactInput {
+        session_id: text(".."),
+        turn_id: text("t"),
+        tool_call_id: text("c"),
+        text: JsString::from("abcde"),
+    };
+    let error = store.persist(&input).expect_err("escape is refused");
+    assert!(error.to_string().contains("outside"), "{error}");
+    store.wait_for_pending();
+    // The would-be path is `<scratch>/t/c.txt`, beside the protected root.
+    assert!(
+        !scratch.path().join("t").exists(),
+        "no escaped directory may appear"
+    );
+}
+
+/// P1 fix-r1: `sessionId` and `turnId` may both be exactly `..` (the `..`
+/// component `safePathPart` lets through; a literal `../..` instead becomes the
+/// harmless single name `..-..`, since `/` is replaced by `-`). Two parent
+/// segments walk two levels above the root; refused, so nothing appears there.
+#[cfg(unix)]
+#[test]
+fn artifact_double_parent_dir_escape_is_refused() {
+    let scratch = Scratch::new("artifact-double-escape");
+    let root = scratch
+        .path()
+        .join("a")
+        .join("b")
+        .join(TOOL_RESULT_DIR_NAME);
+    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let input = GatewayToolResultArtifactInput {
+        session_id: text(".."),
+        turn_id: text(".."),
+        tool_call_id: text("c"),
+        text: JsString::from("abcde"),
+    };
+    store.persist(&input).expect_err("escape is refused");
+    store.wait_for_pending();
+    // `root/../..` is `scratch/a`, still inside the test-owned scratch tree.
+    assert!(
+        !scratch.path().join("a").join("c.txt").exists(),
+        "no file may appear above the root"
+    );
+}
+
+/// P2a fix-r1: levels another writer already created are reused and verified,
+/// not treated as a failed write (the replaced `create_dir_all` tolerated it;
+/// a bare `create_dir` would return `AlreadyExists`).
+#[cfg(unix)]
+#[test]
+fn artifact_existing_peer_created_levels_are_reused() {
+    let scratch = Scratch::new("artifact-peer-levels");
+    let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
+    std::fs::create_dir_all(root.join("s").join("t")).expect("peer-created levels");
+    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let path = store
+        .persist(&long_artifact_input())
+        .expect("advisory persist never throws")
+        .expect("above threshold");
+    store.wait_for_pending();
+    assert_eq!(std::fs::read_to_string(&path).expect("artifact"), "abcde");
+}
+
+/// P2a fix-r1: two same-user stores racing to create the same root must both
+/// persist; the loser's `AlreadyExists` is an existing, verified level.
+#[cfg(unix)]
+#[test]
+fn artifact_concurrent_writers_share_the_same_root() {
+    use std::sync::Barrier;
+
+    let scratch = Scratch::new("artifact-concurrent");
+    for round in 0..8 {
+        // Both writers race to create this root's level on a cold start.
+        let root = scratch.path().join(format!("root-{round}"));
+        let barrier = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|writer| {
+                let root = root.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let store = GatewayToolResultArtifactStore::new(&root, 4);
+                    barrier.wait();
+                    let path = store
+                        .persist(&GatewayToolResultArtifactInput {
+                            session_id: text("s"),
+                            turn_id: text("t"),
+                            tool_call_id: text(format!("c{writer}")),
+                            text: JsString::from("abcde"),
+                        })
+                        .expect("advisory persist never throws")
+                        .expect("above threshold");
+                    store.wait_for_pending();
+                    path
+                })
+            })
+            .collect();
+        for handle in handles {
+            let path = handle.join().expect("writer thread");
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("both writers persisted"),
+                "abcde",
+                "round {round}"
+            );
+        }
+    }
 }
 
 /// Fix round 3: `persist` passes the path fields through unchanged below the
