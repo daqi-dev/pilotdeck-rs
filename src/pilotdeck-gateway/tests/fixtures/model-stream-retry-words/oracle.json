@@ -1,0 +1,926 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/model/streaming/streamModel.ts": "6e2f9450194326b89b16ffbc99254f03687d9e908fe17c740fe9daa02e98bd26",
+    "src/model/protocol/errors.ts": "109e8cd3191d2ae51bec90578148fc06a3f8dc22a2d28c71a96c77fe2e9984bf",
+    "src/router/RouterRuntime.ts": "c3136e14359ac8ab0ef4fa4872da456b0fd30401b797592e7d38f30179ee45b8"
+  },
+  "sourceLists": {
+    "isRetryableStreamError": [
+      "network",
+      "econnreset",
+      "socket hang up",
+      "fetch failed",
+      "aborted",
+      "timeout",
+      "epipe",
+      "econnrefused"
+    ],
+    "isRetryableRequestError": [
+      "network",
+      "econnreset",
+      "socket hang up",
+      "fetch failed",
+      "timeout",
+      "etimedout",
+      "epipe",
+      "econnrefused"
+    ],
+    "isNetworkTransient": [
+      "econnreset",
+      "econnrefused",
+      "etimedout",
+      "epipe",
+      "socket hang up",
+      "network",
+      "dns",
+      "fetch failed",
+      "abort"
+    ]
+  },
+  "prematureStreamClosePattern": "connection prematurely closed(?: during response)?|prematurely closed during response",
+  "cases": [
+    {
+      "name": "word-network",
+      "errorName": "Error",
+      "message": "network",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "word-econnreset",
+      "errorName": "Error",
+      "message": "econnreset",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "word-socket hang up",
+      "errorName": "Error",
+      "message": "socket hang up",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "word-fetch failed",
+      "errorName": "Error",
+      "message": "fetch failed",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "word-aborted",
+      "errorName": "Error",
+      "message": "aborted",
+      "retryWord": true,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "Error",
+        "message": "aborted"
+      }
+    },
+    {
+      "name": "word-timeout",
+      "errorName": "Error",
+      "message": "timeout",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "word-epipe",
+      "errorName": "Error",
+      "message": "epipe",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "word-econnrefused",
+      "errorName": "Error",
+      "message": "econnrefused",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-uppercase-network",
+      "errorName": "Error",
+      "message": "NETWORK",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-mixed-socket-hang-up",
+      "errorName": "Error",
+      "message": "Socket HANG up",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-uppercase-econnreset",
+      "errorName": "Error",
+      "message": "ECONNRESET",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-substring-econnreset",
+      "errorName": "Error",
+      "message": "xxeconnresetyy",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-suffix-econnresetx",
+      "errorName": "Error",
+      "message": "ECONNRESETX",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-sentence-econnrefused",
+      "errorName": "Error",
+      "message": "connect ECONNREFUSED 127.0.0.1:80",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-sentence-timeout",
+      "errorName": "Error",
+      "message": "request timeout",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-sentence-aborted",
+      "errorName": "Error",
+      "message": "request aborted",
+      "retryWord": true,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "Error",
+        "message": "request aborted"
+      }
+    },
+    {
+      "name": "case-not-dns",
+      "errorName": "Error",
+      "message": "dns",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "Error",
+        "message": "dns"
+      }
+    },
+    {
+      "name": "case-not-etimedout",
+      "errorName": "Error",
+      "message": "etimedout",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "Error",
+        "message": "etimedout"
+      }
+    },
+    {
+      "name": "case-not-abort",
+      "errorName": "Error",
+      "message": "abort",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "Error",
+        "message": "abort"
+      }
+    },
+    {
+      "name": "case-not-etimedout-uppercase",
+      "errorName": "Error",
+      "message": "ETIMEDOUT",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "Error",
+        "message": "ETIMEDOUT"
+      }
+    },
+    {
+      "name": "case-not-timed-out",
+      "errorName": "Error",
+      "message": "timed out",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "Error",
+        "message": "timed out"
+      }
+    },
+    {
+      "name": "case-not-connection-reset-by-peer",
+      "errorName": "Error",
+      "message": "connection reset by peer",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "Error",
+        "message": "connection reset by peer"
+      }
+    },
+    {
+      "name": "case-not-prematurely-closed",
+      "errorName": "Error",
+      "message": "prematurely closed",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "Error",
+        "message": "prematurely closed"
+      }
+    },
+    {
+      "name": "case-premature-close-phrase",
+      "errorName": "Error",
+      "message": "Connection prematurely closed DURING response",
+      "retryWord": false,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-abort-name-boom",
+      "errorName": "AbortError",
+      "message": "boom",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "AbortError",
+        "message": "boom"
+      }
+    },
+    {
+      "name": "case-abort-name-timeout",
+      "errorName": "AbortError",
+      "message": "timeout",
+      "retryWord": true,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "AbortError",
+        "message": "timeout"
+      }
+    },
+    {
+      "name": "case-abort-name-aborted",
+      "errorName": "AbortError",
+      "message": "aborted",
+      "retryWord": true,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "AbortError",
+        "message": "aborted"
+      }
+    },
+    {
+      "name": "case-timeout-name-boom",
+      "errorName": "TimeoutError",
+      "message": "boom",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "TimeoutError",
+        "message": "boom"
+      }
+    },
+    {
+      "name": "case-timeout-name-timeout",
+      "errorName": "TimeoutError",
+      "message": "timeout",
+      "retryWord": true,
+      "calls": 2,
+      "retried": true,
+      "retryProgress": [
+        {
+          "reason": "network_error",
+          "attempt": 1,
+          "maxAttempts": 1,
+          "delayMs": 0,
+          "provider": "test",
+          "model": "m"
+        }
+      ],
+      "events": [
+        "request_started",
+        "request_started",
+        "message_start",
+        "text_delta",
+        "message_end"
+      ],
+      "thrown": null
+    },
+    {
+      "name": "case-typeerror-terminated",
+      "errorName": "TypeError",
+      "message": "terminated",
+      "retryWord": false,
+      "calls": 1,
+      "retried": false,
+      "retryProgress": [],
+      "events": [
+        "request_started"
+      ],
+      "thrown": {
+        "name": "TypeError",
+        "message": "terminated"
+      }
+    }
+  ],
+  "routerCases": [
+    {
+      "name": "word-network",
+      "errorName": "Error",
+      "message": "network",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "word-econnreset",
+      "errorName": "Error",
+      "message": "econnreset",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "word-socket hang up",
+      "errorName": "Error",
+      "message": "socket hang up",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "word-fetch failed",
+      "errorName": "Error",
+      "message": "fetch failed",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "word-aborted",
+      "errorName": "Error",
+      "message": "aborted",
+      "retryWord": true,
+      "code": "aborted",
+      "retryable": true
+    },
+    {
+      "name": "word-timeout",
+      "errorName": "Error",
+      "message": "timeout",
+      "retryWord": false,
+      "code": "timeout",
+      "retryable": false
+    },
+    {
+      "name": "word-epipe",
+      "errorName": "Error",
+      "message": "epipe",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "word-econnrefused",
+      "errorName": "Error",
+      "message": "econnrefused",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-uppercase-network",
+      "errorName": "Error",
+      "message": "NETWORK",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-mixed-socket-hang-up",
+      "errorName": "Error",
+      "message": "Socket HANG up",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-uppercase-econnreset",
+      "errorName": "Error",
+      "message": "ECONNRESET",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-substring-econnreset",
+      "errorName": "Error",
+      "message": "xxeconnresetyy",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-suffix-econnresetx",
+      "errorName": "Error",
+      "message": "ECONNRESETX",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-sentence-econnrefused",
+      "errorName": "Error",
+      "message": "connect ECONNREFUSED 127.0.0.1:80",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-sentence-timeout",
+      "errorName": "Error",
+      "message": "request timeout",
+      "retryWord": false,
+      "code": "timeout",
+      "retryable": false
+    },
+    {
+      "name": "case-sentence-aborted",
+      "errorName": "Error",
+      "message": "request aborted",
+      "retryWord": true,
+      "code": "aborted",
+      "retryable": true
+    },
+    {
+      "name": "case-not-dns",
+      "errorName": "Error",
+      "message": "dns",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-not-etimedout",
+      "errorName": "Error",
+      "message": "etimedout",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-not-abort",
+      "errorName": "Error",
+      "message": "abort",
+      "retryWord": true,
+      "code": "aborted",
+      "retryable": true
+    },
+    {
+      "name": "case-not-etimedout-uppercase",
+      "errorName": "Error",
+      "message": "ETIMEDOUT",
+      "retryWord": true,
+      "code": "network_error",
+      "retryable": true
+    },
+    {
+      "name": "case-not-timed-out",
+      "errorName": "Error",
+      "message": "timed out",
+      "retryWord": false,
+      "code": "network_error",
+      "retryable": false
+    },
+    {
+      "name": "case-not-connection-reset-by-peer",
+      "errorName": "Error",
+      "message": "connection reset by peer",
+      "retryWord": false,
+      "code": "network_error",
+      "retryable": false
+    },
+    {
+      "name": "case-not-prematurely-closed",
+      "errorName": "Error",
+      "message": "prematurely closed",
+      "retryWord": false,
+      "code": "network_error",
+      "retryable": false
+    },
+    {
+      "name": "case-premature-close-phrase",
+      "errorName": "Error",
+      "message": "Connection prematurely closed DURING response",
+      "retryWord": false,
+      "code": "network_error",
+      "retryable": false
+    },
+    {
+      "name": "case-abort-name-boom",
+      "errorName": "AbortError",
+      "message": "boom",
+      "retryWord": false,
+      "code": "aborted",
+      "retryable": true
+    },
+    {
+      "name": "case-abort-name-timeout",
+      "errorName": "AbortError",
+      "message": "timeout",
+      "retryWord": false,
+      "code": "timeout",
+      "retryable": true
+    },
+    {
+      "name": "case-abort-name-aborted",
+      "errorName": "AbortError",
+      "message": "aborted",
+      "retryWord": true,
+      "code": "aborted",
+      "retryable": true
+    },
+    {
+      "name": "case-timeout-name-boom",
+      "errorName": "TimeoutError",
+      "message": "boom",
+      "retryWord": false,
+      "code": "timeout",
+      "retryable": true
+    },
+    {
+      "name": "case-timeout-name-timeout",
+      "errorName": "TimeoutError",
+      "message": "timeout",
+      "retryWord": false,
+      "code": "timeout",
+      "retryable": true
+    },
+    {
+      "name": "case-typeerror-terminated",
+      "errorName": "TypeError",
+      "message": "terminated",
+      "retryWord": false,
+      "code": "network_error",
+      "retryable": false
+    }
+  ]
+}

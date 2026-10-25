@@ -2631,3 +2631,134 @@ fn dump_failure_error_projects_the_node_fs_error() {
         Some(&JsString::from("/tmp/pilotdeck_request_1.json"))
     );
 }
+
+const RETRY_WORDS_ORACLE: &str =
+    include_str!("../../../tests/fixtures/model-stream-retry-words/oracle.json");
+
+fn oracle_text(value: &JsValue) -> String {
+    value
+        .as_string()
+        .expect("oracle string")
+        .to_utf8()
+        .expect("oracle UTF-8")
+}
+
+/// Real TS `streamModel` goldens: every retry word and its case/substring/
+/// name variants. `retryWord` records membership in the TS source list;
+/// `retried` records what the running generator actually did (abort names
+/// short-circuit `aborted`, so those two differ). The Rust decision function
+/// must agree with both columns.
+#[test]
+fn real_ts_stream_retry_message_words() {
+    let oracle = crate::test_baseline::oracle(RETRY_WORDS_ORACLE);
+    let cases = super::super::count_body::array(field(&oracle, "cases"));
+    assert_eq!(cases.len(), 30, "fixture case count");
+    let mut positives = 0;
+    let mut words = 0;
+    for case in cases {
+        let error_name = oracle_text(field(case, "errorName"));
+        let message = oracle_text(field(case, "message"));
+        let lower = message.to_lowercase();
+        assert_eq!(
+            retryable_message(&lower),
+            field(case, "retryWord").as_bool().expect("retryWord"),
+            "retryable_message for {error_name}: {message:?}"
+        );
+        let error = ModelStreamError::Thrown {
+            name: error_name.clone().into(),
+            message: message.clone().into(),
+        };
+        let expected = field(case, "retried").as_bool().expect("retried");
+        assert_eq!(
+            is_retryable_stream_error(&error),
+            expected,
+            "is_retryable_stream_error for {error_name}: {message:?}"
+        );
+        if field(case, "name")
+            .as_string()
+            .is_some_and(|name| name.to_utf8().is_ok_and(|name| name.starts_with("word-")))
+        {
+            words += 1;
+            assert!(
+                field(case, "retryWord").as_bool().unwrap(),
+                "word case must be a source-list member"
+            );
+        }
+        if expected {
+            positives += 1;
+        }
+    }
+    assert_eq!(words, 8, "one golden per TS retry word");
+    assert!(positives >= 10, "positive retry goldens");
+}
+
+/// The complete()/`isRetryableRequestError` sibling list differs deliberately
+/// from the stream list (etimedout in, aborted out). The fixture records the
+/// baseline source list; the Rust classifier must match it. The raw branch is
+/// not reachable through `complete()` because `sendProviderRequest` wraps every
+/// transport error in `ModelProviderError` first, so this is source-derived
+/// rather than a runtime golden (see README).
+#[test]
+fn complete_retry_message_list_matches_the_ts_request_classifier_source() {
+    let oracle = crate::test_baseline::oracle(RETRY_WORDS_ORACLE);
+    let words = super::super::count_body::array(field(
+        field(&oracle, "sourceLists"),
+        "isRetryableRequestError",
+    ));
+    assert_eq!(words.len(), 8, "request-list word count");
+    for word in words {
+        let message = oracle_text(word);
+        let error = ModelStreamError::Thrown {
+            name: "Error".into(),
+            message: message.clone().into(),
+        };
+        assert!(
+            is_retryable_request_error(&error),
+            "request retry word {message:?}"
+        );
+    }
+    for message in ["dns", "timed out", "connection reset by peer", "aborted"] {
+        let error = ModelStreamError::Thrown {
+            name: "Error".into(),
+            message: message.into(),
+        };
+        assert!(
+            !is_retryable_request_error(&error),
+            "request non-word {message:?}"
+        );
+    }
+}
+
+/// Real TS `RouterRuntime` goldens for the canonical Thrown classification
+/// used by the router's transient-retry layer (`isNetworkTransient` +
+/// `classifyNetworkErrorCode`). This is a different TS list from streamModel's:
+/// dns/etimedout/abort are retryable here, timeout/aborted are not.
+#[test]
+fn real_ts_router_transient_thrown_words_match_fallback() {
+    let oracle = crate::test_baseline::oracle(RETRY_WORDS_ORACLE);
+    let cases = super::super::count_body::array(field(&oracle, "routerCases"));
+    assert_eq!(cases.len(), 30, "router case count");
+    let request = parse_json(r#"{"provider":"test","model":"m","messages":[]}"#).unwrap();
+    for case in cases {
+        let error_name = oracle_text(field(case, "errorName"));
+        let message = oracle_text(field(case, "message"));
+        let canonical = super::super::fallback::canonical_error(
+            ModelStreamError::Thrown {
+                name: error_name.clone().into(),
+                message: message.clone().into(),
+            },
+            &request,
+            "openai".into(),
+        );
+        assert_eq!(
+            oracle_text(field(&canonical, "code")),
+            oracle_text(field(case, "code")),
+            "canonical code for {error_name}: {message:?}"
+        );
+        assert_eq!(
+            field(&canonical, "retryable").as_bool().expect("retryable"),
+            field(case, "retryable").as_bool().expect("retryable"),
+            "canonical retryable for {error_name}: {message:?}"
+        );
+    }
+}
