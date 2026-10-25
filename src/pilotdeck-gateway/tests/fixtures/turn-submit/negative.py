@@ -23,14 +23,31 @@ output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 source = rust / 'pilotdeck-gateway/src/runtime/turn/submit.rs'
 host_source = rust / 'pilotdeck-gateway/src/runtime/turn/submit_host.rs'
-with mutating_sources(repo, [source, host_source]) as snapshots:
+test_source = rust / 'pilotdeck-gateway/src/runtime/turn/submit_tests.rs'
+# CI runs this against a commit. A sandbox without commit rights can pass the
+# tree's `git stash create` object here; the mutating_sources baseline then
+# still proves the mutated bytes and the restore target are the same tree.
+baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+with mutating_sources(repo, [source, host_source, test_source], baseline=baseline) as snapshots:
     original = snapshots[source]
     host_original = snapshots[host_source]
+    test_original = snapshots[test_source]
+    originals = {source: original, host_source: host_original, test_source: test_original}
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
-    assert Path(env['CARGO_TARGET_DIR']).resolve() == rust / 'target'
+    # Accept the tree-local target and this workspace's shared
+    # `_build/cargo-target`; resolve both sides so a symlinked src/target still
+    # matches either spelling.
+    target_dir = Path(env['CARGO_TARGET_DIR']).resolve()
+    assert target_dir in {(rust / 'target').resolve(), (repo / '_build/cargo-target').resolve()}
     assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
     test = 'runtime::turn::submit::tests'
     host_test = 'runtime::turn::submit_host::tests'
+    submit_replay = f'{test}::real_ts_submit_scenarios'
+    capability_replay = f'{test}::unavailable_capabilities_are_explicitly_refused'
+    utf16_replay = f'{test}::real_ts_utf16_preflight'
+    lease_order = f'{test}::lease_release_precedes_after_turn_across_exit_paths'
+    host_exactly_once = f'{host_test}::finish_pump_releases_a_lease_exactly_once'
+    host_poison = f'{host_test}::finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned'
     # Each mutation changes production behavior. The chosen case names are real
     # generated scenarios; all golden assertions remain unchanged.
     mutants = [
@@ -96,33 +113,87 @@ with mutating_sources(repo, [source, host_source]) as snapshots:
         # strands the lease after an unrelated panic.
         ('lease-poison-unwrap-finish', 'unwrap_or_else(|poisoned| poisoned.into_inner())\n            .remove(', 'unwrap()\n            .remove(', None, 'finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned', None),
         ('lease-poison-unwrap-prepare', 'unwrap_or_else(|poisoned| poisoned.into_inner())\n                    .insert(', 'unwrap()\n                    .insert(', None, 'finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned', None),
+        # opus r2 P2-1: the new lease/after order assertion needs a mutant that
+        # makes it red. Swapping the fake's record order flips the observed
+        # sequence without touching production, so the assertion itself is the
+        # only thing that can fail.
+        ('lease-order-records-swapped', 'fn host(&self, value: &str) {\n        self.host.lock().unwrap().push(value.into());\n    }', 'fn host(&self, value: &str) {\n        let value = match value {\n            "lease_release" => "after",\n            "after" => "lease_release",\n            other => other,\n        };\n        self.host.lock().unwrap().push(value.into());\n    }', None, None, None),
+        # Paired negative control for the missing-lease arm: presenting
+        # attachments but acquiring no lease must fail the tri-state.
+        ('lease-acquisition-skipped', 'true => Some(self.services.resolve_attachments(input).await?),', 'true => None::<SubmitAttachmentLease>,', None, None, None),
+        # Paired negative control for the no-lease arm: acquiring a lease for
+        # an attachment-free case must fail the absence assertion.
+        ('always-acquire-lease', 'false => None,', 'false => Some(self.services.resolve_attachments(input).await?),', None, None, None),
     ]
     mutant_source = {'guard-config-not-provided': host_source,
                      'host-lease-release-skipped': host_source,
                      'cwd-host-unavailable-ok': host_source,
                      'lease-poison-unwrap-finish': host_source,
-                     'lease-poison-unwrap-prepare': host_source}
-    mutant_test = {'host-lease-release-skipped': host_test,
-                   'lease-poison-unwrap-finish': host_test,
-                   'lease-poison-unwrap-prepare': host_test}
+                     'lease-poison-unwrap-prepare': host_source,
+                     'lease-acquisition-skipped': host_source,
+                     'always-acquire-lease': host_source,
+                     'lease-order-records-swapped': test_source}
+    # Every mutant names the test that must fail. Overrides replace the replay
+    # default where the lease windows have their own test.
+    mutant_test = {name: submit_replay for name, _, _, _, _, _ in mutants}
+    mutant_test.update({
+        'snapshot-capability-refusal-skipped': capability_replay,
+        'snapshot-cwd-refusal-skipped': capability_replay,
+        'cwd-capability-error-ignored': capability_replay,
+        'cwd-host-unavailable-ok': capability_replay,
+        'utf16-mode-lossy': utf16_replay,
+        'utf16-busy-lossy': utf16_replay,
+        'host-lease-release-skipped': host_exactly_once,
+        'lease-poison-unwrap-finish': host_poison,
+        'lease-poison-unwrap-prepare': host_poison,
+        'lease-order-records-swapped': lease_order,
+        'lease-acquisition-skipped': lease_order,
+        'always-acquire-lease': lease_order,
+    })
+    # Anchor kinds: `message` is a key substring of the assertion/panic message
+    # for the named test; `location` is the exact panic file:line:column. The
+    # generic "some assertion happened somewhere" check is deliberately gone.
+    mutant_anchor = {
+        'host-lease-release-skipped': ('message', 'assertion `left == right` failed'),
+        'lease-poison-unwrap-finish': ('location', 'pilotdeck-gateway/src/runtime/turn/submit_host.rs:301:14'),
+        'lease-poison-unwrap-prepare': ('location', 'pilotdeck-gateway/src/runtime/turn/submit_host.rs:247:22'),
+        'lease-order-records-swapped': ('message', 'lease_release must precede after_turn'),
+        'lease-acquisition-skipped': ('message', 'attachments must record lease_release and after_turn'),
+        'always-acquire-lease': ('message', 'lease_release recorded without an attachment lease'),
+    }
+
+    def failed_tests(text):
+        # libtest's failure list is the only place a test is declared failed;
+        # a stray panic in a sibling test must not count.
+        return {line[4:].strip() for line in text.splitlines()
+                if line.startswith('    runtime::turn::')}
+
+    def panic_evidence(text, test_name):
+        # Collect every panic block owned by the named test (a poison test
+        # panics twice: once to poison, once at the unwrap).
+        blocks = [part for part in text.split("thread '")[1:]
+                  if part.startswith(f"{test_name}'")]
+        return '\n'.join(blocks)
+
     summary = []
     try:
         for name, before, _, _, _, _ in mutants:
             anchor_source = mutant_source.get(name, source)
-            anchor_text = (host_original if anchor_source == host_source else original).decode()
+            anchor_text = originals[anchor_source].decode()
             assert anchor_text.count(before) == 1, (name, 'anchor is not unique')
         (output / 'original-sha256.json').write_text(json.dumps({
-            str(source.relative_to(repo)): hashlib.sha256(original).hexdigest(),
-            str(host_source.relative_to(repo)): hashlib.sha256(host_original).hexdigest()}, indent=2)+'\n')
+            str(path.relative_to(repo)): hashlib.sha256(data).hexdigest()
+            for path, data in originals.items()}, indent=2)+'\n')
         selected = [('baseline', None, None, None, None, None)] + mutants
         if len(sys.argv) > 2:
             selected = [entry for entry in selected if entry[0] in sys.argv[2:]]
             assert selected, 'unknown control'
         for name, before, after, case, marker, capability in selected:
-            assert source.read_bytes() == original and host_source.read_bytes() == host_original, 'source changed outside this run'
+            assert all(path.read_bytes() == data for path, data in originals.items()), 'source changed outside this run'
             target = mutant_source.get(name, source)
-            target_original = host_original if target == host_source else original
+            target_original = originals[target]
             used_test = mutant_test.get(name, test)
+            anchor_kind, anchor = mutant_anchor.get(name, ('message', marker))
             if before: target.write_text(target_original.decode().replace(before, after, 1))
             slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
             slot_deadline = time.monotonic() + 1800
@@ -154,19 +225,24 @@ with mutating_sources(repo, [source, host_source]) as snapshots:
                 returncode = -signal.SIGKILL
             finally:
                 target.write_bytes(target_original)
-            valid = not timed_out and ((returncode == 0 and 'test result: ok. 4 passed' in raw and 'test result: ok. 10 passed' in raw) if name == 'baseline' else (
-                returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw
-                # Product panics (a poison-unwrap mutant) are failure evidence
-                # alongside assertion diffs.
-                and ('assertion' in raw or 'panicked at' in raw) and marker in raw and used_test in raw))
+
+            if name == 'baseline':
+                valid = not timed_out and returncode == 0 and 'test result: ok. 4 passed' in raw and 'test result: ok. 10 passed' in raw
+            else:
+                evidence = panic_evidence(raw, used_test)
+                anchored = (f'panicked at {anchor}:' in evidence
+                            if anchor_kind == 'location' else anchor in evidence)
+                valid = (not timed_out and returncode == 101 and 'test result: FAILED' in raw
+                         and 'could not compile' not in raw and used_test in failed_tests(raw)
+                         and anchored)
             (output / f'{name}.log').write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={returncode}\n')
-            summary.append(dict(name=name, case=case, before=before, after=after, exit=returncode, marker=marker, valid=valid))
+            summary.append(dict(name=name, case=case, before=before, after=after, exit=returncode, marker=marker, test=used_test, anchor=anchor, anchorKind=anchor_kind, valid=valid))
             (output/'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
             print(f'{name}: {"PASS" if valid else "INVALID"} exit={returncode}', flush=True)
             if not valid: raise SystemExit(1)
     finally:
-        source.write_bytes(original)
-        host_source.write_bytes(host_original)
-        assert source.read_bytes() == original
-        assert host_source.read_bytes() == host_original
+        for path, data in originals.items():
+            path.write_bytes(data)
+        for path, data in originals.items():
+            assert path.read_bytes() == data
     print(f'{len(summary)} controls checked; original bytes restored', flush=True)
