@@ -121,8 +121,18 @@ r6 形状绕过负控：在 `http.rs` 的形状调用处分别把 Anthropic / Re
 比较由 `>` 放宽为 `> limit + 1`，目标跨帧测试的 limit+1 拒绝/不保留前缀断言
 必须失败；把 `string_limit()` 的唯一共享默认尾部改成 `usize::MAX`（等价 r5
 off-tree M9 控件），由钉死 `0x1fffffe8` 字面量的默认值断言抓住，不再用同一
-常量与自身比较。恢复、进程组回收与 cargo 槽位逻辑未改。共 19 条，每个变异都
-先编译，只接受已编译测试的断言失败。
+常量与自身比较。r8（#641 fix-r1）把 `read_shape_probe` 与 `response_text`
+的逐行重复状态机抽成共享 `CappedText`（解码、UTF-16 计数、超限丢弃并排空到
+EOF、EOF 残片计入），r7 的 cap 负控随之改锚到 `CappedText::push` 并更名
+`capped-text-cap-allows-limit-plus-one`：原两行锚文本在 #641 把同款循环复制进
+`response_text` 后于 http.rs 出现两次，脚本自身的锚点检查报
+`mutation anchor count 2` 并跳过该控件，负控当时已失效。另加两个 r8 lib 负
+控：`CappedText::finish` 去掉 EOF 残片 U+FFFD 的计数（目标
+`response_text_counts_eof_replacement_toward_the_cap` 的 limit+1 断言必须失
+败）；`response_text` 循环在跨限帧上提前 `break`（目标
+`complete_response_text_overlong_body_reads_to_eof_then_throws_plain_error`
+的 70ms EOF 下限必须失败）。恢复、进程组回收与 cargo 槽位逻辑未改。共 21
+条，每个变异都先编译，只接受已编译测试的断言失败。
 
 恢复：变异前把原始字节与 SHA-256 写到 worktree 外的状态目录（默认
 `$TMPDIR/pdrs-negctl-<worktree哈希>`），SIGTERM/SIGINT/SIGHUP 处理器同步恢复；

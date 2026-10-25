@@ -1891,14 +1891,68 @@ fn shape_fallback_abort(
         .then_some(HeaderAbort::Timer)
 }
 
+/// The byte→string conversion half shared by `read_shape_probe` and
+/// `response_text`: both convert the body under V8's `MAX_STRING_LENGTH`,
+/// which counts UTF-16 code units of the decoded text — including the U+FFFD
+/// that a trailing incomplete UTF-8 sequence becomes at EOF — and only
+/// throws after the body reached EOF, so an over-limit text keeps draining
+/// while its accumulated value is dropped.
+struct CappedText {
+    decoder: sse::Utf8Decoder,
+    text: String,
+    units: usize,
+    too_long: bool,
+}
+
+impl CappedText {
+    fn new() -> Self {
+        Self {
+            decoder: sse::Utf8Decoder::default(),
+            text: String::new(),
+            units: 0,
+            too_long: false,
+        }
+    }
+
+    /// Feed one body frame. Returns `false` once the text can only be
+    /// rejected: the conversion has not run yet, so the caller keeps
+    /// draining to EOF — where a body failure still wins — but retains
+    /// none of the over-limit prefix.
+    fn push(&mut self, data: &[u8]) -> bool {
+        if self.too_long {
+            return false;
+        }
+        let start = self.text.len();
+        self.decoder.decode(data, &mut self.text);
+        // V8's cap counts UTF-16 code units of the decoded text.
+        self.units += self.text[start..].encode_utf16().count();
+        if self.units > string_limit() {
+            self.too_long = true;
+            self.text = String::new();
+        }
+        !self.too_long
+    }
+
+    /// EOF: a trailing incomplete UTF-8 sequence becomes one U+FFFD, and the
+    /// real conversion counts that unit too, so it can push the text over
+    /// the cap even when the frames alone fit exactly. `Err` is the
+    /// over-limit outcome; each reader maps it to its own error shape.
+    fn finish(mut self) -> Result<String, ()> {
+        let start = self.text.len();
+        self.decoder.finish(&mut self.text);
+        self.units += self.text[start..].encode_utf16().count();
+        if self.too_long || self.units > string_limit() {
+            return Err(());
+        }
+        Ok(self.text)
+    }
+}
+
 async fn read_shape_probe(body: &mut ModelBody, options: &StreamOptions) -> ShapeProbe {
     use crate::runtime::network::{Exchange, body_frame};
-    let mut decoder = sse::Utf8Decoder::default();
-    let mut text = String::new();
+    let mut capped = CappedText::new();
     let mut bytes = Vec::new();
     let mut continuation = false;
-    let mut units = 0usize;
-    let mut too_long = false;
     loop {
         // A fresh undici `bodyTimeout` per frame, with no request deadline and
         // no caller abort: both were detached from this body when the headers
@@ -1913,24 +1967,12 @@ async fn read_shape_probe(body: &mut ModelBody, options: &StreamOptions) -> Shap
         match frame {
             Exchange::Response(Some(Ok(frame)), _) => {
                 if let Some(data) = frame.data_ref() {
-                    if too_long {
-                        // TS has not converted the clone body to a string yet;
-                        // keep draining so EOF / the body idle timeout still
-                        // decide the outer fallback timing, but retain nothing
-                        // once the candidate can only be rejected.
-                        continue;
-                    }
-                    bytes.extend_from_slice(data);
-                    let start = text.len();
-                    decoder.decode(data, &mut text);
-                    // V8's cap counts UTF-16 code units of the decoded text,
-                    // exactly like `response_text` below.
-                    units += text[start..].encode_utf16().count();
-                    if units > string_limit() {
+                    if capped.push(data) {
+                        bytes.extend_from_slice(data);
+                    } else {
                         // `copy.json()` reads the body to EOF before the
-                        // byte→string conversion throws; do not fall back early.
-                        too_long = true;
-                        text = String::new();
+                        // byte→string conversion throws; do not fall back
+                        // early, and retain none of the rejected candidate.
                         bytes = Vec::new();
                     }
                 }
@@ -1950,20 +1992,12 @@ async fn read_shape_probe(body: &mut ModelBody, options: &StreamOptions) -> Shap
             }
         }
     }
-    if too_long {
-        return ShapeProbe::StringTooLong;
-    }
-    // A trailing incomplete UTF-8 sequence becomes one U+FFFD at EOF; count
-    // that unit too (the real string conversion sees it).
-    let start = text.len();
-    decoder.finish(&mut text);
-    units += text[start..].encode_utf16().count();
-    if units > string_limit() {
-        return ShapeProbe::StringTooLong;
-    }
-    ShapeProbe::Complete {
-        bytes: Bytes::from(bytes),
-        parsed: parse_json(&text).ok(),
+    match capped.finish() {
+        Err(()) => ShapeProbe::StringTooLong,
+        Ok(text) => ShapeProbe::Complete {
+            bytes: Bytes::from(bytes),
+            parsed: parse_json(&text).ok(),
+        },
     }
 }
 
@@ -2184,10 +2218,7 @@ async fn response_text(
     // listener detached; only undici's `bodyTimeout` bounds a stalled body
     // (node probe: `TypeError: terminated`, cause UND_ERR_BODY_TIMEOUT).
     // Google wraps this body read in its still-pending SDK promise below.
-    let mut decoder = sse::Utf8Decoder::default();
-    let mut text = String::new();
-    let mut units = 0usize;
-    let mut too_long = false;
+    let mut capped = CappedText::new();
     loop {
         use crate::runtime::network::{Exchange, body_frame};
         match body_frame(
@@ -2215,39 +2246,18 @@ async fn response_text(
             Exchange::Response(None, _) => break,
             Exchange::Response(Some(Ok(frame)), _) => {
                 if let Some(data) = frame.data_ref() {
-                    if too_long {
-                        // The string conversion has not run yet; keep draining
-                        // so EOF / the body idle timeout still decide and a body
-                        // failure keeps priority over the string error.
-                        continue;
-                    }
-                    let start = text.len();
-                    decoder.decode(data, &mut text);
-                    // V8's cap counts UTF-16 code units of the decoded text.
-                    units += text[start..].encode_utf16().count();
-                    if units > string_limit() {
-                        // The conversion throws only after EOF; retain nothing
-                        // once the text can only be rejected.
-                        too_long = true;
-                        text = String::new();
-                    }
+                    // The string conversion has not run yet; `push` keeps
+                    // draining past the cap so EOF / the body idle timeout
+                    // still decide and a body failure keeps priority over
+                    // the string error.
+                    capped.push(data);
                 }
             }
         }
     }
-    // A trailing incomplete UTF-8 sequence becomes one U+FFFD at EOF; the
-    // real conversion sees that unit too, so it can push the text over the
-    // cap even when the frames alone fit exactly.
-    let start = text.len();
-    decoder.finish(&mut text);
-    units += text[start..].encode_utf16().count();
-    if too_long || units > string_limit() {
-        return Err(ModelStreamError::thrown(
-            "Error",
-            crate::fetch_redirect::STRING_TOO_LONG,
-        ));
-    }
-    Ok(text)
+    capped
+        .finish()
+        .map_err(|()| ModelStreamError::thrown("Error", crate::fetch_redirect::STRING_TOO_LONG))
 }
 
 struct StreamGuard {
