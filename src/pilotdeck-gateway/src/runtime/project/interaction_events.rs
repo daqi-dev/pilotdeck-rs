@@ -2,10 +2,11 @@
 //! does not imply availability: consumers must retrieve this concrete resource
 //! and bind it to their leased turn. Permission/lifecycle/steer are independent.
 use super::factory::FamilyResource;
+use super::interaction_notice::DiscardNotice;
 use super::{DisposeFuture, RuntimeError, RuntimeResult};
 use crate::host::modules::{ModuleRouter, event};
 use crate::host::{HostError, ModuleError};
-use pilotdeck_protocol::{JsObject, JsString};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -20,6 +21,9 @@ struct TurnState {
     run_id: JsString,
     closed: bool,
     events: Vec<JsObject>,
+    // #686: notices from the discarded predecessor are injected only after
+    // this turn's `turn_started`, so the stream integrity gate stays valid.
+    notices: Vec<DiscardNotice>,
 }
 
 /// One real `createAgentEventBuffer` owner per generation, with isolated turn
@@ -47,6 +51,7 @@ impl InteractionEvents {
             run_id,
             closed: false,
             events: Vec::new(),
+            notices: Vec::new(),
         }));
         if let Some(previous) = state
             .turns
@@ -55,6 +60,7 @@ impl InteractionEvents {
             let mut previous = lock(&previous);
             previous.closed = true;
             previous.events.clear();
+            previous.notices.clear();
         }
         let port = TurnEvents {
             generation: self.state.clone(),
@@ -117,12 +123,26 @@ impl TurnEvents {
         lock(&self.turn).run_id.clone()
     }
 
+    /// Hold predecessor discard notices for this turn. They are appended after
+    /// `turn_started` so the stream's lifecycle integrity check accepts them.
+    pub fn queue_notices(&self, notices: Vec<DiscardNotice>) {
+        if notices.is_empty() {
+            return;
+        }
+        let generation = lock(&self.generation);
+        let mut turn = lock(&self.turn);
+        if !generation.closed && !turn.closed {
+            turn.notices.extend(notices);
+        }
+    }
+
     /// End this run without revoking a newer run in the same session.
     pub fn close(&self) {
         let mut generation = lock(&self.generation);
         let mut turn = lock(&self.turn);
         turn.closed = true;
         turn.events.clear();
+        turn.notices.clear();
         if generation
             .turns
             .get(&turn.identity.session_id)
@@ -149,7 +169,20 @@ impl event::EventSink for TurnEvents {
                 ModuleError::new("Sidecar host event does not match the active turn.").into(),
             );
         }
+        let started = event
+            .get("type")
+            .and_then(JsValue::as_string)
+            .is_some_and(|value| value.equals_str("turn_started"));
         turn.events.push(event);
+        if started {
+            let active_session = turn.identity.session_id.clone();
+            let active_turn = turn.identity.turn_id.clone();
+            let notices = std::mem::take(&mut turn.notices);
+            for notice in notices {
+                turn.events
+                    .push(notice.to_warning(&active_session, &active_turn));
+            }
+        }
         Ok(())
     }
     fn drain_checked(&self) -> Result<Vec<JsObject>, HostError> {
@@ -190,4 +223,80 @@ pub(super) fn close_resource(resource: Option<Arc<dyn FamilyResource>>) -> Runti
         events.close();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::interaction_notice::DiscardSource;
+    use super::*;
+    use crate::host::modules::event::EventSink as _;
+
+    fn started() -> JsObject {
+        let mut event = JsObject::new();
+        event.insert("type".into(), "turn_started".into());
+        event.insert("sessionId".into(), "s".into());
+        event.insert("turnId".into(), "t".into());
+        event
+    }
+    fn text(event: &JsObject, key: &str) -> String {
+        event
+            .get(key)
+            .and_then(JsValue::as_string)
+            .map(|value| value.to_utf8().unwrap())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn queued_notice_is_injected_after_turn_started_exactly_once() {
+        let resource = InteractionEvents::default();
+        let mut router = ModuleRouter::default();
+        let turn = resource
+            .bind_turn(event::TurnIdentity::new("s", "t"), "r".into(), &mut router)
+            .unwrap();
+        turn.queue_notices(vec![DiscardNotice::new(
+            DiscardSource::Steer,
+            2,
+            "s".into(),
+            "old-run".into(),
+        )]);
+        turn.emit(started()).unwrap();
+        let events = turn.drain().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(text(&events[0], "type"), "turn_started");
+        assert_eq!(text(&events[1], "type"), "warning");
+        assert_eq!(text(&events[1], "code"), "interaction_pending_discarded");
+        assert_eq!(text(&events[1], "turnId"), "t");
+        assert_eq!(
+            text(&events[1], "message"),
+            "Previous turn had 2 pending steer item(s) discarded."
+        );
+        let metadata = events[1]
+            .get("metadata")
+            .and_then(JsValue::as_object)
+            .unwrap();
+        assert_eq!(text(metadata, "source"), "steer");
+        assert_eq!(text(metadata, "runId"), "old-run");
+        // The notice is one-shot: the next drain has no repeat.
+        turn.emit(started()).unwrap();
+        let again = turn.drain().unwrap();
+        assert_eq!(again.len(), 1);
+        turn.close();
+    }
+
+    #[test]
+    fn queued_notice_is_dropped_when_the_turn_is_already_closed() {
+        let resource = InteractionEvents::default();
+        let mut router = ModuleRouter::default();
+        let turn = resource
+            .bind_turn(event::TurnIdentity::new("s", "t"), "r".into(), &mut router)
+            .unwrap();
+        turn.close();
+        turn.queue_notices(vec![DiscardNotice::new(
+            DiscardSource::Hooks,
+            1,
+            "s".into(),
+            "old-run".into(),
+        )]);
+        assert!(turn.drain().is_err());
+    }
 }

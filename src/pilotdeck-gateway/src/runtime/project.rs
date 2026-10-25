@@ -152,6 +152,7 @@ mod factory;
 pub mod interaction;
 pub mod interaction_events;
 pub mod interaction_hooks;
+pub mod interaction_notice;
 pub mod interaction_permission;
 pub mod interaction_steer;
 pub mod memory_bundle;

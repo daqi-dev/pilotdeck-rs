@@ -775,3 +775,52 @@ async fn zero_timeout_is_an_immediate_deny_policy() {
         denied("Permission prompt timed out.")
     );
 }
+
+#[tokio::test]
+async fn closing_pending_permission_queues_the_locked_discard_notice() {
+    use crate::runtime::project::interaction_notice::DiscardSource;
+
+    let coordinator = Arc::new(GatewayInteractionCoordinator::default());
+    let resource = InteractionPermission::default();
+    let (turn, _) = bind(
+        &resource,
+        InteractionProfileName::Interactive,
+        "s",
+        coordinator.clone(),
+        Arc::new(|_| true),
+    );
+    let mut request = prompt(&turn, Cancellation::new());
+    park(&mut request).await;
+    assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 1);
+    assert!(turn.take_discard_notices().is_empty());
+    turn.close();
+    assert!(request.await.is_err());
+    let notices = turn.take_discard_notices();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].source, DiscardSource::Permission);
+    assert_eq!(notices[0].count, 1);
+    assert_eq!(notices[0].session_id, "s".into());
+    assert_eq!(notices[0].run_id, "same-run".into());
+    assert_eq!(
+        notices[0].log_line(),
+        r#"{"event":"interaction_pending_discarded","source":"permission","count":1,"sessionId":"s","runId":"same-run"}"#
+    );
+    assert!(turn.take_discard_notices().is_empty());
+    assert_eq!(coordinator.permission_bus().pending_count(&"s".into()), 0);
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn closing_permission_without_pending_queues_no_notice() {
+    let resource = InteractionPermission::default();
+    let (turn, _) = bind(
+        &resource,
+        InteractionProfileName::Interactive,
+        "s",
+        Arc::default(),
+        Arc::new(|_| true),
+    );
+    turn.close();
+    assert!(turn.take_discard_notices().is_empty());
+    resource.dispose().await.unwrap();
+}

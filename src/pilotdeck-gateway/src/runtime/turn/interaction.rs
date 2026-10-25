@@ -222,6 +222,22 @@ impl InteractionTurn {
             .map_err(|missing| {
                 ModuleError::new(format!("Turn handlers missing: {}", missing.join(", ")))
             })?;
+        // #686: every predecessor binding above has now passed its cleanup
+        // barrier, so their discard notices are final. Hand them to this turn's
+        // event buffer; the buffer appends them after `turn_started`.
+        if let Some(events) = &turn.ports.events {
+            let mut notices = Vec::new();
+            if let Some(permission) = &turn.ports.permission {
+                notices.extend(permission.take_discard_notices());
+            }
+            if let Some(hooks) = &turn.ports.hooks {
+                notices.extend(hooks.take_discard_notices());
+            }
+            if let Some(steer) = &turn.ports.steer {
+                notices.extend(steer.take_discard_notices());
+            }
+            events.queue_notices(notices);
+        }
         Ok(turn)
     }
     pub fn manifest(&self) -> &JsObject {

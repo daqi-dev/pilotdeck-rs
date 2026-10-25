@@ -1,5 +1,6 @@
 //! Configured hooks owned by a project generation, with opaque per-run receipts.
 //! The caller keeps its RuntimeLease until the turn and its cleanup have drained.
+use super::interaction_notice::{DiscardNotice, DiscardSource, take_session_notices};
 use super::interaction_permission::{InteractionPermission, TurnPermission};
 use super::{DisposeFuture, FamilyResource, RuntimeError, RuntimeResult};
 use crate::{
@@ -37,6 +38,9 @@ struct State {
     // Keep the session key after revocation: a replacement run must not
     // overtake the predecessor's asynchronous hook cleanup.
     draining: Vec<(JsString, Arc<Run>)>,
+    // #686: pending async hook receipts voided when their run closed. Kept
+    // until the same session binds its next turn (or the generation closes).
+    notices: Vec<DiscardNotice>,
 }
 struct Run {
     owner: Weak<Mutex<State>>,
@@ -55,10 +59,13 @@ struct Run {
     pending: Mutex<Vec<PendingAsyncHookDescriptor>>,
 }
 impl Run {
-    fn close(self: &Arc<Self>) {
+    /// Close once. Returns the pending receipt count observed at the close
+    /// transition, or `None` when this call observed an already-closed run.
+    fn close(self: &Arc<Self>) -> Option<usize> {
         if self.closed.swap(true, Ordering::SeqCst) {
-            return;
+            return None;
         }
+        let pending = lock(&self.pending).len();
         let run = self.clone();
         // Cleanup survives a dropped/timed-out caller's dispose future.
         crate::runtime::cleanup_task::spawn_after(
@@ -97,6 +104,7 @@ impl Run {
                 Ok(())
             },
         );
+        Some(pending)
     }
     async fn wait_closed(&self) -> Result<(), HostError> {
         let mut done = self.done.subscribe();
@@ -227,7 +235,18 @@ impl InteractionHooks {
             .draining
             .retain(|(_, run)| !matches!(&*run.done.borrow(), Some(Ok(()))));
         if let Some(previous) = state.turns.insert(run.session.clone(), run.clone()) {
-            previous.close();
+            if let Some(pending) = previous.close()
+                && pending > 0
+            {
+                let notice = DiscardNotice::new(
+                    DiscardSource::Hooks,
+                    pending,
+                    previous.session.clone(),
+                    previous.run_id.clone(),
+                );
+                notice.log();
+                state.notices.push(notice);
+            }
             state.draining.push((run.session.clone(), previous));
         }
         // The externally supplied abort is observed even when no dispatch is pending.
@@ -267,12 +286,26 @@ impl InteractionHooks {
         }
         state.closed = true;
         state.releases += 1;
+        let mut notices = Vec::new();
         for run in state
             .turns
             .values()
             .chain(state.draining.iter().map(|(_, run)| run))
         {
-            run.close();
+            if let Some(pending) = run.close()
+                && pending > 0
+            {
+                notices.push(DiscardNotice::new(
+                    DiscardSource::Hooks,
+                    pending,
+                    run.session.clone(),
+                    run.run_id.clone(),
+                ));
+            }
+        }
+        for notice in notices {
+            notice.log();
+            state.notices.push(notice);
         }
     }
     pub fn is_closed(&self) -> bool {
@@ -349,7 +382,18 @@ impl TurnHooks {
     }
     pub fn close(&self) {
         let mut state = lock(&self.state);
-        self.run.close();
+        if let Some(pending) = self.run.close()
+            && pending > 0
+        {
+            let notice = DiscardNotice::new(
+                DiscardSource::Hooks,
+                pending,
+                self.run.session.clone(),
+                self.run.run_id.clone(),
+            );
+            notice.log();
+            state.notices.push(notice);
+        }
         if state
             .turns
             .get(&self.run.session)
@@ -365,6 +409,11 @@ impl TurnHooks {
                     .push((self.run.session.clone(), self.run.clone()));
             }
         }
+    }
+    /// Take this session's pending-discard notices for next-turn delivery.
+    pub fn take_discard_notices(&self) -> Vec<DiscardNotice> {
+        let mut state = lock(&self.state);
+        take_session_notices(&mut state.notices, &self.run.session)
     }
     pub async fn wait_closed(&self) -> Result<(), HostError> {
         self.run.wait_closed().await

@@ -1285,3 +1285,69 @@ async fn real_shell_cancel_runs_term_trap_before_runtime_drain() {
     assert_eq!(turn.release_count(), 1);
     resource.dispose().await.unwrap();
 }
+
+#[tokio::test]
+async fn closing_pending_hooks_queues_the_locked_discard_notice() {
+    use crate::runtime::project::interaction_notice::DiscardSource;
+
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let (turn, router) = bind(&resource);
+    let receipt = pending(&turn, &router).await;
+    assert_eq!(receipt.descriptor().hook_name, "command".into());
+    // The notice is produced by the close transition, not before it.
+    assert!(turn.take_discard_notices().is_empty());
+    turn.close();
+    let notices = turn.take_discard_notices();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].source, DiscardSource::Hooks);
+    assert_eq!(notices[0].count, 1);
+    assert_eq!(notices[0].session_id, "s".into());
+    assert_eq!(notices[0].run_id, "same".into());
+    assert_eq!(
+        notices[0].log_line(),
+        r#"{"event":"interaction_pending_discarded","source":"hooks","count":1,"sessionId":"s","runId":"same"}"#
+    );
+    // Taking is one-shot; a later turn must not repeat the notice.
+    assert!(turn.take_discard_notices().is_empty());
+    tokio::time::timeout(Duration::from_secs(3), turn.wait_closed())
+        .await
+        .unwrap()
+        .unwrap();
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn closing_without_pending_hooks_queues_no_notice() {
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let (turn, _) = bind(&resource);
+    turn.close();
+    assert!(turn.take_discard_notices().is_empty());
+    tokio::time::timeout(Duration::from_secs(3), turn.wait_closed())
+        .await
+        .unwrap()
+        .unwrap();
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn same_key_rebind_queues_the_predecessor_notice_once() {
+    use crate::runtime::project::interaction_notice::DiscardSource;
+
+    let resource = InteractionHooks::new(InteractionPermission::default());
+    let (old, old_router) = bind(&resource);
+    let _receipt = pending(&old, &old_router).await;
+    let (replacement, _) = bind(&resource);
+    let notices = replacement.take_discard_notices();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].source, DiscardSource::Hooks);
+    assert_eq!(notices[0].count, 1);
+    assert_eq!(notices[0].run_id, "same".into());
+    assert!(replacement.take_discard_notices().is_empty());
+    old.close();
+    replacement.close();
+    tokio::time::timeout(Duration::from_secs(3), replacement.wait_closed())
+        .await
+        .unwrap()
+        .unwrap();
+    resource.dispose().await.unwrap();
+}

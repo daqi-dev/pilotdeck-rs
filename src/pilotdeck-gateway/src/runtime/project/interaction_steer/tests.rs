@@ -557,3 +557,39 @@ async fn interaction_steer_failed_cleanup_blocks_same_key_rebinding_only() {
     assert!(resource.dispose().await.is_err());
     println!("failed barrier: repeated same-key rebind fails; other key remains usable");
 }
+
+#[tokio::test]
+async fn closing_undrained_steer_queues_the_locked_discard_notice() {
+    use crate::runtime::project::interaction_notice::DiscardSource;
+
+    let resource = InteractionSteer::default();
+    let session = resource.bind_session("s".into(), None).unwrap();
+    let turn = bind(&session, &mut ModuleRouter::default(), Cancellation::new());
+    turn.enqueue(item("a")).await.unwrap();
+    assert!(turn.take_discard_notices().is_empty());
+    let discarded = turn.close().await.unwrap();
+    assert_eq!(discarded.len(), 1);
+    assert_eq!(discarded[0].item_id, "a".into());
+    let notices = turn.take_discard_notices();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].source, DiscardSource::Steer);
+    assert_eq!(notices[0].count, 1);
+    assert_eq!(notices[0].session_id, "s".into());
+    assert_eq!(notices[0].run_id, "same-run".into());
+    assert_eq!(
+        notices[0].log_line(),
+        r#"{"event":"interaction_pending_discarded","source":"steer","count":1,"sessionId":"s","runId":"same-run"}"#
+    );
+    assert!(turn.take_discard_notices().is_empty());
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn closing_steer_without_unapplied_items_queues_no_notice() {
+    let resource = InteractionSteer::default();
+    let session = resource.bind_session("s".into(), None).unwrap();
+    let turn = bind(&session, &mut ModuleRouter::default(), Cancellation::new());
+    assert!(turn.close().await.unwrap().is_empty());
+    assert!(turn.take_discard_notices().is_empty());
+    resource.dispose().await.unwrap();
+}
