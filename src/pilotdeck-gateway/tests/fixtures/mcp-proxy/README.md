@@ -150,10 +150,8 @@ TS 并与入库逐字节比较。
 
 ## 已知未覆盖
 
-- 代理 URL 只支持 `http:` scheme。TS 的 undici 8.3 `ProxyAgent` 支持 `https:`（TLS 连代理）与
-  `socks5:`/`socks:`（`proxy-agent.js:143,166` 的 socks 分支）；Rust 对这两种 scheme 退回直连
-  （`ProxyConfig::new` 返回 `None`，与 ftp/坏 URL 的 catch-and-direct 同形），差异与六字段候选见
-  RESULT「修复轮 1」。
+- 本目录覆盖 HTTP CONNECT；HTTPS 代理、SOCKS5/socks、非法配置防直连的新增金样及实测见
+  [`../mcp-proxy-schemes/README.md`](../mcp-proxy-schemes/README.md)（#676）。
 - `proxy.url` / `proxy.noProxy` 已进入 `McpClientOptions` / `native_mcp_runtime_factory_with_proxy`
   / `ProjectMcpRuntimeProviderOptions`；gateway 目前没有构造 `ProjectMcpRuntimeProvider` 的生产
   入口（model/hook 接线另单 #572），宿主接线点见 RESULT。

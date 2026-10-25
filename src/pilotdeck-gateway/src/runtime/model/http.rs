@@ -361,12 +361,11 @@ where
 //   optionally pinned to a port
 //   (`node_modules/undici/lib/dispatcher/env-http-proxy-agent.js:82-140`).
 //
-// Only `http:` proxies are tunnelled (the required CONNECT path); `https:` and
-// `socks5:`/`socks:` proxy URLs are supported by undici 8.3 but not by this
-// connector and fall back to a direct connection, like an unparsable URL does
-// in `installGlobalProxy`. See RESULT for the six-field candidate.
+// HTTP/HTTPS CONNECT and SOCKS5 (including `socks:`) share this connector.
+// A selected but invalid proxy fails closed, including NO_PROXY destinations;
+// only an absent proxy selects direct transport (#676).
 //
-// Every proxied request, including plain `http:` targets, is sent through
+// Every HTTP/HTTPS-proxied request, including plain `http:` targets, uses
 // `CONNECT` because undici's ProxyAgent defaults to `proxyTunnel: true`.
 // Proxy credentials come from the URL userinfo and become
 // `Proxy-Authorization: Basic base64(decodeURIComponent(user):decodeURIComponent(password))`.
@@ -480,14 +479,14 @@ fn non_empty_opt(value: Option<&str>) -> Option<String> {
 /// The active proxy (undici `EnvHttpProxyAgent` + `buildNoProxy`).
 #[derive(Clone, Debug)]
 pub(crate) struct ProxyConfig {
-    proxy: url::Url,
+    proxy: Option<url::Url>,
     /// The joined value the baseline logs and matches `"*"` against.
     no_proxy: String,
     entries: Vec<NoProxyEntry>,
     /// The CONNECT `Proxy-Authorization` value, built at construction like
     /// `ProxyAgent`'s constructor. `decodeURIComponent` throws on malformed
     /// userinfo, which makes the TS install fail; here that is `None` from
-    /// the constructor instead.
+    /// the parser instead. The install path retains an explicit failure.
     authorization: Option<String>,
 }
 impl ProxyConfig {
@@ -540,7 +539,20 @@ impl ProxyConfig {
             .skip(5)
             .find_map(|&key| lookup(key).filter(|value| !value.is_empty()))
             .unwrap_or_default();
-        Self::new_with_extra(&proxy_url, &user_no_proxy, extra_no_proxy.as_deref())
+        let parsed = Self::new_with_extra(&proxy_url, &user_no_proxy, extra_no_proxy.as_deref());
+        // TS first tries env, then config at startup. An invalid env install
+        // must not prevent a valid config from being installed.
+        let parsed = parsed.or_else(|| {
+            settings
+                .filter(|settings| settings.mode == ProxyInstallMode::Startup)
+                .and_then(|settings| Self::new_with_extra(&settings.url, &user_no_proxy, None))
+        });
+        Some(parsed.unwrap_or_else(|| Self {
+            proxy: None,
+            no_proxy: String::new(),
+            entries: Vec::new(),
+            authorization: None,
+        }))
     }
 
     #[cfg(test)]
@@ -554,7 +566,16 @@ impl ProxyConfig {
         extra_no_proxy: Option<&str>,
     ) -> Option<Self> {
         let proxy = url::Url::parse(proxy_url).ok()?;
-        if proxy.host_str().is_none() || proxy.scheme() != "http" {
+        if proxy.host_str().is_none()
+            || !matches!(proxy.scheme(), "http" | "https" | "socks5" | "socks")
+        {
+            return None;
+        }
+        if matches!(proxy.scheme(), "http" | "https")
+            && (proxy.path() != "/"
+                || proxy.query().is_some_and(|value| !value.is_empty())
+                || proxy.fragment().is_some_and(|value| !value.is_empty()))
+        {
             return None;
         }
         let no_proxy = [
@@ -602,7 +623,7 @@ impl ProxyConfig {
         }
         let authorization = proxy_authorization(&proxy).ok()?;
         Some(Self {
-            proxy,
+            proxy: Some(proxy),
             no_proxy,
             entries,
             authorization,
@@ -634,13 +655,21 @@ impl ProxyConfig {
     }
 
     fn host_port(&self) -> (String, u16) {
-        let host = match self.proxy.host() {
+        let Some(proxy) = &self.proxy else {
+            return (String::new(), 0);
+        };
+        let host = match proxy.host() {
             Some(url::Host::Ipv6(address)) => address.to_string(),
             Some(url::Host::Ipv4(address)) => address.to_string(),
             Some(url::Host::Domain(name)) => name.to_owned(),
             None => String::new(),
         };
-        (host, self.proxy.port_or_known_default().unwrap_or(80))
+        let port = if matches!(proxy.scheme(), "socks" | "socks5") {
+            proxy.port().filter(|port| *port != 0).unwrap_or(1080)
+        } else {
+            proxy.port_or_known_default().unwrap_or(80)
+        };
+        (host, port)
     }
 
     /// `host:port` as Node's socket errors print it (IPv6 without brackets).
@@ -690,11 +719,35 @@ impl ProxyConfig {
     async fn tunnel(
         &self,
         target: &hyper::Uri,
-    ) -> Result<(tokio::net::TcpStream, Vec<u8>), ProxyError> {
+        tls: Arc<rustls::ClientConfig>,
+    ) -> Result<(Box<dyn ProxyIo>, Vec<u8>), ProxyError> {
+        let proxy = self.proxy.as_ref().ok_or_else(|| {
+            ProxyError::new(
+                "Invalid or unsupported proxy configuration; direct connection refused".into(),
+            )
+        })?;
         let (host, port) = self.host_port();
-        let mut stream = tokio::net::TcpStream::connect((host.as_str(), port))
+        let stream = tokio::net::TcpStream::connect((host.as_str(), port))
             .await
             .map_err(|error| self.connect_error(error))?;
+        let mut stream: Box<dyn ProxyIo> = if proxy.scheme() == "https" {
+            let name = rustls::pki_types::ServerName::try_from(host)
+                .map_err(|_| ProxyError::new("Invalid HTTPS proxy hostname".into()))?;
+            Box::new(
+                tokio_rustls::TlsConnector::from(tls)
+                    .connect(name, stream)
+                    .await
+                    .map_err(|_| ProxyError::new("HTTPS proxy TLS handshake failed".into()))?,
+            )
+        } else {
+            Box::new(stream)
+        };
+        if matches!(proxy.scheme(), "socks5" | "socks") {
+            super::proxy_socks::connect(&mut stream, proxy, target)
+                .await
+                .map_err(|error| ProxyError::new(error.to_string()))?;
+            return Ok((stream, Vec::new()));
+        }
         let (authority, host_header) = connect_target(target);
         let mut request = format!(
             "CONNECT {authority} HTTP/1.1\r\nhost: {host_header}\r\nproxy-connection: keep-alive\r\n"
@@ -771,8 +824,8 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 /// decodeURIComponent(password))`, or `None` for no username. An invalid
 /// escape or a percent-decoded byte sequence that is not UTF-8 makes
 /// `decodeURIComponent` throw `URIError: URI malformed` in TS, which aborts
-/// the whole proxy install; `Err` here makes the caller fall back to direct
-/// exactly like that failed install (no proxy, so no credentials are sent).
+/// the whole proxy install; `Err` here makes the caller reject installation
+/// without opening a direct connection or sending credentials.
 fn proxy_authorization(proxy: &url::Url) -> Result<Option<String>, ()> {
     let username = proxy.username();
     if username.is_empty() {
@@ -878,13 +931,20 @@ impl<S: hyper::rt::Write + Unpin> hyper::rt::Write for PrefixedStream<S> {
 /// TCP connector that either delegates to hyper's `HttpConnector` or opens an
 /// HTTP `CONNECT` tunnel first. `HttpsConnector` still terminates TLS to the
 /// target on top of the returned socket.
+pub(crate) trait ProxyIo:
+    tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send
+{
+}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> ProxyIo for T {}
+
 #[derive(Clone)]
 pub(crate) struct ProxyConnect {
     inner: HttpConnector,
     proxy: Option<Arc<ProxyConfig>>,
+    tls: Arc<rustls::ClientConfig>,
 }
 impl tower_service::Service<hyper::Uri> for ProxyConnect {
-    type Response = PrefixedStream<TokioIo<tokio::net::TcpStream>>;
+    type Response = PrefixedStream<TokioIo<Box<dyn ProxyIo>>>;
     type Error = Box<dyn std::error::Error + Send + Sync>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
     fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -896,11 +956,15 @@ impl tower_service::Service<hyper::Uri> for ProxyConnect {
             .clone()
             .filter(|proxy| proxy.should_proxy(&destination))
         {
+            let tls = self.tls.clone();
             return Box::pin(async move {
-                let (stream, prefix) = proxy
-                    .tunnel(&destination)
-                    .await
-                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)?;
+                let (stream, prefix) =
+                    tokio::time::timeout(Duration::from_secs(10), proxy.tunnel(&destination, tls))
+                        .await
+                        .map_err(|_| proxy.connect_error(std::io::ErrorKind::TimedOut.into()))?
+                        .map_err(|error| {
+                            Box::new(error) as Box<dyn std::error::Error + Send + Sync>
+                        })?;
                 Ok(PrefixedStream::new(TokioIo::new(stream), prefix))
             });
         }
@@ -908,7 +972,12 @@ impl tower_service::Service<hyper::Uri> for ProxyConnect {
         Box::pin(async move {
             direct
                 .await
-                .map(|stream| PrefixedStream::new(stream, Vec::new()))
+                .map(|stream| {
+                    PrefixedStream::new(
+                        TokioIo::new(Box::new(stream.into_inner()) as Box<dyn ProxyIo>),
+                        Vec::new(),
+                    )
+                })
                 .map_err(Into::into)
         })
     }
@@ -923,11 +992,13 @@ pub(crate) fn proxy_https_connector(
     let mut http = HttpConnector::new();
     http.enforce_http(false);
     http.set_connect_timeout(Some(Duration::from_secs(10)));
+    let tls = Arc::new(config.clone());
     hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(config)
         .https_or_http()
         .enable_http1()
         .wrap_connector(ProxyConnect {
+            tls,
             inner: http,
             proxy: proxy.map(Arc::new),
         })
@@ -3902,8 +3973,10 @@ mod proxy_tests {
         assert_eq!(config.host_port(), ("http".into(), 1));
 
         assert!(ProxyConfig::from_lookup(lookup(&[])).is_none());
-        // An unparsable URL keeps the baseline's direct dispatcher.
-        assert!(ProxyConfig::from_lookup(lookup(&[("HTTP_PROXY", "127.0.0.1:1")])).is_none());
+        // A failed installation stays configured and fails closed (#676).
+        let invalid = ProxyConfig::from_lookup(lookup(&[("HTTP_PROXY", "127.0.0.1:1")])).unwrap();
+        assert!(invalid.proxy.is_none());
+        assert!(invalid.should_proxy(&"http://127.0.0.1/".parse().unwrap()));
     }
 
     #[test]
@@ -4100,6 +4173,109 @@ mod proxy_tests {
                 config.should_proxy(&uri.parse().unwrap()),
                 "{uri} must go through the proxy"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_proxy_never_opens_even_a_no_proxy_target() {
+        use tower_service::Service;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = format!("http://{}/", listener.local_addr().unwrap());
+        for url in [
+            "not a url",
+            "ftp://127.0.0.1:9",
+            "http://user%ZZ:pass@127.0.0.1:9",
+            "http://127.0.0.1:9/path",
+            "https://127.0.0.1:9/?q",
+            "http://127.0.0.1:9/#fragment",
+        ] {
+            for mode in [ProxyInstallMode::Startup, ProxyInstallMode::Reload] {
+                let settings = ProxySettings {
+                    url: url.into(),
+                    mode,
+                    no_proxy: Some("*".into()),
+                };
+                let proxy = ProxyConfig::from_settings_lookup(Some(&settings), |_| None);
+                let mut connector = proxy_https_connector(webpki_client_config(), proxy);
+                let result = connector.call(target.parse().unwrap()).await;
+                let error = match result {
+                    Ok(_) => panic!("invalid proxy opened target: {url}"),
+                    Err(error) => error,
+                };
+                assert!(
+                    error
+                        .to_string()
+                        .contains("Invalid or unsupported proxy configuration"),
+                    "{url}: {error}"
+                );
+            }
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn proxy_handshake_has_a_whole_connect_deadline() {
+        use tower_service::Service;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut connector = proxy_https_connector(
+            webpki_client_config(),
+            ProxyConfig::new(&format!("http://{address}"), ""),
+        );
+        let request =
+            tokio::spawn(async move { connector.call("http://mcp.test/".parse().unwrap()).await });
+        let (_stalled, _) = listener.accept().await.unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let result = tokio::time::timeout(Duration::from_secs(1), request)
+            .await
+            .expect("proxy handshake deadline missing")
+            .unwrap();
+        let error = match result {
+            Ok(_) => panic!("stalled proxy connected"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("Connect Timeout Error"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn proxy_scheme_defaults_and_invalid_origins() {
+        for (url, port) in [
+            ("http://proxy", 80),
+            ("http://proxy:0", 0),
+            ("https://proxy", 443),
+            ("https://proxy:0", 0),
+            ("socks5://proxy", 1080),
+            ("socks://proxy:0", 1080),
+        ] {
+            assert_eq!(
+                ProxyConfig::new(url, "").unwrap().host_port().1,
+                port,
+                "{url}"
+            );
+        }
+        for url in [
+            "http://proxy/path",
+            "https://proxy/?q",
+            "http://proxy/#frag",
+            "ftp://proxy",
+            "not a url",
+        ] {
+            assert!(ProxyConfig::new(url, "").is_none(), "{url}");
+        }
+        for url in [
+            "http://proxy/?#",
+            "socks5://proxy/path",
+            "socks://proxy/?q#frag",
+        ] {
+            assert!(ProxyConfig::new(url, "").is_some(), "{url}");
         }
     }
 
