@@ -27,11 +27,14 @@ pub(crate) fn ignore_sigxfsz_like_gateway() {
 /// 512-byte blocks, so `1` fails any 4 KiB write and `0` fails every write.
 pub(crate) fn child_write_error(child: &str, limit_blocks: u32, path: &std::path::Path) -> String {
     let output = std::process::Command::new("/bin/sh")
+        // The child name and the limit ride positional parameters, never
+        // string interpolation into the script, so a child name containing
+        // spaces, quotes or `$` stays one argument.
         .arg("-c")
-        .arg(format!(
-            "ulimit -f {limit_blocks}; exec \"$0\" --exact {child} --ignored --nocapture"
-        ))
+        .arg("ulimit -f \"$1\"; exec \"$0\" --exact \"$2\" --ignored --nocapture")
         .arg(std::env::current_exe().unwrap())
+        .arg(limit_blocks.to_string())
+        .arg(child)
         .env(CHILD_PATH_ENV, path)
         .output()
         .unwrap();

@@ -54,41 +54,41 @@ pub type HttpClient = Client<HttpConnector, Incoming>;
 /// a directory, read`; node v22.22.0 under `ulimit -f` gives
 /// `EFBIG: file too large, write` with `syscall: 'write'` and no path,
 /// `_tmp/20261025-issue-621-takeover/xfsz-probe/`), while an
-/// open/stat/mkdir/... error names its path. The CLI and the MCP runtime
-/// share this formatter and the libuv table instead of keeping their own
-/// copies.
+/// open/stat/mkdir/... error names its path — even an empty one (`fs.openSync('')`
+/// on node v22.22.0 reports `ENOENT: no such file or directory, open ''`,
+/// `_tmp/20261025-issue-656/fix-r2/empty-path-probe.out`). The CLI and the
+/// MCP runtime share this formatter and the libuv table instead of keeping
+/// their own copies.
 pub fn node_fs_message(
     error: &std::io::Error,
     syscall: &str,
     path: Option<&str>,
 ) -> Option<String> {
-    let path = if matches!(syscall, "read" | "write") {
-        None
-    } else {
-        path
-    };
-    node_io::diagnostic(error, syscall, path).map(|(_, message)| message)
+    node_io::diagnostic(error, syscall, staged_path(syscall, path)).map(|(_, message)| message)
 }
 
 /// [`node_fs_message`] with libuv's `UV_UNKNOWN` fallback for errnos outside
-/// the generated table. The fallback keeps the same stage rule — a descriptor
-/// read/write error carries no path — so callers cannot end up with an
-/// `UNKNOWN` message that the shared formatter would never produce.
+/// the generated table: `UNKNOWN: unknown error` under the same stage and
+/// path rules, formatted by the same `node_io` code — a descriptor read/write
+/// error carries no path there either, and a staged error keeps its own
+/// stage.
 pub fn node_fs_message_or_unknown(
     error: &std::io::Error,
     syscall: &str,
     path: Option<&str>,
 ) -> String {
-    node_fs_message(error, syscall, path).unwrap_or_else(|| {
-        let suffix = if matches!(syscall, "read" | "write") {
-            String::new()
-        } else {
-            path.filter(|path| !path.is_empty())
-                .map(|path| format!(" '{path}'"))
-                .unwrap_or_default()
-        };
-        format!("UNKNOWN: unknown error, {syscall}{suffix}")
-    })
+    node_io::diagnostic_or_unknown(error, syscall, staged_path(syscall, path)).1
+}
+
+/// Descriptor reads and writes carry no path in Node, whatever label the
+/// caller uses; `node_io`'s stage override then restores a staged error's own
+/// labels, so a `descriptor_error` stays pathless.
+fn staged_path<'a>(syscall: &str, path: Option<&'a str>) -> Option<&'a str> {
+    if matches!(syscall, "read" | "write") {
+        None
+    } else {
+        path
+    }
 }
 
 /// Read the original session bytes without transcript validation or sorting.

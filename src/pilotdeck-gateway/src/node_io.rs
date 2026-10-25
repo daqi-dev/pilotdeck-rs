@@ -127,12 +127,47 @@ pub(crate) fn diagnostic(
     {
         return diagnostic(&mkdir.source, "mkdir", Some(&mkdir.path.to_string_lossy()));
     }
-    let (code, description) = lookup(error)?;
+    lookup(error).map(|(code, description)| uv_exception(code, description, error, syscall, path))
+}
+
+/// [`diagnostic`] with libuv's `UV_UNKNOWN` fallback for errnos outside the
+/// generated table: `UNKNOWN: unknown error`, under the same stage and path
+/// rules, formatted by the same code — so a staged error renders the same
+/// through either entry point, and callers cannot get an `UNKNOWN` message
+/// the shared formatter would never produce.
+pub(crate) fn diagnostic_or_unknown(
+    error: &io::Error,
+    syscall: &str,
+    path: Option<&str>,
+) -> (&'static str, String) {
+    if let Some(mkdir) = error
+        .get_ref()
+        .and_then(|e| e.downcast_ref::<mkdir::MkdirError>())
+    {
+        return diagnostic_or_unknown(&mkdir.source, "mkdir", Some(&mkdir.path.to_string_lossy()));
+    }
+    let (code, description) = lookup(error).unwrap_or(("UNKNOWN", "unknown error"));
+    uv_exception(code, description, error, syscall, path)
+}
+
+/// One message body for both entry points above: `${code}: ${description},
+/// ${syscall}` plus ` 'path'` for a known path, even an empty one. Real fs
+/// errors report through the C++ binding formatter, which appends a provided
+/// path verbatim (node v22.22.0: `fs.openSync('')` → `ENOENT: no such file
+/// or directory, open ''`, likewise `statSync`/`readdirSync`; the JS
+/// `UVException` class used to build the table truthiness-drops an empty
+/// path — `_tmp/20261025-issue-656/fix-r2/empty-path-probe.out`). A `Stage`
+/// overrides the caller's syscall and path.
+fn uv_exception(
+    code: &'static str,
+    description: &'static str,
+    error: &io::Error,
+    syscall: &str,
+    path: Option<&str>,
+) -> (&'static str, String) {
     let (syscall, path) = stage(error).map_or((syscall, path), |e| (e.syscall, e.path.as_deref()));
-    let suffix = path
-        .filter(|p| !p.is_empty())
-        .map_or(String::new(), |p| format!(" '{p}'"));
-    Some((code, format!("{code}: {description}, {syscall}{suffix}")))
+    let suffix = path.map_or(String::new(), |p| format!(" '{p}'"));
+    (code, format!("{code}: {description}, {syscall}{suffix}"))
 }
 /// readFile errors before descriptor acquisition include the path. Node's
 /// fstat/read descriptor errors have no path. EISDIR fixtures without stage
@@ -360,6 +395,33 @@ mod tests {
             assert!(read_file(&e, "/file").is_none());
             assert!(read_file(&descriptor_error(e, "read"), "/file").is_none());
         }
+    }
+    #[test]
+    fn uv_unknown_fallback_shares_the_stage_and_path_rules() {
+        let e = io::Error::from_raw_os_error(123456);
+        // A known path stays appended — even an empty one, like the C++
+        // binding formatter real fs errors report through — and no path
+        // stays absent.
+        assert_eq!(
+            diagnostic_or_unknown(&e, "open", Some("")).1,
+            "UNKNOWN: unknown error, open ''"
+        );
+        assert_eq!(
+            diagnostic_or_unknown(&e, "stat", Some("/file")).1,
+            "UNKNOWN: unknown error, stat '/file'"
+        );
+        assert_eq!(
+            diagnostic_or_unknown(&e, "stat", None).1,
+            "UNKNOWN: unknown error, stat"
+        );
+        // A Stage overrides the caller's labels in the fallback too, so a
+        // `descriptor_error(e, "write")` keeps reporting `write` with no path
+        // even when the caller labels it open.
+        let staged = descriptor_error(e, "write");
+        assert_eq!(
+            diagnostic_or_unknown(&staged, "open", Some("/file")).1,
+            "UNKNOWN: unknown error, write"
+        );
     }
     #[test]
     fn tmpdir_follows_node_os_tmpdir() {

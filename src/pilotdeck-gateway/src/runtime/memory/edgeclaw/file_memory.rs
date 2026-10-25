@@ -3256,6 +3256,10 @@ mod round6_tests {
 /// `EFBIG: file too large, write` with no path (node v22.22.0,
 /// `_tmp/20261025-issue-656/node-probe/write-stages.out`) — which is also how
 /// their staged errors render through `FileMemoryError` on the mutation path.
+/// Both children realpath the scratch root before writing: `overwrite_at`'s
+/// NOFOLLOW walk starts at `/` and cannot cross macOS' /var symlink, and
+/// `io_write` treats the root the same way so the two ports are judged at one
+/// physical location.
 #[cfg(all(test, unix))]
 mod write_stage_tests {
     use super::*;
@@ -3305,8 +3309,19 @@ mod write_stage_tests {
             );
         };
         crate::test_write_stage::ignore_sigxfsz_like_gateway();
-        let error = io_write(std::path::Path::new(&path), [b'a'; 4096])
-            .expect_err("a write past RLIMIT_FSIZE must fail");
+        // Same root treatment as overwrite_child: realpath the parent so
+        // both children write at one physical location (the shared scratch
+        // sits behind macOS' /var symlink). `io_write` itself opens through
+        // `File::create`, which follows symlinks, so this is fixture
+        // uniformity, not a NOFOLLOW requirement; the printed WRITE_ERROR
+        // below is the descriptor write's EFBIG either way.
+        let target = std::path::PathBuf::from(path);
+        let root = fs::canonicalize(target.parent().expect("scratch root")).unwrap();
+        let error = io_write(
+            root.join(target.file_name().expect("entry file name")),
+            [b'a'; 4096],
+        )
+        .expect_err("a write past RLIMIT_FSIZE must fail");
         println!("WRITE_ERROR={}", FileMemoryError::Io(error));
     }
 

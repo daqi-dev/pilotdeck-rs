@@ -482,6 +482,30 @@ mod tests {
         }
     }
 
+    /// An empty path stays quoted, in the table and in the `UV_UNKNOWN`
+    /// fallback: node v22.22.0's binding formatter appends a known path
+    /// verbatim, empty included (`fs.openSync('')` →
+    /// `ENOENT: no such file or directory, open ''`,
+    /// `_tmp/20261025-issue-656/fix-r2/empty-path-probe.out`).
+    #[test]
+    fn fs_failure_quotes_an_empty_path_like_node() {
+        for (error, expected) in [
+            (
+                std::io::Error::from_raw_os_error(libc::ENOENT),
+                "ENOENT: no such file or directory, open ''",
+            ),
+            (
+                std::io::Error::from_raw_os_error(123456),
+                "UNKNOWN: unknown error, open ''",
+            ),
+        ] {
+            match fs_failure(error, "open", Path::new("")) {
+                Failure::Error(message) => assert_eq!(message, expected),
+                other => panic!("expected Failure::Error, got {other:?}"),
+            }
+        }
+    }
+
     #[test]
     fn unreadable_bundled_root_is_the_missing_warning() {
         let home = temp_home("root-errors");
