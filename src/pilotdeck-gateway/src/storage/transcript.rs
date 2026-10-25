@@ -59,16 +59,25 @@ pub struct WriterState {
 }
 
 pub fn read_transcript(path: impl AsRef<Path>) -> Result<TranscriptRead> {
-    Ok(load(path.as_ref(), MAX_BYTES)?.1)
+    read_transcript_limited(path, None)
 }
 /// TS `readTranscript(path, { maxBytes })`; `None` is the 50 MiB default.
 pub fn read_transcript_limited(
     path: impl AsRef<Path>,
     max_bytes: Option<u64>,
 ) -> Result<TranscriptRead> {
-    Ok(load(path.as_ref(), max_bytes.unwrap_or(MAX_BYTES))?.1)
+    read_transcript_limited_at(path.as_ref(), path.as_ref(), max_bytes)
 }
-fn load(path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
+/// A locked writer reads its canonical IO path, but TS diagnostics retain the
+/// caller's spelling (including directory symlinks) rather than a realpath.
+pub(super) fn read_transcript_limited_at(
+    path: &Path,
+    diagnostic_path: &Path,
+    max_bytes: Option<u64>,
+) -> Result<TranscriptRead> {
+    Ok(load(path, diagnostic_path, max_bytes.unwrap_or(MAX_BYTES))?.1)
+}
+fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
     let bytes = match fs::metadata(path) {
         Ok(meta) if meta.len() > max_bytes => {
             return Ok((
@@ -81,7 +90,7 @@ fn load(path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
                         line: None,
                         message: format!(
                             "Transcript {} is larger than {max_bytes} bytes.",
-                            path.display()
+                            diagnostic_path.display()
                         ),
                     }],
                 },
@@ -101,7 +110,10 @@ fn load(path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
                         code: "transcript_missing",
                         severity: "warning",
                         line: None,
-                        message: format!("Transcript {} does not exist.", path.display()),
+                        message: format!(
+                            "Transcript {} does not exist.",
+                            diagnostic_path.display()
+                        ),
                     }],
                 },
             ));
@@ -222,8 +234,9 @@ impl JsonlLedgerStore {
         path: impl AsRef<Path>,
         session_id: impl Into<JsString>,
     ) -> Result<SessionOperationLedger<Self>> {
-        let (path, lock) = LedgerLock::acquire(path.as_ref())?;
-        let (bytes, read) = load(&path, MAX_BYTES)?;
+        let supplied = path.as_ref();
+        let (path, lock) = LedgerLock::acquire(supplied)?;
+        let (bytes, read) = load(&path, supplied, MAX_BYTES)?;
         // Reading too-large transcripts returns diagnostics, as TS does. Opening
         // a writer must not mistake that empty projection for a fresh session.
         read.ensure_writable()?;

@@ -418,29 +418,63 @@ async fn persistence_snapshot_failed_marker_and_hard_error_are_not_success() {
 #[tokio::test]
 async fn persistence_oversized_log_never_publishes_a_reset_writer() {
     let scratch = Scratch::new();
-    let registry = registry(&scratch, false);
+    assert_oversized_log_rejected(&scratch, scratch.0.clone()).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn persistence_oversized_log_through_symlink_keeps_supplied_path() {
+    let scratch = Scratch::new();
+    let real = scratch.0.join("real");
+    let alias = scratch.0.join("alias");
+    fs::create_dir(&real).unwrap();
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    assert_ne!(alias, alias.canonicalize().unwrap());
+    assert_oversized_log_rejected(&scratch, alias).await;
+}
+
+async fn assert_oversized_log_rejected(scratch: &Scratch, chat_dir: PathBuf) {
+    let registry = registry(scratch, false);
     let lease = registry.acquire(None).unwrap();
     let handle = resource(&lease);
-    let path = scratch.0.join("large.jsonl");
+    let path = chat_dir.join("large.jsonl");
     let file = fs::File::create(&path).unwrap();
     let size = 50 * 1024 * 1024 + 1;
     file.set_len(size).unwrap();
+    let expected = format!(
+        "Transcript {} is larger than 52428800 bytes.",
+        path.display()
+    );
+    // TS readTranscript keeps the supplied path; neither public reader should
+    // resolve symlinks just to format a diagnostic.
+    for read in [
+        crate::storage::read_transcript(&path).unwrap(),
+        crate::storage::read_transcript_limited(&path, Some(size - 1)).unwrap(),
+    ] {
+        assert!(read.entries.is_empty());
+        assert_eq!(
+            read.diagnostics,
+            vec![crate::storage::Diagnostic {
+                code: "transcript_too_large",
+                severity: "error",
+                line: None,
+                message: expected.clone(),
+            }]
+        );
+    }
     let Err(error) = native(&handle).create_session("s".into(), Some(path.clone())) else {
         panic!("size-limit diagnostics must not publish a writable empty chain");
     };
-    let expected = format!(
-        "Transcript {} is larger than 52428800 bytes.",
-        path.canonicalize().unwrap().display()
-    );
     assert!(
-        matches!(error, RecorderError::Store(LedgerError::Invalid(ref message)) if message == &expected)
+        matches!(&error, RecorderError::Store(LedgerError::Invalid(message)) if message == &expected),
+        "persistence error: {error:?}; expected: {expected:?}"
     );
     assert_eq!(fs::metadata(&path).unwrap().len(), size);
     // Sibling writable restore must reject the same size-limited projection.
-    let chat_dir = scratch.0.clone();
+    let adapter_dir = chat_dir.clone();
     let adapter = crate::storage::AsyncTranscriptAdapter::new(
         Arc::new(crate::storage::JsonlTranscriptStore::new()),
-        Arc::new(move |_| chat_dir.clone()),
+        Arc::new(move |_| adapter_dir.clone()),
     );
     let storage = adapter.create_session_storage(crate::storage::SessionStorageInput {
         project_root: scratch.0.join("project"),
@@ -449,23 +483,44 @@ async fn persistence_oversized_log_never_publishes_a_reset_writer() {
         now: None,
     });
     assert_eq!(storage.transcript_path, path);
+    let error = storage.restore().unwrap_err();
     assert!(
-        matches!(storage.restore(), Err(AdapterError::Store(LedgerError::Invalid(message))) if message == expected)
+        matches!(&error, AdapterError::Store(LedgerError::Invalid(message)) if message == &expected),
+        "adapter error: {error:?}; expected: {expected:?}"
     );
+    let Err(error) = JsonlLedgerStore::open(&path, "s") else {
+        panic!("size-limit diagnostics must not publish a writable ledger");
+    };
     assert!(
-        matches!(JsonlLedgerStore::open(&path, "s"), Err(LedgerError::Invalid(message)) if message == expected)
+        matches!(&error, LedgerError::Invalid(message) if message == &expected),
+        "ledger error: {error:?}; expected: {expected:?}"
     );
     // Repeated rejection must release the session's lock too.
+    let Err(error) = native(&handle).create_session("s".into(), Some(path.clone())) else {
+        panic!("repeated oversized open must fail");
+    };
     assert!(
-        matches!(native(&handle).create_session("s".into(), Some(path.clone())), Err(RecorderError::Store(LedgerError::Invalid(message))) if message == expected)
+        matches!(&error, RecorderError::Store(LedgerError::Invalid(message)) if message == &expected),
+        "repeated persistence error: {error:?}; expected: {expected:?}"
     );
     assert_eq!(storage.transcript.snapshot_state().sequence, 0);
     assert_eq!(fs::metadata(&path).unwrap().len(), size);
     assert_eq!(oracle()["events"]["oversizedSequence"], 1);
-    // Positive control: an actual empty log does open and record.
+    // Positive control: a missing/empty log through the same directory opens
+    // and records, and its missing-file diagnostic retains that path too.
+    let empty_path = chat_dir.join("empty.jsonl");
     let empty = native(&handle)
-        .create_session("s".into(), Some(scratch.0.join("empty.jsonl")))
+        .create_session("s".into(), Some(empty_path.clone()))
         .unwrap();
+    assert_eq!(
+        empty.restored.diagnostics,
+        vec![crate::storage::Diagnostic {
+            code: "transcript_missing",
+            severity: "warning",
+            line: None,
+            message: format!("Transcript {} does not exist.", empty_path.display()),
+        }]
+    );
     empty.recorder.start_turn(&"s".into(), &"t".into()).unwrap();
     assert_eq!(empty.read().unwrap().entries.len(), 1);
     drop((empty, handle, lease));
