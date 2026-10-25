@@ -9,7 +9,13 @@
 //! `[lib] path`，以及从 `[lib] src_path` 出发沿 `#[path = ...]` / `include!("...")`
 //! 字面量目标做传递闭包得到的全部编译源（不按扩展名过滤，`.rs.data` 与无扩展名
 //! 文件同样扫描）；闭包中的每个目标都必须留在该 vendored 包目录内、是文件、
-//! 不是 symlink。vendored 包内部的 unsafe 本身仍不属于本守卫范围。
+//! 不是 symlink。扫描面是 rustc 的 fail-closed 超集：目录下所有 `.rs` 文件，以及
+//! 所有含 `#[path` / `include!` / `r#path`（忽略空白，故 `# [ path`、`include ! (`
+//! 也算）的常规文件，不论扩展名；UTF-8 解码失败的二进制数据不会被 rustc 当源码
+//! 编译，跳过。inline `mod name { ... }` 内的 `#[path]` 一律拒绝：rustc 以
+//! `<文件目录>/<模块名>/` 为基准，与本扫描器的「文件目录 + 字面量」不一致，
+//! 否则会审到诱饵文件而漏掉真正编译的文件。vendored 包内部的 unsafe 本身仍不
+//! 属于本守卫范围。
 //! vendored 源码内容不做哈希 pin：内容本身是否可信属于冻结件/人工评审边界；
 //! 本守卫只锁“声明边与源码包含边不能引出该目录”。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
@@ -303,8 +309,44 @@ fn assert_vendored_source_target(
 fn vendored_source_edges(package: &str, directory: &Path, file: &Path) -> Vec<PathBuf> {
     let source = fs::read_to_string(file).unwrap();
     let tokens = source_tokens(&source);
+    // rustc resolves a `#[path]` inside an inline `mod name { ... }` block
+    // against `<containing dir>/<module name>/`, not against the containing
+    // file's directory as this scanner does. Reproducing rustc's directory
+    // ownership rules (they also differ for crate roots and `mod.rs`) is out
+    // of scope, so the shape is rejected: otherwise the scanner could audit a
+    // decoy file inside the package while rustc compiles a different,
+    // unscanned file. Track brace nesting, marking the `{` of `mod <ident> {`.
+    let inline_opens: HashSet<_> = tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| match token {
+            SourceToken::Ident(word)
+                if word == "mod"
+                    && matches!(tokens.get(index + 1), Some(SourceToken::Ident(_)))
+                    && tokens.get(index + 2) == Some(&SourceToken::Punct('{')) =>
+            {
+                Some(index + 2)
+            }
+            _ => None,
+        })
+        .collect();
     let mut targets = Vec::new();
+    let mut inline_depth = 0usize;
+    let mut braces = Vec::new();
     for (index, token) in tokens.iter().enumerate() {
+        match token {
+            SourceToken::Punct('{') => {
+                let inline = inline_opens.contains(&index);
+                braces.push(inline);
+                if inline {
+                    inline_depth += 1;
+                }
+            }
+            SourceToken::Punct('}') => {
+                inline_depth -= usize::from(braces.pop() == Some(true));
+            }
+            _ => {}
+        }
         let SourceToken::Ident(word) = token else {
             continue;
         };
@@ -318,6 +360,11 @@ fn vendored_source_edges(package: &str, directory: &Path, file: &Path) -> Vec<Pa
             )
             && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
         {
+            assert!(
+                inline_depth == 0,
+                "vendored package {package} #[path] appears inside an inline module block, where rustc resolves targets against the module directory instead of the containing file's directory; fail closed: {}",
+                file.display()
+            );
             match tokens.get(index + 2) {
                 Some(SourceToken::Str { value, escaped }) => {
                     assert!(
@@ -366,7 +413,24 @@ fn vendored_source_edges(package: &str, directory: &Path, file: &Path) -> Vec<Pa
     targets
 }
 
-fn collect_vendored_rust_sources(package: &str, directory: &Path, files: &mut Vec<PathBuf>) {
+// Scan every file that can name a source edge, not only `.rs`: `#[path]` and
+// `include!` compile targets with any extension or none. Matching after
+// removing whitespace also covers `# [ path` and `include ! (`, so a spacing
+// variant cannot fall out of the superset. Non-UTF-8 files are binary payloads
+// (e.g. the ICU collator blobs), which rustc cannot compile as Rust source and
+// which therefore cannot introduce an edge; skip them instead of failing the
+// whole guard on data files.
+fn vendored_source_mentions_edge(path: &Path) -> bool {
+    let Ok(text) = String::from_utf8(fs::read(path).unwrap()) else {
+        return false;
+    };
+    let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+    ["#[path", "r#path", "include!"]
+        .iter()
+        .any(|marker| compact.contains(marker))
+}
+
+fn collect_vendored_source_candidates(package: &str, directory: &Path, files: &mut Vec<PathBuf>) {
     for name in entries(directory) {
         let path = directory.join(&name);
         let kind = fs::symlink_metadata(&path).unwrap().file_type();
@@ -376,8 +440,11 @@ fn collect_vendored_rust_sources(package: &str, directory: &Path, files: &mut Ve
             path.display()
         );
         if kind.is_dir() {
-            collect_vendored_rust_sources(package, &path, files);
-        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+            collect_vendored_source_candidates(package, &path, files);
+        } else if kind.is_file()
+            && (path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+                || vendored_source_mentions_edge(&path))
+        {
             files.push(path);
         }
     }
@@ -386,12 +453,13 @@ fn collect_vendored_rust_sources(package: &str, directory: &Path, files: &mut Ve
 // Scan the transitive closure of literal `#[path]` / `include!` targets that
 // starts at the `[lib]` source. Extensions carry no meaning to rustc here:
 // `.rs.data` and extensionless files are compiled exactly like `.rs`, so every
-// target is scanned regardless of its name. The recursive `.rs` sweep is kept
-// as a fail-closed superset (an unreferenced Rust file must not introduce an
-// escaping edge either), but it is not the only seed.
+// target is scanned regardless of its name. The recursive sweep over `.rs`
+// files and every file naming an edge is kept as a fail-closed superset (an
+// unreferenced Rust file must not introduce an escaping edge either), but it
+// is not the only seed.
 fn vendored_compile_closure(package: &str, directory: &Path, lib_sources: Vec<PathBuf>) {
     let mut pending = lib_sources;
-    collect_vendored_rust_sources(package, directory, &mut pending);
+    collect_vendored_source_candidates(package, directory, &mut pending);
     let mut seen = HashSet::new();
     while let Some(file) = pending.pop() {
         let file = file.canonicalize().unwrap_or_else(|error| {
@@ -1226,4 +1294,277 @@ fn compiler_enforces_gateway_boundary() {
         assert_eq!(kind.is_file(), !is_dir, "{relative}");
     }
     child_source_boundary(&fs::read_to_string(child.join("src/lib.rs")).unwrap());
+}
+
+// Negative controls for the vendored source scanner. The guard's only positive
+// control is the real vendored tree: passing there proves the current inputs
+// work, not that a bad input goes red. Each case below feeds a throwaway
+// vendored-shaped tree to `vendored_source_edges` /
+// `collect_vendored_source_candidates` and pins the rejection reason, so a
+// future scanner change cannot silently turn a rejection into a skip.
+#[cfg(test)]
+mod vendored_edge_negative_controls {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct Fixture {
+        root: PathBuf,
+        package: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicU32 = AtomicU32::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "pdrs-449-edges-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(root.join("pkg/src")).unwrap();
+            // The edge check compares canonical targets with the package
+            // directory, so make the fixture root canonical (macOS /var is a
+            // symlink to /private/var).
+            let root = root.canonicalize().unwrap();
+            let package = root.join("pkg");
+            Self { root, package }
+        }
+
+        fn write(root: &Path, relative: &str, text: &str) -> PathBuf {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, text).unwrap();
+            path
+        }
+
+        fn source(&self, relative: &str, text: &str) -> PathBuf {
+            Self::write(&self.package.join("src"), relative, text)
+        }
+
+        fn outside(&self, relative: &str, text: &str) -> PathBuf {
+            Self::write(&self.root, relative, text)
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    // Every rejection is a panic; capture the message so a test asserts the
+    // reason, not merely "something failed".
+    fn rejection(action: impl FnOnce()) -> String {
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(action))
+            .expect_err("the guard must reject this source edge");
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                payload
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_owned())
+            })
+            .unwrap_or_default()
+    }
+
+    fn scan(package: &Path, source: &Path) -> Vec<PathBuf> {
+        vendored_source_edges("fixture", package, source)
+    }
+
+    #[test]
+    fn escaping_path_attribute_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        let source = fixture.source("evil.rs", "#[path = \"../../outside.rs\"]\nmod m;\n");
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(
+            message.contains("escapes its package directory"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn raw_path_attribute_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        let source = fixture.source("evil.rs", "#[r#path = \"../../outside.rs\"]\nmod m;\n");
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(
+            message.contains("escapes its package directory"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn cfg_attr_raw_path_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        let source = fixture.source(
+            "evil.rs",
+            "#[cfg_attr(all(), r#path = \"../../outside.rs\")]\nmod m;\n",
+        );
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(
+            message.contains("escapes its package directory"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn inline_module_path_is_rejected_with_decoy_present() {
+        let fixture = Fixture::new();
+        // The decoy is what the old scanner resolved; the real rustc target
+        // lives one directory deeper. Both exist so only the inline rule can
+        // reject this source.
+        fixture.source("b/leaf.rs", "// decoy\n");
+        fixture.source("a/b/leaf.rs", "// rustc target\n");
+        for attribute in [
+            "#[path = \"b/leaf.rs\"]",
+            "#[r#path = \"b/leaf.rs\"]",
+            "#[cfg_attr(all(), path = \"b/leaf.rs\")]",
+        ] {
+            let source = fixture.source("evil.rs", &format!("mod a {{ {attribute} mod m; }}\n"));
+            let message = rejection(|| {
+                scan(&fixture.package, &source);
+            });
+            assert!(message.contains("inline module"), "{attribute}: {message}");
+        }
+        // Nested inline modules are rejected too; the depth must not pop early.
+        let source = fixture.source(
+            "nested.rs",
+            "mod a { mod b { #[path = \"leaf.rs\"] mod m; } }\n",
+        );
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(message.contains("inline module"), "{message}");
+    }
+
+    #[test]
+    fn inline_module_without_path_is_allowed() {
+        let fixture = Fixture::new();
+        let source = fixture.source(
+            "plain.rs",
+            "mod a { pub fn f() {} mod b { pub fn g() {} } }\n",
+        );
+        assert!(scan(&fixture.package, &source).is_empty());
+    }
+
+    #[test]
+    fn escaping_include_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        let source = fixture.source("evil.rs", "include!(\"../../outside.rs\");\n");
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(
+            message.contains("escapes its package directory"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn non_literal_arguments_are_rejected() {
+        let fixture = Fixture::new();
+        let path = fixture.source(
+            "path.rs",
+            "#[path = concat!(\"..\", \"/outside.rs\")]\nmod m;\n",
+        );
+        let message = rejection(|| {
+            scan(&fixture.package, &path);
+        });
+        assert!(
+            message.contains("#[path] must be a plain string literal"),
+            "{message}"
+        );
+        let include = fixture.source(
+            "include.rs",
+            "include!(concat!(\"..\", \"/outside.rs\"));\n",
+        );
+        let message = rejection(|| {
+            scan(&fixture.package, &include);
+        });
+        assert!(
+            message.contains("include! must be a plain string literal"),
+            "{message}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_targets_are_rejected() {
+        use std::os::unix::fs::symlink;
+        let fixture = Fixture::new();
+        let real = fixture.source("real.rs", "// real file inside the package\n");
+        symlink(&real, fixture.package.join("src/link.rs")).unwrap();
+        let source = fixture.source("evil.rs", "#[path = \"link.rs\"]\nmod m;\n");
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(message.contains("is a symlink"), "{message}");
+        let include = fixture.source("evil_include.rs", "include!(\"link.rs\");\n");
+        let message = rejection(|| {
+            scan(&fixture.package, &include);
+        });
+        assert!(message.contains("is a symlink"), "{message}");
+    }
+
+    #[test]
+    fn normal_edges_resolve_inside_the_package() {
+        let fixture = Fixture::new();
+        let leaf = fixture.source("nested/leaf.rs", "// leaf\n");
+        let attr = fixture.source("attr.rs", "// attr\n");
+        let data = fixture.source("data.inc", "// include\n");
+        let source = fixture.source(
+            "lib.rs",
+            "mod plain { pub fn f() {} }\n\
+             mod plain_nested { mod inner { pub fn g() {} } }\n\
+             #[path = \"nested/leaf.rs\"] mod leaf;\n\
+             #[cfg_attr(all(), path = \"attr.rs\")] mod attr;\n\
+             include!(\"data.inc\");\n\
+             r#include!(\"data.inc\");\n",
+        );
+        let mut targets = scan(&fixture.package, &source);
+        let data = data.canonicalize().unwrap();
+        let mut expected = vec![
+            leaf.canonicalize().unwrap(),
+            attr.canonicalize().unwrap(),
+            data.clone(),
+            data,
+        ];
+        targets.sort();
+        expected.sort();
+        assert_eq!(targets, expected);
+    }
+
+    #[test]
+    fn non_rust_files_naming_edges_are_scanned() {
+        let fixture = Fixture::new();
+        let lib = fixture.source("lib.rs", "// lib\n");
+        let marker = fixture.source("data/blob.inc", "include!(\"x\");\n");
+        // Whitespace variants still name the same edge.
+        let spaced = fixture.source("data/spaced.inc", "include ! (\"x\");\n");
+        let raw = fixture.source("data/raw.inc", "#[r#path = \"x\"] mod m;\n");
+        fixture.source("data/plain.txt", "not source\n");
+        // Invalid UTF-8 is binary data, which rustc cannot compile as source.
+        fs::write(
+            fixture.package.join("src/data/binary.bin"),
+            [0xff, 0xfe, b'#', b'[', b'p'],
+        )
+        .unwrap();
+        let mut files = Vec::new();
+        collect_vendored_source_candidates("fixture", &fixture.package, &mut files);
+        let mut expected = vec![lib, marker, spaced, raw];
+        files.sort();
+        expected.sort();
+        assert_eq!(files, expected);
+    }
 }
