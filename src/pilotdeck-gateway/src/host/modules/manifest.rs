@@ -25,6 +25,31 @@ pub struct ToolSnapshot {
     /// `requiredRuntimeCapabilities` verbatim; None omits the field entirely.
     pub required_runtime_capabilities: Option<Vec<JsString>>,
 }
+impl ToolSnapshot {
+    /// Capture live predicates once with the descriptor's TS safely() rules.
+    /// The native definition remains in the catalog for permission/execution.
+    pub fn from_definition(tool: &dyn ToolDefinition) -> Self {
+        let fields = tool.fields().clone();
+        let empty = JsValue::Object(JsObject::new());
+        let read_only = tool.is_read_only(&empty).unwrap_or(JsValue::Bool(false));
+        let concurrency_safe = tool
+            .is_concurrency_safe(&empty)
+            .unwrap_or(JsValue::Bool(false));
+        let interaction = tool
+            .requires_user_interaction(&empty)
+            .unwrap_or(JsValue::Bool(false));
+        Self {
+            fields,
+            read_only,
+            concurrency_safe,
+            requires_user_interaction: match interaction {
+                JsValue::Undefined | JsValue::Null => JsValue::Bool(false),
+                value => value,
+            },
+            required_runtime_capabilities: tool.required_runtime_capabilities(),
+        }
+    }
+}
 impl ToolDefinition for ToolSnapshot {
     fn fields(&self) -> &JsObject {
         &self.fields
@@ -442,6 +467,63 @@ mod tests {
                 "case {}",
                 text(&field(spec, "name"))
             );
+        }
+    }
+    #[test]
+    fn live_tool_snapshot_preserves_safely_semantics_and_evaluates_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct LiveTool {
+            fields: JsObject,
+            value: Result<JsValue, HostError>,
+            calls: AtomicUsize,
+        }
+        impl LiveTool {
+            fn predicate(&self, input: &JsValue) -> Result<JsValue, HostError> {
+                assert_eq!(input, &JsValue::Object(JsObject::new()));
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.value.clone()
+            }
+        }
+        impl ToolDefinition for LiveTool {
+            fn fields(&self) -> &JsObject {
+                &self.fields
+            }
+            fn is_read_only(&self, input: &JsValue) -> Result<JsValue, HostError> {
+                self.predicate(input)
+            }
+            fn is_concurrency_safe(&self, input: &JsValue) -> Result<JsValue, HostError> {
+                self.predicate(input)
+            }
+            fn requires_user_interaction(&self, input: &JsValue) -> Result<JsValue, HostError> {
+                self.predicate(input)
+            }
+            fn required_runtime_capabilities(&self) -> Option<Vec<JsString>> {
+                Some(vec!["test-capability".into()])
+            }
+        }
+        for value in [
+            Ok(JsValue::Bool(false)),
+            Ok(JsValue::Bool(true)),
+            Ok(JsValue::Null),
+            Ok(JsValue::Undefined),
+            Ok("non-boolean".into()),
+            Err(crate::host::ModuleError::new("predicate failed").into()),
+        ] {
+            let tool = LiveTool {
+                fields: parse_json(
+                    r#"{"name":"live","inputSchema":{},"description":"test","kind":"tool"}"#,
+                )
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone(),
+                value,
+                calls: AtomicUsize::new(0),
+            };
+            let snapshot = ToolSnapshot::from_definition(&tool);
+            let captured = serialize_tool_descriptor(&snapshot);
+            assert_eq!(tool.calls.load(Ordering::SeqCst), 3);
+            assert_eq!(captured, serialize_tool_descriptor(&tool));
         }
     }
 }

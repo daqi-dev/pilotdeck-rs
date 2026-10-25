@@ -20,6 +20,8 @@ struct Handler {
     calls: AtomicUsize,
     disposed: AtomicUsize,
     fail_event: bool,
+    /// Each callback synchronously captures one programmed host-buffer drain.
+    drains: Mutex<std::collections::VecDeque<Result<Vec<JsObject>, HostError>>>,
     /// Leaves the input_accepted callback pending forever, so a received final
     /// stays unapplied and only the host's bounded cancel exit can surface it.
     block_input_accepted: bool,
@@ -73,6 +75,14 @@ impl HostHandler for Handler {
             ));
         }
         Ok(())
+    }
+
+    fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        self.drains
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(vec![]))
     }
 
     fn dispose(&self) -> HostFuture<()> {
@@ -1577,4 +1587,258 @@ async fn dispose_cancels_pending_host_creation_and_rejects_future_submits() {
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert!(session.submit(input(), options()).is_err());
+}
+
+fn host_event(kind: &str) -> JsValue {
+    let mut event = JsObject::new();
+    event.insert("type".into(), kind.into());
+    JsValue::Object(event)
+}
+
+fn queue_host_events(inner: &Handler, events: &[JsValue]) {
+    inner.drains.lock().unwrap().push_back(Ok(events
+        .iter()
+        .map(|event| event.as_object().unwrap().clone())
+        .collect()));
+}
+
+fn buffered_handler(
+    capacity: usize,
+) -> (Arc<Handler>, Arc<StreamHandler>, mpsc::Receiver<JsValue>) {
+    let inner = Arc::new(Handler::default());
+    let (events, receiver) = mpsc::channel(capacity);
+    let handler = Arc::new(StreamHandler {
+        inner: inner.clone(),
+        events,
+        integrity: Arc::new(StreamIntegrity::new()),
+        forwarding: Mutex::default(),
+    });
+    (inner, handler, receiver)
+}
+
+#[tokio::test]
+async fn host_buffer_failures_cut_off_later_events_and_terminals() {
+    for (bad_event, expected) in [
+        (None, "host drain failed"),
+        (
+            Some("turn_started"),
+            "turn_started after the turn already opened",
+        ),
+        (Some("input_accepted"), "input_accepted out of order"),
+        (
+            Some("turn_completed"),
+            "sidecar turn_completed must not reach",
+        ),
+    ] {
+        for aborted in [false, true] {
+            let (inner, handler, rx) = buffered_handler(4);
+            let integrity = handler.integrity.clone();
+            let mut turn = stream(
+                Box::pin(async move {
+                    deliver(&handler, &host_event("turn_started"), false).await?;
+                    deliver(&handler, &host_event("input_accepted"), false).await?;
+                    if let Some(kind) = bad_event {
+                        queue_host_events(&inner, &[host_event(kind)]);
+                    } else {
+                        inner.drains.lock().unwrap().push_back(Err(HostError::new(
+                            HostErrorKind::Callback,
+                            "host drain failed",
+                        )));
+                    }
+                    let failed = handler.module_call(JsValue::Null);
+                    if aborted {
+                        // Cancellation may drop this future; synchronous capture
+                        // must retain the failure independently of polling it.
+                        drop(failed);
+                    } else {
+                        assert!(failed.await.unwrap_err().message.contains(expected));
+                    }
+                    // HostClient turns module Err into a response and keeps reading.
+                    // Even a later otherwise-legal wire payload must be cut off.
+                    let error = deliver(&handler, &host_event("model_event"), false)
+                        .await
+                        .expect_err("host error must cut off later wire events");
+                    assert!(error.message.contains(expected), "{error:?}");
+                    assert_eq!(inner.events.lock().unwrap().len(), 2);
+                    queue_host_events(&inner, &[host_event("model_event")]);
+                    assert!(
+                        handler
+                            .module_call(JsValue::Null)
+                            .await
+                            .unwrap_err()
+                            .message
+                            .contains(expected)
+                    );
+                    if aborted {
+                        Ok(ExecuteResult::Aborted { terminal: None })
+                    } else {
+                        let terminal =
+                            parse_json(r#"{"result":{"type":"success"},"messages":[]}"#).unwrap();
+                        Ok(ExecuteResult::Terminal(wire(&terminal, true)))
+                    }
+                }),
+                rx,
+                integrity,
+            );
+            assert_eq!(
+                next(&mut turn).await.unwrap(),
+                Some(host_event("turn_started"))
+            );
+            assert_eq!(
+                next(&mut turn).await.unwrap(),
+                Some(host_event("input_accepted"))
+            );
+            let error = next(&mut turn).await.unwrap_err();
+            assert!(error.message.contains(expected), "{error:?}");
+            assert_eq!(next(&mut turn).await.unwrap(), None);
+            assert_eq!(next(&mut turn).await.unwrap(), None);
+        }
+    }
+}
+
+#[tokio::test]
+async fn host_buffer_before_turn_started_fails_closed() {
+    for kind in ["model_event", "input_accepted"] {
+        let (inner, handler, rx) = buffered_handler(4);
+        let integrity = handler.integrity.clone();
+        let mut turn = stream(
+            Box::pin(async move {
+                queue_host_events(&inner, &[host_event(kind)]);
+                let error = handler.module_call(JsValue::Null).await.unwrap_err();
+                assert!(error.message.contains("Stream integrity violation"));
+                assert_eq!(
+                    deliver(&handler, &host_event("turn_started"), false)
+                        .await
+                        .unwrap_err()
+                        .message,
+                    error.message
+                );
+                assert!(inner.events.lock().unwrap().is_empty());
+                Ok(ExecuteResult::Aborted { terminal: None })
+            }),
+            rx,
+            integrity,
+        );
+        assert!(
+            next(&mut turn)
+                .await
+                .unwrap_err()
+                .message
+                .contains("Stream integrity violation")
+        );
+        assert_eq!(next(&mut turn).await.unwrap(), None);
+    }
+}
+
+/// Poll once without sleeps or scheduler races, retaining the pending future.
+async fn assert_pending<T>(future: &mut HostFuture<T>) {
+    std::future::poll_fn(|cx| {
+        assert!(future.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn host_buffer_batches_wait_for_reserved_wire_order() {
+    let (inner, handler, mut rx) = buffered_handler(8);
+    let started = host_event("turn_started");
+    let accepted = host_event("input_accepted");
+    let first = [host_event("module_first_a"), host_event("module_first_b")];
+    let second = [host_event("module_second_a"), host_event("module_second_b")];
+    handler.validate_event(&started).unwrap();
+    queue_host_events(&inner, &first);
+    let mut first_call = handler.module_call(JsValue::Null);
+    handler.validate_event(&accepted).unwrap();
+    queue_host_events(&inner, &second);
+    let mut second_call = handler.module_call(JsValue::Null);
+    // Reverse poll order cannot move either batch past the reserved wire slot.
+    assert_pending(&mut second_call).await;
+    assert_pending(&mut first_call).await;
+    assert!(matches!(
+        rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    timeout(FINAL_SYNC_TIMEOUT, handler.event(wire(&started, false)))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut accepted_call = handler.event(wire(&accepted, false));
+    assert_pending(&mut accepted_call).await;
+    timeout(FINAL_SYNC_TIMEOUT, first_call)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_pending(&mut second_call).await;
+    timeout(FINAL_SYNC_TIMEOUT, accepted_call)
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(FINAL_SYNC_TIMEOUT, second_call)
+        .await
+        .unwrap()
+        .unwrap();
+    let expected = [
+        vec![started],
+        first.to_vec(),
+        vec![accepted],
+        second.to_vec(),
+    ]
+    .concat();
+    for event in expected {
+        assert_eq!(rx.try_recv().unwrap(), event);
+    }
+    assert!(matches!(
+        rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    handler
+        .integrity
+        .observe_terminal(Some(&"success".into()))
+        .unwrap();
+}
+
+#[tokio::test]
+async fn host_error_cuts_off_prevalidated_and_backpressured_deliveries() {
+    for pending_send in [false, true] {
+        let (inner, handler, mut rx) = buffered_handler(1);
+        let started = host_event("turn_started");
+        deliver(&handler, &started, false).await.unwrap(); // fill the channel
+        let accepted = host_event("input_accepted");
+        handler.validate_event(&accepted).unwrap();
+        let mut pending = if pending_send {
+            let mut future = handler.event(wire(&accepted, false));
+            assert_pending(&mut future).await; // blocked on capacity
+            Some(future)
+        } else {
+            None
+        };
+        inner.drains.lock().unwrap().push_back(Err(HostError::new(
+            HostErrorKind::Callback,
+            "host drain failed while wire pending",
+        )));
+        assert!(
+            timeout(FINAL_SYNC_TIMEOUT, handler.module_call(JsValue::Null))
+                .await
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(rx.try_recv().unwrap(), started); // earlier applied prefix survives
+        let future = pending
+            .take()
+            .unwrap_or_else(|| handler.event(wire(&accepted, false)));
+        assert!(
+            timeout(FINAL_SYNC_TIMEOUT, future)
+                .await
+                .unwrap()
+                .expect_err("queued event must not survive host failure")
+                .message
+                .contains("host drain failed while wire pending")
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(handler.integrity.observe_aborted().is_err());
+    }
 }
