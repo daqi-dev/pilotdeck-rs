@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_baseline as baseline;
 fn field<'a>(v: &'a JsValue, key: &str) -> &'a JsValue {
     v.get(key).unwrap()
 }
@@ -245,4 +246,10 @@ fn interaction_producer_malformed_graph_is_explicit() {
             ReplayValueError::new("TypeError", "Invalid interaction producer BigInt")
         );
     }
+}
+#[test]
+#[ignore = "requires Node 22 and PDRS_BASELINE; generates the real TS oracle twice"]
+fn interaction_values_regenerate_twice_identically() {
+    baseline::regenerates_identically("interaction-values");
+    baseline::regenerates_identically("interaction-values");
 }
