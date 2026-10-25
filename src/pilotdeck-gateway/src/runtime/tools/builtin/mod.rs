@@ -336,13 +336,11 @@ pub(super) fn failed(
     // Node's fs errors carry the libuv code/description pair. An `ErrorKind`
     // alone conflates EACCES with EPERM and cannot name errnos such as EISDIR
     // or ENOSPC, so prefer the generated table whenever the OS supplied errno.
-    let node_errno = if error.raw_os_error().is_some() {
-        crate::node_io::lookup(&error)
-    } else {
-        None
-    };
-    if let Some((code, description)) = node_errno {
-        let message = format!("{code}: {description}, {operation} '{}'", text(path));
+    // `node_fs_message` also drops the path for a read-stage error, matching
+    // Node's descriptor diagnostics (EISDIR from reading a directory).
+    if error.raw_os_error().is_some()
+        && let Some(message) = crate::node_fs_message(&error, operation, Some(&text(path)))
+    {
         return crate::runtime::tools::ToolError::failed(message);
     }
     let kind = match error.kind() {
@@ -1156,9 +1154,18 @@ mod errno_tests {
             raw(libc::EPERM, "open"),
             "EPERM: operation not permitted, open '/tmp/errno'"
         );
+        // Opening a directory succeeds on POSIX; its EISDIR comes from the
+        // descriptor read, which Node renders without a path (Node v22.22.0:
+        // `readFileSync('/tmp')` -> `EISDIR: illegal operation on a
+        // directory, read`, `syscall === "read"`, `path === undefined`).
         assert_eq!(
             raw(libc::EISDIR, "read"),
-            "EISDIR: illegal operation on a directory, read '/tmp/errno'"
+            "EISDIR: illegal operation on a directory, read"
+        );
+        // An EISDIR raised by open itself (writeFile on a directory) keeps it.
+        assert_eq!(
+            raw(libc::EISDIR, "open"),
+            "EISDIR: illegal operation on a directory, open '/tmp/errno'"
         );
         assert_eq!(
             raw(libc::ENOSPC, "write"),
