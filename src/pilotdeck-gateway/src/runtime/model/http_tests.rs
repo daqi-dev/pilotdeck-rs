@@ -2085,7 +2085,6 @@ async fn complete_response_text_overlong_body_reads_to_eof_then_throws_plain_err
         TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
         TestFrame::After(Duration::from_millis(40), b" "),
     ]]);
-    let started = tokio::time::Instant::now();
     let error = complete_model(&transport, &request, &config, &StreamOptions::default())
         .await
         .expect_err("an over-limit body must fail the text conversion");
@@ -2096,9 +2095,8 @@ async fn complete_response_text_overlong_body_reads_to_eof_then_throws_plain_err
         "real TS: Error, not RangeError/TypeError"
     );
     assert!(
-        started.elapsed() >= Duration::from_millis(70),
-        "the error was raised before the body reached EOF: {:?}",
-        started.elapsed()
+        transport.eof(0),
+        "the error was raised before the body reached EOF"
     );
 }
 
