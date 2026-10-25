@@ -9,7 +9,18 @@ import base64
 import copy
 import hashlib
 import json
+from pathlib import Path
 import re
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    # ``python3 -I`` does not put this directory on sys.path when the module
+    # is executed directly (``--expand`` / ``--compact``), so the sibling
+    # strict-comparison helper needs an explicit path.
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from strict_compare import strict_equal  # noqa: E402
 
 REF = re.compile(r'B/([A-Za-z0-9_./-]+):([0-9]+)')
 
@@ -86,7 +97,7 @@ def group_name(source_ids, ranges, members):
 
 def compact(data):
     """Extract whole identical records by producing ranges and consumer set."""
-    if data.get('format_version') != 1:
+    if not strict_equal(data.get('format_version'), 1):
         raise ValueError('compact expects expanded format_version=1')
     result = copy.deepcopy(data)
     result['format_version'] = 2
@@ -193,8 +204,19 @@ def compact(data):
 
 def expand(data):
     """Return original v1 shape and structural failures before normal checks."""
-    if not isinstance(data, dict) or data.get('format_version') != 2:
+    if not isinstance(data, dict):
         return copy.deepcopy(data), []
+    version = data.get('format_version')
+    if not strict_equal(version, 2):
+        if strict_equal(version, 1):
+            return copy.deepcopy(data), []
+        # A float/bool retype (2.0 / True) is not a v2 ledger: silently
+        # treating it as v1 and rewriting ``format_version`` to 1 would hide
+        # the retype from every downstream pin.
+        return copy.deepcopy(data), [{
+            'code': 'format_version', 'path': '$.format_version',
+            'detail': 'format_version must be exactly int 1 (expanded) or 2 (compact)',
+        }]
     result, failures = copy.deepcopy(data), []
     for table in ('ranges', 'error_code_groups', 'construction_points', 'audit_texts', 'error_summaries'):
         if not isinstance(data.get(table), dict):
