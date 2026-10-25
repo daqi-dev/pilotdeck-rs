@@ -784,6 +784,7 @@ fn assert_no_interaction_resources(context: &StageContext) {
         Resource::InteractionEvents,
         Resource::InteractionPermission,
         Resource::InteractionHooks,
+        Resource::InteractionSteer,
     ] {
         assert!(
             context.resource(resource).is_none(),
@@ -856,8 +857,6 @@ async fn tools_without_interaction_has_no_interaction_marker() {
 
     let families = Families::unwired().with_tools_mcp();
     stage_tools_and_execution_world(&families, &context, &mut group.sink());
-    assert!(context.resource(Resource::InteractionSteer).is_none());
-
     assert_no_interaction_resources(&context);
     assert!(context.resource(Resource::ExecutionWorld).is_some());
     assert!(context.owner(Family::McpProvider).is_some());
@@ -3874,14 +3873,15 @@ async fn interaction_event_registry_keeps_old_generation_until_lease_drain() {
     let root = scratch.0.join("a");
     let runtime = registry.resolve(Some(&root)).unwrap();
     let mut lease = runtime.acquire().unwrap();
-    let old = event_resource(
-        &lease
-            .runtime()
-            .resources()
-            .get::<ProjectResources>()
-            .unwrap()
-            .context(),
-    );
+    let old_context = lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .unwrap()
+        .context();
+    let old = event_resource(&old_context);
+    let old_steer = steer_resource(&old_context);
+    let old_steer_turn = bind_steer(&old_steer);
     let mut old_router = ModuleRouter::default();
     old.bind_turn(
         TurnIdentity::new("session", "turn"),
@@ -3892,14 +3892,18 @@ async fn interaction_event_registry_keeps_old_generation_until_lease_drain() {
     bounded(registry.reload()).await.unwrap();
     let current = registry.resolve(Some(&root)).unwrap();
     let current_lease = current.acquire().unwrap();
-    let new = event_resource(
-        &current_lease
-            .runtime()
-            .resources()
-            .get::<ProjectResources>()
-            .unwrap()
-            .context(),
-    );
+    let new_context = current_lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .unwrap()
+        .context();
+    let new = event_resource(&new_context);
+    let new_steer = steer_resource(&new_context);
+    let new_steer_turn = bind_steer(&new_steer);
+    assert!(!old_steer.is_closed());
+    assert_eq!(old_steer_turn.release_count(), 0);
+    assert!(!new_steer.is_closed());
     let mut new_router = ModuleRouter::default();
     new.bind_turn(
         TurnIdentity::new("session", "turn"),
@@ -3915,6 +3919,11 @@ async fn interaction_event_registry_keeps_old_generation_until_lease_drain() {
     assert!(new_router.event.drain_checked().unwrap().is_empty());
     lease.release().await.unwrap();
     assert!(old.is_closed());
+    assert!(old_steer.is_closed());
+    assert_eq!(old_steer.release_count(), 1);
+    assert_eq!(old_steer_turn.release_count(), 1);
+    assert!(!new_steer.is_closed());
+    assert_eq!(new_steer_turn.release_count(), 0);
     assert_eq!(old.release_count(), 1);
     assert!(
         old_router
@@ -3933,6 +3942,9 @@ async fn interaction_event_registry_keeps_old_generation_until_lease_drain() {
     drop(current_lease);
     bounded(registry.dispose()).await.unwrap();
     assert_eq!(new.release_count(), 1);
+    assert!(new_steer.is_closed());
+    assert_eq!(new_steer.release_count(), 1);
+    assert_eq!(new_steer_turn.release_count(), 1);
 }
 
 fn permission_resource(
@@ -4003,11 +4015,16 @@ async fn interaction_permission_factory_binds_and_closes_in_both_builder_orders(
             .stage(&context, &mut group.sink())
             .unwrap();
         let resource = permission_resource(&context);
+        let steer = steer_resource(&context);
+        let steer_turn = bind_steer(&steer);
         let turn = bind_permission(&resource);
         assert!(turn.prepare(JsValue::Null).await.is_ok());
         group.dispose().await.unwrap();
         group.dispose().await.unwrap();
         assert!(resource.is_closed());
+        assert!(steer.is_closed());
+        assert_eq!(steer.release_count(), 1);
+        assert_eq!(steer_turn.release_count(), 1);
         assert_eq!(resource.release_count(), 1);
         assert!(turn.prepare(JsValue::Null).await.is_err());
     }
@@ -4021,30 +4038,40 @@ async fn interaction_permission_registry_keeps_old_generation_until_lease_drain(
     let root = scratch.0.join("a");
     let runtime = registry.resolve(Some(&root)).unwrap();
     let mut lease = runtime.acquire().unwrap();
-    let old = permission_resource(
-        &lease
-            .runtime()
-            .resources()
-            .get::<ProjectResources>()
-            .unwrap()
-            .context(),
-    );
+    let old_context = lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .unwrap()
+        .context();
+    let old = permission_resource(&old_context);
+    let old_steer = steer_resource(&old_context);
+    let old_steer_turn = bind_steer(&old_steer);
     let old_turn = bind_permission(&old);
     bounded(registry.reload()).await.unwrap();
     let current = registry.resolve(Some(&root)).unwrap();
     let current_lease = current.acquire().unwrap();
-    let new = permission_resource(
-        &current_lease
-            .runtime()
-            .resources()
-            .get::<ProjectResources>()
-            .unwrap()
-            .context(),
-    );
+    let new_context = current_lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .unwrap()
+        .context();
+    let new = permission_resource(&new_context);
+    let new_steer = steer_resource(&new_context);
+    let new_steer_turn = bind_steer(&new_steer);
+    assert!(!old_steer.is_closed());
+    assert_eq!(old_steer_turn.release_count(), 0);
+    assert!(!new_steer.is_closed());
     let new_turn = bind_permission(&new);
     assert!(old_turn.prepare(JsValue::Null).await.is_ok());
     lease.release().await.unwrap();
     assert!(old.is_closed());
+    assert!(old_steer.is_closed());
+    assert_eq!(old_steer.release_count(), 1);
+    assert_eq!(old_steer_turn.release_count(), 1);
+    assert!(!new_steer.is_closed());
+    assert_eq!(new_steer_turn.release_count(), 0);
     assert_eq!(old.release_count(), 1);
     assert!(old_turn.prepare(JsValue::Null).await.is_err());
     assert!(new_turn.prepare(JsValue::Null).await.is_ok());
@@ -4052,6 +4079,9 @@ async fn interaction_permission_registry_keeps_old_generation_until_lease_drain(
     bounded(registry.dispose()).await.unwrap();
     assert!(new.is_closed());
     assert_eq!(new.release_count(), 1);
+    assert!(new_steer.is_closed());
+    assert_eq!(new_steer.release_count(), 1);
+    assert_eq!(new_steer_turn.release_count(), 1);
 }
 
 fn hooks_resource(context: &StageContext) -> super::super::interaction_hooks::InteractionHooks {
@@ -4176,7 +4206,7 @@ async fn interaction_hooks_factory_binds_and_rolls_back_in_both_builder_orders()
     assert_eq!(error, RuntimeError::new("injected after hooks"));
     let (resource, turn, steer, steer_turn) = captured.lock().unwrap().take().unwrap();
     until(|| resource.is_closed()).await;
-    bounded(turn.wait_closed()).await;
+    bounded(turn.wait_closed()).await.unwrap();
     assert_eq!(resource.release_count(), 1);
     assert_eq!(turn.release_count(), 1);
     assert!(turn.pending_receipts().is_err());

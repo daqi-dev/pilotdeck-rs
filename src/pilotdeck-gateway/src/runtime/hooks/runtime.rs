@@ -333,7 +333,7 @@ struct Inner {
     state: Mutex<RuntimeState>,
     in_flight: Mutex<usize>,
     drained: watch::Sender<usize>,
-    dispose_done: watch::Sender<bool>,
+    dispose_done: watch::Sender<Option<Result<(), HostError>>>,
     next_async_hook_id: Mutex<u64>,
     clock: Arc<dyn Fn() -> JsString + Send + Sync>,
     on_async_registered: Option<Arc<dyn AsyncHookRegistrationHandler>>,
@@ -342,6 +342,13 @@ struct Inner {
 #[derive(Clone)]
 pub struct HookRuntime(Arc<Inner>);
 impl HookRuntime {
+    #[cfg(test)]
+    pub(crate) fn poison_cleanup_bus_for_test(&self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _bus = self.0.bus.0.lock().unwrap();
+            panic!("injected hook cleanup bus poison");
+        }));
+    }
     pub fn new(settings: HooksSettings) -> Self {
         Self::with_options(settings, HookRuntimeOptions::default())
     }
@@ -362,7 +369,7 @@ impl HookRuntime {
             state: Mutex::new(RuntimeState::Active),
             in_flight: Mutex::new(0),
             drained: watch::channel(0).0,
-            dispose_done: watch::channel(false).0,
+            dispose_done: watch::channel(None).0,
             next_async_hook_id: Mutex::new(0),
             clock: options.clock,
             on_async_registered: options.on_async_registered,
@@ -622,9 +629,18 @@ impl HookRuntime {
         self.0.pending.remove_delivered();
     }
     pub async fn dispose(&self) {
+        self.dispose_checked()
+            .await
+            .expect("Hook runtime cleanup failed");
+    }
+    pub(crate) async fn dispose_checked(&self) -> Result<(), HostError> {
         let mut done = self.0.dispose_done.subscribe();
         let first = {
-            let mut state = self.0.state.lock().unwrap();
+            let mut state = self
+                .0
+                .state
+                .lock()
+                .map_err(|_| ModuleError::new("Hook runtime state is poisoned."))?;
             match *state {
                 RuntimeState::Active => {
                     *state = RuntimeState::Draining;
@@ -633,26 +649,32 @@ impl HookRuntime {
                 RuntimeState::Draining | RuntimeState::Disposed => false,
             }
         };
-        if !first {
-            // A second dispose returns the first drain, like TS's drainPromise.
-            let _ = done.wait_for(|done| *done).await;
-            return;
+        if first {
+            // The completion guard also covers this nested detached task: an
+            // inner panic must wake the interaction resource waiting on us.
+            let inner = self.0.clone();
+            crate::runtime::cleanup_task::spawn(
+                &tokio::runtime::Handle::current(),
+                self.0.dispose_done.clone(),
+                async move {
+                    inner.bus.dispose();
+                    inner.pending.dispose().await;
+                    inner.callback.dispose().await;
+                    let mut drained = inner.drained.subscribe();
+                    let _ = drained.wait_for(|count| *count == 0).await;
+                    *inner.state.lock().unwrap() = RuntimeState::Disposed;
+                    Ok(())
+                },
+            );
         }
-        // C5: the drain must not live inside this future. `TurnScope` bounds
-        // `handler.dispose()` with a timeout and drops the future on expiry;
-        // keeping the drain in a detached task means state still reaches
-        // Disposed and a later dispose() never waits forever.
-        let inner = self.0.clone();
-        tokio::spawn(async move {
-            inner.bus.dispose();
-            inner.pending.dispose().await;
-            inner.callback.dispose().await;
-            let mut drained = inner.drained.subscribe();
-            let _ = drained.wait_for(|count| *count == 0).await;
-            *inner.state.lock().unwrap() = RuntimeState::Disposed;
-            inner.dispose_done.send_replace(true);
-        });
-        let _ = done.wait_for(|done| *done).await;
+        loop {
+            if let Some(result) = done.borrow_and_update().clone() {
+                return result;
+            }
+            done.changed()
+                .await
+                .map_err(|_| ModuleError::new("Hook runtime cleanup notification was lost."))?;
+        }
     }
 }
 
@@ -1077,6 +1099,9 @@ impl LifecycleRuntime {
     }
     pub async fn dispose(&self) {
         self.hooks.dispose().await;
+    }
+    pub(crate) async fn dispose_checked(&self) -> Result<(), HostError> {
+        self.hooks.dispose_checked().await
     }
 }
 

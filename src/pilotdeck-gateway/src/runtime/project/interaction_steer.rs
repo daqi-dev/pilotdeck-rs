@@ -1,5 +1,8 @@
 //! Session-owned mailboxes with opaque generation/session/run bindings.
 //! Retain the project lease through session disposal and durable turn cleanup.
+//! Host prerequisite: mutation and transcript recorders must complete in bounded
+//! time (including their own I/O deadlines). Disposal preserves durable-first
+//! ordering and cannot release the lease while an admitted recorder is pending.
 use super::{DisposeFuture, FamilyResource, RuntimeError};
 use crate::{
     host::{
@@ -48,6 +51,8 @@ struct Run {
     releases: AtomicUsize,
     applying: tokio::sync::Mutex<()>,
     done: watch::Sender<Option<Closed>>,
+    #[cfg(test)]
+    close_events: Mutex<Option<std::sync::mpsc::Sender<&'static str>>>,
 }
 impl Run {
     fn close(self: &Arc<Self>) {
@@ -55,14 +60,22 @@ impl Run {
             return;
         }
         let run = self.clone();
-        self.executor.spawn(async move {
+        crate::runtime::cleanup_task::spawn(&self.executor, self.done.clone(), async move {
             // A dropped consumer cannot abandon an admitted durable write.
             let _applying = run.applying.lock().await;
             let result = run.steers.mailbox.close(run.turn_id.clone()).await;
             run.steers.mailbox.finish(&run.turn_id);
             run.releases.fetch_add(1, Ordering::SeqCst);
-            run.done.send_replace(Some(result));
+            result
         });
+        #[cfg(test)]
+        self.close_event("closed");
+    }
+    #[cfg(test)]
+    fn close_event(&self, event: &'static str) {
+        if let Some(events) = self.close_events.lock().unwrap().as_ref() {
+            let _ = events.send(event);
+        }
     }
     async fn wait(&self) -> Closed {
         let mut done = self.done.subscribe();
@@ -207,6 +220,8 @@ impl SessionSteer {
             releases: AtomicUsize::new(0),
             applying: tokio::sync::Mutex::new(()),
             done: watch::channel(None).0,
+            #[cfg(test)]
+            close_events: Mutex::default(),
         });
         session.run = Some(run.clone());
         *self.current_run.lock().unwrap() = Some(run.clone());
@@ -234,9 +249,23 @@ impl SessionSteer {
         }));
         // Preserve compaction and the host's tool-checkpoint authorization table.
         let monitor = binding.run.clone();
+        let owner = self.owner.clone();
         self.executor.spawn(async move {
             tokio::select! {
-                _ = monitor.external.cancelled() => monitor.close(),
+                _ = monitor.external.cancelled() => {
+                    // Same admission lock as mutate: close must not pass the
+                    // check -> mailbox queue insertion critical section.
+                    let _state = match owner.0.try_lock() {
+                        Ok(state) => state,
+                        Err(std::sync::TryLockError::WouldBlock) => {
+                            #[cfg(test)]
+                            monitor.close_event("blocked");
+                            owner.0.lock().unwrap()
+                        }
+                        Err(std::sync::TryLockError::Poisoned(error)) => panic!("{error}"),
+                    };
+                    monitor.close();
+                },
                 _ = monitor.wait() => {},
             }
         });
@@ -269,15 +298,20 @@ pub struct TurnSteer {
     run: Arc<Run>,
 }
 impl TurnSteer {
-    fn check(&self, state: &mut State) -> Result<(), HostError> {
+    fn check_identity(&self, state: &mut State) -> Result<(), HostError> {
         let session = self.session.session(state)?;
-        if self.run.closed.load(Ordering::SeqCst)
-            || self.run.external.is_cancelled()
-            || !session
-                .run
-                .as_ref()
-                .is_some_and(|run| Arc::ptr_eq(run, &self.run))
+        if !session
+            .run
+            .as_ref()
+            .is_some_and(|run| Arc::ptr_eq(run, &self.run))
         {
+            return Err(stale());
+        }
+        Ok(())
+    }
+    fn check(&self, state: &mut State) -> Result<(), HostError> {
+        self.check_identity(state)?;
+        if self.run.closed.load(Ordering::SeqCst) || self.run.external.is_cancelled() {
             return Err(stale());
         }
         Ok(())
@@ -306,7 +340,10 @@ impl TurnSteer {
     }
     fn drain(&self, close: bool) -> Result<(Vec<JsObject>, bool), HostError> {
         let mut state = self.session.owner.0.lock().unwrap();
-        self.check(&mut state)?;
+        self.check_identity(&mut state)?;
+        if self.run.closed.load(Ordering::SeqCst) && !self.run.external.is_cancelled() {
+            return Err(stale());
+        }
         let (messages, closed) = if close {
             let result = self.run.steers.drain_or_close();
             (result.messages, result.closed)
@@ -358,8 +395,10 @@ impl TurnSteer {
                     })
                 })
                 .await?;
-            let mut state = turn.session.owner.0.lock().unwrap();
-            turn.check(&mut state)?;
+            // A successful durable write commits delivery, even if cancellation
+            // or session disposal happened during record. `applying` prevents
+            // close/finish/restart; these objects belong to this exact run, so
+            // ack and grants cannot target a replacement session or run.
             if let Some(authorizations) = &turn.run.authorizations {
                 authorizations.apply(&item_id);
             }

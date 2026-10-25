@@ -67,6 +67,129 @@ async fn wait_record(records: &Records, count: usize) {
     .unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn interaction_steer_cancel_monitor_cannot_overtake_admitted_enqueue() {
+    let resource = InteractionSteer::default();
+    let records = Arc::new(Records::default());
+    let session = resource
+        .bind_session("s".into(), Some(records.clone()))
+        .unwrap();
+    let signal = Cancellation::new();
+    let turn = bind(&session, &mut ModuleRouter::default(), signal.clone());
+    let (events, received) = std::sync::mpsc::channel();
+    *turn.run.close_events.lock().unwrap() = Some(events);
+    // `operation` is the hook between check and serialize. The monitor reports
+    // either lock contention or close, so no sleep/scheduling probability is
+    // used to decide which side of the race won.
+    let admitted = turn.mutate(|run| {
+        signal.cancel();
+        let event = received
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        assert_eq!(
+            event, "blocked",
+            "close overtook check -> enqueue admission"
+        );
+        run.steers.mailbox.enqueue(run.turn_id.clone(), item("old"))
+    });
+    assert!(admitted.await.is_err());
+    turn.close().await.unwrap();
+    let mut router = ModuleRouter::default();
+    let current = bind(&session, &mut router, Cancellation::new());
+    assert_eq!(drain(&router, false).await.unwrap(), json!({"messages":[]}));
+    assert!(current.enqueue(item("old")).await.unwrap().accepted);
+    resource.dispose().await.unwrap();
+}
+
+#[tokio::test]
+async fn interaction_steer_cancelled_current_run_can_drain_before_and_after_close() {
+    let oracle: Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/interaction-steer/cancel-oracle.json"
+    ))
+    .unwrap();
+    for (index, close) in [false, true].into_iter().enumerate() {
+        let resource = InteractionSteer::default();
+        let session = resource.bind_session("s".into(), None).unwrap();
+        let signal = Cancellation::new();
+        let mut router = ModuleRouter::default();
+        let turn = bind(&session, &mut router, signal.clone());
+        turn.enqueue(item("a")).await.unwrap();
+        signal.cancel();
+        // Current-thread runtime, and these ready ports do not yield: observe
+        // TS abort -> drain before the monitor's asynchronous close executes.
+        let first = drain(&router, close).await.unwrap();
+        assert_eq!(
+            first["messages"],
+            json!([value(&JsValue::Object(item("a").to_object()))])
+        );
+        assert_eq!(first, oracle["abortDrain"][index]["first"]);
+        assert_eq!(
+            drain(&router, true).await.unwrap(),
+            oracle["abortDrain"][index]["terminal"]
+        );
+        assert_eq!(turn.close().await.unwrap().len(), 1);
+        assert_eq!(drain(&router, false).await.unwrap(), json!({"messages":[]}));
+        assert_eq!(
+            drain(&router, true).await.unwrap(),
+            json!({"messages":[],"closed":true})
+        );
+        assert!(turn.enqueue(item("late")).await.is_err());
+        bind(&session, &mut ModuleRouter::default(), Cancellation::new());
+        assert!(drain(&router, true).await.is_err()); // superseded still fails
+        resource.dispose().await.unwrap();
+    }
+}
+
+#[test]
+fn interaction_steer_cleanup_runtime_shutdown_is_observable() {
+    for close_before_shutdown in [false, true] {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let resource = InteractionSteer::default();
+        let (session, turn) = {
+            let _entered = executor.enter();
+            let session = resource.bind_session("s".into(), None).unwrap();
+            let turn = bind(&session, &mut ModuleRouter::default(), Cancellation::new());
+            if close_before_shutdown {
+                drop(turn.close());
+            }
+            (session, turn)
+        };
+        // No block_on yet: the scheduled close was never polled.
+        drop(executor);
+        drop(turn.close()); // stopped Handle must not unwind synchronously
+        let observer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        observer.block_on(async {
+            let result = tokio::time::timeout(std::time::Duration::from_secs(3), turn.close())
+                .await
+                .unwrap();
+            assert!(result.unwrap_err().to_string().contains("cleanup task"));
+            assert!(session.dispose().await.is_err());
+            assert!(resource.dispose().await.is_err());
+        });
+    }
+}
+
+#[tokio::test]
+async fn interaction_steer_cleanup_poison_reports_error_instead_of_hanging() {
+    let resource = InteractionSteer::default();
+    let session = resource.bind_session("s".into(), None).unwrap();
+    let turn = bind(&session, &mut ModuleRouter::default(), Cancellation::new());
+    turn.run.steers.mailbox.poison_state_for_test();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(3), turn.close())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(error.to_string().contains("cleanup task"));
+    assert!(session.dispose().await.is_err());
+    assert!(resource.dispose().await.is_err());
+}
+
 #[tokio::test]
 async fn interaction_steer_session_trace_matches_real_ts_and_preserves_compaction() {
     let oracle: Value = serde_json::from_str(include_str!(
@@ -248,10 +371,10 @@ async fn interaction_steer_failed_durable_never_acks_or_grants_and_cancel_waits_
     drop(session.dispose());
     assert_eq!(turn.release_count(), 0);
     release.send_replace(true);
-    assert_eq!(turn.close().await.unwrap().len(), 1);
     assert!(turn.close().await.unwrap().is_empty());
-    assert!(turn.messages().is_empty());
-    assert!(grants(&checkpoint).is_empty());
+    assert!(turn.close().await.unwrap().is_empty());
+    assert_eq!(turn.messages(), vec![item("a").message]);
+    assert_eq!(grants(&checkpoint), vec![JsString::from("/safe")]);
     assert_eq!(
         records
             .rows
@@ -260,7 +383,7 @@ async fn interaction_steer_failed_durable_never_acks_or_grants_and_cancel_waits_
             .iter()
             .filter(|v| v["mutation"] == "discard")
             .count(),
-        1
+        0
     );
     assert_eq!(
         records
