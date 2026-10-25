@@ -5,8 +5,9 @@ use pilotdeck_gateway::runtime::memory::edgeclaw::text::{
     build_l2_time_index_id, build_link_id, build_memory_recall_system_context,
     decode_escaped_unicode_text, decode_escaped_unicode_value, general_workspace_dir_in,
     get_workspace_memory_mode_in, hash_text, is_external_record_id, is_general_workspace_dir_in,
-    looks_like_raw_recall_context, normalize_case_trace_context_preview, normalize_text,
-    normalize_workspace_path, now_iso_at, parse_external_record_id, parse_raw_recall_sections,
+    is_general_workspace_dir_with_home, looks_like_raw_recall_context,
+    normalize_case_trace_context_preview, normalize_text, normalize_workspace_path,
+    normalize_workspace_path_from, now_iso_at, parse_external_record_id, parse_raw_recall_sections,
     safe_json_parse, score_match, trace_i18n, truncate,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -215,31 +216,30 @@ fn call(case: &JsValue, clock_ms: i64) -> JsValue {
             text(case, 2),
             text(case, 3),
         )),
-        "normalizeWorkspacePath" => JsValue::String(normalize_workspace_path(text(case, 0))),
+        "normalizeWorkspacePath" => {
+            JsValue::String(normalize_workspace_path(text(case, 0)).unwrap())
+        }
         "generalWorkspaceDir" => {
             JsValue::String(general_workspace_dir_in(Path::new("/fixture/home")))
         }
         "generalWorkspaceDirEmptyHome" => JsValue::String(general_workspace_dir_in(Path::new(""))),
-        "isGeneralWorkspaceDir" => JsValue::Bool(is_general_workspace_dir_in(
-            text(case, 0),
-            Path::new("/fixture/home"),
-        )),
+        "isGeneralWorkspaceDir" => JsValue::Bool(
+            is_general_workspace_dir_in(text(case, 0), Path::new("/fixture/home")).unwrap(),
+        ),
         "isGeneralWorkspaceDirEmptyHome" => {
-            JsValue::Bool(is_general_workspace_dir_in(text(case, 0), Path::new("")))
+            JsValue::Bool(is_general_workspace_dir_in(text(case, 0), Path::new("")).unwrap())
         }
-        "getWorkspaceMemoryMode" => JsValue::String(JsString::from(get_workspace_memory_mode_in(
-            text(case, 0),
-            Path::new("/fixture/home"),
-        ))),
+        "getWorkspaceMemoryMode" => JsValue::String(JsString::from(
+            get_workspace_memory_mode_in(text(case, 0), Path::new("/fixture/home")).unwrap(),
+        )),
         "getWorkspaceMemoryModeEmptyHome" => JsValue::String(JsString::from(
-            get_workspace_memory_mode_in(text(case, 0), Path::new("")),
+            get_workspace_memory_mode_in(text(case, 0), Path::new("")).unwrap(),
         )),
-        "buildExternalProjectLogicalId" => JsValue::String(build_external_project_logical_id(
-            text(case, 0),
-            text(case, 1),
-        )),
+        "buildExternalProjectLogicalId" => JsValue::String(
+            build_external_project_logical_id(text(case, 0), text(case, 1)).unwrap(),
+        ),
         "buildExternalRecordId" => {
-            JsValue::String(build_external_record_id(text(case, 0), text(case, 1)))
+            JsValue::String(build_external_record_id(text(case, 0), text(case, 1)).unwrap())
         }
         "parseExternalRecordId" => match parse_external_record_id(text(case, 0)) {
             Some(parsed) => {
@@ -256,7 +256,7 @@ fn call(case: &JsValue, clock_ms: i64) -> JsValue {
                 Some(JsValue::Array(args)) => args.clone(),
                 _ => Vec::new(),
             };
-            JsValue::Object(trace_i18n(text(case, 0), text(case, 1), &args))
+            JsValue::Object(trace_i18n(text(case, 0), text(case, 1), &args).unwrap())
         }
         "parseRawRecallSections" => sections_value(parse_raw_recall_sections(text(case, 0))),
         "buildMemoryRecallSystemContext" => {
@@ -336,4 +336,51 @@ fn case_trace_preview_matches_ts() {
 #[ignore = "requires fixed PDRS_BASELINE with Node 22 and tsx"]
 fn fixture_regenerates_identically() {
     baseline::regenerates_identically("edgeclaw-text");
+}
+
+#[test]
+fn normalize_workspace_path_reports_a_missing_cwd() {
+    // Node probe: with the cwd deleted, `path.resolve('/abs/x/../y')` still
+    // returns `/abs/y`, while `path.resolve('rel/x')` throws
+    // `ENOENT: no such file or directory, uv_cwd`.
+    let dead_cwd = || Err(std::io::Error::from_raw_os_error(libc::ENOENT));
+    let error = normalize_workspace_path_from(dead_cwd(), &JsString::from("rel/x")).unwrap_err();
+    assert_eq!(error.io_code(), Some("ENOENT"));
+    assert_eq!(
+        normalize_workspace_path_from(dead_cwd(), &JsString::from("/abs/x/../y")).unwrap(),
+        JsString::from("/abs/y")
+    );
+}
+
+#[test]
+fn general_workspace_reports_a_missing_homedir() {
+    // TS evaluates `GENERAL_WORKSPACE_DIR` at module load, so a failing
+    // `os.homedir()` rejects the import instead of returning false.
+    let error = is_general_workspace_dir_with_home(
+        &JsString::from("/fixture/home/.pilotdeck"),
+        Err(
+            pilotdeck_gateway::runtime::memory::edgeclaw::FileMemoryError::Invalid(
+                "os.homedir() is unavailable".into(),
+            ),
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "os.homedir() is unavailable");
+}
+
+#[test]
+fn decode_escaped_unicode_value_handles_100k_nesting() {
+    let mut value = JsValue::String(JsString::from("\\u0041"));
+    for _ in 0..100_000 {
+        value = JsValue::Array(vec![value]);
+    }
+    let mut decoded = &decode_escaped_unicode_value(&value, false);
+    let mut depth = 0;
+    while let JsValue::Array(items) = decoded {
+        assert_eq!(items.len(), 1);
+        decoded = &items[0];
+        depth += 1;
+    }
+    assert_eq!(depth, 100_000);
+    assert_eq!(decoded, &JsValue::String(JsString::from("A")));
 }

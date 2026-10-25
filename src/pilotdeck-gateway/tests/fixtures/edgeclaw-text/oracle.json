@@ -1112,6 +1112,79 @@
       }
     },
     {
+      "fn": "traceI18n",
+      "args": [
+        "key",
+        "fb",
+        [
+          [
+            null,
+            {
+              "$undefined": true
+            },
+            1,
+            [
+              2,
+              null
+            ],
+            {
+              "a": 1
+            },
+            true
+          ]
+        ]
+      ],
+      "expected": {
+        "key": "key",
+        "args": [
+          ",,1,2,,[object Object],true"
+        ],
+        "fallback": "fb"
+      }
+    },
+    {
+      "fn": "traceI18n",
+      "args": [
+        "key",
+        "fb",
+        [
+          [
+            null
+          ]
+        ]
+      ],
+      "expected": {
+        "key": "key",
+        "args": [
+          ""
+        ],
+        "fallback": "fb"
+      }
+    },
+    {
+      "fn": "traceI18n",
+      "args": [
+        "key",
+        "fb",
+        [
+          [
+            [
+              {
+                "$undefined": true
+              }
+            ]
+          ]
+        ]
+      ],
+      "expected": {
+        "key": "key",
+        "args": [
+          ""
+        ],
+        "fallback": "fb"
+      }
+    },
+    {
       "fn": "parseRawRecallSections",
       "args": [
         ""

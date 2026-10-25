@@ -15,12 +15,13 @@
 //! so every string input/output is a [`JsString`] instead of `&str`.
 
 use crate::{
-    js_value::number_string,
+    js_value::to_string_units,
+    metadata::resolve_units,
     runtime::memory::{js_is_space_unit, js_trim_units},
 };
-use icu_casemap::CaseMapper;
 use icu_locale_core::LanguageIdentifier;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use std::path::{Path, PathBuf};
 
 // -- `core/utils/text.ts` ---------------------------------------------------
 
@@ -85,28 +86,47 @@ pub fn decode_escaped_unicode_text(text: &JsString, decode_common_escapes: bool)
 }
 
 pub fn decode_escaped_unicode_value(value: &JsValue, decode_common_escapes: bool) -> JsValue {
-    match value {
-        JsValue::String(text) => {
-            JsValue::String(decode_escaped_unicode_text(text, decode_common_escapes))
-        }
-        JsValue::Array(items) => JsValue::Array(
-            items
-                .iter()
-                .map(|item| decode_escaped_unicode_value(item, decode_common_escapes))
-                .collect(),
-        ),
-        JsValue::Object(object) => {
-            let mut decoded = JsObject::new();
-            for (key, item) in object.entries() {
-                decoded.insert(
-                    key.clone(),
-                    decode_escaped_unicode_value(item, decode_common_escapes),
-                );
-            }
-            JsValue::Object(decoded)
-        }
-        other => other.clone(),
+    // Explicit stack: the TS baseline recurses, so a deeply nested JSON value
+    // overflows V8's call stack. Wire values may nest past any Rust stack too.
+    enum Task<'a> {
+        Visit(&'a JsValue),
+        FinishArray(usize),
+        FinishObject(Vec<JsString>),
     }
+    let mut tasks = vec![Task::Visit(value)];
+    let mut done: Vec<JsValue> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(JsValue::String(text)) => done.push(JsValue::String(
+                decode_escaped_unicode_text(text, decode_common_escapes),
+            )),
+            Task::Visit(JsValue::Array(items)) => {
+                tasks.push(Task::FinishArray(items.len()));
+                tasks.extend(items.iter().rev().map(Task::Visit));
+            }
+            Task::Visit(JsValue::Object(object)) => {
+                let entries = object.entries();
+                tasks.push(Task::FinishObject(
+                    entries.iter().map(|(key, _)| key.clone()).collect(),
+                ));
+                tasks.extend(entries.iter().rev().map(|(_, item)| Task::Visit(item)));
+            }
+            Task::Visit(other) => done.push(other.clone()),
+            Task::FinishArray(len) => {
+                let items = done.split_off(done.len() - len);
+                done.push(JsValue::Array(items));
+            }
+            Task::FinishObject(keys) => {
+                let values = done.split_off(done.len() - keys.len());
+                let mut decoded = JsObject::new();
+                for (key, value) in keys.into_iter().zip(values) {
+                    decoded.insert(key, value);
+                }
+                done.push(JsValue::Object(decoded));
+            }
+        }
+    }
+    done.pop().expect("one decoded value")
 }
 
 /// `text.replace(/\s+/g, " ").trim()` over ECMAScript whitespace units.
@@ -267,9 +287,12 @@ pub const EXTERNAL_PROJECT_PREFIX: &str = "external-project:";
 /// `GENERAL_WORKSPACE_DIR = join(homedir(), ".pilotdeck")`, computed lazily so
 /// an isolated `HOME` (or the passwd fallback) is observed per call.
 pub fn general_workspace_dir() -> Result<JsString, super::file_memory::FileMemoryError> {
-    Ok(general_workspace_dir_in(
-        &super::storage::accessors::homedir()?,
-    ))
+    Ok(general_workspace_dir_in(&general_workspace_path()?))
+}
+
+/// `os.homedir()/.pilotdeck` as a path; the shared source of the literal.
+pub fn general_workspace_path() -> Result<PathBuf, super::file_memory::FileMemoryError> {
+    Ok(super::storage::accessors::homedir()?.join(".pilotdeck"))
 }
 
 /// The same constant for an explicit `$HOME`, including an empty one.
@@ -278,100 +301,113 @@ pub fn general_workspace_dir_in(home: &std::path::Path) -> JsString {
 }
 
 /// `path.resolve(workspacePath)` on POSIX, preserving UTF-16 units.
-pub fn normalize_workspace_path(workspace_path: &JsString) -> JsString {
-    let mut combined = if workspace_path.units().first() == Some(&u16::from(b'/')) {
-        Vec::new()
-    } else {
-        let cwd = std::env::current_dir()
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let mut units = JsString::from(cwd).units().to_vec();
-        units.push(u16::from(b'/'));
-        units
-    };
-    combined.extend(workspace_path.units());
-    // process.cwd() is absolute, so a relative argument resolves absolutely.
-    let absolute = combined.first() == Some(&u16::from(b'/'));
-    let mut parts: Vec<Vec<u16>> = Vec::new();
-    for part in combined.split(|unit| *unit == u16::from(b'/')) {
-        if part.is_empty() || is_units(part, ".") {
-            continue;
-        }
-        if is_units(part, "..") {
-            let above_root = parts.last().is_none_or(|last| is_units(last, ".."));
-            if !absolute && above_root {
-                parts.push(part.to_vec());
-            } else {
-                parts.pop();
-            }
-        } else {
-            parts.push(part.to_vec());
-        }
-    }
-    let mut out = Vec::new();
-    if absolute {
-        out.push(u16::from(b'/'));
-    }
-    for (i, part) in parts.iter().enumerate() {
-        if i > 0 {
-            out.push(u16::from(b'/'));
-        }
-        out.extend(part);
-    }
-    if out.is_empty() {
-        out.push(u16::from(b'.'));
-    }
-    JsString::from_utf16(out)
+///
+/// A relative path needs `process.cwd()`; `path.resolve` throws
+/// `ENOENT: ... uv_cwd` when it is unavailable (Node probe: with the cwd
+/// deleted, `/abs/x` still resolves but `rel/x` throws). Absolute inputs never
+/// consult it and therefore keep working.
+pub fn normalize_workspace_path(
+    workspace_path: &JsString,
+) -> Result<JsString, super::file_memory::FileMemoryError> {
+    normalize_workspace_path_from(std::env::current_dir(), workspace_path)
 }
 
-pub fn is_general_workspace_dir(workspace_dir: &JsString) -> bool {
-    let general = match general_workspace_dir() {
-        Ok(general) => general,
-        Err(_) => return false,
-    };
-    normalize_workspace_path(workspace_dir).units() == normalize_workspace_path(&general).units()
+/// Injection seam for the `process.cwd()` lookup, exercised by the failure test.
+pub fn normalize_workspace_path_from(
+    cwd: std::io::Result<PathBuf>,
+    workspace_path: &JsString,
+) -> Result<JsString, super::file_memory::FileMemoryError> {
+    if workspace_path.units().first() == Some(&u16::from(b'/')) {
+        return Ok(resolve_units("", workspace_path));
+    }
+    let cwd = cwd?;
+    Ok(resolve_units(&cwd.to_string_lossy(), workspace_path))
 }
 
-pub fn is_general_workspace_dir_in(workspace_dir: &JsString, home: &std::path::Path) -> bool {
-    let general = general_workspace_dir_in(home);
-    normalize_workspace_path(workspace_dir).units() == normalize_workspace_path(&general).units()
+pub fn is_general_workspace_dir(
+    workspace_dir: &JsString,
+) -> Result<bool, super::file_memory::FileMemoryError> {
+    is_general_workspace_dir_with_home(workspace_dir, super::storage::accessors::homedir())
+}
+
+pub fn is_general_workspace_dir_in(
+    workspace_dir: &JsString,
+    home: &Path,
+) -> Result<bool, super::file_memory::FileMemoryError> {
+    is_general_workspace_dir_with_home(workspace_dir, Ok(home.to_path_buf()))
+}
+
+/// `isGeneralWorkspaceDir` with an injectable `os.homedir()`. The TS constant is
+/// evaluated when `general-projects.ts` loads, so a failing `homedir()` rejects
+/// the import instead of misclassifying every workspace (Node loader probe:
+/// `IMPORT-ERR ENOENT ... uv_os_homedir`).
+pub fn is_general_workspace_dir_with_home(
+    workspace_dir: &JsString,
+    home: Result<PathBuf, super::file_memory::FileMemoryError>,
+) -> Result<bool, super::file_memory::FileMemoryError> {
+    let general = general_workspace_dir_in(&home?);
+    Ok(normalize_workspace_path(workspace_dir)?.units()
+        == normalize_workspace_path(&general)?.units())
+}
+
+/// `isGeneralWorkspaceDir` for paths already made absolute by `absolute`:
+/// both inputs are lexically canonical, so `path.resolve` equality is `==`.
+pub fn is_general_workspace_path(workspace_dir: &Path, general: &Path) -> bool {
+    workspace_dir == general
 }
 
 /// `getWorkspaceMemoryMode`: `"general"` for `~/.pilotdeck`, else `"single"`.
-pub fn get_workspace_memory_mode(workspace_dir: &JsString) -> &'static str {
-    if is_general_workspace_dir(workspace_dir) {
+pub fn get_workspace_memory_mode(
+    workspace_dir: &JsString,
+) -> Result<&'static str, super::file_memory::FileMemoryError> {
+    Ok(if is_general_workspace_dir(workspace_dir)? {
         "general"
     } else {
         "single"
-    }
+    })
 }
 
 pub fn get_workspace_memory_mode_in(
     workspace_dir: &JsString,
-    home: &std::path::Path,
-) -> &'static str {
-    if is_general_workspace_dir_in(workspace_dir, home) {
+    home: &Path,
+) -> Result<&'static str, super::file_memory::FileMemoryError> {
+    Ok(if is_general_workspace_dir_in(workspace_dir, home)? {
         "general"
     } else {
         "single"
-    }
+    })
 }
 
 pub fn build_external_project_logical_id(
     workspace_path: &JsString,
     project_id: &JsString,
-) -> JsString {
-    let mut seed = normalize_workspace_path(workspace_path).units().to_vec();
+) -> Result<JsString, super::file_memory::FileMemoryError> {
+    let mut seed = normalize_workspace_path(workspace_path)?.units().to_vec();
     seed.extend("::".encode_utf16());
     seed.extend(project_id.units());
-    JsString::from(format!(
+    Ok(JsString::from(format!(
         "{EXTERNAL_PROJECT_PREFIX}{}",
         hash_text(&JsString::from_utf16(seed))
-    ))
+    )))
 }
 
-pub fn build_external_record_id(workspace_path: &JsString, relative_path: &JsString) -> JsString {
-    let hash = hash_text(&normalize_workspace_path(workspace_path));
+/// `buildExternalProjectLogicalId` for an already-absolute workspace path.
+pub fn build_external_project_logical_id_path(
+    workspace_path: &Path,
+    project_id: &str,
+) -> Result<String, super::file_memory::FileMemoryError> {
+    let workspace = JsString::from(workspace_path.to_string_lossy().into_owned());
+    let id = build_external_project_logical_id(&workspace, &JsString::from(project_id))?;
+    id.to_utf8().map_err(|_| {
+        super::file_memory::FileMemoryError::Invalid("external project id is not UTF-8".into())
+    })
+}
+
+pub fn build_external_record_id(
+    workspace_path: &JsString,
+    relative_path: &JsString,
+) -> Result<JsString, super::file_memory::FileMemoryError> {
+    let hash = hash_text(&normalize_workspace_path(workspace_path)?);
     let prefix = JsString::from(format!("{EXTERNAL_RECORD_PREFIX}{hash}:"));
     let relative = JsString::from_utf16(
         relative_path
@@ -386,7 +422,7 @@ pub fn build_external_record_id(workspace_path: &JsString, relative_path: &JsStr
             })
             .collect(),
     );
-    concat(&[&prefix, &relative])
+    Ok(concat(&[&prefix, &relative]))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -436,43 +472,42 @@ pub fn is_external_record_id(value: &JsString) -> bool {
 
 // -- `core/trace-i18n.ts` ---------------------------------------------------
 
-pub fn trace_i18n(key: &JsString, fallback: &JsString, args: &[JsValue]) -> JsObject {
+/// `String(value)` for a trace argument exceeded the join depth. V8 raises
+/// `RangeError: Maximum call stack size exceeded` at the same point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TraceArgumentOverflow;
+impl std::fmt::Display for TraceArgumentOverflow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(crate::js_value::StackOverflow::MESSAGE)
+    }
+}
+
+pub fn trace_i18n(
+    key: &JsString,
+    fallback: &JsString,
+    args: &[JsValue],
+) -> Result<JsObject, TraceArgumentOverflow> {
     let mut out = JsObject::new();
     out.insert("key".into(), JsValue::String(key.clone()));
     if !args.is_empty() {
-        out.insert(
-            "args".into(),
-            JsValue::Array(args.iter().map(to_js_string).collect()),
-        );
+        let args = args
+            .iter()
+            .map(to_js_string)
+            .collect::<Result<Vec<_>, _>>()?;
+        out.insert("args".into(), JsValue::Array(args));
     }
     // Insertion order matters: key, optional args, fallback.
     out.insert("fallback".into(), JsValue::String(fallback.clone()));
-    out
+    Ok(out)
 }
 
-fn to_js_string(value: &JsValue) -> JsValue {
-    JsValue::String(match value {
-        JsValue::String(text) => text.clone(),
-        JsValue::Number(number) => JsString::from(number_string(*number)),
-        JsValue::Bool(value) => JsString::from(if *value { "true" } else { "false" }),
-        JsValue::Null => JsString::from("null"),
-        JsValue::Undefined => JsString::from("undefined"),
-        // Array.prototype.toString joins recursively; plain objects use the
-        // default tag (no own `toString` reaches this typed argument list).
-        JsValue::Array(items) => {
-            let mut units = Vec::new();
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    units.push(u16::from(b','));
-                }
-                if let JsValue::String(ref text) = to_js_string(item) {
-                    units.extend(text.units());
-                }
-            }
-            JsString::from_utf16(units)
-        }
-        JsValue::Object(_) => JsString::from("[object Object]"),
-    })
+fn to_js_string(value: &JsValue) -> Result<JsValue, TraceArgumentOverflow> {
+    // ECMAScript `String(value)`: reuse the shared implementation, where
+    // `Array.prototype.join` renders null/undefined elements as empty strings
+    // (`String([1, null, 2]) === "1,,2"`).
+    to_string_units(value)
+        .map(|units| JsValue::String(JsString::from_utf16(units)))
+        .map_err(|crate::js_value::StackOverflow| TraceArgumentOverflow)
 }
 
 // -- `service.ts:429-541` ---------------------------------------------------
@@ -669,25 +704,10 @@ fn replace_pair(units: &[u16], from: u16, to: u16) -> Vec<u16> {
     out
 }
 
-/// `String.prototype.toLowerCase` (locale-independent), preserving unpaired
-/// surrogates instead of replacing them like ICU would.
+/// `String.prototype.toLowerCase` (locale-independent), reusing the catalog
+/// projection's canonical case mapper.
 fn lowercase(value: &JsString) -> JsString {
-    let mapper = CaseMapper::new();
-    let locale = LanguageIdentifier::UNKNOWN;
-    let mut out = Vec::with_capacity(value.units().len());
-    let mut run = String::new();
-    for unit in char::decode_utf16(value.units().iter().copied()) {
-        match unit {
-            Ok(c) => run.push(c),
-            Err(error) => {
-                out.extend(mapper.lowercase_to_string(&run, &locale).encode_utf16());
-                run.clear();
-                out.push(error.unpaired_surrogate());
-            }
-        }
-    }
-    out.extend(mapper.lowercase_to_string(&run, &locale).encode_utf16());
-    JsString::from_utf16(out)
+    crate::model_catalog::lower(value, &LanguageIdentifier::UNKNOWN, false)
 }
 
 fn without_space(units: &[u16]) -> Vec<u16> {
@@ -785,8 +805,4 @@ fn json_text(units: &[u16]) -> String {
         }
     }
     out
-}
-
-fn is_units(part: &[u16], value: &str) -> bool {
-    part == value.encode_utf16().collect::<Vec<_>>().as_slice()
 }
