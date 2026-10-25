@@ -167,6 +167,13 @@ export async function collect(baseline: string) {
   add('traceI18n', ['trace.key', 'fallback', [[]]], trace.traceI18n('trace.key', 'fallback', []));
   add('traceI18n', ['key', 'fb', ['x', 1, 1.5, -0, NaN, Infinity]],
     trace.traceI18n('key', 'fb', 'x', 1, 1.5, -0, NaN, Infinity));
+  // Array.prototype.toString renders null/undefined elements as empty strings.
+  // `add` records the rest-argument list, so each array argument is wrapped once.
+  const arrayArg = [null, undefined, 1, [2, null], {a: 1}, true];
+  add('traceI18n', ['key', 'fb', [arrayArg]], trace.traceI18n('key', 'fb', arrayArg));
+  add('traceI18n', ['key', 'fb', [[null]]], trace.traceI18n('key', 'fb', [null]));
+  const nestedArg = [[undefined]];
+  add('traceI18n', ['key', 'fb', [nestedArg]], trace.traceI18n('key', 'fb', nestedArg));
 
   // -- service.ts recall ---------------------------------------------------
   const recallBlocks: string[] = [

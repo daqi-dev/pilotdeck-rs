@@ -6,7 +6,10 @@
 //! boundaries. Public operations serialize on each resolved root, matching synchronous
 //! TS calls. Separate processes require a single writer (TS has
 //! no cross-process transaction or locking either).
-use super::{EdgeClawStorage, StorageError};
+use super::{
+    EdgeClawStorage, StorageError,
+    text::{GENERAL_FEEDBACK_MEMORY_DIR, GENERAL_PROJECT_MEMORY_DIR},
+};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use std::{
     cell::RefCell,
@@ -30,7 +33,7 @@ pub(super) fn io_write(path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> std
 pub const CURRENT_PROJECT_ID: &str = "current_project";
 pub const TMP_PROJECT_ID: &str = "_tmp";
 const PROFILE: &str = "global/UserIdentity/user-profile.md";
-const GENERAL: &str = "GeneralProjects";
+const GENERAL: &str = super::text::GENERAL_PROJECT_META_DIR;
 
 pub type MemoryCandidate = JsObject;
 pub type MemoryFileRecord = JsObject;
@@ -805,7 +808,7 @@ impl Core {
             }
         }
         if self.options.manage_project_files {
-            for dir in ["Project", "Feedback"] {
+            for dir in [GENERAL_PROJECT_MEMORY_DIR, GENERAL_FEEDBACK_MEMORY_DIR] {
                 self.mkdir(dir)?;
             }
         }
@@ -933,8 +936,8 @@ impl Core {
             entries.extend(self.directory(GENERAL)?);
         }
         if self.options.manage_project_files {
-            entries.extend(self.directory("Project")?);
-            entries.extend(self.directory("Feedback")?);
+            entries.extend(self.directory(GENERAL_PROJECT_MEMORY_DIR)?);
+            entries.extend(self.directory(GENERAL_FEEDBACK_MEMORY_DIR)?);
         }
         if self.options.manage_user_profile {
             if let Some(path) = &self.options.user_profile_relative_path
@@ -1659,9 +1662,9 @@ impl Core {
                     .as_deref()
                     .unwrap_or("UserIdentityNotes")
             } else if kind == "feedback" {
-                "Feedback"
+                GENERAL_FEEDBACK_MEMORY_DIR
             } else {
-                "Project"
+                GENERAL_PROJECT_MEMORY_DIR
             };
             format!("{dir}/{}-{}.md", slug(&text(&c, "name")), hash(&seed))
         };

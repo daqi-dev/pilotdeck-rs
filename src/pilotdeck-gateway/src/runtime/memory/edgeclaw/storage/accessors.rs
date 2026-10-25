@@ -7,6 +7,10 @@ use crate::runtime::memory::edgeclaw::file_memory::{
     absolute,
     helpers::{extract_objects, hash, map_global, objects, s, sort_manifest_entries, text},
 };
+use crate::runtime::memory::edgeclaw::text::{
+    EXTERNAL_RECORD_PREFIX, build_external_project_logical_id_path, general_workspace_path,
+    is_general_workspace_path,
+};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use rusqlite::{Connection, OptionalExtension};
 use std::{
@@ -118,7 +122,7 @@ fn passwd_home() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE").map(PathBuf::from)
 }
 fn general_workspace() -> Result<PathBuf> {
-    absolute(&homedir()?.join(".pilotdeck"))
+    absolute(&general_workspace_path()?)
 }
 fn put(o: &mut JsObject, k: &str, v: JsValue) {
     o.insert(k.into(), v);
@@ -126,11 +130,8 @@ fn put(o: &mut JsObject, k: &str, v: JsValue) {
 fn path_text(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
-fn external_id(workspace: &Path, project: &str) -> String {
-    format!(
-        "external-project:{}",
-        hash(&format!("{}::{project}", workspace.display()))
-    )
+fn external_id(workspace: &Path, project: &str) -> Result<String> {
+    build_external_project_logical_id_path(workspace, project)
 }
 /// `options.includeExternal ?? true`, then JS truthiness. Only nullish values
 /// default to true; `0`, `""`, `false` and `NaN` skip external entries.
@@ -279,7 +280,7 @@ impl EdgeClawFileStores {
     ) -> Result<Self> {
         let workspace = absolute(workspace.as_ref())?;
         let general_workspace = absolute(general_workspace.as_ref())?;
-        let mode = if workspace == general_workspace {
+        let mode = if is_general_workspace_path(&workspace, &general_workspace) {
             "general"
         } else {
             "single"
@@ -358,7 +359,9 @@ impl EdgeClawFileStores {
                 let Some(workspace) = read_workspace(&db) else {
                     continue;
                 };
-                if workspace == current || workspace == self.repository.general_workspace {
+                if is_general_workspace_path(&workspace, &current)
+                    || is_general_workspace_path(&workspace, &self.repository.general_workspace)
+                {
                     continue;
                 }
                 let key = hash(&path_text(&workspace));
@@ -432,7 +435,7 @@ impl EdgeClawFileStores {
                 continue;
             };
             let id = text(meta, "projectId");
-            let logical = external_id(&snapshot.workspace, &id);
+            let logical = external_id(&snapshot.workspace, &id)?;
             let external_summary = summary(&snapshot.store, &id)?;
             let mut entry = if let Some(mirror) = mirrors.get(&(snapshot.workspace.clone(), id)) {
                 let mirror_id = text(mirror, "projectId");
@@ -577,7 +580,7 @@ impl EdgeClawFileStores {
                                 &mut e,
                                 "relativePath",
                                 s(format!(
-                                    "external:{}:{path}",
+                                    "{EXTERNAL_RECORD_PREFIX}{}:{path}",
                                     hash(&path_text(&snapshot.workspace))
                                 )),
                             );
@@ -784,7 +787,7 @@ impl EdgeClawFileStores {
             put(&mut input, "ids", JsValue::Array(paths));
             put(&mut input, "maxLines", JsValue::Number(max_lines));
             for mut record in extract_objects(&snapshot.store.get_memory_records_by_ids(&input)?) {
-                let mut path = format!("external:{key}:")
+                let mut path = format!("{EXTERNAL_RECORD_PREFIX}{key}:")
                     .encode_utf16()
                     .collect::<Vec<_>>();
                 path.extend(
