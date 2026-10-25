@@ -51,8 +51,8 @@ LIB_CAP_BOUNDARY_TEST = (
     "runtime::model::http::tests::complete_shape_probe_cap_boundary_is_exact_across_frames"
 )
 LIB_DEFAULT_LIMIT_TEST = "runtime::model::http::tests::shape_string_limit_defaults_to_v8_max"
-LIB_RESPONSE_EOF_TEST = (
-    "runtime::model::http::tests::response_text_counts_eof_replacement_toward_the_cap"
+LIB_RESPONSE_BYTES_TEST = (
+    "runtime::model::http::tests::response_text_cap_counts_received_bytes_not_utf16_units"
 )
 LIB_RESPONSE_DRAIN_TEST = "runtime::model::http::tests::complete_response_text_overlong_body_reads_to_eof_then_throws_plain_error"
 
@@ -255,17 +255,29 @@ CONTROLS = [
     ),
     (
         # The shared reader's in-loop cap boundary must reject exactly
-        # limit + 1 UTF-16 units across frames. The target test also proves
+        # limit + 1 received bytes across frames. The target test also proves
         # the over-limit prefix is discarded before a later body read error;
         # widening the comparison keeps that prefix and fails the assertion.
         # The r7 anchor duplicated once #641 copied the loop into
-        # `response_text`; r8 moved both onto the shared `CappedText::push`.
+        # `response_text`; r8 moved both onto the shared `CappedText::push`,
+        # r9 switched the counter from UTF-16 units to received bytes (#647).
         "capped-text-cap-allows-limit-plus-one",
-        """        self.units += self.text[start..].encode_utf16().count();
-        if self.units > string_limit() {""",
-        """        self.units += self.text[start..].encode_utf16().count();
-        if self.units > string_limit() + 1 {""",
+        """        self.bytes += data.len();
+        if self.bytes > string_limit() {""",
+        """        self.bytes += data.len();
+        if self.bytes > string_limit() + 1 {""",
         LIB_CAP_BOUNDARY_TEST,
+    ),
+    (
+        # The cap must count received UTF-8 bytes, not decoded UTF-16 units
+        # (node v22.22 real-TS probe, _tmp/20261025-issue-647-probe/).
+        # Reverting the counter to units lets the multibyte "bytes over the
+        # cap, units under it" body pass, and the target test's expect_err
+        # fails.
+        "capped-text-cap-counts-utf16-units",
+        """        self.bytes += data.len();""",
+        """        self.bytes += String::from_utf8_lossy(data).encode_utf16().count();""",
+        LIB_RESPONSE_BYTES_TEST,
     ),
     (
         # Equivalent to the r5 off-tree M9 control, now on the single shared
@@ -293,22 +305,11 @@ CONTROLS = [
         LIB_DEFAULT_LIMIT_TEST,
     ),
     (
-        # `CappedText::finish` must count the EOF replacement unit: dropping
-        # the count lets the trailing incomplete UTF-8 sequence pass under the
-        # cap, and the target response_text test's limit+1 expectation fails.
-        "response-text-eof-replacement-not-counted",
-        """        let start = self.text.len();
-        self.decoder.finish(&mut self.text);
-        self.units += self.text[start..].encode_utf16().count();""",
-        """        let start = self.text.len();
-        self.decoder.finish(&mut self.text);
-        let _ = &self.text[start..];""",
-        LIB_RESPONSE_EOF_TEST,
-    ),
-    (
         # The reader must keep draining an over-limit body to EOF: breaking
-        # out of the loop on the frame that crosses the cap raises the string
-        # error one 40ms frame early, below the target test's 70ms floor.
+        # out of the loop on the frame that crosses the cap leaves the
+        # scripted body unpolled, so the target test's EOF-flag assertion
+        # fails deterministically (r9 replaced the old 70ms wall-clock floor,
+        # which only held while the frames were 40ms apart).
         "response-text-returns-before-eof",
         """                if let Some(data) = frame.data_ref() {
                     // The string conversion has not run yet; `push` keeps
@@ -334,8 +335,8 @@ CONTROLS = [
 # oracle controls. Keep the existing runner/recovery protocol unchanged.
 LIB_TESTS = {
     "capped-text-cap-allows-limit-plus-one",
+    "capped-text-cap-counts-utf16-units",
     "shape-probe-string-limit-default-removed",
-    "response-text-eof-replacement-not-counted",
     "response-text-returns-before-eof",
 }
 
@@ -347,8 +348,8 @@ TARGET_CASE = {
     "anthropic-shape-check-bypassed": "anthropic-200-empty-endpoint-fallback:",
     "responses-shape-check-bypassed": "responses-200-empty-endpoint-fallback:",
     "capped-text-cap-allows-limit-plus-one": LIB_CAP_BOUNDARY_TEST,
+    "capped-text-cap-counts-utf16-units": LIB_RESPONSE_BYTES_TEST,
     "shape-probe-string-limit-default-removed": LIB_DEFAULT_LIMIT_TEST,
-    "response-text-eof-replacement-not-counted": LIB_RESPONSE_EOF_TEST,
     "response-text-returns-before-eof": LIB_RESPONSE_DRAIN_TEST,
 }
 

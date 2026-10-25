@@ -437,6 +437,37 @@ async fn google_sdk_errors_match_the_recorded_status_text_and_content_type() {
     assert_eq!(checked, 3);
 }
 
+/// The non-2xx Google path shares the `response_text` reader, so an
+/// over-limit error body is drained to EOF and then rejects with V8's plain
+/// `Error` — the SDK error-body promise never normalizes a string that could
+/// not be created.
+#[tokio::test(start_paused = true)]
+async fn google_non_2xx_overlong_body_throws_the_v8_error() {
+    let _limit = LimitGuard::set(32);
+    let provider = JsValue::Object(JsObject::new());
+    let eof = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let body = SequenceBody {
+        frames: vec![
+            TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
+            TestFrame::After(Duration::from_millis(40), b" "),
+        ]
+        .into(),
+        timer: None,
+        eof: eof.clone(),
+    }
+    .boxed();
+    let response = Response::builder().status(500).body((body, false)).unwrap();
+    let error = google_response_error(response, &StreamOptions::default(), &provider)
+        .await
+        .expect_err("an over-long error body must fail the text conversion");
+    assert!(error.name().equals_str("Error"), "{error:?}");
+    assert_eq!(error.message_text(), crate::fetch_redirect::STRING_TOO_LONG);
+    assert!(
+        eof.load(std::sync::atomic::Ordering::Relaxed),
+        "the error was raised before the error body reached EOF"
+    );
+}
+
 /// Scripted transport: one response per call, body frames served in order;
 /// a frame of `None` stalls forever.
 /// Status and body frames (`None` stalls) of one scripted response.
@@ -1661,6 +1692,9 @@ enum TestFrame {
 struct SequenceBody {
     frames: std::collections::VecDeque<TestFrame>,
     timer: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// Set once the frame stream reached EOF, so tests can assert the reader
+    /// drained the body instead of timing the frames.
+    eof: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl hyper::body::Body for SequenceBody {
     type Data = Bytes;
@@ -1670,6 +1704,7 @@ impl hyper::body::Body for SequenceBody {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, BodyFailure>>> {
         let Some(frame) = self.frames.front().copied() else {
+            self.eof.store(true, std::sync::atomic::Ordering::Relaxed);
             return std::task::Poll::Ready(None);
         };
         match frame {
@@ -1695,46 +1730,90 @@ impl hyper::body::Body for SequenceBody {
 }
 
 /// Scripted transport with ordered frame timing; one entry per endpoint.
-struct Sequence(std::sync::Mutex<Vec<(u16, Vec<TestFrame>)>>);
+/// The parallel flag list records, per requested endpoint, whether its body
+/// was polled to EOF — the deterministic drain signal the cap tests assert
+/// instead of wall-clock frame timing.
+struct Sequence(
+    std::sync::Mutex<Vec<(u16, Vec<TestFrame>)>>,
+    Vec<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+);
 impl ModelHttpTransport for Sequence {
     fn send(&self, _: Request<Full<Bytes>>) -> TransportFuture {
-        let (status, frames) = self.0.lock().unwrap().remove(0);
+        let mut replies = self.0.lock().unwrap();
+        let (status, frames) = replies.remove(0);
+        let index = self.1.len() - replies.len() - 1;
+        drop(replies);
         let body = SequenceBody {
             frames: frames.into(),
             timer: None,
+            eof: self.1[index].clone(),
         }
         .boxed();
         TransportFuture::ready(Ok(Response::builder().status(status).body(body).unwrap()))
     }
 }
+impl Sequence {
+    /// Whether the i-th requested endpoint's body reached EOF.
+    fn eof(&self, endpoint: usize) -> bool {
+        self.1[endpoint].load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
 fn sequence(replies: Vec<Vec<TestFrame>>) -> Sequence {
-    Sequence(std::sync::Mutex::new(
-        replies.into_iter().map(|frames| (200, frames)).collect(),
-    ))
+    sequence_with_status(replies.into_iter().map(|frames| (200, frames)).collect())
+}
+fn sequence_with_status(replies: Vec<(u16, Vec<TestFrame>)>) -> Sequence {
+    let flags = (0..replies.len())
+        .map(|_| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
+        .collect();
+    Sequence(std::sync::Mutex::new(replies), flags)
 }
 
-/// The cap counts UTF-16 units of the decoded text (not bytes). This body is
-/// 24 units but 27 bytes, and the first `é` is split across two frames.
+/// The cap counts the received UTF-8 bytes, not the decoded UTF-16 units
+/// (node v22.22 real-TS probe, `_tmp/20261025-issue-647-probe/RESULT.md`).
+/// This body is 24 units but 27 bytes, and the first `é` is split across two
+/// frames: at a 24-byte cap it overflows and falls back, at exactly 27 it is
+/// accepted without a second request.
 #[tokio::test]
-async fn complete_shape_probe_counts_utf16_units_not_bytes() {
-    let _limit = LimitGuard::set(24);
-    let (request, config) = complete_config();
-    let transport = sequence(vec![vec![
-        TestFrame::Data(b"{\"choices\":[],\"n\":\"\xc3"),
-        TestFrame::Data(b"\xa9\xc3\xa9\xc3\xa9\"}"),
-    ]]);
-    let result = complete_model(&transport, &request, &config, &StreamOptions::default())
-        .await
-        .expect("exactly the limit is still a valid string");
-    assert!(matches!(result, JsValue::Object(_)));
-    assert!(
-        transport.0.lock().unwrap().is_empty(),
-        "under-limit candidate must be accepted without fallback"
-    );
+async fn complete_shape_probe_counts_received_bytes_not_utf16_units() {
+    {
+        let _limit = LimitGuard::set(24);
+        let (request, config) = complete_config();
+        let transport = sequence(vec![
+            vec![
+                TestFrame::Data(b"{\"choices\":[],\"n\":\"\xc3"),
+                TestFrame::Data(b"\xa9\xc3\xa9\xc3\xa9\"}"),
+            ],
+            vec![TestFrame::Data(TEST_TINY_CHOICES)],
+        ]);
+        let result = complete_model(&transport, &request, &config, &StreamOptions::default())
+            .await
+            .expect("the over-byte-cap first candidate falls back");
+        assert!(matches!(result, JsValue::Object(_)));
+        assert!(
+            transport.0.lock().unwrap().is_empty(),
+            "both endpoints were requested"
+        );
+    }
+    {
+        let _limit = LimitGuard::set(27);
+        let (request, config) = complete_config();
+        let transport = sequence(vec![vec![
+            TestFrame::Data(b"{\"choices\":[],\"n\":\"\xc3"),
+            TestFrame::Data(b"\xa9\xc3\xa9\xc3\xa9\"}"),
+        ]]);
+        let result = complete_model(&transport, &request, &config, &StreamOptions::default())
+            .await
+            .expect("exactly the byte limit is still a valid string");
+        assert!(matches!(result, JsValue::Object(_)));
+        assert!(
+            transport.0.lock().unwrap().is_empty(),
+            "under-limit candidate must be accepted without fallback"
+        );
+    }
 }
 
 /// An over-limit first candidate may only fall back after the body reaches
-/// EOF: the body frames are 40ms apart and both must be drained first.
+/// EOF: both frames must be drained first.
 #[tokio::test(start_paused = true)]
 async fn complete_shape_probe_drains_overlong_first_body_before_fallback() {
     let _limit = LimitGuard::set(32);
@@ -1746,7 +1825,6 @@ async fn complete_shape_probe_drains_overlong_first_body_before_fallback() {
         ],
         vec![TestFrame::Data(TEST_TINY_CHOICES)],
     ]);
-    let started = tokio::time::Instant::now();
     let result = complete_model(&transport, &request, &config, &StreamOptions::default())
         .await
         .expect("second candidate accepted");
@@ -1756,9 +1834,8 @@ async fn complete_shape_probe_drains_overlong_first_body_before_fallback() {
         "both endpoints were requested"
     );
     assert!(
-        started.elapsed() >= Duration::from_millis(70),
-        "fallback happened before the over-limit body reached EOF: {:?}",
-        started.elapsed()
+        transport.eof(0),
+        "fallback happened before the over-limit body reached EOF"
     );
 }
 
@@ -1776,7 +1853,6 @@ async fn complete_shape_probe_last_overlong_body_throws_v8_error_after_eof() {
             TestFrame::After(Duration::from_millis(40), b" "),
         ],
     ]);
-    let started = tokio::time::Instant::now();
     let error = complete_model(&transport, &request, &config, &StreamOptions::default())
         .await
         .expect_err("overlong last body must throw");
@@ -1791,9 +1867,8 @@ async fn complete_shape_probe_last_overlong_body_throws_v8_error_after_eof() {
         "both endpoints were requested"
     );
     assert!(
-        started.elapsed() >= Duration::from_millis(70),
-        "error was raised before the body reached EOF: {:?}",
-        started.elapsed()
+        transport.eof(1),
+        "error was raised before the body reached EOF"
     );
 }
 
@@ -1884,13 +1959,15 @@ async fn complete_shape_probe_body_error_beats_string_overflow_on_last() {
     assert!(transport.0.lock().unwrap().is_empty());
 }
 
-/// At EOF an incomplete UTF-8 sequence becomes U+FFFD; that unit counts
-/// toward V8's limit just like decoded text (TS TextDecoder stream mode).
+/// At EOF an incomplete UTF-8 sequence becomes U+FFFD in the decoded text,
+/// but the cap already counted its bytes when they were received: 3 bytes
+/// (`é` plus a lone `\xc3`) overflow a 2-byte cap even though the decoded
+/// text is only 2 UTF-16 units, and exactly 3 bytes stay valid.
 #[tokio::test]
-async fn shape_probe_counts_eof_replacement_against_string_limit() {
+async fn shape_probe_counts_eof_trailing_bytes_against_string_limit() {
     {
         let _limit = LimitGuard::set(2);
-        let mut body = replay_body(Bytes::from_static(b"{}\xc3"), None);
+        let mut body = replay_body(Bytes::from_static(b"\xc3\xa9\xc3"), None);
         assert!(matches!(
             read_shape_probe(&mut body, &StreamOptions::default()).await,
             ShapeProbe::StringTooLong
@@ -1898,7 +1975,7 @@ async fn shape_probe_counts_eof_replacement_against_string_limit() {
     }
     {
         let _limit = LimitGuard::set(3);
-        let mut body = replay_body(Bytes::from_static(b"{}\xc3"), None);
+        let mut body = replay_body(Bytes::from_static(b"\xc3\xa9\xc3"), None);
         assert!(matches!(
             read_shape_probe(&mut body, &StreamOptions::default()).await,
             ShapeProbe::Complete { .. }
@@ -2025,17 +2102,22 @@ async fn complete_response_text_overlong_body_reads_to_eof_then_throws_plain_err
     );
 }
 
-/// At EOF an incomplete UTF-8 sequence becomes one U+FFFD, and the real
-/// conversion counts that unit toward the cap: frames that exactly fill the
-/// cap still throw, one unit of headroom does not.
+/// The cap counts the received UTF-8 bytes, not the decoded UTF-16 units
+/// (node v22.22 real-TS probe, `_tmp/20261025-issue-647-probe/RESULT.md`):
+/// `中中中` is 9 bytes but 3 UTF-16 units, so a body past the byte cap with
+/// units to spare still throws, while exactly the byte cap succeeds.
 #[tokio::test]
-async fn response_text_counts_eof_replacement_toward_the_cap() {
+async fn response_text_cap_counts_received_bytes_not_utf16_units() {
     {
-        let _limit = LimitGuard::set(4);
-        let mut body = replay_body(Bytes::from_static(b"abcd\xc3"), None);
+        let _limit = LimitGuard::set(5);
+        // "中中中": 9 bytes, 3 UTF-16 units.
+        let mut body = replay_body(
+            Bytes::from_static(b"\xe4\xb8\xad\xe4\xb8\xad\xe4\xb8\xad"),
+            None,
+        );
         let error = response_text(&mut body, &StreamOptions::default(), false)
             .await
-            .expect_err("the EOF U+FFFD must push the text over the cap");
+            .expect_err("9 received bytes must pass the 5-byte cap");
         assert!(
             error.name().equals_str("Error")
                 && error.message_text() == crate::fetch_redirect::STRING_TOO_LONG,
@@ -2043,12 +2125,39 @@ async fn response_text_counts_eof_replacement_toward_the_cap() {
         );
     }
     {
-        let _limit = LimitGuard::set(5);
-        let mut body = replay_body(Bytes::from_static(b"abcd\xc3"), None);
+        let _limit = LimitGuard::set(9);
+        let mut body = replay_body(
+            Bytes::from_static(b"\xe4\xb8\xad\xe4\xb8\xad\xe4\xb8\xad"),
+            None,
+        );
         let text = response_text(&mut body, &StreamOptions::default(), false)
             .await
-            .expect("the EOF U+FFFD fits within the cap");
-        assert_eq!(text, "abcd\u{fffd}");
+            .expect("exactly the byte cap is still a valid string");
+        assert_eq!(text, "中中中");
+    }
+    {
+        // "中中" plus a lone \xc3: a trailing incomplete UTF-8 sequence only
+        // becomes U+FFFD at EOF, but its bytes were counted when received:
+        // 7 bytes over a 6-byte cap throw even though the decoded text is
+        // only 3 UTF-16 units.
+        let _limit = LimitGuard::set(6);
+        let mut body = replay_body(Bytes::from_static(b"\xe4\xb8\xad\xe4\xb8\xad\xc3"), None);
+        let error = response_text(&mut body, &StreamOptions::default(), false)
+            .await
+            .expect_err("the trailing incomplete sequence's bytes count");
+        assert!(
+            error.name().equals_str("Error")
+                && error.message_text() == crate::fetch_redirect::STRING_TOO_LONG,
+            "{error:?}"
+        );
+    }
+    {
+        let _limit = LimitGuard::set(7);
+        let mut body = replay_body(Bytes::from_static(b"\xe4\xb8\xad\xe4\xb8\xad\xc3"), None);
+        let text = response_text(&mut body, &StreamOptions::default(), false)
+            .await
+            .expect("exactly the byte cap is still a valid string");
+        assert_eq!(text, "中中\u{fffd}");
     }
 }
 
@@ -2078,23 +2187,21 @@ async fn response_text_body_error_beats_string_overflow() {
 async fn complete_non_2xx_overlong_error_body_throws_the_v8_error() {
     let _limit = LimitGuard::set(32);
     let (request, config) = complete_single_endpoint_config();
-    let transport = Sequence(std::sync::Mutex::new(vec![(
+    let transport = sequence_with_status(vec![(
         500,
         vec![
             TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
             TestFrame::After(Duration::from_millis(40), b" "),
         ],
-    )]));
-    let started = tokio::time::Instant::now();
+    )]);
     let error = complete_model(&transport, &request, &config, &StreamOptions::default())
         .await
         .expect_err("an over-long error body must fail the text conversion");
     assert!(error.name().equals_str("Error"), "{error:?}");
     assert_eq!(error.message_text(), crate::fetch_redirect::STRING_TOO_LONG);
     assert!(
-        started.elapsed() >= Duration::from_millis(70),
-        "the error was raised before the error body reached EOF: {:?}",
-        started.elapsed()
+        transport.eof(0),
+        "the error was raised before the error body reached EOF"
     );
 }
 
@@ -2106,15 +2213,14 @@ async fn complete_non_2xx_overlong_error_body_throws_the_v8_error() {
 async fn stream_non_2xx_overlong_error_body_throws_the_v8_error() {
     let _limit = LimitGuard::set(32);
     let (request, config) = stream_config();
-    let transport = Sequence(std::sync::Mutex::new(vec![(
+    let transport = sequence_with_status(vec![(
         500,
         vec![
             TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
             TestFrame::After(Duration::from_millis(40), b" "),
         ],
-    )]));
+    )]);
     let mut outputs = Vec::new();
-    let started = tokio::time::Instant::now();
     let error = stream_model(
         &transport,
         &request,
@@ -2127,9 +2233,8 @@ async fn stream_non_2xx_overlong_error_body_throws_the_v8_error() {
     assert!(error.name().equals_str("Error"), "{error:?}");
     assert_eq!(error.message_text(), crate::fetch_redirect::STRING_TOO_LONG);
     assert!(
-        started.elapsed() >= Duration::from_millis(70),
-        "the error was raised before the error body reached EOF: {:?}",
-        started.elapsed()
+        transport.eof(0),
+        "the error was raised before the error body reached EOF"
     );
     assert_eq!(
         outputs.len(),

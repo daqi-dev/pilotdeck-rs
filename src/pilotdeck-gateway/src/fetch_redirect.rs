@@ -82,6 +82,76 @@ where
     }
 }
 
+/// [`read_body_with_signal`] with `Response.text()`'s over-limit semantics:
+/// once the received bytes pass `limit` the buffer is dropped and the body is
+/// still drained to EOF, so a body failure wins over the string error and
+/// exactly `limit` bytes stay valid (real TS probes,
+/// `_tmp/20261025-issue-641/RESULT.md` and
+/// `_tmp/20261025-issue-647-probe/RESULT.md`). Kept separate from
+/// [`read_body_with_signal`], whose callers (the HTTP hook executor, the
+/// user-dialog store) bound an arbitrary configured cap and stop at the first
+/// over-limit frame.
+pub(crate) async fn read_text_body<B>(
+    body: B,
+    limit: usize,
+    idle: Option<Duration>,
+) -> Result<Vec<u8>, BodyError>
+where
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Send,
+{
+    read_text_body_with_signal(body, limit, idle, None, false).await
+}
+
+/// The signal-aware half of [`read_text_body`]; see its doc for the
+/// over-limit draining contract.
+pub(crate) async fn read_text_body_with_signal<B>(
+    body: B,
+    limit: usize,
+    idle: Option<Duration>,
+    signal: Option<&crate::runtime::network::Cancellation>,
+    mut continuation_before_abort: bool,
+) -> Result<Vec<u8>, BodyError>
+where
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Send,
+{
+    use crate::runtime::network::{Exchange, body_frame};
+    let mut body = Box::pin(body);
+    let mut buffer = Vec::new();
+    let mut too_long = false;
+    loop {
+        let frame = match body_frame(&mut body, idle, signal, &mut continuation_before_abort).await
+        {
+            Exchange::Response(frame, _) => frame,
+            Exchange::Timeout { .. } => return Err(BodyError::Terminated),
+            Exchange::Aborted => return Err(BodyError::Aborted),
+        };
+        let Some(frame) = frame else {
+            return if too_long {
+                Err(BodyError::TooLong)
+            } else {
+                Ok(buffer)
+            };
+        };
+        let frame = frame.map_err(|_| BodyError::Terminated)?;
+        if let Some(data) = frame.data_ref() {
+            if too_long {
+                continue;
+            }
+            if buffer.len().saturating_add(data.len()) > limit {
+                // The conversion has not run yet; keep draining to EOF so a
+                // body failure still decides, and retain none of the
+                // over-limit prefix.
+                too_long = true;
+                buffer = Vec::new();
+                continue;
+            }
+            buffer.extend_from_slice(data);
+        }
+    }
+}
+
 /// Follow 301/302/303/307/308 like undici and return the first non-redirect
 /// response (its body unread). Every network-level refusal maps to `failed()`
 /// (TS `TypeError: fetch failed`).

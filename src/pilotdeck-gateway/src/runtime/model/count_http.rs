@@ -125,10 +125,13 @@ where
         .into());
     }
     // Node 22 cannot materialize a string longer than
-    // `buffer.constants.MAX_STRING_LENGTH` (0x1fffffe8). Bound the read so
-    // a broken/malicious endpoint cannot stream unbounded bytes inside the
-    // 1500ms window; the message matches V8's RangeError.
-    let buffer = crate::fetch_redirect::read_body(
+    // `buffer.constants.MAX_STRING_LENGTH` (0x1fffffe8), counted in received
+    // bytes (`Response.text()`'s bound, real-TS probes
+    // `_tmp/20261025-issue-641/RESULT.md` and
+    // `_tmp/20261025-issue-647-probe/RESULT.md`): the reader drains an
+    // over-limit body to EOF before raising the error, so a body failure
+    // still wins, and it retains none of the over-limit prefix.
+    let buffer = crate::fetch_redirect::read_text_body(
         response.into_body(),
         MAX_STRING_LENGTH,
         Some(crate::runtime::network::UNDICI_BODY_TIMEOUT),

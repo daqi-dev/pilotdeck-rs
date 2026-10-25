@@ -400,9 +400,11 @@ where
     if status.is_success() {
         return Ok(());
     }
-    let bytes = fetch_redirect::read_body_with_signal(
+    let bytes = fetch_redirect::read_text_body_with_signal(
         response.into_body(),
-        fetch_redirect::MAX_STRING_LENGTH,
+        // The production value is `MAX_STRING_LENGTH`; the shared thread-local
+        // knob lets unit tests shrink it.
+        string_limit(),
         Some(crate::runtime::network::UNDICI_BODY_TIMEOUT),
         Some(aborted),
         before_abort,
@@ -845,8 +847,10 @@ thread_local! {
 }
 
 /// Both streamable response.text() and response.json() use undici's body
-/// idle timer and V8 string bound. Their callers retain the SDK's distinct
-/// failure projection (error POST substitutes null; JSON propagates failure).
+/// idle timer and V8 string bound; an over-limit body is drained to EOF
+/// before the string error is raised, so a body failure wins (#641/#647
+/// real-TS probes). Their callers retain the SDK's distinct failure
+/// projection (error POST substitutes null; JSON propagates failure).
 async fn streamable_text<B>(
     body: B,
     aborted: &ToolCancellation,
@@ -856,7 +860,7 @@ where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Send,
 {
-    fetch_redirect::read_body_with_signal(
+    fetch_redirect::read_text_body_with_signal(
         body,
         string_limit(),
         Some(crate::runtime::network::UNDICI_BODY_TIMEOUT),
@@ -1930,6 +1934,56 @@ mod tests {
         );
     }
 
+    /// The over-limit frame must not end the read: response.text() drains the
+    /// body to EOF before the byte→string conversion raises its error.
+    #[tokio::test]
+    async fn streamable_text_drains_overlong_body_to_eof_before_the_string_error() {
+        let signal = ToolCancellation::default();
+        let _limit = StringLimitGuard::set(4);
+        let (body, eof) = frames_body(vec![Ok(b"12345"), Ok(b"6789")]);
+        let error = streamable_text(body, &signal, false).await.unwrap_err();
+        assert_eq!(error.to_string(), fetch_redirect::STRING_TOO_LONG);
+        assert!(
+            eof.load(std::sync::atomic::Ordering::Relaxed),
+            "the read ended before the body reached EOF"
+        );
+    }
+
+    /// A body failure after the cap was crossed still wins, exactly like the
+    /// model reader: the drained read reports the transport error, not the
+    /// string error (an early-return reader would report the string error
+    /// here instead).
+    #[tokio::test]
+    async fn streamable_text_body_error_beats_string_overflow_after_drain() {
+        let signal = ToolCancellation::default();
+        let _limit = StringLimitGuard::set(4);
+        let (body, _eof) = frames_body(vec![Ok(b"12345"), Err("reset")]);
+        let error = streamable_text(body, &signal, false).await.unwrap_err();
+        assert_eq!(error.to_string(), "terminated");
+    }
+
+    /// The legacy POST's non-2xx `response.text()` uses the same drained
+    /// reader; the SDK's catch then substitutes its null body either way, so
+    /// only the EOF flag distinguishes the drain.
+    #[tokio::test]
+    async fn legacy_error_body_over_limit_is_drained_to_eof() {
+        let signal = ToolCancellation::default();
+        let _limit = StringLimitGuard::set(4);
+        let (body, eof) = frames_body(vec![Ok(b"12345"), Ok(b"6789")]);
+        let response = hyper::Response::builder().status(400).body(body).unwrap();
+        assert_eq!(
+            legacy_post_response(response, &signal, false)
+                .await
+                .unwrap_err()
+                .to_string(),
+            "Error POSTing to endpoint (HTTP 400): null"
+        );
+        assert!(
+            eof.load(std::sync::atomic::Ordering::Relaxed),
+            "the read ended before the body reached EOF"
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn sse_stall_uses_global_body_timeout() {
         let signal = ToolCancellation::default();
@@ -2341,6 +2395,46 @@ mod tests {
                 .poll_recv(cx)
                 .map(|data| data.map(|data| Ok(hyper::body::Frame::data(data))))
         }
+    }
+
+    /// Scripted frames; an `Err` entry simulates a mid-read body failure and
+    /// `eof` records that the reader polled the stream to its end, so the
+    /// cap tests can assert the drain instead of timing the frames.
+    struct FramesBody {
+        frames: std::collections::VecDeque<Result<Bytes, String>>,
+        eof: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl hyper::body::Body for FramesBody {
+        type Data = Bytes;
+        type Error = String;
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, String>>> {
+            match self.frames.pop_front() {
+                None => {
+                    self.eof.store(true, std::sync::atomic::Ordering::Relaxed);
+                    Poll::Ready(None)
+                }
+                Some(Ok(data)) => Poll::Ready(Some(Ok(hyper::body::Frame::data(data)))),
+                Some(Err(error)) => Poll::Ready(Some(Err(error))),
+            }
+        }
+    }
+    fn frames_body(
+        frames: Vec<Result<&'static [u8], &'static str>>,
+    ) -> (FramesBody, std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        let eof = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        (
+            FramesBody {
+                frames: frames
+                    .into_iter()
+                    .map(|frame| frame.map(Bytes::from_static).map_err(str::to_owned))
+                    .collect(),
+                eof: eof.clone(),
+            },
+            eof,
+        )
     }
 
     /// Real SDK + networkFetch records the two requests. A body with no EOF
