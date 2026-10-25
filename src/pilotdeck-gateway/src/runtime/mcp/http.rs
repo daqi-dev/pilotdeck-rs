@@ -321,10 +321,7 @@ async fn resolved_attempts(target: &hyper::Uri) -> Option<Vec<SocketAddr>> {
 
 /// [`resolved_attempts`] with the resolver injected, so the deadline is
 /// testable against a resolver that never answers.
-async fn resolved_attempts_with<F, Fut>(
-    target: &hyper::Uri,
-    lookup: F,
-) -> Option<Vec<SocketAddr>>
+async fn resolved_attempts_with<F, Fut>(target: &hyper::Uri, lookup: F) -> Option<Vec<SocketAddr>>
 where
     F: FnOnce(String, u16) -> Fut,
     Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
@@ -3144,7 +3141,10 @@ mod tests {
         let uri = |raw: &str| -> hyper::Uri { raw.parse().unwrap() };
         let duplicated = [sock("127.0.0.1", 64718), sock("127.0.0.1", 64718)];
         assert_eq!(
-            refused_cause(&uri("http://dup-probe.invalid:64718/sse"), Some(&duplicated)),
+            refused_cause(
+                &uri("http://dup-probe.invalid:64718/sse"),
+                Some(&duplicated)
+            ),
             "connect ECONNREFUSED 127.0.0.1:64718"
         );
     }
