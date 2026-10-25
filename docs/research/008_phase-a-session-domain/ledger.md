@@ -170,13 +170,14 @@ snapshot 证据：`B/src/storage/workspaceSnapshot.ts:25`、`B/src/storage/works
 ```sh
 python3 scripts/gateway-coverage/check_ledger.py
 python3 scripts/gateway-coverage/check_coverage_manifest.py
+python3 scripts/gateway-coverage/test_strict_disk_inputs.py
 python3 scripts/gateway-parity/check_frozen.py
 git diff --check
 ```
 
 **账本改动必须同 PR 重新投影 manifest 并跑本校验器**：`coverage-manifest.json` 的 `source.ledger_sha256` 与逐行投影都钉着当前 `ledger.json`；只跑 `check_ledger.py` 不会更新投影，之后 manifest 入口会报 `ledger_hash` 与大量 `ledger_projection` 的假 FAIL。改账本后须重新生成 `coverage-manifest.json`（含 `frozen_inputs.sha256` 的五枚输入哈希），再跑 `check_coverage_manifest.py`。
 
-校验器仍核三方 method 集合、冻结类别、owner、字段、每处锚点、引用文件与输入哈希、A2场景调用。默认从 checkout/祖先寻找只读 resources/PilotDeck，可显式 --baseline。`check_ledger.py` 每次验证执行38项内存负例，必须命中指定错误类型；另有6项共用生产规则的解析/改名 Error 夹具。第3轮新增缩范围+重算hash+删callee、删除callee、虚构码、改成原正则未覆盖的新code类/未定义类、白名单篡改、缺关闭副作用/懒创建、可选store伪称默认与缺动态origin。独立CLI副本负例的退出码另存 RESULT 附件。`check_coverage_manifest.py` 默认在无失败时执行全部负例，并核 schema/snapshot/inventory/driver/gap 五枚输入哈希。
+校验器仍核三方 method 集合、冻结类别、owner、字段、每处锚点、引用文件与输入哈希、A2场景调用。默认从 checkout/祖先寻找只读 resources/PilotDeck，可显式 --baseline（也接受 `PDRS_BASELINE`）。`check_ledger.py` 每次验证默认执行全部内存负例（无需 `--self-test`），必须命中指定错误类型；另有共用生产规则的解析/改名 Error 夹具。账本侧的 `format_version`、`scope`、`source_files.line_count`、`input_files`、`error_classes`、`default_boot`、`source_audit.depth` 与清单侧同构投影均走 `strict_equal`，bool/float 改类型不能冒充整数钉；磁盘原始 JSON 的 `format_version` 类型由 `test_strict_disk_inputs.py` 负控。第3轮新增缩范围+重算hash+删callee、删除callee、虚构码、改成原正则未覆盖的新code类/未定义类、白名单篡改、缺关闭副作用/懒创建、可选store伪称默认与缺动态origin。独立CLI副本负例的退出码另存 RESULT 附件。`check_coverage_manifest.py` 默认在无失败时执行全部负例，并核 schema/snapshot/inventory/driver/gap 五枚输入哈希。两个校验器已接入 `.github/workflows/ci.yml` 的 check job（浅克隆冻结基线，复用 gateway-parity 的 TypeScript 5.9.3）。
 
 机器保证结构与扫描完整性；不证明每段中文语义、动态竞态或远端部署。下游每个 PR 前复核是规划索引的必要维护步骤。没有运行 A2/A5 服务对拍；READY/BLOCKED 仍为46/55。原始结果与完整新码清单在 `_tmp/RESULT.md` 第3轮。
 

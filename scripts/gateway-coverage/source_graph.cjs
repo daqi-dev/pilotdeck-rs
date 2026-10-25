@@ -4,7 +4,19 @@
 const fs = require('fs');
 const path = require('path');
 const root = path.resolve(process.argv[2]);
-const ts = require(path.join(root, 'node_modules/typescript/lib/typescript.js'));
+// CI clones the frozen baseline without its 1.1 GB node_modules; the same
+// pinned TypeScript version (5.9.3) is installed for scripts/gateway-parity,
+// so fall back to it when the checkout has no local parser. A missing parser
+// stays fatal (never silently skipped).
+function loadTypeScript(checkout) {
+  const candidates = [
+    path.join(checkout, 'node_modules/typescript/lib/typescript.js'),
+    path.join(__dirname, '..', 'gateway-parity', 'node_modules/typescript/lib/typescript.js'),
+  ];
+  for (const candidate of candidates) if (fs.existsSync(candidate)) return require(candidate);
+  throw Error('typescript parser not found: install the baseline checkout deps or run npm ci in scripts/gateway-parity');
+}
+const ts = loadTypeScript(root);
 const DEPTH = 8;
 const rules=require('./ast_rules.cjs');
 const files = [];

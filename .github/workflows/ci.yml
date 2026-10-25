@@ -99,6 +99,26 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-fund
           node validate_fixtures.mjs
+      # A5.1 · 覆盖账本/清单校验器：默认命令即跑内存负例（含 bool/float 类型负控）。
+      # CI 没有 resources/ 基线；按冻结 commit 浅克隆，并复用上一步
+      # scripts/gateway-parity 内同版本（5.9.3）的 TypeScript 解析器。
+      - name: 浅克隆 A5.1 只读基线
+        working-directory: .
+        env:
+          PILOTDECK_BASELINE_REF: cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85 # schema-FROZEN.md
+        run: |
+          git init pilotdeck-baseline
+          git -C pilotdeck-baseline remote add origin https://github.com/OpenBMB/PilotDeck.git
+          git -C pilotdeck-baseline fetch --depth 1 origin "$PILOTDECK_BASELINE_REF"
+          git -C pilotdeck-baseline checkout FETCH_HEAD
+      - name: A5.1 覆盖账本/清单（严格比较，默认带负例）
+        working-directory: .
+        env:
+          PDRS_BASELINE: ${{ github.workspace }}/pilotdeck-baseline
+        run: |
+          python3 -I scripts/gateway-coverage/check_ledger.py
+          python3 -I scripts/gateway-coverage/check_coverage_manifest.py
+          python3 -I scripts/gateway-coverage/test_strict_disk_inputs.py
 
   # A3 · 基线三角的第三边：按冻结 commit 浅克隆 OpenBMB/PilotDeck，再生成 schema 并与已提交产物
   # 字节比对（export_schema.mjs --check），随后跑 check_schema.py 的 L1–L3 基线核对。

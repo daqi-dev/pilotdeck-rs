@@ -11,6 +11,7 @@ import copy
 import hashlib
 from functools import lru_cache
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -141,6 +142,9 @@ def digest(path):
 
 def default_baseline():
     # Works in the main checkout and in _build/wt-* without a machine-specific path.
+    env = os.environ.get('PDRS_BASELINE')
+    if env:
+        return Path(env)
     for parent in (ROOT, *ROOT.parents):
         candidate = parent / 'resources/PilotDeck'
         if candidate.is_dir():
@@ -200,6 +204,14 @@ def load_inputs():
 
 def validate(data, baseline, inputs, graph=None):
     data, errors = expand(data)
+    if isinstance(data, dict) and not strict_equal(data.get('format_version'), 1):
+        # ``expand`` rejects a compact ledger whose format_version is not the
+        # exact int 2 (2.0 / True); stop before the v2-only shapes reach
+        # validate() and raise AttributeError instead of a reported failure.
+        if not any(error['code'] == 'format_version' for error in errors):
+            errors.append({'code': 'format_version', 'path': '$',
+                           'detail': 'expected format_version=1'})
+        return errors, {}
     references = []
     referenced_files = set()
     file_cache = {}
@@ -291,8 +303,6 @@ def validate(data, baseline, inputs, graph=None):
         return [{'code': 'document', 'path': '$', 'detail': 'expected object'}], {}
     if any(control['result'] != 'PASS' for control in graph['parser_controls']):
         fail('parser_controls', '$', graph['parser_controls'])
-    if not strict_equal(data.get('format_version'), 1):
-        fail('format_version', '$', 'expected format_version=1')
     if not isinstance(data.get('baseline'), dict) or data['baseline'].get('commit') != BASELINE_COMMIT:
         fail('baseline', '$.baseline', 'expected the schema-FROZEN baseline commit')
     for name, source in inputs['protocol_sources'].items():
@@ -335,9 +345,9 @@ def validate(data, baseline, inputs, graph=None):
     if data.get('provider_exceptions') != PROVIDER_EXCEPTIONS:
         fail('provider_exceptions', '$.provider_exceptions', 'must exactly match reviewed checker-owned reasons')
     catalog = {name: dict(value, refs=[f"B/{value['file']}:{value['line']}"]) for name, value in graph['errorClasses'].items()}
-    if data.get('error_classes') != catalog:
+    if not strict_equal(data.get('error_classes'), catalog):
         fail('error_class_catalog', '$.error_classes', 'all production Error classes, inherited code and origins must match source')
-    if data.get('default_boot') != dict(graph['boot'], refs=[f"B/{graph['boot']['file']}:{graph['boot']['line']}"]):
+    if not strict_equal(data.get('default_boot'), dict(graph['boot'], refs=[f"B/{graph['boot']['file']}:{graph['boot']['line']}"])):
         fail('default_construction', '$.default_boot', 'default root must be CLI createLocalGateway call')
     transport = next(f for f in functions if f['file'] == 'src/gateway/server/GatewayWsConnection.ts' and f['symbol'] == 'handleRequest')
     expected_transport = {'summary': '所有 RPC 的共同 WS 错误响应边界；只用于运输码字面量与动态 origin 核验，不把 switch 的其他方法领域码归给本方法。',
@@ -407,7 +417,7 @@ def validate(data, baseline, inputs, graph=None):
                 fail('provider_scope', where, {'expected_automatic_providers': expected_providers})
             if not providers and method not in PROVIDER_EXCEPTIONS:
                 fail('provider_scope', where, 'no provider discovered and no reviewed exception')
-            if audit.get('depth') != graph['depth']:
+            if not strict_equal(audit.get('depth'), graph['depth']):
                 fail('callee_scope', where, 'reported callee depth differs from checker-owned bound')
             if audit.get('default_constructions') != route['construction_points']:
                 fail('default_construction', where, 'default provider construction points disagree with source graph')
@@ -820,7 +830,7 @@ def self_test(data, baseline, inputs):
     mutated = copy.deepcopy(data)
     next(s for e in mutated['methods'] for s in e['source_audit']['functions'] if s['assembly'] == 'optional_host').pop('optional')
     cases.append(('optional_injection_missing_marker', mutated, 'default_construction'))
-    if compact_data.get('format_version') == 2:
+    if strict_equal(compact_data.get('format_version'), 2):
         unknown = copy.deepcopy(compact_data)
         target = next(e for e in unknown['methods'] if e['branches']['error']['groups'])
         target['branches']['error']['groups'][0] = 'does_not_exist'
@@ -925,13 +935,47 @@ def self_test(data, baseline, inputs):
     line_count_float['source_files'][line_count_file]['line_count'] = float(
         line_count_float['source_files'][line_count_file]['line_count'])
     cases.append(('strict_line_count_float', line_count_float, 'source_drift'))
+    # Nested source-derived catalogs: ``line``/``code_argument`` are ints and
+    # ``code`` is a bool inside dict/list data, so a retype must not satisfy
+    # the pin (the manifest already uses strict_equal for the same ledger).
+    error_class_line_float = copy.deepcopy(data)
+    error_class_name = next(name for name, value in error_class_line_float['error_classes'].items()
+                            if type(value.get('line')) is int)
+    error_class_line_float['error_classes'][error_class_name]['line'] = float(
+        error_class_line_float['error_classes'][error_class_name]['line'])
+    cases.append(('strict_error_class_line_float', error_class_line_float, 'error_class_catalog'))
+    error_class_code_bool = copy.deepcopy(data)
+    error_class_code_name = next(name for name, value in error_class_code_bool['error_classes'].items()
+                                 if type(value.get('code')) is bool)
+    error_class_code_bool['error_classes'][error_class_code_name]['code'] = int(
+        error_class_code_bool['error_classes'][error_class_code_name]['code'])
+    cases.append(('strict_error_class_code_bool', error_class_code_bool, 'error_class_catalog'))
+    code_argument_bool = copy.deepcopy(data)
+    code_argument_name = next(name for name, value in code_argument_bool['error_classes'].items()
+                              if type(value.get('code_argument')) is int and value['code_argument'] == 0)
+    code_argument_bool['error_classes'][code_argument_name]['code_argument'] = False
+    cases.append(('strict_code_argument_bool', code_argument_bool, 'error_class_catalog'))
+    default_boot_line_float = copy.deepcopy(data)
+    default_boot_line_float['default_boot']['line'] = float(
+        default_boot_line_float['default_boot']['line'])
+    cases.append(('strict_default_boot_line_float', default_boot_line_float, 'default_construction'))
+    depth_float = copy.deepcopy(data)
+    depth_float['methods'][0]['source_audit']['depth'] = float(
+        depth_float['methods'][0]['source_audit']['depth'])
+    cases.append(('strict_depth_float', depth_float, 'callee_scope'))
+    # The raw disk value is what ``expand`` reads; 2.0 used to be accepted as
+    # v2 and rewritten to the int 1, so the expanded-field control above could
+    # never observe it.  Feed the retype back through expand().
+    format_version_float = copy.deepcopy(data)
+    format_version_float['format_version'] = 2.0
+    cases.append(('strict_format_version_float', format_version_float, 'format_version'))
     results = []
     for name, mutated, expected_code in cases:
         errors, _ = validate(mutated, baseline, inputs)
         detected = any(e['code'] == expected_code for e in errors)
         results.append({'name': name, 'expected': 'FAIL', 'observed': 'FAIL' if errors else 'PASS',
                         'required_error': expected_code, 'result': 'PASS' if detected else 'FAIL'})
-    if compact_data.get('format_version') == 2:
+    if strict_equal(compact_data.get('format_version'), 2):
         # Same strict JSON loader used by --ledger: one name cannot have two
         # source declarations silently resolved by last-key-wins parsing.
         name, group = next(iter(compact_data['error_code_groups'].items()))

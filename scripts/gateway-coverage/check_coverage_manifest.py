@@ -804,6 +804,34 @@ def self_test(data, ledger_raw, ledger, inputs, checker):
                 'result': 'PASS' if detected else 'FAIL',
                 'status': 'PASS' if detected else 'FAIL'}
 
+    def pin_line_count_float_case():
+        # ``frozen pin line_count`` had no strict_* control: an int pin
+        # retyped to float used to satisfy the loose comparison in
+        # RefChecker.check, so the manifest could PASS against a drifted pin.
+        expected = 'baseline_pin'
+        pins = ledger_raw.get('source_files') if isinstance(ledger_raw, dict) else None
+        if not isinstance(pins, dict):
+            return {'name': 'strict_pin_line_count_float', 'expected_error': expected,
+                    'result': 'SKIP', 'reason': 'no source_files pin table', 'status': 'SKIP'}
+        anchor = next((ref for entry in data.get('methods', [])
+                       if isinstance(entry, dict)
+                       for ref in (entry.get('handler') or {}).get('refs', [])
+                       if isinstance(ref, str) and REF.fullmatch(ref)), None)
+        relative = REF.fullmatch(anchor).group(1) if anchor else None
+        pin = pins.get(relative) if relative else None
+        if not isinstance(pin, dict) or type(pin.get('line_count')) is not int:
+            return {'name': 'strict_pin_line_count_float', 'expected_error': expected,
+                    'result': 'SKIP', 'reason': 'no referenced integer line_count pin',
+                    'status': 'SKIP'}
+        mutated_pins = copy.deepcopy(pins)
+        mutated_pins[relative]['line_count'] = float(mutated_pins[relative]['line_count'])
+        probe = RefChecker(checker.baseline, mutated_pins)
+        errors, _ = validate(data, ledger_raw, ledger, inputs, probe)
+        detected = any(error['code'] == expected for error in errors)
+        return {'name': 'strict_pin_line_count_float', 'expected_error': expected,
+                'result': 'PASS' if detected else 'FAIL',
+                'status': 'FAIL' if errors else 'PASS'}
+
     run('remove_one_method', lambda mutated: mutated['methods'].pop(), 'method_set')
     run('duplicate_one_method',
         lambda mutated: mutated['methods'].__setitem__(-1, copy.deepcopy(mutated['methods'][0])),
@@ -884,6 +912,11 @@ def self_test(data, ledger_raw, ledger, inputs, checker):
     run('strict_method_count_float',
         lambda mutated: mutated['frozen_inputs'].__setitem__(
             'method_count', float(mutated['frozen_inputs']['method_count'])), 'input_methods')
+    # The raw ledger version is compared strictly at :source.ledger_format_version;
+    # this was the only strict comparison in the manifest without a negative
+    # control of its own (same family as strict_pin_line_count_float).
+    run('strict_ledger_format_version_float',
+        lambda mutated: mutated['source'].__setitem__('ledger_format_version', 2.0), 'ledger')
 
     # Remaining failure codes had no control.
     run('baseline_commit_drift',
@@ -910,6 +943,7 @@ def self_test(data, ledger_raw, ledger, inputs, checker):
         lambda mutated: mutated['methods'][0]['branches']['unconfigured'][0].pop('code'), 'branches')
 
     cases.append(symlink_escape_case())
+    cases.append(pin_line_count_float_case())
     return cases
 
 
