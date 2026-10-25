@@ -1,0 +1,2659 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/gateway/SessionRouter.ts": "90a0dbb46565bae5e2a994cbcd83b8a53a155b9b73cf67d8be1295a35b1afbb6",
+    "src/agent/scope/AgentHandle.ts": "b491c291f31a37b188a7ef2f9bd8d35925ada1846b8f28e66052c387b5be1f2a",
+    "src/agent/scope/AgentRegistry.ts": "9afac0b01b7b290e6e57a7665c7387f247ad5a4b184b491096aacd3b61fb5d80",
+    "src/agent/scope/AgentFactoryProvider.ts": "1486fe22690af6ca410b3ac784c75ecf3ac282c661ab8bce4f54bad0614478c4",
+    "src/agent/scope/ScopedServiceRegistry.ts": "c6a70cc92ad955cac97ffdd08135be1be9335a443d0a3276cd48bfb697e1b9b8",
+    "src/gateway/client/GatewayTurnCompletionFence.ts": "4b409046c127ef09a9536d00e972a1f32bd04fc6eb53c9e03a5a34729f5cd940",
+    "src/gateway/client/GatewayTurnReplayStore.ts": "ff3f8206be88afac0336f0aede66c084ce40eef5ea6318d1e751c3902bc135ce",
+    "src/gateway/client/GatewayTurnEventCoordinator.ts": "48c8b51b02003f47b2eb682dc9d058be79cb5304937dc915135354bf500bee1e",
+    "src/gateway/client/GatewayAgentEventProjector.ts": "8236f898bec8b263827b8c66f27ac190cdd497baa0ac27723637e34847832225",
+    "src/gateway/client/GatewayToolResultArtifactStore.ts": "dcaf1816e61a964f0c13fd8b84d96ae95e2920ffd7b3684c36c8a42fe6f774a9",
+    "src/tool/protocol/result.ts": "dc605b936b1a5b648b9c00c2512fb9c3236b735cba880e081502d93017b9bc6f",
+    "src/gateway/util/AsyncQueue.ts": "7c13151c23b0114e04cfefe590456e99b64a097226a96dee6226fe24afe309c8",
+    "src/gateway/run/RunRegistry.ts": "99884343c4b8d13865d254e27e1db293f0c0387dae0075191e2431890bb6bc37",
+    "src/status/agentStatus.ts": "9b3f11e574fc33652594afa0a7b74f574542df57b50bb7226111cc40f2d6233b",
+    "src/gateway/dialog/errors.ts": "20668c4b0074c1cd2b9d375b11a3a8c93c47faddf8264844b6a6206f1630804c",
+    "src/router/protocol/errors.ts": "d9f3af16b25209842d654d92642b9eb9f3e905a65ef3db6937fcad674d7054d9",
+    "src/agent/policy/FailureGuard.ts": "d7b88a788134c51dd7138a3641f6dab0348656bcc7343c9400397eaededc6f0c",
+    "src/agent/policy/classify.ts": "601d433550ac58452e86611e35942c97e899f1eaf2ce081658afc7ac16196a95",
+    "src/gateway/client/GatewayTurnReplacementCoordinator.ts": "b814a84716c2daf566f2631e91b9ec2ed02c5d0bf938cae43c16ec6979182c16",
+    "src/gateway/client/GatewayInteractionCoordinator.ts": "899200052fb525033104872f9c3e222321a6926bd4319b5e901cadf09153a297",
+    "src/interaction/InteractionReconnect.ts": "da3dc151d66c3a377c0d9e51d7dec78b7e50476471fbeae142d64b1e8a751b80",
+    "src/gateway/client/GatewayManualCompactionCoordinator.ts": "9069d0ac3752fce2890676aac15fac6dbe918ff7df1721a4f16ceb3977fd7aef",
+    "src/gateway/dialog/modelCatalog.ts": "87b5ce892aefec8f2148e44b30fb78cc9c93f6140e206e44be454aa3b7ab507d"
+  },
+  "cases": [
+    {
+      "name": "reconnect-stale-connection",
+      "setup": {
+        "seed": {
+          "connectionId": "c1",
+          "generation": 1
+        },
+        "input": {
+          "interactionBinding": {
+            "connectionId": "c2",
+            "generation": 2
+          }
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "code": "interaction_reconnect_required",
+              "message": "This session has reconnectable interaction requests. Reconnect with the previous binding before submitting a new turn.",
+              "recoverable": true
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"code\":\"interaction_reconnect_required\",\"message\":\"This session has reconnectable interaction requests. Reconnect with the previous binding before submitting a new turn.\",\"recoverable\":true}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "reconnect-stale-generation",
+      "setup": {
+        "seed": {
+          "connectionId": "c1",
+          "generation": 2
+        },
+        "input": {
+          "interactionBinding": {
+            "connectionId": "c1",
+            "generation": 1
+          }
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "code": "interaction_reconnect_required",
+              "message": "This session has reconnectable interaction requests. Reconnect with the previous binding before submitting a new turn.",
+              "recoverable": true
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"code\":\"interaction_reconnect_required\",\"message\":\"This session has reconnectable interaction requests. Reconnect with the previous binding before submitting a new turn.\",\"recoverable\":true}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "reconnect-invalid-binding",
+      "setup": {
+        "input": {
+          "interactionBinding": {
+            "connectionId": "",
+            "generation": 1
+          }
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [],
+          "wire": [],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": "Interaction connectionId must be a non-empty string."
+        }
+      ]
+    },
+    {
+      "name": "reconnect-fresh-turn",
+      "setup": {
+        "seed": {
+          "connectionId": "c1",
+          "generation": 1
+        },
+        "input": {
+          "interactionBinding": {
+            "connectionId": "c1",
+            "generation": 2
+          }
+        },
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"input_accepted\",\"runId\":\"r\"}",
+            "{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}",
+            "{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}",
+            "{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}"
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "after"
+          ],
+          "submits": [
+            {
+              "agentInput": {
+                "type": "text",
+                "text": "hello"
+              },
+              "options": {
+                "turnId": "r",
+                "execution": {
+                  "runId": "r",
+                  "operationId": "r"
+                },
+                "runMode": "agent",
+                "allowPlanModeTools": false,
+                "allowedReadFiles": [],
+                "permissionRules": {
+                  "allow": [],
+                  "deny": [],
+                  "ask": []
+                }
+              }
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 4,
+        "revision": 5
+      }
+    },
+    {
+      "name": "replacement-claim-conflict",
+      "setup": {
+        "pendingReplacement": "rx",
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "replace_turn_pending",
+              "message": "This session is waiting for its edited replacement turn to be accepted.",
+              "recoverable": true,
+              "userHint": "Wait for the edited message transaction to finish, then try again."
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"replace_turn_pending\",\"message\":\"This session is waiting for its edited replacement turn to be accepted.\",\"recoverable\":true,\"userHint\":\"Wait for the edited message transaction to finish, then try again.\"}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "replace_turn_pending",
+                "message": "This session is waiting for its edited replacement turn to be accepted.",
+                "recoverable": true,
+                "userHint": "Wait for the edited message transaction to finish, then try again."
+              }
+            }
+          ],
+          "storageCalls": [
+            {
+              "op": "replace",
+              "input": {
+                "sessionKey": "s",
+                "projectKey": "p",
+                "expectedTurnId": "prev",
+                "replacementTurnId": "rx"
+              }
+            }
+          ],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "replace_turn_pending",
+            "message": "This session is waiting for its edited replacement turn to be accepted.",
+            "recoverable": true,
+            "userHint": "Wait for the edited message transaction to finish, then try again."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 1,
+        "revision": 2
+      }
+    },
+    {
+      "name": "replacement-claim-committed",
+      "setup": {
+        "pendingReplacement": "r",
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"input_accepted\",\"runId\":\"r\"}",
+            "{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}",
+            "{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}",
+            "{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}"
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "after"
+          ],
+          "submits": [
+            {
+              "agentInput": {
+                "type": "text",
+                "text": "hello"
+              },
+              "options": {
+                "turnId": "r",
+                "execution": {
+                  "runId": "r",
+                  "operationId": "r"
+                },
+                "runMode": "agent",
+                "allowPlanModeTools": false,
+                "allowedReadFiles": [],
+                "permissionRules": {
+                  "allow": [],
+                  "deny": [],
+                  "ask": []
+                }
+              }
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "storageCalls": [
+            {
+              "op": "replace",
+              "input": {
+                "sessionKey": "s",
+                "projectKey": "p",
+                "expectedTurnId": "prev",
+                "replacementTurnId": "r"
+              }
+            },
+            {
+              "op": "finalize",
+              "input": {
+                "sessionKey": "s",
+                "projectKey": "p",
+                "transactionId": "tx-1",
+                "action": "commit"
+              }
+            }
+          ],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 4,
+        "revision": 5
+      }
+    },
+    {
+      "name": "replacement-write-reservation",
+      "setup": {
+        "writeReservation": true,
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "replace_turn_pending",
+              "message": "This session transcript is currently being updated.",
+              "recoverable": true,
+              "userHint": "Wait for the session update to finish, then try again."
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"replace_turn_pending\",\"message\":\"This session transcript is currently being updated.\",\"recoverable\":true,\"userHint\":\"Wait for the session update to finish, then try again.\"}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "replace_turn_pending",
+                "message": "This session transcript is currently being updated.",
+                "recoverable": true,
+                "userHint": "Wait for the session update to finish, then try again."
+              }
+            }
+          ],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "replace_turn_pending",
+            "message": "This session transcript is currently being updated.",
+            "recoverable": true,
+            "userHint": "Wait for the session update to finish, then try again."
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 1,
+        "revision": 2
+      }
+    },
+    {
+      "name": "compact-usage",
+      "setup": {
+        "input": {
+          "message": "/compact extra"
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "assistant_text_delta",
+              "text": "用法：/compact"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"assistant_text_delta\",\"text\":\"用法：/compact\"}",
+            "{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\"}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "compact-compacted",
+      "setup": {
+        "input": {
+          "message": "/compact"
+        },
+        "compactResult": {
+          "type": "compacted",
+          "turnId": "r",
+          "compactionId": "c1",
+          "preTokens": 100,
+          "postTokens": 10,
+          "messagesSummarized": 4,
+          "usage": {
+            "inputTokens": 1,
+            "outputTokens": 2
+          }
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "manual_compaction",
+              "detail": {
+                "outcome": "compacted",
+                "turnId": "r"
+              }
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "Compacted 4 history items (~100 tokens)."
+            },
+            {
+              "type": "turn_completed",
+              "runId": "r",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 2
+              },
+              "finishReason": "completed"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"agent_status\",\"runId\":\"r\",\"event\":\"manual_compaction\",\"detail\":{\"outcome\":\"compacted\",\"turnId\":\"r\"}}",
+            "{\"type\":\"assistant_text_delta\",\"text\":\"Compacted 4 history items (~100 tokens).\"}",
+            "{\"type\":\"turn_completed\",\"runId\":\"r\",\"usage\":{\"inputTokens\":1,\"outputTokens\":2},\"finishReason\":\"completed\"}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [
+            {
+              "sessionKey": "s",
+              "turnId": "r"
+            }
+          ],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "compact-busy",
+      "setup": {
+        "input": {
+          "message": "/compact"
+        },
+        "compactError": "session has active turn"
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "session_busy",
+              "message": "Compaction is unavailable because this session has an active turn or queued work.",
+              "recoverable": true,
+              "userHint": "Wait for the current work to finish, then run /compact again."
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"session_busy\",\"message\":\"Compaction is unavailable because this session has an active turn or queued work.\",\"recoverable\":true,\"userHint\":\"Wait for the current work to finish, then run /compact again.\"}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [
+            {
+              "sessionKey": "s",
+              "turnId": "r"
+            }
+          ],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "compact-failed-error",
+      "setup": {
+        "input": {
+          "message": "/compact"
+        },
+        "compactError": "disk exploded"
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "manual_compaction_failed",
+              "message": "disk exploded",
+              "recoverable": true,
+              "userHint": "Retry /compact after checking the session state."
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"manual_compaction_failed\",\"message\":\"disk exploded\",\"recoverable\":true,\"userHint\":\"Retry /compact after checking the session state.\"}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [
+            {
+              "sessionKey": "s",
+              "turnId": "r"
+            }
+          ],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "compact-timeout-abort",
+      "setup": {
+        "input": {
+          "message": "/compact",
+          "timeoutMs": 100
+        },
+        "compactHang": true
+      },
+      "steps": [
+        "observe",
+        "timeout"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [],
+          "wire": [],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [
+            {
+              "sessionKey": "s",
+              "turnId": "r"
+            }
+          ],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": false,
+          "thrown": null
+        },
+        {
+          "visible": [
+            {
+              "type": "agent_status",
+              "runId": "r",
+              "event": "manual_compaction",
+              "detail": {
+                "outcome": "aborted",
+                "turnId": "r"
+              }
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "Compaction cancelled."
+            },
+            {
+              "type": "turn_completed",
+              "runId": "r",
+              "usage": {},
+              "finishReason": "aborted_streaming"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"agent_status\",\"runId\":\"r\",\"event\":\"manual_compaction\",\"detail\":{\"outcome\":\"aborted\",\"turnId\":\"r\"}}",
+            "{\"type\":\"assistant_text_delta\",\"text\":\"Compaction cancelled.\"}",
+            "{\"type\":\"turn_completed\",\"runId\":\"r\",\"usage\":{},\"finishReason\":\"aborted_streaming\"}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [
+            {
+              "sessionKey": "s",
+              "turnId": "r"
+            }
+          ],
+          "compactAborts": [
+            "timeout:r"
+          ],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "plan-usage",
+      "setup": {
+        "input": {
+          "message": "/plan"
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "assistant_text_delta",
+              "text": "用法：/plan <任务>\n例如：/plan 设计一个新功能"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"assistant_text_delta\",\"text\":\"用法：/plan <任务>\\n例如：/plan 设计一个新功能\"}",
+            "{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\"}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "plan-rewritten",
+      "setup": {
+        "input": {
+          "message": "/plan  设计 x "
+        },
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"input_accepted\",\"runId\":\"r\"}",
+            "{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}",
+            "{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}",
+            "{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}"
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "after"
+          ],
+          "submits": [
+            {
+              "agentInput": {
+                "type": "text",
+                "text": "设计 x"
+              },
+              "options": {
+                "turnId": "r",
+                "execution": {
+                  "runId": "r",
+                  "operationId": "r"
+                },
+                "runMode": "plan",
+                "permissionMode": "plan",
+                "basePermissionMode": "default",
+                "allowPlanModeTools": true,
+                "allowedReadFiles": [],
+                "permissionRules": {
+                  "allow": [],
+                  "deny": [],
+                  "ask": []
+                }
+              }
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"allowPlanModeTools\":true,\"basePermissionMode\":\"default\",\"channelKey\":\"test\",\"message\":\"设计 x\",\"mode\":\"plan\",\"projectKey\":\"p\",\"runMode\":\"plan\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 4,
+        "revision": 5
+      }
+    },
+    {
+      "name": "trusted-unavailable",
+      "setup": {
+        "input": {
+          "trustedContext": [
+            {
+              "text": "t",
+              "source": "channel",
+              "purpose": "material_context",
+              "scope": "turn"
+            }
+          ]
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "trustedContext requires a Gateway trusted-context authorizer.",
+              "recoverable": true
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"CAPABILITY_UNAVAILABLE\",\"message\":\"trustedContext requires a Gateway trusted-context authorizer.\",\"recoverable\":true}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "trusted-invalid-decision",
+      "setup": {
+        "input": {
+          "trustedContext": [
+            {
+              "text": "t",
+              "source": "channel",
+              "purpose": "material_context",
+              "scope": "turn"
+            }
+          ]
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "INVALID_TRUSTED_CONTEXT_AUTHORIZATION",
+              "message": "Trusted context authorizer returned an invalid decision.",
+              "recoverable": true
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"INVALID_TRUSTED_CONTEXT_AUTHORIZATION\",\"message\":\"Trusted context authorizer returned an invalid decision.\",\"recoverable\":true}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [
+            {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "channelKey": "test",
+              "context": {
+                "text": "t",
+                "source": "channel",
+                "purpose": "material_context",
+                "scope": "turn"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "trusted-throws",
+      "setup": {
+        "input": {
+          "trustedContext": [
+            {
+              "text": "t",
+              "source": "channel",
+              "purpose": "material_context",
+              "scope": "turn"
+            }
+          ]
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "TRUSTED_CONTEXT_UNAUTHORIZED",
+              "message": "no way",
+              "recoverable": true
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"TRUSTED_CONTEXT_UNAUTHORIZED\",\"message\":\"no way\",\"recoverable\":true}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [
+            {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "channelKey": "test",
+              "context": {
+                "text": "t",
+                "source": "channel",
+                "purpose": "material_context",
+                "scope": "turn"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ]
+    },
+    {
+      "name": "trusted-authorized",
+      "setup": {
+        "input": {
+          "trustedContext": [
+            {
+              "text": "t1",
+              "source": "channel",
+              "purpose": "material_context",
+              "scope": "turn"
+            },
+            {
+              "text": "t2",
+              "source": "channel",
+              "purpose": "material_context",
+              "scope": "turn"
+            }
+          ]
+        },
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"input_accepted\",\"runId\":\"r\"}",
+            "{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}",
+            "{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}",
+            "{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}"
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "after"
+          ],
+          "submits": [
+            {
+              "agentInput": {
+                "type": "text",
+                "text": "hello"
+              },
+              "options": {
+                "turnId": "r",
+                "execution": {
+                  "runId": "r",
+                  "operationId": "r"
+                },
+                "runMode": "agent",
+                "allowPlanModeTools": false,
+                "allowedReadFiles": [],
+                "permissionRules": {
+                  "allow": [],
+                  "deny": [],
+                  "ask": []
+                },
+                "syntheticMessages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "t1"
+                      }
+                    ],
+                    "metadata": {
+                      "synthetic": true,
+                      "purpose": "trusted_context",
+                      "trustedContext": {
+                        "source": "authorized",
+                        "purpose": "material_context",
+                        "scope": "turn",
+                        "authorizedPrincipal": "p1"
+                      }
+                    }
+                  },
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "t2"
+                      }
+                    ],
+                    "metadata": {
+                      "synthetic": true,
+                      "purpose": "trusted_context",
+                      "trustedContext": {
+                        "source": "authorized",
+                        "purpose": "material_context",
+                        "scope": "turn",
+                        "authorizedPrincipal": "p1"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\",\"trustedContext\":[{\"purpose\":\"material_context\",\"scope\":\"turn\",\"source\":\"channel\",\"text\":\"t1\"},{\"purpose\":\"material_context\",\"scope\":\"turn\",\"source\":\"channel\",\"text\":\"t2\"}]}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [
+            {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "channelKey": "test",
+              "context": {
+                "text": "t1",
+                "source": "channel",
+                "purpose": "material_context",
+                "scope": "turn"
+              }
+            },
+            {
+              "sessionKey": "s",
+              "projectKey": "p",
+              "channelKey": "test",
+              "context": {
+                "text": "t2",
+                "source": "channel",
+                "purpose": "material_context",
+                "scope": "turn"
+              }
+            }
+          ],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 4,
+        "revision": 5
+      }
+    },
+    {
+      "name": "model-selection-normalized",
+      "setup": {
+        "input": {
+          "modelSelection": {
+            "mode": "model",
+            "provider": "pv",
+            "model": "mv",
+            "reasoning": 0.8,
+            "speed": 0.5,
+            "temperature": 0.7,
+            "retired": "drop-me"
+          },
+          "modelOverride": {
+            "mode": "model",
+            "provider": "ov",
+            "model": "om",
+            "retired": "drop-me-too"
+          }
+        },
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "model_selection_changed",
+              "provider": "pv",
+              "model": "mv",
+              "source": "turn",
+              "reasoning": 0.8,
+              "speed": 0.5,
+              "runId": "r"
+            },
+            {
+              "type": "input_accepted",
+              "runId": "r",
+              "modelSelection": {
+                "mode": "model",
+                "provider": "pv",
+                "model": "mv",
+                "reasoning": 0.8,
+                "speed": 0.5
+              }
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"model_selection_changed\",\"provider\":\"pv\",\"model\":\"mv\",\"source\":\"turn\",\"reasoning\":0.8,\"speed\":0.5,\"runId\":\"r\"}",
+            "{\"type\":\"input_accepted\",\"runId\":\"r\",\"modelSelection\":{\"mode\":\"model\",\"provider\":\"pv\",\"model\":\"mv\",\"reasoning\":0.8,\"speed\":0.5}}",
+            "{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}",
+            "{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}",
+            "{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}"
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "after"
+          ],
+          "submits": [
+            {
+              "agentInput": {
+                "type": "text",
+                "text": "hello"
+              },
+              "options": {
+                "turnId": "r",
+                "modelSelection": {
+                  "mode": "model",
+                  "provider": "pv",
+                  "model": "mv",
+                  "reasoning": 0.8,
+                  "speed": 0.5
+                },
+                "execution": {
+                  "runId": "r",
+                  "operationId": "r"
+                },
+                "runMode": "agent",
+                "allowPlanModeTools": false,
+                "allowedReadFiles": [],
+                "permissionRules": {
+                  "allow": [],
+                  "deny": [],
+                  "ask": []
+                },
+                "modelOverride": {
+                  "provider": "pv",
+                  "model": "mv",
+                  "speed": 0.5,
+                  "thinking": {
+                    "enabled": true,
+                    "mode": "high"
+                  }
+                }
+              }
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"modelOverride\":{\"mode\":\"model\",\"model\":\"om\",\"provider\":\"ov\"},\"modelSelection\":{\"mode\":\"model\",\"model\":\"mv\",\"provider\":\"pv\",\"reasoning\":0.8,\"speed\":0.5},\"projectKey\":\"p\",\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "model_selection_changed",
+                "provider": "pv",
+                "model": "mv",
+                "source": "turn",
+                "reasoning": 0.8,
+                "speed": 0.5,
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r",
+                "modelSelection": {
+                  "mode": "model",
+                  "provider": "pv",
+                  "model": "mv",
+                  "reasoning": 0.8,
+                  "speed": 0.5
+                }
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "storageCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "model_selection_changed",
+            "provider": "pv",
+            "model": "mv",
+            "source": "turn",
+            "reasoning": 0.8,
+            "speed": 0.5,
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r",
+            "modelSelection": {
+              "mode": "model",
+              "provider": "pv",
+              "model": "mv",
+              "reasoning": 0.8,
+              "speed": 0.5
+            }
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 5,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 5,
+        "revision": 6
+      }
+    }
+  ]
+}

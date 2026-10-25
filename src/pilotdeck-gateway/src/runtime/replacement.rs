@@ -571,7 +571,7 @@ fn finalize_input(key: &JsString, pending: &Pending, action: &str) -> JsValue {
     input.insert("action".into(), JsValue::String(action.into()));
     JsValue::Object(input)
 }
-fn js_whitespace(unit: u16) -> bool {
+pub(crate) fn js_whitespace(unit: u16) -> bool {
     matches!(unit, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
 }
 
