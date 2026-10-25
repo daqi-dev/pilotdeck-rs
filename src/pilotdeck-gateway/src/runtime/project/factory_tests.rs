@@ -1066,6 +1066,101 @@ async fn forwarding_decorator_keeps_interaction_layering() {
     );
 }
 
+/// Paired with forwarding_decorator_keeps_interaction_layering: the default
+/// false declaration deliberately hides an inner interaction selection.
+#[tokio::test]
+async fn nonforwarding_decorator_is_replaced_or_rewrapped() {
+    struct NonForwarding(Arc<dyn ResourceFamilySource>);
+    impl ResourceFamilySource for NonForwarding {
+        fn family(&self) -> Family {
+            self.0.family()
+        }
+        fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+            self.0.stage(context, sink)
+        }
+    }
+    let probe = Arc::new(Probe::default());
+    let custom: Arc<dyn ResourceFamilySource> = Arc::new(FakeSource {
+        probe: probe.clone(),
+        family: Family::ExecutionWorld,
+        extra: no_extra,
+        registers_owner: true,
+        stages: true,
+        publishes: &[Resource::ExecutionWorld],
+    });
+    let decorated: Arc<dyn ResourceFamilySource> = Arc::new(NonForwarding(Arc::new(
+        crate::runtime::project::interaction::InteractionFamilySource::new(custom),
+    )));
+    assert!(!decorated.layers_interaction());
+    let replaced = Families {
+        execution_world: decorated.clone(),
+        ..Families::unwired()
+    }
+    .with_tools_mcp();
+    assert!(!Arc::ptr_eq(&decorated, &replaced.execution_world));
+    assert!(!replaced.execution_world.layers_interaction());
+    let group = interaction_test_group();
+    let context = group.context();
+    replaced
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .unwrap();
+    assert_no_interaction_resources(&context);
+    assert!(
+        !context
+            .resource(Resource::ExecutionWorld)
+            .unwrap()
+            .as_any()
+            .is::<FakeHandle>()
+    );
+    bounded(group.dispose()).await.unwrap();
+    assert!(
+        probe.events().is_empty(),
+        "replaced custom must never stage"
+    );
+
+    let wrapped = Families {
+        execution_world: decorated.clone(),
+        ..Families::unwired()
+    }
+    .with_interaction();
+    assert!(
+        !Arc::ptr_eq(&decorated, &wrapped.execution_world),
+        "false must force a new layer"
+    );
+    assert!(wrapped.execution_world.layers_interaction());
+    let outer = wrapped.execution_world.clone();
+    let wrapped = wrapped.with_interaction();
+    assert!(
+        Arc::ptr_eq(&outer, &wrapped.execution_world),
+        "declared outer layer must not stack again"
+    );
+    let group = interaction_test_group();
+    let context = group.context();
+    assert_no_interaction_resources(&context);
+    wrapped
+        .execution_world
+        .stage(&context, &mut group.sink())
+        .unwrap();
+    assert!(context.resource(Resource::Interaction).is_some());
+    let owner = context.owner(Family::ExecutionWorld).unwrap();
+    assert!(owner.as_any().is::<FakeHandle>());
+    assert_eq!(
+        handle_id(Some(owner)),
+        handle_id(context.resource(Resource::ExecutionWorld)),
+        "owner and resource must come from the same custom stage"
+    );
+    bounded(group.dispose()).await.unwrap();
+    assert_eq!(
+        probe.events(),
+        [
+            "construct:executionWorld:1",
+            "stage:executionWorld:1",
+            "dispose:executionWorld:1"
+        ]
+    );
+}
+
 /// Builder chains around the interaction selection keep a working marker
 /// layering over the native source: I→T→I, T→I→T and a repeated T all stage
 /// the native execution world with the interaction marker. The captured
@@ -3942,3 +4037,6 @@ fn bind_steer(
         )
         .unwrap()
 }
+
+#[path = "interaction_host_tests.rs"]
+mod interaction_host;
