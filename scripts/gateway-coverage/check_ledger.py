@@ -6,7 +6,6 @@ PASS 表示账本结构/集合/锚点完整，不表示 BLOCKED 项已解决或�
 --ledger 支持待评审副本，--baseline 指定只读 B/；--compare-expanded 作一次性逐项对照。
 """
 import argparse
-from ledger_format import expand, read_json, unique_object
 from collections import Counter
 import copy
 import hashlib
@@ -16,6 +15,15 @@ from pathlib import Path
 import re
 import sys
 import subprocess
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    # ``python3 -I`` (isolated mode) does not put the script directory on
+    # sys.path, so the sibling modules below need an explicit path.
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from ledger_format import expand, read_json, unique_object  # noqa: E402
+from strict_compare import strict_equal  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER = ROOT / 'specs/gateway-coverage/ledger.json'
@@ -283,7 +291,7 @@ def validate(data, baseline, inputs, graph=None):
         return [{'code': 'document', 'path': '$', 'detail': 'expected object'}], {}
     if any(control['result'] != 'PASS' for control in graph['parser_controls']):
         fail('parser_controls', '$', graph['parser_controls'])
-    if data.get('format_version') != 1:
+    if not strict_equal(data.get('format_version'), 1):
         fail('format_version', '$', 'expected format_version=1')
     if not isinstance(data.get('baseline'), dict) or data['baseline'].get('commit') != BASELINE_COMMIT:
         fail('baseline', '$.baseline', 'expected the schema-FROZEN baseline commit')
@@ -292,8 +300,9 @@ def validate(data, baseline, inputs, graph=None):
         if not path.is_file() or digest(path) != source['sha256']:
             fail('baseline_protocol', name, 'baseline differs from frozen protocol source hash')
     scope = data.get('scope', {})
-    if (not isinstance(scope, dict) or scope.get('total') != 101
-            or scope.get('remaining_after_a4') != 91 or scope.get('category_counts') != CATEGORIES):
+    if (not isinstance(scope, dict) or not strict_equal(scope.get('total'), 101)
+            or not strict_equal(scope.get('remaining_after_a4'), 91)
+            or not strict_equal(scope.get('category_counts'), CATEGORIES)):
         fail('scope', '$.scope', 'expected 101 total, 91 non-A4, frozen 10/46/4/41 categories')
     for source in ('schema', 'snapshot', 'inventory'):
         values = inputs[source]
@@ -629,13 +638,15 @@ def validate(data, baseline, inputs, graph=None):
         for relative in referenced_files:
             recorded = source_files.get(relative)
             actual = file_cache.get(relative)
-            if actual and (not isinstance(recorded, dict) or recorded.get('line_count') != actual[0] or recorded.get('sha256') != actual[1]):
+            if actual and (not isinstance(recorded, dict)
+                           or not strict_equal(recorded.get('line_count'), actual[0])
+                           or not strict_equal(recorded.get('sha256'), actual[1])):
                 fail('source_drift', relative, 'baseline file differs from the audited ledger source')
     files = (SCHEMA, SNAPSHOT, INVENTORY, DRIVER,
              ROOT / 'docs/research/008_phase-a-session-domain/gap.md',
              ROOT / 'docs/plan/005_phase-a-session-domain.md')
     wanted_hashes = {str(p.relative_to(ROOT)): digest(p) for p in files}
-    if data.get('input_files') != wanted_hashes:
+    if not strict_equal(data.get('input_files'), wanted_hashes):
         fail('input_drift', '$.input_files', 'schema/snapshot/inventory/driver changed since audit')
     summary = {
         'parser': graph['parser'], 'callee_depth': graph['depth'],
@@ -690,6 +701,13 @@ def self_test(data, baseline, inputs):
     unknown_scenario = copy.deepcopy(data)
     unknown_scenario['methods'][0]['scenario_ids'] = ['does_not_exist']
     cases.append(('unknown_scenario', unknown_scenario, 'scenarios'))
+    # The proposed-id gate in validate() is separate from the scenario_ids
+    # branch; a numeric case suffix must be rejected here too (the manifest
+    # validator already has the same paired control).
+    numeric_proposed = copy.deepcopy(data)
+    numeric_entry = numeric_proposed['methods'][0]
+    numeric_entry['proposed_scenarios'].append('a51.%s.case2' % numeric_entry['method'])
+    cases.append(('numeric_proposed_id', numeric_proposed, 'scenarios'))
     def mutate_method(name, field, value):
         mutated = copy.deepcopy(data)
         next(e for e in mutated['methods'] if e['method'] == name)[field] = value
@@ -885,6 +903,28 @@ def self_test(data, baseline, inputs):
             branch['origin'] = {'refs': [ref], 'expression': expression}
         next(e for e in mutated['methods'] if e['method'] == 'memory_list')['branches']['unconfigured'].append(branch)
         cases.append((label, mutated, expected))
+    # Type strictness: plain == accepts bool/int and int/float drift.  Values
+    # are derived from the current ledger, so these stay genuine type pairs
+    # after a legitimate count change (e.g. a category total moving by one).
+    format_version_bool = copy.deepcopy(data)
+    format_version_bool['format_version'] = True
+    cases.append(('strict_format_version_bool', format_version_bool, 'format_version'))
+    scope_total_float = copy.deepcopy(data)
+    scope_total_float['scope']['total'] = float(scope_total_float['scope']['total'])
+    cases.append(('strict_scope_total_float', scope_total_float, 'scope'))
+    scope_remaining_float = copy.deepcopy(data)
+    scope_remaining_float['scope']['remaining_after_a4'] = float(
+        scope_remaining_float['scope']['remaining_after_a4'])
+    cases.append(('strict_scope_remaining_float', scope_remaining_float, 'scope'))
+    scope_category_float = copy.deepcopy(data)
+    scope_category_float['scope']['category_counts']['(b)'] = float(
+        scope_category_float['scope']['category_counts']['(b)'])
+    cases.append(('strict_scope_category_float', scope_category_float, 'scope'))
+    line_count_float = copy.deepcopy(data)
+    line_count_file = next(iter(line_count_float['source_files']))
+    line_count_float['source_files'][line_count_file]['line_count'] = float(
+        line_count_float['source_files'][line_count_file]['line_count'])
+    cases.append(('strict_line_count_float', line_count_float, 'source_drift'))
     results = []
     for name, mutated, expected_code in cases:
         errors, _ = validate(mutated, baseline, inputs)
