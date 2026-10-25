@@ -84,6 +84,13 @@ const NODE_408_RESPONSE: &[u8] = b"HTTP/1.1 408 Request Timeout\r\nConnection: c
 /// [`NODE_408_RESPONSE`] (fixture `node-431.bin`).
 const NODE_431_RESPONSE: &[u8] =
     b"HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n";
+/// Node v22.22.0's default `clientError` answer for an incomplete request. An
+/// EOF in the middle of a request head or body raises `HPE_INVALID_EOF_STATE`
+/// and the server writes exactly these bytes before closing (probe
+/// `_tmp/20261025-issue-699/fix-r2/node/probe-half-close.mjs`, fixture
+/// `node-400.bin`). An empty connection stays silent: Node only writes this
+/// once the parser has seen bytes of the current request.
+const NODE_400_RESPONSE: &[u8] = b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
 /// Largest raw socket chunk the header guard inspects in one `poll_read`.
 const HEADER_GUARD_BUFFER_BYTES: usize = 8 * 1024;
 
@@ -2195,7 +2202,16 @@ struct TimeoutStream<S> {
     /// Node error response bytes that still have to be written before the EOF.
     raw_response: Option<&'static [u8]>,
     raw_written: usize,
-    closed: bool,
+    /// The read half reached EOF (peer FIN, idle timeout, or terminal bytes
+    /// written). `poll_read` keeps reporting EOF, but the write half stays
+    /// usable: a peer that only half-closes (`shutdown(SHUT_WR)`) still reads
+    /// the response, exactly like Node. Closing both halves here was the
+    /// fix-r1 regression that turned every half-close into a 0-byte EOF.
+    read_eof: bool,
+    /// The write half is terminal: Node's canned 408/431/400 was written, the
+    /// idle timer destroyed the socket, or the underlying write failed. hyper
+    /// must never append a response after those bytes.
+    write_closed: bool,
 }
 impl<S> TimeoutStream<S> {
     fn new(inner: S, timer: Arc<KeepAliveTimer>, max_header_bytes: usize) -> Self {
@@ -2212,7 +2228,8 @@ impl<S> TimeoutStream<S> {
             read_buffer: vec![0u8; HEADER_GUARD_BUFFER_BYTES].into_boxed_slice(),
             raw_response: None,
             raw_written: 0,
-            closed: false,
+            read_eof: false,
+            write_closed: false,
         }
     }
 
@@ -2238,7 +2255,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TimeoutStream<S> {
                 self.poll_raw_response(cx)
             }
             ExpiredTimer::Idle => {
-                self.closed = true;
+                // Node's `socket.setTimeout` destroys the socket: both halves
+                // are gone, no bytes may follow.
+                self.read_eof = true;
+                self.write_closed = true;
                 Poll::Ready(Ok(()))
             }
             // The state changed between `nearest_deadline` and `expired`; let
@@ -2266,17 +2286,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin> TimeoutStream<S> {
                         }
                     }
                     Poll::Ready(Err(_)) => break,
-                    // The write half is not ready; retry this poll_read once it
-                    // is. `poll_write` registered the write waker.
-                    Poll::Pending => {
-                        cx.waker().wake_by_ref();
-                        return Poll::Pending;
-                    }
+                    // `poll_write` registered the write waker; self-waking here
+                    // would spin the executor until the socket drains.
+                    Poll::Pending => return Poll::Pending,
                 }
             }
             self.raw_response = None;
         }
-        self.closed = true;
+        self.read_eof = true;
+        self.write_closed = true;
         Poll::Ready(Ok(()))
     }
 }
@@ -2287,7 +2305,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
-        if this.closed {
+        if this.read_eof {
             return Poll::Ready(Ok(()));
         }
         if this.raw_response.is_some() {
@@ -2309,7 +2327,29 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TimeoutStream<S> {
                 Poll::Ready(Ok(())) => {
                     let filled = scratch.filled();
                     if filled.is_empty() {
-                        this.closed = true;
+                        // Peer FIN only closes the read half. Node still writes
+                        // a response to a half-closed peer; an incomplete
+                        // request additionally gets the parser's 47-byte 400.
+                        let phase = this.timer.phase();
+                        let incomplete = match phase {
+                            // hyper was still polling the body, so the parser
+                            // saw EOF before `Content-Length`/chunked end.
+                            TimeoutPhase::Request => true,
+                            // Some bytes of a head arrived but the blank line
+                            // never did; an empty head stays silent like Node.
+                            TimeoutPhase::InitialHeaders | TimeoutPhase::NextHeaders => {
+                                !this.header_guard.completed && this.header_guard.raw_bytes > 0
+                            }
+                            // No request in flight: Node's graceful close writes
+                            // nothing.
+                            TimeoutPhase::Idle => false,
+                        };
+                        if incomplete {
+                            this.raw_response = Some(NODE_400_RESPONSE);
+                            this.raw_written = 0;
+                            return this.poll_raw_response(cx);
+                        }
+                        this.read_eof = true;
                         return Poll::Ready(Ok(()));
                     }
                     this.timer.read_activity();
@@ -2344,9 +2384,10 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for TimeoutStream<S> {
         buffer: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        if this.closed || this.raw_response.is_some() {
-            // The connection already has its terminal bytes (or EOF); never
-            // append a hyper response after Node's canned 408/431.
+        if this.write_closed || this.raw_response.is_some() {
+            // The connection already has its terminal bytes; never append a
+            // hyper response after Node's canned 400/408/431. A read-side EOF
+            // (peer FIN) must not land here: the peer may still be reading.
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "connection closed",
@@ -2359,7 +2400,12 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for TimeoutStream<S> {
                 }
                 Poll::Ready(Ok(written))
             }
-            poll => poll,
+            Poll::Ready(Err(error)) => {
+                // A reset / write failure makes the write half terminal.
+                this.write_closed = true;
+                Poll::Ready(Err(error))
+            }
+            Poll::Pending => Poll::Pending,
         }
     }
 
@@ -2552,6 +2598,13 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                         });
                         let mut builder = http1::Builder::new();
                         builder
+                            // A peer may FIN its write side (`shutdown(SHUT_WR)`)
+                            // while it still reads the response; Node serves
+                            // that peer. hyper's default half_close=false closes
+                            // as soon as read sees EOF "in the middle of a
+                            // request", so a complete request that half-closes
+                            // never reaches the service (fix-r2 GLM P1).
+                            .half_close(true)
                             .timer(TokioTimer::new())
                             // Node's `headersTimeout` is enforced by
                             // `TimeoutStream` from the first byte of each

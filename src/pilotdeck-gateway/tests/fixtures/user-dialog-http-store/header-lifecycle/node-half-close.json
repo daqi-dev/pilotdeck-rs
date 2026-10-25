@@ -1,0 +1,70 @@
+{
+  "node": "v22.22.0",
+  "results": [
+    {
+      "name": "half-body-fin",
+      "requestBytes": 166,
+      "finAtMs": 52,
+      "firstByteAtMs": null,
+      "responseBytes": 47,
+      "status": 400,
+      "head": "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+      "bodyHex": "",
+      "ended": true,
+      "error": null,
+      "elapsedMs": 55
+    },
+    {
+      "name": "partial-head-fin",
+      "requestBytes": 75,
+      "finAtMs": 51,
+      "firstByteAtMs": null,
+      "responseBytes": 47,
+      "status": 400,
+      "head": "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+      "bodyHex": "",
+      "ended": true,
+      "error": null,
+      "elapsedMs": 52
+    },
+    {
+      "name": "empty-fin",
+      "requestBytes": 0,
+      "finAtMs": 51,
+      "responseBytes": 0,
+      "status": null,
+      "head": "",
+      "bodyHex": "",
+      "ended": true,
+      "error": null,
+      "elapsedMs": 51
+    },
+    {
+      "name": "complete-request-fin",
+      "requestBytes": 233,
+      "finAtMs": 49,
+      "firstByteAtMs": null,
+      "responseBytes": 195,
+      "status": 200,
+      "head": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 14:37:09 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 25\r\n\r\n",
+      "bodyHex": "7b2276657273696f6e223a312c22726573756c74223a5b5d7d",
+      "ended": true,
+      "error": null,
+      "elapsedMs": 50
+    },
+    {
+      "name": "complete-request-immediate-fin",
+      "requestBytes": 233,
+      "finAtMs": 2,
+      "firstByteAtMs": null,
+      "responseBytes": 195,
+      "status": 200,
+      "head": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 14:37:10 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 25\r\n\r\n",
+      "bodyHex": "7b2276657273696f6e223a312c22726573756c74223a5b5d7d",
+      "ended": true,
+      "error": null,
+      "elapsedMs": 2
+    }
+  ],
+  "health": "HTTP/1.1 405 Method Not Allowed\r\ncontent-type: application/json; charset=utf-8\r\nDate: Sun, 25 Oct 2026 14:37:10 GMT\r\nConnection: close\r\nContent-Length: 78\r\n\r\n{\"version\":1,\"error\":\"method_not_allowed\",\"message\":\"Only POST is supported.\"}"
+}
