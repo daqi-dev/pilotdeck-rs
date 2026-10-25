@@ -301,6 +301,8 @@ pub enum Resource {
     InteractionSteer,
     InstructionStorage,
     ToolResultSpill,
+    /// Native snapshot instances and per-session event persistence composition.
+    Persistence,
     PromptCacheCoordinator,
     Memory,
     MemoryService,
@@ -324,6 +326,7 @@ impl Resource {
             Self::InteractionSteer => "interactionSteer",
             Self::InstructionStorage => "instructionStorage",
             Self::ToolResultSpill => "toolResultSpill",
+            Self::Persistence => "persistence",
             Self::PromptCacheCoordinator => "promptCacheCoordinator",
             Self::Memory => "memory",
             Self::MemoryService => "memoryService",
@@ -537,7 +540,8 @@ impl Families {
         self
     }
 
-    /// Wire the native context storage and the default memory family
+    /// Wire native context storage, snapshot/session persistence composition,
+    /// and the default memory family
     /// (A6.9-pr3d). The memory source has no injected provider factory, so an
     /// enabled `edgeclaw` config still fails explicitly with
     /// `NativeProviderNotPorted`; call [`Self::with_memory`] with
@@ -654,6 +658,7 @@ struct Slots {
     interaction_steer: Option<Arc<dyn FamilyResource>>,
     instruction_storage: Option<Arc<dyn FamilyResource>>,
     tool_result_spill: Option<Arc<dyn FamilyResource>>,
+    persistence: Option<Arc<dyn FamilyResource>>,
     prompt_cache_coordinator: Option<Arc<dyn FamilyResource>>,
     memory: Option<Arc<dyn FamilyResource>>,
     memory_service: Option<Arc<dyn FamilyResource>>,
@@ -769,6 +774,7 @@ impl Slots {
             Resource::InteractionSteer => slots.interaction_steer.clone(),
             Resource::InstructionStorage => slots.instruction_storage.clone(),
             Resource::ToolResultSpill => slots.tool_result_spill.clone(),
+            Resource::Persistence => slots.persistence.clone(),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator.clone(),
             Resource::Memory => slots.memory.clone(),
             Resource::MemoryService => slots.memory_service.clone(),
@@ -823,6 +829,7 @@ impl StageSink<'_> {
             Resource::InteractionSteer => slots.interaction_steer = Some(handle),
             Resource::InstructionStorage => slots.instruction_storage = Some(handle),
             Resource::ToolResultSpill => slots.tool_result_spill = Some(handle),
+            Resource::Persistence => slots.persistence = Some(handle),
             Resource::PromptCacheCoordinator => slots.prompt_cache_coordinator = Some(handle),
             Resource::Memory => slots.memory = Some(handle),
             Resource::MemoryService => slots.memory_service = Some(handle),
@@ -885,6 +892,7 @@ impl ProjectResources {
                 interaction_steer: None,
                 instruction_storage: None,
                 tool_result_spill: None,
+                persistence: None,
                 prompt_cache_coordinator: None,
                 memory: None,
                 memory_service: None,

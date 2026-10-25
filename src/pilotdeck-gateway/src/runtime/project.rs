@@ -156,6 +156,7 @@ pub mod interaction_permission;
 pub mod interaction_steer;
 pub mod memory_bundle;
 pub mod model;
+pub mod persistence;
 pub mod plugins;
 pub mod tools_mcp;
 pub use factory::{

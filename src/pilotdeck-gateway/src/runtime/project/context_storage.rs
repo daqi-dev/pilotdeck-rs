@@ -44,6 +44,7 @@ impl ResourceFamilySource for ContextStorageFamilySource {
         });
         sink.register_resource(Resource::InstructionStorage, resources.clone());
         sink.register_resource(Resource::ToolResultSpill, resources);
+        super::persistence::stage(context, sink)?;
         Ok(())
     }
 }
