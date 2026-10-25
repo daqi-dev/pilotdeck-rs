@@ -2250,9 +2250,12 @@ mod context_storage_tests {
     /// open and write still run; the probe is not a sleep replacing the
     /// I/O), so before the `spawn_blocking` offload each spill occupied a
     /// worker for both stalls and the heartbeat below went silent for their
-    /// whole duration. The bound is fifteen heartbeat intervals of scheduling
-    /// noise — far below one 300 ms controlled stall, which is what a blocked
-    /// worker would impose; no timeout threshold is relaxed to make this pass.
+    /// whole duration. The 500 ms controlled stall leaves a 3.3x margin to
+    /// the 150 ms bound (fix-r1, P1-1: at least 3x, so CI scheduling noise
+    /// cannot bleed into a pass), and the bound itself is far below one
+    /// stall — what a blocked worker would impose; no threshold is relaxed to
+    /// make this pass. On failure the diagnostics print every heartbeat
+    /// interval plus max/median/p99, the tick count and the stalled opens.
     #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn context_storage_spill_does_not_starve_same_runtime_tasks() {
@@ -2266,7 +2269,7 @@ mod context_storage_tests {
         };
 
         const HEARTBEAT_MS: u64 = 10;
-        const CONTROLLED_STALL_MS: u64 = 300;
+        const CONTROLLED_STALL_MS: u64 = 500;
         const MAX_HEARTBEAT_GAP_MS: u64 = 150;
 
         let scratch = Scratch::new();
@@ -2290,17 +2293,15 @@ mod context_storage_tests {
         let stop = Arc::new(AtomicBool::new(false));
         let heartbeat_stop = stop.clone();
         let heartbeat = tokio::spawn(async move {
-            let mut max_gap = Duration::ZERO;
-            let mut ticks = 0usize;
+            let mut intervals: Vec<Duration> = Vec::new();
             let mut last = Instant::now();
             while !heartbeat_stop.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(HEARTBEAT_MS)).await;
                 let now = Instant::now();
-                max_gap = max_gap.max(now - last);
+                intervals.push(now - last);
                 last = now;
-                ticks += 1;
             }
-            (max_gap, ticks)
+            intervals
         });
 
         let texts: Vec<String> = ["a", "b", "c", "d"]
@@ -2331,7 +2332,19 @@ mod context_storage_tests {
         let stalled_opens = slow.fires();
         drop(slow);
         stop.store(true, Ordering::SeqCst);
-        let (max_gap, ticks) = heartbeat.await.unwrap();
+        let intervals = heartbeat.await.unwrap();
+        let ticks = intervals.len();
+        let max_gap = intervals.iter().max().copied().unwrap_or(Duration::ZERO);
+        let mut sorted: Vec<u128> = intervals.iter().map(|gap| gap.as_millis()).collect();
+        sorted.sort_unstable();
+        let (median_ms, p99_ms) = if sorted.is_empty() {
+            (0, 0)
+        } else {
+            (
+                sorted[sorted.len() / 2],
+                sorted[(sorted.len() * 99).div_ceil(100).min(sorted.len() - 1)],
+            )
+        };
 
         // The real spill files and aliases landed with the expected contents.
         for ((id, reference), expected) in ["a", "b", "c", "d"].iter().zip(&references).zip(&texts)
@@ -2351,10 +2364,17 @@ mod context_storage_tests {
             stalled_opens >= 8,
             "the slow-I/O probe must reach the real open path (fires={stalled_opens})"
         );
+        // The heartbeat really ran (P3-3): a stopped-too-early loop with no
+        // intervals must not pass vacuously.
+        assert!(
+            ticks >= 5,
+            "heartbeat barely ran (ticks={ticks}, stalled opens={stalled_opens})"
+        );
         assert!(
             max_gap < Duration::from_millis(MAX_HEARTBEAT_GAP_MS),
             "heartbeat starved for {max_gap:?} while four sessions spilled \
-             (ticks={ticks}, stalled opens={stalled_opens})"
+             (ticks={ticks}, stalled opens={stalled_opens}, median={median_ms}ms, \
+             p99={p99_ms}ms, intervals_ms={sorted:?})"
         );
     }
 
