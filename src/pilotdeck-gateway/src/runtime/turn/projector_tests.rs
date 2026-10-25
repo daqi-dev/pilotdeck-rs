@@ -586,6 +586,67 @@ fn sanitize_colliding_tool_call_ids_truncate_overwrite_on_disk() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// #640 fix-r1: the back-to-back shape the diff entry is about — both
+/// advisory writes in flight at once, with **no** `wait_for_pending`
+/// between the two `persist` calls. The one detached FIFO writer thread
+/// drains job A then job B, so the colliding file deterministically holds
+/// the *last-enqueued* body and both already-returned refs show it. The
+/// measured TS store has no such determinism here (probe scenario C,
+/// `_tmp/20261025-issue-640/ts-probe/probe-output.txt`: 20 rounds of
+/// back-to-back persist yielded BODY-A 7× and BODY-B 13×), which is the
+/// registered difference. Unlike the two sequential tests above, this
+/// case fails if the single-writer design is traded for a writer per
+/// persist (then the completion order, and with it the final bytes,
+/// depends on thread scheduling).
+#[test]
+fn sanitize_colliding_tool_call_ids_back_to_back_last_enqueued_wins() {
+    for round in 0..20 {
+        // Fresh store per round: each store owns its writer thread, so every
+        // round exercises a fresh enqueue-then-drain sequence.
+        let root = std::env::temp_dir().join(format!(
+            "pdrs-projector-640-b2b-{}-{}",
+            round,
+            uuid::Uuid::new_v4()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let store = GatewayToolResultArtifactStore::new(&root, 4);
+        let body_a = format!("BODY-A/{}", "a".repeat(500));
+        let body_b = format!("BODY-B/{}", "b".repeat(90));
+        let input = |tool_call_id: &str, body: String| GatewayToolResultArtifactInput {
+            session_id: text("s"),
+            turn_id: text("t"),
+            tool_call_id: text(tool_call_id),
+            text: JsString::from(body),
+        };
+        // Back-to-back: both advisory writes are queued before either is
+        // known to have completed.
+        let ref_a = store
+            .persist(&input("c/1", body_a))
+            .expect("persisted")
+            .expect("above threshold");
+        let ref_b = store
+            .persist(&input("c-1", body_b.clone()))
+            .expect("persisted")
+            .expect("above threshold");
+        assert_eq!(ref_a, ref_b, "both tool results return the same path");
+        store.wait_for_pending();
+        // Last enqueued wins: the FIFO writer truncates A away with B, and
+        // the exact-length comparison rules out an in-place overwrite of the
+        // longer A body.
+        assert_eq!(
+            std::fs::read(&ref_b).expect("final artifact"),
+            body_b.as_bytes(),
+            "round {round}: the colliding file must hold the last-enqueued body"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&ref_a).expect("ref a reread"),
+            body_b,
+            "round {round}: the first persist's ref shows the last body"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
 /// Shared owner-token scratch guard (`tests/common/scratch.rs`), not a copy.
 #[cfg(unix)]
 use crate::test_scratch::Scratch;
