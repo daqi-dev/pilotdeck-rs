@@ -112,6 +112,7 @@ fn options() -> InteractionTurnInput {
         record_message: Some(Arc::new(|_| Box::pin(async { Ok(()) }))),
         messages: vec![],
         switches: Default::default(),
+        turn_ports: Default::default(),
     }
 }
 fn identity() -> ExecutionIdentity {

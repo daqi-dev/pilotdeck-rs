@@ -1,0 +1,193 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/cli/AgentLoopDeploymentProfile.ts": "2d54740aba32e68ae1d609033851111ae8c112391efed6d6b661c40936352d6f",
+    "src/cli/ProjectRuntimeRegistry.ts": "0df6b0e82be872c2a2d57f85e73136d75865ff1fc2c4ded2e5e5550d7a9353d9",
+    "src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts": "2ec674ccf767533e0cd7c592d16bc0157a1c441c3c43d35e6288276300dc7e2f"
+  },
+  "deployment": [
+    {
+      "name": "default",
+      "env": {},
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": true,
+      "value": {
+        "transport": "native"
+      }
+    },
+    {
+      "name": "native",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "native"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": true,
+      "value": {
+        "transport": "native"
+      }
+    },
+    {
+      "name": "empty",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "  "
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": true,
+      "value": {
+        "transport": "native"
+      }
+    },
+    {
+      "name": "stdio",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio",
+        "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND": "node",
+        "PILOTDECK_AGENT_LOOP_SIDECAR_PATH": "side.js",
+        "PILOTDECK_AGENT_LOOP_TCP_HOST": "1.2.3.4",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "7000"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": true,
+      "value": {
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "/tmp/pdrs-cwd/side.js"
+        ],
+        "env": {
+          "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio",
+          "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND": "node",
+          "PILOTDECK_AGENT_LOOP_SIDECAR_PATH": "side.js"
+        }
+      }
+    },
+    {
+      "name": "stdio-empty-command",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "stdio",
+        "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND": "   "
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND must not be empty."
+    },
+    {
+      "name": "tcp-missing-port",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TCP_PORT is required when transport is tcp."
+    },
+    {
+      "name": "tcp-invalid-port",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "0"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535."
+    },
+    {
+      "name": "tcp",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": true,
+      "value": {
+        "transport": "tcp",
+        "host": "127.0.0.1",
+        "port": 4000
+      }
+    },
+    {
+      "name": "tcp-timeout",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000",
+        "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "25"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": true,
+      "value": {
+        "transport": "tcp",
+        "host": "127.0.0.1",
+        "port": 4000,
+        "connectTimeoutMs": 25
+      }
+    },
+    {
+      "name": "tcp-invalid-timeout",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000",
+        "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "0"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS must be a positive integer."
+    },
+    {
+      "name": "invalid",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "bogus"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TRANSPORT must be native, stdio, or tcp."
+    }
+  ],
+  "lease": [
+    {
+      "name": "two-leases",
+      "leases": 2,
+      "disposals": 0,
+      "state": "active"
+    },
+    {
+      "name": "after-first-release",
+      "leases": 1,
+      "disposals": 0,
+      "state": "active"
+    },
+    {
+      "name": "retire-with-second-lease",
+      "leases": 1,
+      "disposals": 0,
+      "state": "retired"
+    },
+    {
+      "name": "after-last-release",
+      "leases": 0,
+      "disposals": 1,
+      "state": "disposed"
+    },
+    {
+      "name": "after-double-release",
+      "leases": 0,
+      "disposals": 1,
+      "state": "disposed"
+    },
+    {
+      "name": "acquire-retired",
+      "error": "Project runtime is retired.",
+      "leases": 1
+    }
+  ],
+  "connection": [
+    {
+      "name": "spawn-failure",
+      "ok": false,
+      "error": "Sidecar failed to start: spawn /nonexistent-pdrs-sidecar ENOENT before execute reached a terminal event."
+    },
+    {
+      "name": "exit-before-terminal",
+      "ok": false,
+      "error": "Sidecar exited with code 7 before execute reached a terminal event."
+    }
+  ]
+}

@@ -46,11 +46,21 @@ pub struct Ports {
 impl Ports {
     /// Local accounting, including budget evaluation without provider access.
     pub fn local(pricing: Option<PricingMap>) -> Self {
+        Self::for_accounting(
+            Arc::new(crate::runtime::model::token_accounting::TokenAccountingRuntime::default()),
+            pricing,
+        )
+    }
+    /// Bind evaluation to the generation's staged token accounting while the
+    /// request estimate and usage cost stay host-local, like the TS budget
+    /// port (`AgentTurnCapabilities.model.budget`).
+    pub fn for_accounting(
+        accounting: Arc<crate::runtime::model::token_accounting::TokenAccountingRuntime>,
+        pricing: Option<PricingMap>,
+    ) -> Self {
         Self {
             estimate_request_input: Some(Arc::new(LocalRequestInput)),
-            evaluate_request_budget: Some(Arc::new(
-                crate::runtime::model::token_accounting::TokenAccountingRuntime::default(),
-            )),
+            evaluate_request_budget: Some(accounting),
             estimate_usage_cost: Some(Arc::new(LocalUsageCost { pricing })),
         }
     }
