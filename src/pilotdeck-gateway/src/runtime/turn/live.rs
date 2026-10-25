@@ -515,6 +515,14 @@ impl HostHandler for StreamHandler {
     fn event(&self, event: JsValue) -> HostFuture<()> {
         let final_event = event.get("final").and_then(JsValue::as_bool) == Some(true);
         let payload = event.get("payload").cloned();
+        if !final_event && payload.is_none() {
+            return Box::pin(async {
+                Err(HostError::new(
+                    HostErrorKind::Protocol,
+                    "AgentEvent payload is missing.",
+                ))
+            });
+        }
         let applied = self.inner.event(event);
         let delivery = {
             let mut forwarding = self.forwarding.lock().unwrap();

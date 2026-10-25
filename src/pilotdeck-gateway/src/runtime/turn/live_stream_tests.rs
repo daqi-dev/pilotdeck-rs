@@ -1842,3 +1842,34 @@ async fn host_error_cuts_off_prevalidated_and_backpressured_deliveries() {
         assert!(handler.integrity.observe_aborted().is_err());
     }
 }
+
+#[tokio::test]
+async fn non_final_event_missing_payload_is_protocol_error() {
+    for raw in ["{}", r#"{"final":false}"#] {
+        let (inner, handler, mut receiver) = buffered_handler(4);
+        let error = handler.event(parse_json(raw).unwrap()).await.unwrap_err();
+        assert_eq!(error.kind, HostErrorKind::Protocol);
+        assert_eq!(error.message, "AgentEvent payload is missing.");
+        assert!(inner.events.lock().unwrap().is_empty());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        println!("missing payload {raw}: {error}");
+    }
+    let (inner, handler, mut receiver) = buffered_handler(4);
+    handler
+        .event(parse_json(r#"{"final":true}"#).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(inner.events.lock().unwrap().len(), 1);
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    let payload = host_event("model_event");
+    let mut event = JsObject::new();
+    event.insert("payload".into(), payload.clone());
+    handler.event(JsValue::Object(event)).await.unwrap();
+    assert_eq!(receiver.recv().await, Some(payload));
+}

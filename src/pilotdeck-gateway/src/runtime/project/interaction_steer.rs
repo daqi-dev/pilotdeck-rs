@@ -32,7 +32,9 @@ struct State {
     closed: bool,
     releases: usize,
     sessions: HashMap<JsString, Session>,
-    draining: Vec<Arc<Run>>,
+    // Keep the session key after revocation: replacement mailboxes must not
+    // overtake durable writes, even across multiple not-yet-started bindings.
+    draining: Vec<(JsString, Arc<Run>)>,
 }
 struct Session {
     identity: Arc<()>,
@@ -92,6 +94,7 @@ impl Run {
 pub struct InteractionSteer(Arc<Mutex<State>>);
 impl InteractionSteer {
     /// A recorder belongs to this session's transcript, never to wire input.
+    /// Replaces the old identity; wait_ready must succeed before starting a run.
     pub fn bind_session(
         &self,
         key: JsString,
@@ -100,21 +103,25 @@ impl InteractionSteer {
         let executor = Handle::try_current()
             .map_err(|_| ModuleError::new("Steer binding requires a Tokio runtime."))?;
         let mut state = self.0.lock().unwrap();
-        if state.closed || state.sessions.contains_key(&key) {
+        if state.closed {
             return Err(stale());
         }
         state
             .draining
-            .retain(|run| !matches!(&*run.done.borrow(), Some(Ok(_))));
+            .retain(|(_, run)| !matches!(&*run.done.borrow(), Some(Ok(_))));
         let identity = Arc::new(());
-        state.sessions.insert(
+        if let Some(previous) = state.sessions.insert(
             key.clone(),
             Session {
                 identity: identity.clone(),
                 mailbox: SteerMailbox::new(recorder),
                 run: None,
             },
-        );
+        ) && let Some(run) = previous.run
+        {
+            run.close();
+            state.draining.push((key.clone(), run));
+        }
         Ok(SessionSteer {
             owner: self.clone(),
             key,
@@ -130,10 +137,10 @@ impl InteractionSteer {
         }
         state.closed = true;
         state.releases += 1;
-        for session in std::mem::take(&mut state.sessions).into_values() {
+        for (key, session) in std::mem::take(&mut state.sessions) {
             if let Some(run) = session.run {
                 run.close();
-                state.draining.push(run);
+                state.draining.push((key, run));
             }
         }
     }
@@ -150,7 +157,7 @@ impl FamilyResource for InteractionSteer {
         let runs = self.0.lock().unwrap().draining.clone();
         Box::pin(async move {
             let mut failures = Vec::new();
-            for run in runs {
+            for (_, run) in runs {
                 if let Err(error) = run.wait().await {
                     failures.push(RuntimeError::new(error.to_string()));
                 }
@@ -172,6 +179,27 @@ pub struct SessionSteer {
     current_run: Arc<Mutex<Option<Arc<Run>>>>,
 }
 impl SessionSteer {
+    /// Wait for every superseded run of this session, including a predecessor
+    /// whose binding was disposed before start. Recorders must bound their I/O;
+    /// errors remain barriers rather than granting a fresh mailbox authority.
+    pub async fn wait_ready(&self) -> Result<(), HostError> {
+        let runs = {
+            let mut state = self.owner.0.lock().unwrap();
+            self.session(&mut state)?;
+            state
+                .draining
+                .iter()
+                .filter(|(key, _)| key == &self.key)
+                .map(|(_, run)| run.clone())
+                .collect::<Vec<_>>()
+        };
+        for run in runs {
+            run.wait().await?;
+        }
+        // This binding may itself have been superseded while it waited.
+        self.session(&mut self.owner.0.lock().unwrap())?;
+        Ok(())
+    }
     fn session<'a>(&self, state: &'a mut State) -> Result<&'a mut Session, HostError> {
         if state.closed {
             return Err(stale());
@@ -193,6 +221,13 @@ impl SessionSteer {
         router: &mut ModuleRouter,
     ) -> Result<TurnSteer, HostError> {
         let mut state = self.owner.0.lock().unwrap();
+        if state
+            .draining
+            .iter()
+            .any(|(key, run)| key == &self.key && !matches!(&*run.done.borrow(), Some(Ok(_))))
+        {
+            return Err(stale());
+        }
         let session = self.session(&mut state)?;
         if session
             .run
@@ -280,7 +315,7 @@ impl SessionSteer {
             && let Some(run) = state.sessions.remove(&self.key).and_then(|s| s.run)
         {
             run.close();
-            state.draining.push(run);
+            state.draining.push((self.key.clone(), run));
         }
         let run = self.current_run.lock().unwrap().clone();
         Box::pin(async move {

@@ -21,9 +21,14 @@ pub(super) struct ExecutionSignals {
     pub(super) reconnect_started: tokio::sync::watch::Sender<bool>,
     pub(super) reconnect_completed: tokio::sync::watch::Sender<bool>,
     pub(super) reconnect_gate: Option<Arc<Notify>>,
+    pub(super) dispose_gate: Option<(Arc<Notify>, Arc<Notify>)>,
 }
 
 impl HostClient {
+    /// Hold the detached disposer after callback shutdown but before revocation.
+    pub(crate) fn pause_dispose_for_test(&mut self, entered: Arc<Notify>, release: Arc<Notify>) {
+        self.test_signals.dispose_gate = Some((entered, release));
+    }
     /// Test-only observation for the slow-consumer synchronization: the
     /// execution loop sets this the moment the module final enters its
     /// application queue, before any handler callback runs. It lets a test

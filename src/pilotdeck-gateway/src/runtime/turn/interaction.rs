@@ -178,6 +178,10 @@ impl InteractionTurn {
                 .as_mut()
                 .unwrap()
                 .session_steer = Some(session.clone());
+            // A dropped stream releases the submit slot before detached
+            // disposal finishes. Supersede its identity, then wait for all
+            // admitted durable writes before starting the replacement mailbox.
+            session.wait_ready().await?;
             turn.ports.steer = Some(session.start_turn(
                 identity.turn_id.clone(),
                 identity.run_id.clone(),
