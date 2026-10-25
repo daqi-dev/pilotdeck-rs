@@ -10,6 +10,10 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use std::sync::Arc;
 
+#[path = "runner_recording.rs"]
+mod recording;
+pub use recording::{Recording, RecordingAction};
+
 pub enum AgentInput {
     Text(JsString),
     Blocks(Vec<JsValue>),
@@ -37,6 +41,7 @@ enum Phase {
 pub struct TurnRunner {
     recorder: Arc<Recorder>,
     lease: Arc<RuntimeLease>,
+    owner: Option<Arc<dyn Send + Sync>>,
     session: JsString,
     turn: JsString,
     now: Arc<dyn Fn() -> JsString + Send + Sync>,
@@ -56,6 +61,7 @@ impl TurnRunner {
         Self {
             recorder,
             lease,
+            owner: None,
             session,
             turn,
             now: Arc::new(|| SystemExecutionClock.now_iso()),
@@ -81,8 +87,10 @@ impl TurnRunner {
             self.session.clone(),
             self.turn.clone(),
         );
+        let owner = self.owner.clone();
         tokio::task::spawn_blocking(move || {
             let result = write(&recorder, &session, &turn);
+            drop(owner);
             drop(lease);
             result
         })

@@ -77,3 +77,15 @@ runner 负控默认20项（两个 terminal 分支分别变异，每个锚点 cou
 `recorderCases` 新增 null/undefined/number × fresh/started/completed 九格真实 TS 金样。null/undefined 在去重前抛 TypeError；数字在完成标记为 undefined 时 no-op，已有完成标记时抛 `Durable turn undefined has not started.`；这些调用都不追加 JSONL，started 格随后成功完成证明可重试。Rust 保留显式 session/turn 参数的既有对象调用合同，仅对齐本轮非对象边界。
 
 两套负控先定位函数作用域，再替换不带前导缩进、不跨行的短语句锚点，每个锚点严格 `count == 1`；recorder 10 项、runner 20 项，均要求运行时断言失败且恢复后正控通过。
+
+## pr3 独立端口（未完成 LiveSession 接线）
+
+`TurnInput::from_agent_input` 消费原始 text/blocks，分开接收宿主 history/synthetic，按真实 TS `acceptedInputMetadata` 投影选项。新增八行 `input-metadata-*` / `input-text-original` 金样由 `recording_metadata_*` / `recording_original_text` 消费；既有17行 matrix、21行 recorder、7行 sidecar 和 sourceSha256 原值保持。metadata 在 writer 归一化前也对拍，不能用 writer 丢弃空对象掩盖投影差异。
+
+`Recording` 将 transition future 留在自身，`settle()` 被取消后可继续同一次迁移；在 pending 或完成后拒绝 `begin()`。丢弃驱动时，已进入同步 I/O 的 worker 继续持有传入的共享 owner 和 RuntimeLease。调用方须把真实 active-slot guard 传给 `Recording::new`；目前 LiveSession 还没有调用该端口，不能把本地 guard 析构实验称为端到端 slot 验收。永久卡住的同步 I/O 不承诺强杀或提前释放 owner。
+
+`runner_tests` 的现有 oracle 重放经 Recording 驱动全部五种 action；六个独立 gate 用例覆盖 start/accept/complete 中取消 waiter 后继续以及直接 drop。gate entered/Disposed 上限5秒，阻塞 I/O gate 上限10秒；用未放行 gate 和单次 poll 覆盖前驱持续 pending、第二个 waiter 被取消、禁止覆盖 pending。另测未 poll drop、失败后的 closed 状态、非法 AgentInput 与 modelSelection prototype。
+
+`recording_negative.py <新证据目录>` 使用同一三个公共 helper，对这些新分支逐项变异，要求运行时 RED 与恢复 PASS。原 runner/recorder 负控仍适用且锚点未改。重生成继续使用已存在的 ignored `runner_regenerates_identically`，须显式运行；生成器仍 recursive mkdir + `flag:'wx'`。
+
+尚未完成的完整接线范围仍为上面“待接续”及本包 RESULT 的最终清单；所有 live_* 用例仍是接手要求，不因新增端口而改成已验收。

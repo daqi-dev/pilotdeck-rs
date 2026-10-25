@@ -1880,6 +1880,1095 @@
         "test": "runner_nullish_hint",
         "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
       }
+    },
+    {
+      "name": "input-metadata-all",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}],\"metadata\":{\"synthetic\":true}}],\"metadata\":{\"modelSelection\":{\"provider\":\"test\",\"model\":\"chosen\"},\"permissionMode\":\"default\",\"runMode\":\"agent\",\"basePermissionMode\":\"plan\",\"allowPlanModeTools\":true},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "rawInput": {
+        "type": "text",
+        "text": "probe"
+      },
+      "history": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        }
+      ],
+      "synthetic": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "loopMessages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "probe"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "submitOptions": {
+        "modelSelection": {
+          "provider": "test",
+          "model": "chosen"
+        },
+        "permissionMode": "default",
+        "runMode": "agent",
+        "basePermissionMode": "plan",
+        "allowPlanModeTools": true,
+        "ignored": "never persisted"
+      },
+      "consumption": {
+        "status": "pr3 端口已消费",
+        "test": "recording_metadata_all",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "input-metadata-false",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}],\"metadata\":{\"synthetic\":true}}],\"metadata\":{\"allowPlanModeTools\":false},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "rawInput": {
+        "type": "text",
+        "text": "probe"
+      },
+      "history": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        }
+      ],
+      "synthetic": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "loopMessages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "probe"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "submitOptions": {
+        "modelSelection": false,
+        "permissionMode": "",
+        "runMode": false,
+        "basePermissionMode": 0,
+        "allowPlanModeTools": false
+      },
+      "consumption": {
+        "status": "pr3 端口已消费",
+        "test": "recording_metadata_false",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "input-metadata-null",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}],\"metadata\":{\"synthetic\":true}}],\"metadata\":{\"allowPlanModeTools\":null},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "rawInput": {
+        "type": "text",
+        "text": "probe"
+      },
+      "history": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        }
+      ],
+      "synthetic": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "loopMessages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "probe"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "submitOptions": {
+        "modelSelection": null,
+        "permissionMode": null,
+        "runMode": null,
+        "basePermissionMode": null,
+        "allowPlanModeTools": null
+      },
+      "consumption": {
+        "status": "pr3 端口已消费",
+        "test": "recording_metadata_null",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "input-metadata-absent",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}],\"metadata\":{\"synthetic\":true}}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "rawInput": {
+        "type": "text",
+        "text": "probe"
+      },
+      "history": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        }
+      ],
+      "synthetic": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "loopMessages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "probe"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "submitOptions": {},
+      "consumption": {
+        "status": "pr3 端口已消费",
+        "test": "recording_metadata_absent",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "input-metadata-array",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}],\"metadata\":{\"synthetic\":true}}],\"metadata\":{\"modelSelection\":{\"0\":true,\"1\":null}},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "rawInput": {
+        "type": "text",
+        "text": "probe"
+      },
+      "history": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        }
+      ],
+      "synthetic": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "loopMessages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "probe"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "submitOptions": {
+        "modelSelection": [
+          true,
+          null
+        ]
+      },
+      "consumption": {
+        "status": "pr3 端口已消费",
+        "test": "recording_metadata_array",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "input-metadata-string",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}],\"metadata\":{\"synthetic\":true}}],\"metadata\":{\"modelSelection\":{\"0\":\"a\",\"1\":\"\\ud800\",\"2\":\"\\ud83d\",\"3\":\"\\ude00\"}},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "rawInput": {
+        "type": "text",
+        "text": "probe"
+      },
+      "history": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        }
+      ],
+      "synthetic": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "loopMessages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "probe"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "submitOptions": {
+        "modelSelection": "a\ud800😀"
+      },
+      "consumption": {
+        "status": "pr3 端口已消费",
+        "test": "recording_metadata_string",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "input-metadata-number",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}],\"metadata\":{\"synthetic\":true}}],\"metadata\":{\"modelSelection\":{}},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "rawInput": {
+        "type": "text",
+        "text": "probe"
+      },
+      "history": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        }
+      ],
+      "synthetic": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "loopMessages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "probe"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "submitOptions": {
+        "modelSelection": 1
+      },
+      "consumption": {
+        "status": "pr3 端口已消费",
+        "test": "recording_metadata_number",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "input-text-original",
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "raw\ud800"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "raw\ud800"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"raw\\ud800\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}],\"metadata\":{\"synthetic\":true}}],\"metadata\":{\"allowPlanModeTools\":false},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "rawInput": {
+        "type": "text",
+        "text": "raw\ud800",
+        "metadata": {
+          "permissionMode": "ignored"
+        }
+      },
+      "history": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        }
+      ],
+      "synthetic": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "loopMessages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "history"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "raw\ud800"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "synthetic"
+            }
+          ],
+          "metadata": {
+            "synthetic": true
+          }
+        }
+      ],
+      "consumption": {
+        "status": "pr3 端口已消费",
+        "test": "recording_original_text",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
     }
   ],
   "recorderCases": [

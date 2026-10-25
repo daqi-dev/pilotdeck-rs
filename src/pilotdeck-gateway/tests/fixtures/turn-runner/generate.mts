@@ -74,7 +74,7 @@ const result = (type = 'success', turnId = 't') => ({type,sessionId:'s',turnId,s
   usage:{},permissionDenials:[],turns:1,startedAt:now().toISOString(),completedAt:now().toISOString()});
 const matrix:any[] = [];
 for (const name of ['success','start-fails','accepted-fails','abort-before-execute','abort-after-accepted',
-  'loop-fails-twice','loop-throws','early-completed','consumer-drop','complete-once','complete-always','input-text','input-blocks','accepted-duplicate','loop-aborted-error','status-fails','loop-null-hint']) {
+  'loop-fails-twice','loop-throws','early-completed','consumer-drop','complete-once','complete-always','input-text','input-blocks','accepted-duplicate','loop-aborted-error','status-fails','loop-null-hint','input-metadata-all','input-metadata-false','input-metadata-null','input-metadata-absent','input-metadata-array','input-metadata-string','input-metadata-number','input-text-original']) {
   const fault = name === 'status-fails' ? 'agent_status_message' : name === 'start-fails' ? 'turn_started' : name === 'accepted-fails' ? 'accepted_input'
     : name.startsWith('complete-') ? 'turn_result' : '';
   const ctx = writerFor(name, fault, name === 'complete-once' ? 1 : 99);
@@ -84,7 +84,12 @@ for (const name of ['success','start-fails','accepted-fails','abort-before-execu
   const inputCase=name.startsWith('input-');
   const history=inputCase?[{role:'assistant',content:[{type:'text',text:'history'}]}]:[];
   const synthetic=inputCase?[{role:'user',content:[{type:'text',text:'synthetic'}],metadata:{synthetic:true}}]:[];
-  const rawInput=name==='input-blocks'?{type:'blocks',content:[{type:'text',text:'raw\ud800'},{type:'text',text:'second'}]}:{type:'text',text:'probe'};
+  const submitOptions: any = name==='input-metadata-all' ? {modelSelection:{provider:'test',model:'chosen'},permissionMode:'default',runMode:'agent',basePermissionMode:'plan',allowPlanModeTools:true,ignored:'never persisted'}
+    : name==='input-metadata-false' ? {modelSelection:false,permissionMode:'',runMode:false,basePermissionMode:0,allowPlanModeTools:false}
+    : name==='input-metadata-null' ? {modelSelection:null,permissionMode:null,runMode:null,basePermissionMode:null,allowPlanModeTools:null}
+    : name==='input-metadata-array' ? {modelSelection:[true,null]} : name==='input-metadata-string' ? {modelSelection:'a\ud800😀'} : name==='input-metadata-number' ? {modelSelection:1}
+    : name==='input-metadata-absent' ? {} : inputCase ? {allowPlanModeTools:false} : {};
+  const rawInput=name==='input-blocks'?{type:'blocks',content:[{type:'text',text:'raw\ud800'},{type:'text',text:'second'}]}:{type:'text',text:name==='input-text-original'?'raw\ud800':'probe',...(name==='input-text-original'?{metadata:{permissionMode:'ignored'}}:{})};
   const recorder = new AgentSessionEventRecorder(ctx.writer);
   const complete = recorder.completeTurn.bind(recorder);
   recorder.completeTurn = async (value:any) => {completes++; await complete(value);};
@@ -112,13 +117,13 @@ for (const name of ['success','start-fails','accepted-fails','abort-before-execu
   let error: string | null=null;
   if(name==='abort-before-execute')controller.abort('probe');
   try {for await(const e of runner.run({sessionId:'s',turnId:'t',messages:history,input:rawInput,syntheticMessages:synthetic,
-    ...(inputCase?{allowPlanModeTools:false}:{}),
+    ...submitOptions,
     abortSignal:controller.signal,closeSteerMailbox:()=>{closes++;return [];}})) {
       events.push(e);
       if(name==='abort-after-accepted' && e.type==='input_accepted')controller.abort('probe');
       if(name==='consumer-drop' && e.type==='model_event')break;
   }}catch(e:any){error=e.message;}
-  matrix.push({name,events,error,loopCalls,modelCalls,returns,completes,closes,writeAttempts:ctx.attempts(),transcript:ctx.bytes(),...(inputCase?{rawInput,history,synthetic,loopMessages}: {})});
+  matrix.push({name,events,error,loopCalls,modelCalls,returns,completes,closes,writeAttempts:ctx.attempts(),transcript:ctx.bytes(),...(inputCase?{rawInput,history,synthetic,loopMessages}: {}),...(name.startsWith('input-metadata-')?{submitOptions}: {})});
 }
 // Recorder completion is independently replayable in Rust, including retry state.
 const recorderCases:any[]=[];
@@ -154,6 +159,14 @@ for(const name of ['success','error','aborted','max_turns','no-step','unstarted'
 }
 const sidecar = await probeSidecar(root, output);
 const matrixConsumers: Record<string,string> = {
+  "input-text-original": "recording_original_text",
+  "input-metadata-array": "recording_metadata_array",
+  "input-metadata-string": "recording_metadata_string",
+  "input-metadata-number": "recording_metadata_number",
+  "input-metadata-all": "recording_metadata_all",
+  "input-metadata-false": "recording_metadata_false",
+  "input-metadata-null": "recording_metadata_null",
+  "input-metadata-absent": "recording_metadata_absent",
   "success": "runner_success",
   "start-fails": "runner_start_write_failure",
   "accepted-fails": "runner_accepted_write_failure",
@@ -170,7 +183,7 @@ const matrixConsumers: Record<string,string> = {
   "loop-null-hint": "runner_nullish_hint"
 };
 for(const row of matrix) row.consumption = matrixConsumers[row.name]
-  ? {status:'pr2 已消费',test:matrixConsumers[row.name],scope:'runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational'}
+  ? {status:row.name.startsWith('input-metadata-') || row.name==='input-text-original' ? 'pr3 端口已消费' : 'pr2 已消费',test:matrixConsumers[row.name],scope:'runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational'}
   : {status:'仅记录，由 pr3 消费',test:`live_runner_${row.name.replaceAll('-','_')}`,scope:'LiveSessionAdapter + AgentLoop host integration'};
 for(const row of sidecar) row.consumption = {status:'仅记录，由 pr3 消费',test:`live_sidecar_${row.name.replaceAll('-','_')}`,scope:'real TS sidecar + Rust host; approved differences require separate acceptance'};
 assertBaseline(root);
