@@ -15,3 +15,15 @@ PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck node --import /Users
 配置来源遵循 TS `ProjectSessionRuntimeBundle.ts:380` 的 session contributions.hooks：宿主保留 plugin contribution lease，将已解析 HooksSettings 传入本 generation 的 bind_turn，并传入同代同 session/run 的 TurnPermission。不能用配置中不存在的顶层 config.hooks；SDK HTTP hook selector 与远端 invocationId registry 的组合仍属后续宿主接线。Interaction marker 本身不安装任何端口。
 
 真实 TERM 测试只验证既有 shell 的 TERM 清理被执行、runtime job 完成后才能报告 drain；保留 exec.rs 自己的延迟进程组 KILL/reaper 语义，不把 runtime release_count 等同所有后代进程均已退出。真实 provider/UI 效果待人工验收。
+
+## 同 session key 替换探针（#693）
+
+`replacement-probe.mts` / `replacement-oracle.json` 直接 import cc7c4e6 的 `HookRuntime`、`CallbackHookExecutor`、`AsyncHookRegistry`、`LifecycleRuntime`，用 deferred callback 定序，不执行 shell/网络。探针记录：同一 runtime 复用（宿主按 key 缓存见 `SessionRouter.ts:126-180` 读码）；旧 callback pending 时新 item 仍可并发；drop 消费者流不 dispose；abort 只终止 callback；按 per-run 形态另建 replacement runtime 时新 runtime 可在旧 `draining` 完成前启动；旧 runtime dispose 丢弃旧 async pending。
+
+从仓库根运行（stdout 覆盖 `replacement-oracle.json` 前先写到新证据文件，不覆盖已入库 oracle）：
+
+```sh
+PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck node --import /Users/da/ws/pilotdeck-rs/resources/PilotDeck/node_modules/tsx/dist/loader.mjs src/pilotdeck-gateway/tests/fixtures/interaction-hooks/replacement-probe.mts
+```
+
+Rust 的 per-run `HookRuntime` 是 `A6.9-HOOKS-RUN-001` 已登记的 port-only 形态；#693 按 steer 的按 key draining/`wait_ready` 模式给该替换加清理屏障，因此 Rust 比 TS 的并发重叠更保守。oracle 只记录 TS 基线事实，不把该屏障归因给 TS。

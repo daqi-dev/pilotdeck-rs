@@ -34,7 +34,9 @@ struct State {
     closed: bool,
     releases: usize,
     turns: HashMap<JsString, Arc<Run>>,
-    draining: Vec<Arc<Run>>,
+    // Keep the session key after revocation: a replacement run must not
+    // overtake the predecessor's asynchronous hook cleanup.
+    draining: Vec<(JsString, Arc<Run>)>,
 }
 struct Run {
     owner: Weak<Mutex<State>>,
@@ -88,7 +90,9 @@ impl Run {
                     {
                         state.turns.remove(&run.session);
                     }
-                    state.draining.retain(|current| !Arc::ptr_eq(current, &run));
+                    state
+                        .draining
+                        .retain(|(_, current)| !Arc::ptr_eq(current, &run));
                 }
                 Ok(())
             },
@@ -221,10 +225,10 @@ impl InteractionHooks {
         });
         state
             .draining
-            .retain(|run| !matches!(&*run.done.borrow(), Some(Ok(()))));
+            .retain(|(_, run)| !matches!(&*run.done.borrow(), Some(Ok(()))));
         if let Some(previous) = state.turns.insert(run.session.clone(), run.clone()) {
             previous.close();
-            state.draining.push(previous);
+            state.draining.push((run.session.clone(), previous));
         }
         // The externally supplied abort is observed even when no dispatch is pending.
         let monitor = run.clone();
@@ -263,7 +267,11 @@ impl InteractionHooks {
         }
         state.closed = true;
         state.releases += 1;
-        for run in state.turns.values().chain(&state.draining) {
+        for run in state
+            .turns
+            .values()
+            .chain(state.draining.iter().map(|(_, run)| run))
+        {
             run.close();
         }
     }
@@ -282,7 +290,7 @@ impl FamilyResource for InteractionHooks {
             state
                 .turns
                 .values()
-                .chain(&state.draining)
+                .chain(state.draining.iter().map(|(_, run)| run))
                 .cloned()
                 .collect()
         };
@@ -350,9 +358,11 @@ impl TurnHooks {
             state.turns.remove(&self.run.session);
             state
                 .draining
-                .retain(|run| !matches!(&*run.done.borrow(), Some(Ok(()))));
+                .retain(|(_, run)| !matches!(&*run.done.borrow(), Some(Ok(()))));
             if !matches!(&*self.run.done.borrow(), Some(Ok(()))) {
-                state.draining.push(self.run.clone());
+                state
+                    .draining
+                    .push((self.run.session.clone(), self.run.clone()));
             }
         }
     }
@@ -412,11 +422,51 @@ impl TurnHooks {
         lock(&self.run.pending).retain(|d| !responses.iter().any(|r| r.id == d.id));
         Ok(responses)
     }
+
+    /// Wait for a superseded run of this session to finish its cleanup before
+    /// this binding may execute hooks. The cancellation of this binding is a
+    /// termination condition too: a predecessor that never completes must not
+    /// hold a cancelled replacement forever. Failed cleanup stays observable
+    /// and keeps blocking the same session key, as in the steer barrier.
+    async fn wait_barrier(&self) -> Result<(), HostError> {
+        let runs = {
+            let state = lock(&self.state);
+            state
+                .draining
+                .iter()
+                .filter(|(key, _)| key == &self.run.session)
+                .map(|(_, run)| run.clone())
+                .collect::<Vec<_>>()
+        };
+        for run in runs {
+            tokio::select! {
+                biased;
+                _ = self.run.cancelled.cancelled() => return Err(stale()),
+                _ = self.run.external.cancelled() => return Err(stale()),
+                result = run.wait_closed() => result?,
+            }
+        }
+        let mut state = lock(&self.state);
+        // Successful predecessors are no longer a barrier; failures stay so
+        // every later same-key binding observes the same error instead of
+        // granting fresh hook authority.
+        state.draining.retain(|(key, run)| {
+            key != &self.run.session || !matches!(&*run.done.borrow(), Some(Ok(())))
+        });
+        self.check(&state)
+    }
+    /// Production assembly waits here before handing the new turn out, matching
+    /// `SessionSteer::wait_ready`. Dispatch also waits, so a direct caller
+    /// cannot bypass the predecessor cleanup barrier.
+    pub async fn wait_ready(&self) -> Result<(), HostError> {
+        self.wait_barrier().await
+    }
 }
 impl lifecycle::LifecyclePort for TurnHooks {
     fn dispatch(&self, mut input: LifecycleDispatchInput) -> HostFuture<LifecycleDispatchResult> {
         let turn = self.clone();
         Box::pin(async move {
+            turn.wait_barrier().await?;
             {
                 let state = lock(&turn.state);
                 turn.check(&state)?;

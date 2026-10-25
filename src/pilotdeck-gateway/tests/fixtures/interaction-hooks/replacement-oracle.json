@@ -1,0 +1,62 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/extension/hooks/execution/HookRuntime.ts": "1b8c7c6549b538bf5f85576f0f1638fc5f82ebd13f5a1dad8a01cf2c518a417e",
+    "src/extension/hooks/execution/CallbackHookExecutor.ts": "63e0730fe5d8222ba4e8ea21a449c16d987ee5215d5074c8a37d9ffc56f04467",
+    "src/extension/hooks/execution/AsyncHookRegistry.ts": "3605fd1393dc363030cc364d14c0b6f60aceefd9d8c6cdd28047a479e43a1294",
+    "src/lifecycle/runtime/LifecycleRuntime.ts": "90afe325048ab832c822d184f7433b80df810dfa9e3da429f861aab135df0a26"
+  },
+  "observations": {
+    "same_session_runtime": {
+      "same_session_key_reused": true,
+      "second_started_before_first_end": true,
+      "first_pending_when_second_done": true,
+      "order": [
+        "start:A",
+        "start:B",
+        "end:B",
+        "end:A"
+      ]
+    },
+    "dropped_stream": {
+      "dropped_stream_kept_old_run": true,
+      "new_item_accepted_while_old_pending": true,
+      "order": [
+        "start:A",
+        "start:B",
+        "end:B",
+        "end:A"
+      ]
+    },
+    "cancel": {
+      "old_callback_observed": true,
+      "runtime_state_after_cancel": "active",
+      "next_item_accepted": true,
+      "order": [
+        "start:A",
+        "aborted",
+        "end:A",
+        "start:B",
+        "end:B"
+      ]
+    },
+    "replacement": {
+      "old_state_while_inflight": "draining",
+      "late_old_rejected": "Cannot run hooks; hook runtime is draining.",
+      "replacement_started_before_old_drain": true,
+      "old_disposed_state": "disposed",
+      "after_cleanup_old_rejected": "Cannot run hooks; hook runtime is disposed.",
+      "order": [
+        "start:old",
+        "start:replacement",
+        "end:replacement",
+        "end:old"
+      ]
+    },
+    "async_pending": {
+      "old_pending_before_dispose": 1,
+      "old_pending_after_dispose": 0,
+      "replacement_pending": 1
+    }
+  }
+}

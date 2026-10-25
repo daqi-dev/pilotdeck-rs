@@ -160,6 +160,13 @@ impl InteractionTurn {
                 router,
             )?);
         }
+        if let Some(hooks) = &turn.ports.hooks {
+            // A dropped stream releases the submit slot before detached hook
+            // cleanup finishes, just as with steer. Supersede the old hooks
+            // identity first, then wait for its admitted hook jobs to drain
+            // before this turn may dispatch anything.
+            hooks.wait_ready().await?;
+        }
         if let Some(resource) = resource::<InteractionSteer>(&context, Resource::InteractionSteer)?
         {
             if turn.record_message.is_none() {
