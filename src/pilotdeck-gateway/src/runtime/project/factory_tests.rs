@@ -2417,7 +2417,7 @@ mod context_storage_tests {
             .unwrap();
         let dir = scratch.0.join(".pilotdeck/tool-results");
         let first = storage.create_session(dir.join("session-a")).unwrap();
-        let second = storage.create_session(dir.join("session-b")).unwrap();
+        let second = storage.create_session(dir.join("session-a")).unwrap();
         assert!(!Arc::ptr_eq(
             &first.tool_result_budget,
             &second.tool_result_budget
@@ -2441,10 +2441,13 @@ mod context_storage_tests {
         let (_, second_ref) = second.unwrap();
         for (reference, session_id, expected) in [
             (&first_ref, "session-a", &first_text),
-            (&second_ref, "session-b", &second_text),
+            (&second_ref, "session-a", &second_text),
         ] {
             let path = PathBuf::from(text_field(reference, "path"));
-            assert_eq!(path.parent(), Some(dir.join(session_id).as_path()));
+            assert_eq!(
+                path.parent().unwrap().parent(),
+                Some(dir.join(session_id).as_path())
+            );
             assert_eq!(std::fs::read_to_string(path).unwrap(), *expected);
             let alias = text_field(reference, "readFilePath");
             assert!(alias.starts_with(".pilotdeck/tool-results/refs/result-"));
@@ -2608,7 +2611,10 @@ mod context_storage_tests {
         {
             let session_id = format!("session-{id}");
             let path = PathBuf::from(text_field(reference, "path"));
-            assert_eq!(path.parent(), Some(dir.join(&session_id).as_path()));
+            assert_eq!(
+                path.parent().unwrap().parent(),
+                Some(dir.join(&session_id).as_path())
+            );
             assert_eq!(std::fs::read_to_string(path).unwrap(), *expected);
             let alias = text_field(reference, "readFilePath");
             assert_eq!(
@@ -2884,7 +2890,7 @@ mod context_storage_tests {
     }
 
     #[tokio::test]
-    async fn context_storage_shared_directory_requires_unique_scoped_keys() {
+    async fn context_storage_shared_directory_isolates_scoped_keys() {
         let scratch = Scratch::new();
         let group = stage(&scratch.0, snapshot());
         let resource = group.context().resource(Resource::ToolResultSpill).unwrap();
@@ -2902,10 +2908,13 @@ mod context_storage_tests {
         let second_ref = spill_with(&second, &second_text, "t1", "c1").await;
 
         let path = PathBuf::from(text_field(&first_ref, "path"));
-        assert_eq!(second_ref.get("path"), first_ref.get("path"));
+        assert_ne!(second_ref.get("path"), first_ref.get("path"));
+        assert_eq!(
+            std::fs::read_to_string(text_field(&second_ref, "path")).unwrap(),
+            second_text
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), first_text);
-        // The second preview describes the second input, but its record points
-        // at the first context's file; that file was never replaced.
+        // Preview, spill and alias all describe the second context.
         let preview = text_field(&second_ref, "preview");
         assert!(preview.starts_with('b'));
         assert!(!preview.contains('a'));
@@ -2914,12 +2923,12 @@ mod context_storage_tests {
         assert_ne!(alias, text_field(&first_ref, "readFilePath"));
         assert_eq!(
             std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
-            first_text
+            second_text
         );
     }
 
     #[tokio::test]
-    async fn context_storage_shared_directory_requires_unique_sanitized_filenames() {
+    async fn context_storage_shared_directory_isolates_sanitized_filenames() {
         let scratch = Scratch::new();
         let group = stage(&scratch.0, snapshot());
         let resource = group.context().resource(Resource::ToolResultSpill).unwrap();
@@ -2933,21 +2942,22 @@ mod context_storage_tests {
         let first_text = "a".repeat(200_001);
         let second_text = "b".repeat(200_001);
 
-        // These raw tool-call ids differ but both sanitize to `c-1`, so the
-        // shared spill file is `t1-c-1.txt` for both contexts.
+        // Both IDs sanitize to c-1; context directories keep them apart.
         let first_ref = spill_with(&first, &first_text, "t1", "c/1").await;
         let second_ref = spill_with(&second, &second_text, "t1", "c-1").await;
 
         let path = PathBuf::from(text_field(&first_ref, "path"));
-        assert_eq!(second_ref.get("path"), first_ref.get("path"));
+        assert_ne!(second_ref.get("path"), first_ref.get("path"));
+        assert_eq!(
+            std::fs::read_to_string(text_field(&second_ref, "path")).unwrap(),
+            second_text
+        );
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
             Some("t1-c-1.txt")
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), first_text);
-        // As with an identical raw key, the second preview describes the
-        // second input while the persisted file and read alias still hold the
-        // first context's body.
+        // Sanitization cannot merge the two context directories.
         let preview = text_field(&second_ref, "preview");
         assert!(preview.starts_with('b'));
         assert!(!preview.contains('a'));
@@ -2956,7 +2966,7 @@ mod context_storage_tests {
         assert_ne!(alias, text_field(&first_ref, "readFilePath"));
         assert_eq!(
             std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
-            first_text
+            second_text
         );
     }
 

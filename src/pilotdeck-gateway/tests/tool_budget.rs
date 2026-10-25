@@ -177,9 +177,22 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
             )
             .unwrap();
         }
+        let budget_options = field(case, "budget");
+        let budget = Arc::new(ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: tool_results_dir.clone(),
+            max_result_size_chars: optional_usize(budget_options.get("maxResultSizeChars")),
+            max_result_size_tokens: optional_usize(budget_options.get("maxResultSizeTokens")),
+            preview_bytes: optional_usize(budget_options.get("previewBytes")),
+        }));
+        let isolated = PathBuf::from(budget.spill_directory().to_utf8().unwrap());
+        let namespace = isolated.file_name().unwrap().to_str().unwrap().to_owned();
         if let Some(files) = case.get("files") {
             for file in array(files) {
                 let path = case_root.join(text(field(file, "path")));
+                let path = path
+                    .strip_prefix(&tool_results_dir)
+                    .map(|p| isolated.join(p))
+                    .unwrap_or(path);
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
                 fs::write(path, text(field(file, "text"))).unwrap();
             }
@@ -207,13 +220,6 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
             continue;
         }
 
-        let budget_options = field(case, "budget");
-        let budget = Arc::new(ToolResultBudget::new(ToolResultBudgetOptions {
-            tool_results_dir,
-            max_result_size_chars: optional_usize(budget_options.get("maxResultSizeChars")),
-            max_result_size_tokens: optional_usize(budget_options.get("maxResultSizeTokens")),
-            preview_bytes: optional_usize(budget_options.get("previewBytes")),
-        }));
         let runtime = DefaultContextRuntime::new(Options {
             tool_result_budget: Some(budget),
             locale: Some("en-US".into()),
@@ -236,10 +242,24 @@ async fn real_ts_tool_budget_and_apply_tool_results_replay() {
             let actual = stringify_json(&result)
                 .unwrap()
                 .unwrap()
-                .replace(&root_string, "<fixture>");
+                .replace(&root_string, "<fixture>")
+                .replace(&format!("/{namespace}"), "");
             let expected = text(field(step, "outputJson"));
             assert_eq!(actual, expected, "case {name} step {index} output");
-            let actual_files = stringify_json(&snapshot(&case_root)).unwrap().unwrap();
+            let files = snapshot(&case_root);
+            // Removing the context component restores the TS lexical walk order.
+            let mut files: Vec<_> = array(&files)
+                .iter()
+                .filter(|entry| !text(field(entry, "path")).ends_with(&namespace))
+                .cloned()
+                .collect();
+            files.sort_by_key(|entry| {
+                text(field(entry, "path")).replace(&format!("/{namespace}"), "")
+            });
+            let actual_files = stringify_json(&JsValue::Array(files))
+                .unwrap()
+                .unwrap()
+                .replace(&format!("/{namespace}"), "");
             let expected_files = text(field(step, "filesJson"));
             assert_eq!(
                 actual_files, expected_files,
@@ -357,7 +377,6 @@ async fn spill_rejects_symlinked_copy_source() {
     // tool-results tree. create_new() refuses to follow it, so the alias copy
     // is the only place that could read the secret; it opens O_NOFOLLOW and
     // rejects the link without reading its target.
-    std::os::unix::fs::symlink(&secret_path, dir.join("turn-file-call-file.txt")).unwrap();
 
     let budget = ToolResultBudget::new(ToolResultBudgetOptions {
         tool_results_dir: dir.clone(),
@@ -365,6 +384,9 @@ async fn spill_rejects_symlinked_copy_source() {
         max_result_size_tokens: Some(100),
         preview_bytes: None,
     });
+    let isolated = PathBuf::from(budget.spill_directory().to_utf8().unwrap());
+    fs::create_dir_all(&isolated).unwrap();
+    std::os::unix::fs::symlink(&secret_path, isolated.join("turn-file-call-file.txt")).unwrap();
     let message = obj(vec![
         ("role", "user".into()),
         (
@@ -439,7 +461,6 @@ async fn spill_rejects_hardlinked_copy_source() {
     // it and the alias copy read the outside bytes into refs/. The source must
     // be opened with O_NOFOLLOW and fstat'ed on that handle: regular file and
     // nlink == 1, never a second directory entry to the same inode.
-    fs::hard_link(&secret_path, dir.join("turn-hard-call-hard.txt")).unwrap();
 
     let budget = ToolResultBudget::new(ToolResultBudgetOptions {
         tool_results_dir: dir.clone(),
@@ -447,6 +468,9 @@ async fn spill_rejects_hardlinked_copy_source() {
         max_result_size_tokens: Some(100),
         preview_bytes: None,
     });
+    let isolated = PathBuf::from(budget.spill_directory().to_utf8().unwrap());
+    fs::create_dir_all(&isolated).unwrap();
+    fs::hard_link(&secret_path, isolated.join("turn-hard-call-hard.txt")).unwrap();
     let message = obj(vec![
         ("role", "user".into()),
         (
@@ -563,4 +587,10 @@ async fn runtime_without_budget_passes_messages_through() {
             stringify_json(&message).unwrap().unwrap()
         )
     );
+}
+
+#[test]
+#[ignore = "requires fixed TS checkout and Node v22.22.0"]
+fn spill_isolation_regenerates_identically() {
+    baseline::regenerates_identically("spill-isolation");
 }
