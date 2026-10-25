@@ -39,6 +39,7 @@ fn registry(scratch: &Scratch, configured: bool) -> ProjectRuntimeRegistry {
             config_version: None,
             runtime_profile_overrides: RuntimeProfileOverrides::default(),
             families: silent_families().with_context_memory(),
+            telemetry: None,
         })),
     )
 }
