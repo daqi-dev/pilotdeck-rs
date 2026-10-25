@@ -1627,6 +1627,24 @@ fn complete_config_with_timeout(timeout_ms: f64) -> (JsValue, JsValue) {
     (request, config)
 }
 
+/// A URL that resolves to exactly one endpoint candidate, so `complete()`
+/// reads the body with the plain `response_text` reader instead of the
+/// multi-endpoint shape probe (`buildProviderChatEndpointCandidates` returns
+/// one candidate when the base URL already ends in `chat/completions`).
+fn complete_single_endpoint_config() -> (JsValue, JsValue) {
+    let (request, mut config) = complete_config();
+    let mut provider = field(field(&config, "providers"), "p").clone();
+    put(
+        &mut provider,
+        "url",
+        JsValue::String("http://127.0.0.1:18080/api/v1/chat/completions".into()),
+    );
+    let mut providers = JsObject::new();
+    providers.insert("p".into(), provider);
+    put(&mut config, "providers", JsValue::Object(providers));
+    (request, config)
+}
+
 const TEST_TINY_CHOICES: &[u8] = br#"{"choices":[]}"#;
 /// 53 UTF-16 units, valid OpenAI shape, over every small test limit below.
 const TEST_OVERLONG_CHOICES: &[u8] = br#"{"choices":[],"pad":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}"#;
@@ -1965,6 +1983,161 @@ fn limit_guard_nests_and_drop_restores_the_shared_default() {
         assert_eq!(string_limit(), 4);
     }
     assert_eq!(string_limit(), 0x1fffffe8);
+}
+
+// ---------------------------------------------------------------------------
+// Plain `response_text` (single-endpoint `complete()`, the non-2xx body read,
+// and the streaming error response share it): V8 `MAX_STRING_LENGTH` bound.
+//
+// TS `Response.text()` reads the whole body first and only then converts the
+// bytes to a string. An over-limit body therefore still reaches EOF, a
+// mid-read body failure wins over the string error, and the EOF replacement
+// character of a trailing incomplete UTF-8 sequence counts toward the cap.
+// The conversion throws a plain `Error: Cannot create a string longer than
+// 0x1fffffe8 characters`, never a `RangeError` (real TS probes
+// `_tmp/20261025-issue-641/RESULT.md` and
+// `_tmp/20261025-issue-610/probe-reader-string-limit-single.mts`).
+
+/// A single-endpoint `complete()` body over the cap: read to EOF, then throw
+/// the plain V8 `Error` — not `RangeError`, and not before the last frame.
+#[tokio::test(start_paused = true)]
+async fn complete_response_text_overlong_body_reads_to_eof_then_throws_plain_error() {
+    let _limit = LimitGuard::set(32);
+    let (request, config) = complete_single_endpoint_config();
+    let transport = sequence(vec![vec![
+        TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
+        TestFrame::After(Duration::from_millis(40), b" "),
+    ]]);
+    let started = tokio::time::Instant::now();
+    let error = complete_model(&transport, &request, &config, &StreamOptions::default())
+        .await
+        .expect_err("an over-limit body must fail the text conversion");
+    assert!(error.name().equals_str("Error"), "{error:?}");
+    assert_eq!(
+        error.message_text(),
+        crate::fetch_redirect::STRING_TOO_LONG,
+        "real TS: Error, not RangeError/TypeError"
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(70),
+        "the error was raised before the body reached EOF: {:?}",
+        started.elapsed()
+    );
+}
+
+/// At EOF an incomplete UTF-8 sequence becomes one U+FFFD, and the real
+/// conversion counts that unit toward the cap: frames that exactly fill the
+/// cap still throw, one unit of headroom does not.
+#[tokio::test]
+async fn response_text_counts_eof_replacement_toward_the_cap() {
+    {
+        let _limit = LimitGuard::set(4);
+        let mut body = replay_body(Bytes::from_static(b"abcd\xc3"), None);
+        let error = response_text(&mut body, &StreamOptions::default(), false)
+            .await
+            .expect_err("the EOF U+FFFD must push the text over the cap");
+        assert!(
+            error.name().equals_str("Error")
+                && error.message_text() == crate::fetch_redirect::STRING_TOO_LONG,
+            "{error:?}"
+        );
+    }
+    {
+        let _limit = LimitGuard::set(5);
+        let mut body = replay_body(Bytes::from_static(b"abcd\xc3"), None);
+        let text = response_text(&mut body, &StreamOptions::default(), false)
+            .await
+            .expect("the EOF U+FFFD fits within the cap");
+        assert_eq!(text, "abcd\u{fffd}");
+    }
+}
+
+/// A body read failure keeps priority over the string conversion: the frame
+/// that crosses the cap is followed by `TypeError: terminated`, which is what
+/// `await response.text()` rejects with (same error object as the body).
+#[tokio::test]
+async fn response_text_body_error_beats_string_overflow() {
+    let _limit = LimitGuard::set(4);
+    let mut body = replay_body(
+        Bytes::from_static(b"abcdefgh"),
+        Some(BodyFailure::Terminated),
+    );
+    let error = response_text(&mut body, &StreamOptions::default(), false)
+        .await
+        .expect_err("the body failure must win");
+    assert!(
+        error.name().equals_str("TypeError") && error.message_text() == "terminated",
+        "{error:?}"
+    );
+}
+
+/// The non-2xx shared path in `complete()`: TS awaits the same
+/// `response.text()` before any status-specific normalization, so an
+/// over-long error body throws the plain V8 `Error`, not a provider error.
+#[tokio::test(start_paused = true)]
+async fn complete_non_2xx_overlong_error_body_throws_the_v8_error() {
+    let _limit = LimitGuard::set(32);
+    let (request, config) = complete_single_endpoint_config();
+    let transport = Sequence(std::sync::Mutex::new(vec![(
+        500,
+        vec![
+            TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
+            TestFrame::After(Duration::from_millis(40), b" "),
+        ],
+    )]));
+    let started = tokio::time::Instant::now();
+    let error = complete_model(&transport, &request, &config, &StreamOptions::default())
+        .await
+        .expect_err("an over-long error body must fail the text conversion");
+    assert!(error.name().equals_str("Error"), "{error:?}");
+    assert_eq!(error.message_text(), crate::fetch_redirect::STRING_TOO_LONG);
+    assert!(
+        started.elapsed() >= Duration::from_millis(70),
+        "the error was raised before the error body reached EOF: {:?}",
+        started.elapsed()
+    );
+}
+
+/// The streaming error response path shares the same reader: a non-2xx
+/// stream response with an over-long body throws the plain V8 `Error`
+/// straight out of `streamModel`, before any retry or error-event
+/// normalization.
+#[tokio::test(start_paused = true)]
+async fn stream_non_2xx_overlong_error_body_throws_the_v8_error() {
+    let _limit = LimitGuard::set(32);
+    let (request, config) = stream_config();
+    let transport = Sequence(std::sync::Mutex::new(vec![(
+        500,
+        vec![
+            TestFrame::After(Duration::from_millis(40), TEST_OVERLONG_CHOICES),
+            TestFrame::After(Duration::from_millis(40), b" "),
+        ],
+    )]));
+    let mut outputs = Vec::new();
+    let started = tokio::time::Instant::now();
+    let error = stream_model(
+        &transport,
+        &request,
+        &config,
+        &StreamOptions::default(),
+        &mut |output| outputs.push(output),
+    )
+    .await
+    .expect_err("an over-long error body must fail the text conversion");
+    assert!(error.name().equals_str("Error"), "{error:?}");
+    assert_eq!(error.message_text(), crate::fetch_redirect::STRING_TOO_LONG);
+    assert!(
+        started.elapsed() >= Duration::from_millis(70),
+        "the error was raised before the error body reached EOF: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        outputs.len(),
+        1,
+        "request_started only, no retry progress or error event"
+    );
+    assert!(matches!(&outputs[0], StreamOutput::Event(event)
+        if field(event, "type") == &JsValue::from("request_started")));
 }
 
 // --- PILOTDECK_DUMP_REQUEST safe creation (A6.4-MODEL-DUMP-SECURE-001) ---
