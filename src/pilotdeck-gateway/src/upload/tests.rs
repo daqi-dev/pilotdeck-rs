@@ -832,6 +832,29 @@ fn upload_paths_outside_upload_root_are_rejected() {
     );
 }
 
+/// A directory occupying `metadata.json`: both realpath checks pass, and the
+/// whole-file read (UploadStore.ts:384 `readFile`, node:fs/promises) must
+/// report the descriptor read stage like Node — `EISDIR: illegal operation
+/// on a directory, read` with no path (node v22.22.0,
+/// `_tmp/20261025-issue-656/node-probe/read-stages.out`) — not the open label
+/// with the path. POSIX-only: opening a directory read-only succeeds there.
+#[cfg(unix)]
+#[test]
+fn upload_metadata_directory_reports_the_read_stage() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = harness(&project, &scratch.dir("other"), &JsValue::Undefined);
+    fs::create_dir_all(metadata_path(&project).parent().unwrap()).unwrap();
+    fs::create_dir(metadata_path(&project)).unwrap();
+    let error = h.store.get("upload-1").unwrap_err();
+    assert_eq!(error.code, "EISDIR");
+    assert_eq!(
+        error.message,
+        "EISDIR: illegal operation on a directory, read"
+    );
+    assert!(!error.dialog);
+}
+
 #[test]
 fn upload_subscription_receives_updates_until_dropped() {
     let scratch = Scratch::new();

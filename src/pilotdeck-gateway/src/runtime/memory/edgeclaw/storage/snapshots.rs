@@ -504,10 +504,16 @@ impl EdgeClawFileStores {
         if !path.exists() {
             return Ok(None);
         }
-        let metadata = parse_json(&String::from_utf8_lossy(
-            &fs::read(&path).map_err(|e| crate::node_io::path_error(e, "open", &path))?,
-        ))
-        .unwrap_or(JsValue::Null);
+        // sqlite.ts:1315 reads the metadata through `readFileSync`: an open
+        // error names its path, a descriptor read error (EISDIR after a
+        // directory swap, EIO, ...) is `read` without one (node v22.22.0,
+        // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
+        let mut file =
+            fs::File::open(&path).map_err(|e| crate::node_io::path_error(e, "open", &path))?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut bytes)
+            .map_err(|e| crate::node_io::descriptor_error(e, "read"))?;
+        let metadata = parse_json(&String::from_utf8_lossy(&bytes)).unwrap_or(JsValue::Null);
         if field(&metadata, "version") != &JsValue::Number(1.0)
             || !root.join("workspace").exists()
             || !root.join("global").exists()
@@ -838,6 +844,45 @@ mod round6_tests {
             round6_io::deny(&last(root).join("metadata.json"), false);
             repo.get_last_dream_snapshot_overview().unwrap_err()
         });
+    }
+    /// sqlite.ts:1315 reads the metadata through `readFileSync`, so a
+    /// directory occupying metadata.json (the exists check passes, the
+    /// read-only open succeeds on POSIX) must report the descriptor read
+    /// stage like Node: `EISDIR: illegal operation on a directory, read`
+    /// without the path (node v22.22.0,
+    /// `_tmp/20261025-issue-656/node-probe/read-stages.out`), not the open
+    /// label with it.
+    #[test]
+    fn metadata_directory_reports_the_read_stage() {
+        let root = std::env::temp_dir().join(format!(
+            "pdrs-snapshot-eisdir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let repo = EdgeClawFileStores::with_workspace_clock(
+            root.join("control.sqlite"),
+            root.join("current/memory"),
+            root.join("global"),
+            root.join("workspace"),
+            root.join("workspace"),
+            Arc::new(|| "2026-10-23T00:00:00.000Z".into()),
+        )
+        .unwrap();
+        let last = root.join("last_dream");
+        fs::create_dir_all(last.join("workspace")).unwrap();
+        fs::create_dir_all(last.join("global")).unwrap();
+        fs::create_dir(last.join("metadata.json")).unwrap();
+        let error = repo.get_last_dream_snapshot_overview().unwrap_err();
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            error.to_string(),
+            "EISDIR: illegal operation on a directory, read"
+        );
+        assert_eq!(error.io_code(), Some("EISDIR"));
     }
     #[test]
     fn snapshot_mkdir_matches_real_ts() {

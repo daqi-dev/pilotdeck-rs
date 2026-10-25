@@ -167,14 +167,7 @@ fn known_legacy(slug: &str, hash: &str) -> bool {
 }
 
 pub(super) fn fs_failure(error: std::io::Error, syscall: &str, path: &Path) -> Failure {
-    paths::node_fs_message(&error, syscall, path)
-        .map(Failure::Error)
-        .unwrap_or_else(|| {
-            Failure::Error(format!(
-                "UNKNOWN: unknown error, {syscall} '{}'",
-                path.display()
-            ))
-        })
+    Failure::Error(paths::node_fs_message_or_unknown(&error, syscall, path))
 }
 fn rename_failure(error: std::io::Error, from: &Path, to: &Path) -> Failure {
     match fs_failure(error, "rename", from) {
@@ -390,6 +383,103 @@ mod tests {
         );
         assert!(source.exists());
         fs::remove_dir_all(home).unwrap();
+    }
+
+    /// Child half of `marker_write_reports_the_write_stage_like_node`: runs
+    /// under `ulimit -f 0`, so even the fixed 10-byte marker write fails at
+    /// the descriptor write stage. The parent pre-creates the home and the
+    /// bundled root, because under that limit the child cannot set them up
+    /// itself.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "spawned by marker_write_reports_the_write_stage_like_node"]
+    fn marker_child_over_file_size_limit() {
+        let Ok(home) = std::env::var("PDRS_MARKER_HOME") else {
+            panic!(
+                "PDRS_MARKER_HOME not set; spawn via marker_write_reports_the_write_stage_like_node"
+            );
+        };
+        // The gateway binary's startup disposition, through the same safe
+        // signal API: SIGXFSZ ignored, so the write past RLIMIT_FSIZE
+        // surfaces as EFBIG instead of killing us.
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("child test runtime")
+            .block_on(async { pilotdeck_gateway::ensure_sigxfsz_ignored() });
+        let home = PathBuf::from(home);
+        let report = super::migrate_legacy_bundled_skill_copies(&home, &home.join("bundled"))
+            .expect("the migration itself must not fail");
+        let warning = report
+            .warnings
+            .first()
+            .expect("the failed marker write must warn");
+        println!("WRITE_ERROR={warning}");
+    }
+
+    /// The marker write is `writeFileSync(completionMarker, "completed\n")`
+    /// (migrateLegacyBundledSkills.ts:126): a descriptor write error must
+    /// read like Node's `EFBIG: file too large, write` with no path (node
+    /// v22.22.0 under RLIMIT_FSIZE=0,
+    /// `_tmp/20261025-issue-656/node-probe/write-stage-zero-limit.out`), not
+    /// the open label with the marker path.
+    #[cfg(unix)]
+    #[test]
+    fn marker_write_reports_the_write_stage_like_node() {
+        let home = temp_home("marker-write-stage");
+        bundled_root(&home);
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(
+                "ulimit -f 0; exec \"$0\" --exact skills::tests::marker_child_over_file_size_limit --ignored --nocapture",
+            )
+            .arg(std::env::current_exe().unwrap())
+            .env("PDRS_MARKER_HOME", &home)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let _ = fs::remove_dir_all(&home);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "child killed or failed: {stdout}"
+        );
+        let line = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("WRITE_ERROR="))
+            .unwrap_or_else(|| panic!("no WRITE_ERROR line: {stdout}"));
+        assert_eq!(
+            line,
+            "[pilotdeck] Could not migrate legacy skill '__migration__': EFBIG: file too large, write"
+        );
+    }
+
+    /// The renderer the marker write feeds must drop the path for the write
+    /// stage, including in the `UV_UNKNOWN` fallback for errnos outside the
+    /// shared libuv table (node v22.22.0 formats a descriptor write error
+    /// without a path).
+    #[test]
+    fn fs_failure_drops_the_path_for_write_stage_errors() {
+        let marker = Path::new("/home/u/.pilotdeck/.legacy-bundled-skills-migrated-v1");
+        for (error, expected) in [
+            (
+                std::io::Error::from_raw_os_error(libc::EFBIG),
+                "EFBIG: file too large, write",
+            ),
+            (
+                std::io::Error::from_raw_os_error(libc::ENOSPC),
+                "ENOSPC: no space left on device, write",
+            ),
+            (
+                std::io::Error::from_raw_os_error(123456),
+                "UNKNOWN: unknown error, write",
+            ),
+        ] {
+            match fs_failure(error, "write", marker) {
+                Failure::Error(message) => assert_eq!(message, expected),
+                other => panic!("expected Failure::Error, got {other:?}"),
+            }
+        }
     }
 
     #[test]

@@ -1405,6 +1405,41 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
 
+    /// Child half of `write_file_reports_the_write_stage_like_node`.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "spawned by write_file_reports_the_write_stage_like_node"]
+    fn write_file_child_over_file_size_limit() {
+        let Ok(path) = std::env::var(crate::test_write_stage::CHILD_PATH_ENV) else {
+            panic!(
+                "{} not set; spawn via write_file_reports_the_write_stage_like_node",
+                crate::test_write_stage::CHILD_PATH_ENV
+            );
+        };
+        crate::test_write_stage::ignore_sigxfsz_like_gateway();
+        let error = write_file(std::path::Path::new(&path), &[b'a'; 4096])
+            .expect_err("a write past RLIMIT_FSIZE must fail");
+        println!("WRITE_ERROR={error}");
+    }
+
+    /// The snapshot writes go through `writeFile` (node:fs/promises): a
+    /// descriptor write error must read like Node's `EFBIG: file too large,
+    /// write` with no path (node v22.22.0,
+    /// `_tmp/20261025-issue-656/node-probe/write-stages.out`), not the open
+    /// label with the temporary path.
+    #[cfg(unix)]
+    #[test]
+    fn write_file_reports_the_write_stage_like_node() {
+        let scratch = crate::test_scratch::Scratch::new("snapshot-write-stage");
+        let target = scratch.path().join("big.txt");
+        let line = crate::test_write_stage::child_write_error(
+            "storage::workspace_snapshot::tests::write_file_child_over_file_size_limit",
+            1,
+            &target,
+        );
+        assert_eq!(line, "EFBIG: file too large, write");
+    }
+
     /// workspaceSnapshot.ts:190-201: callers already waiting on the same key
     /// receive the round's rejection. After `finally` deletes `inFlight`, a
     /// later call retries instead of replaying the cached failure.
