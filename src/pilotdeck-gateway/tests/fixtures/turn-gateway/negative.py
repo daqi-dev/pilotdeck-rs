@@ -116,12 +116,12 @@ with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
     try:
         for mutant in selected:
             assert all(p.read_bytes() == data for p, data in original.items()), 'source changed outside this run'
-            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
             slot_deadline = time.monotonic() + 1800
             while slots.returncode == 1:
                 assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(20)
-                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
             assert slots.returncode == 0
             modified = dict(original)
             for path, before, after in mutant['changes']:

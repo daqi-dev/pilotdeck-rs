@@ -698,6 +698,7 @@ def cargo_slots() -> tuple[int, str, str]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        timeout=10,
     )
     note = (script.stdout + script.stderr).strip()
     count, error = slots_from_ps()

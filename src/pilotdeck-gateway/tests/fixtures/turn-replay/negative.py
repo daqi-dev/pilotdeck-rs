@@ -537,14 +537,16 @@ lib_source = (
 
 def wait_for_slot():
     slots = rust.parent / "scripts/cargo-slots.sh"
+    deadline = time.monotonic() + 1800
     while True:
-        result = subprocess.run(["bash", str(slots)], capture_output=True, text=True)
+        result = subprocess.run(["bash", str(slots)], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             return
         if "Operation not permitted" in result.stderr:
             # Slot accounting needs `ps`; when the sandbox forbids it, fall
             # back to running one mutant at a time, which is the same bound.
             return
+        assert time.monotonic() < deadline, 'cargo slots unavailable for 30 minutes'
         time.sleep(30)
 
 

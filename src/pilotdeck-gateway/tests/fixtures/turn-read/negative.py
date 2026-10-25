@@ -177,10 +177,13 @@ with mutating_sources(repo, [source, registry_source]) as snapshots:
             if path:
                 assert path.read_bytes() == originals[path], f'{path} changed outside this run'
                 path.write_text(originals[path].decode().replace(before, after, 1))
-            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
+            slot_deadline = time.monotonic() + 1800
             while slots.returncode == 1:
+                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(30)
-                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
+            assert slots.returncode == 0
             command = ['cargo','test','--offline','--manifest-path',str(rust / 'Cargo.toml'),'-p','pilotdeck-gateway','--lib',prefix+test,'--','--nocapture']
             try:
                 run = run_owned(command, cwd=repo, env=env, timeout=240)

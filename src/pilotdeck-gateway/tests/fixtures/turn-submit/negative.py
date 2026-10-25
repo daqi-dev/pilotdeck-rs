@@ -92,10 +92,12 @@ with mutating_sources(repo, [source]) as snapshots:
         for name, before, after, case, marker, capability in selected:
             assert source.read_bytes() == original, 'source changed outside this run'
             if before: source.write_text(original.decode().replace(before, after, 1))
-            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
+            slot_deadline = time.monotonic() + 1800
             while slots.returncode == 1:
+                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
                 time.sleep(30)
-                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True)
+                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
             assert slots.returncode == 0
             command = ['cargo', 'test', '--offline', '--manifest-path', str(rust / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', test, '--', '--nocapture']
             run_env = dict(env)
