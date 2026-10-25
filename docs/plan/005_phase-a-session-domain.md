@@ -173,7 +173,7 @@ A5.2 后续发车时只读基线、不改资源源码，用独立 fixture/注入
 git diff --check
 python3 scripts/gateway-parity/check_frozen.py
 python3 scripts/gateway-parity/check_schema.py
-python3 scripts/parity/check_frozen.py
+python3 -I scripts/parity/check_frozen.py
 
 CARGO_HOME="$PWD/_build/cargo-home" cargo fmt --manifest-path src/Cargo.toml --all --check
 CARGO_HOME="$PWD/_build/cargo-home" cargo clippy --manifest-path src/Cargo.toml --workspace --all-targets --locked -- -D warnings

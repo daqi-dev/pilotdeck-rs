@@ -52,14 +52,14 @@ related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-bound
 
 **S3 四项对照**（结果写进 `docs/experiments/exp004-ruler-recheck/readme.md`；`exp003` 留给阶段 A 的「真 `ui/server` 连代理」）
 1. **TS sidecar 自比**：`round.py --side ts` 连跑 k = 5 遍，按 G03 v1 两两比较。**默认口径：10 对两两全一致**的场景进 S（与冻结规约「k 遍全一致」的字面意思一致，最严）；**同时报告**另两种口径（以第 1 遍为基准的 4 对、相邻的 4 对）得出的 S，供人批 `acceptance.md` 时选定。trace 都留着，换口径只需离线重算，不用重跑。
-2. **逐条规则的负向对照**：G03 v1 每放宽一处（通道拆分、E1–E12 各条），各构造一对注入了对应差异的 trace，断言是**那条规则**判它 FAIL（不是「随便哪里 FAIL」）。另加**端到端**的负向对照：在一对真实 trace 里注入差异、删掉一个场景、截断一份 trace，都必须判 FAIL。放在 `scripts/parity/controls/`，`python3 scripts/parity/controls/run_all.py` 一键跑。
+2. **逐条规则的负向对照**：G03 v1 每放宽一处（通道拆分、E1–E12 各条），各构造一对注入了对应差异的 trace，断言是**那条规则**判它 FAIL（不是「随便哪里 FAIL」）。另加**端到端**的负向对照：在一对真实 trace 里注入差异、删掉一个场景、截断一份 trace，都必须判 FAIL。放在 `scripts/parity/controls/`，`python3 -I scripts/parity/controls/run_all.py` 一键跑。
    ⚠️ 评审 A 指出旧 `verify_a9.py` 的 E 规则失败只「旁报」、不进总判决（`:435`），场景靠 glob 取（`:423`）——**总判决必须同时要求：53 个场景齐全、两侧身份断言通过、所有适用的 E 规则通过**。
 3. **两侧同坏**：两边都空、两边都报同样的错——必须判 FAIL。
 4. **独立审查**：codex + opencode 双谱系各审一遍尺子与对照结果，记录在 `docs/reviews/001_ruler-recheck.md`（与本计划同号）。**最多两轮**；两轮后仍有 P0/P1/P2，停下交人仲裁，不再自己调。
 
 **Issue #1 怎么算做完**
-- [ ] `python3 scripts/parity/check_ruler.py` 输出一份 JSON，四项对照各一个布尔值，**全为 true**；结果与原始数据路径写进 `exp004`
-- [ ] `acceptance.md`、`normalization.md` 写好后**先交人批**，批了才冻结；`FROZEN.md` 记录 `specs/parity/` 全部规约 **以及 `scripts/parity/` 下全部比较器与驱动代码**的 sha256；`python3 scripts/parity/check_frozen.py` 校验全部哈希。冻结后改任何一份都要另开 issue、由人批
+- [ ] `python3 -I scripts/parity/check_ruler.py` 输出一份 JSON，四项对照各一个布尔值，**全为 true**；结果与原始数据路径写进 `exp004`
+- [ ] `acceptance.md`、`normalization.md` 写好后**先交人批**，批了才冻结；`FROZEN.md` 记录 `specs/parity/` 全部规约 **以及 `scripts/parity/` 下全部比较器与驱动代码**的 sha256；`python3 -I scripts/parity/check_frozen.py` 校验全部哈希。冻结后改任何一份都要另开 issue、由人批
 - [ ] 双谱系审查收敛到无 P0/P1/P2（最多两轮，见上）
 - [ ] CI `check` 绿（本 issue 不碰 Rust 代码，但 PR 照常走闸）
 
@@ -108,15 +108,15 @@ related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-bound
 
 ```bash
 # 尺子（Issue #1 之后可用）
-python3 scripts/parity/controls/run_all.py
-python3 scripts/parity/check_ruler.py                              # 四项对照，输出 JSON
-python3 scripts/parity/check_frozen.py                             # 冻结文件哈希
-python3 scripts/parity/round.py --side ts   --label ts-r1           # TS sidecar 跑一遍
-python3 scripts/parity/round.py --side ts   --label ts-r2
-python3 scripts/parity/g03_compare.py ts-r1 ts-r2                   # TS 自比
+python3 -I scripts/parity/controls/run_all.py
+python3 -I scripts/parity/check_ruler.py                              # 四项对照，输出 JSON
+python3 -I scripts/parity/check_frozen.py                             # 冻结文件哈希
+python3 -I scripts/parity/round.py --side ts   --label ts-r1           # TS sidecar 跑一遍
+python3 -I scripts/parity/round.py --side ts   --label ts-r2
+python3 -I scripts/parity/g03_compare.py ts-r1 ts-r2                   # TS 自比
 # Rust sidecar（Issue #2 之后可用）
-python3 scripts/parity/round.py --side rust --label rust-r1 --rust-binary src/target/release/pilotdeck-agent-loop-sidecar --expected-sha256 <sha>
-python3 scripts/parity/g03_compare.py ts-r1 rust-r1
+python3 -I scripts/parity/round.py --side rust --label rust-r1 --rust-binary src/target/release/pilotdeck-agent-loop-sidecar --expected-sha256 <sha>
+python3 -I scripts/parity/g03_compare.py ts-r1 rust-r1
 ```
 
 最后一道是人：用原版 UI 实际跑一遍（TS gateway 配 Rust sidecar），这一步不交给 AI。

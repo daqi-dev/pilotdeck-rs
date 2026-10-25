@@ -1,6 +1,6 @@
 # G03 v1 离线对照
 
-`python3 scripts/parity/controls/run_all.py` 不启动产品、不拿运行锁；只读 exp001 的真实 trace，在本 worktree `_tmp` 的临时目录复制后注入差异，退出时清理自己创建的副本。可用 `--source` 指定另一份完整 53 场景的 TS 数据。详细 JSON 写到 `_tmp/controls.json`。
+`python3 -I scripts/parity/controls/run_all.py` 不启动产品、不拿运行锁；只读 exp001 的真实 trace，在本 worktree `_tmp` 的临时目录复制后注入差异，退出时清理自己创建的副本。可用 `--source` 指定另一份完整 53 场景的 TS 数据。详细 JSON 写到 `_tmp/controls.json`。装置入口在导入任何装置模块前断言隔离模式（`-I`），并把 `sys.pycache_prefix` 导向临时目录且禁写字节码；`check_frozen.py` 把装置目录内任何 `__pycache__` / `.pyc` / `.pyo` 判为未登记。
 
 逐条规则的 witness 由 `run_all.py:rule_pairs` 生成：每条先断言合法 trace 自比 PASS，再断言注入后 FAIL 且 `triggered_rules` 包含指定规则。多个规则同时命中是允许的；**不以“任意 FAIL”代替指定规则命中**。E10 是流内顺序/值严格比较，E11 是每种事件身份的数量一致，旧源码以隐含方式执行这两条，此处赋予显式名称。E1v 是旧源码的 context-budget 可见形式检查，也提供对照。
 

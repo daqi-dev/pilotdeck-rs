@@ -2,16 +2,46 @@
 """Offline k=5 scoring; registered TS modes use a TS-only reference pool."""
 from __future__ import annotations
 
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution; without it, exit before loading any apparatus module.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-pyc-')
+sys.dont_write_bytecode = True
+
 import argparse
 from datetime import date, datetime, timezone
+import importlib.util
 from itertools import combinations
 import json
 import math
 from pathlib import Path
 import re
-import sys
 
-import g03_compare as G
+_HERE = Path(__file__).resolve().parent
+
+
+def _load(name, path):
+    """Load an apparatus module by explicit path; never resolve via sys.path."""
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+G = _load('g03_compare', _HERE / 'g03_compare.py')
 
 K = 5
 MIN_POOL = 20

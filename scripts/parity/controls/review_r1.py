@@ -1,24 +1,54 @@
 #!/usr/bin/env python3
 """Offline regression controls for PR #13 review; never use the shared lock."""
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution; without it, exit before loading any apparatus module.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-pyc-')
+sys.dont_write_bytecode = True
+
 from contextlib import redirect_stdout, redirect_stderr
 from copy import deepcopy
+import importlib.util
 import io
 import json
 import os
 from pathlib import Path
 import subprocess
-import sys
-import tempfile
 import time
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import g03_compare as G
-import check_ruler
-import round as R
-from controls.run_all import rows, rec, terminal
-import self_compare
+_HERE = Path(__file__).resolve().parent
+_ROOT = _HERE.parent
+
+
+def _load(name, path):
+    """Load an apparatus module by explicit path; never resolve via sys.path."""
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+G = _load('g03_compare', _ROOT / 'g03_compare.py')
+check_ruler = _load('check_ruler', _ROOT / 'check_ruler.py')
+R = _load('round', _ROOT / 'round.py')
+_run_all = _load('controls.run_all', _HERE / 'run_all.py')
+rows, rec, terminal = _run_all.rows, _run_all.rec, _run_all.terminal
+self_compare = _load('self_compare', _ROOT / 'self_compare.py')
 
 
 class ReviewControls(unittest.TestCase):

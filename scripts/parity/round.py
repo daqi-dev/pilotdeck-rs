@@ -6,9 +6,21 @@ outside this repository and never read at runtime.
 Source sha256: 854d40a0c444bc9839e143c94b3137ccaf6db3652a4b17ceae0d55c8c22269b6
 Identity-only bind.mjs observes spawns; production env selects the binary.
 """
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution; without it, exit before loading any apparatus module.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-pyc-')
+sys.dont_write_bytecode = True
+
 import argparse
 from contextlib import contextmanager
 import fcntl
+import importlib.util
 import json
 import math
 import os
@@ -16,12 +28,30 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
-import sys
 import signal
 import time
 import uuid
 
-import g03_compare as G
+_HERE = Path(__file__).resolve().parent
+
+
+def _load(name, path):
+    """Load an apparatus module by explicit path; never resolve via sys.path."""
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+G = _load('g03_compare', _HERE / 'g03_compare.py')
 
 LOCK = Path('/tmp/pdrs-parity.lock')
 LOCK_MAX_AGE = 40 * 60

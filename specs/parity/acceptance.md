@@ -110,7 +110,7 @@ BLOCKED 是环境失败，整轮作废，不归入原版不稳定；本批五轮
 
 原始目录：`/Users/da/ws/pilotdeck-rs/_tmp/20261014-ts5/r1` … `r5`；完成标记为同目录 `progress.txt` 的 DONE。五遍沿用相同运行输出目录，模型 prompt 路径一致，本批没有路径对齐。单份 trace、summary、上游代码与本仓代码的 sha256 记在本 worktree `_tmp/self-compare.json`。
 
-复算命令：`python3 scripts/parity/self_compare.py`。结果为 `_tmp/self-compare.json` 和 `_tmp/self-compare.md`；后者列出全部场景在三种口径下的状态。对照与边界见 [exp004](../../docs/experiments/exp004-ruler-recheck/readme.md) 和 [normalization](normalization.md)。独立评审仍待协调者填写；四项闸门未齐之前不宣称尺子已验收。
+复算命令：`python3 -I scripts/parity/self_compare.py`。结果为 `_tmp/self-compare.json` 和 `_tmp/self-compare.md`；后者列出全部场景在三种口径下的状态。对照与边界见 [exp004](../../docs/experiments/exp004-ruler-recheck/readme.md) 和 [normalization](normalization.md)。独立评审仍待协调者填写；四项闸门未齐之前不宣称尺子已验收。
 
 ## 原版多态场景
 

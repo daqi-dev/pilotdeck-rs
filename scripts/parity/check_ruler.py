@@ -1,13 +1,44 @@
 #!/usr/bin/env python3
 """Re-run controls, validate self-comparison evidence, and report review pending."""
-import argparse
-import json
-from pathlib import Path
 import sys
 
-import g03_compare as G
-from controls.run_all import run_controls, DEFAULT_SOURCE
-from check_frozen import check as check_frozen
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution; without it, exit before loading any apparatus module.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-pyc-')
+sys.dont_write_bytecode = True
+
+import argparse
+import importlib.util
+import json
+from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+
+
+def _load(name, path):
+    """Load an apparatus module by explicit path; never resolve via sys.path."""
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+G = _load('g03_compare', _HERE / 'g03_compare.py')
+_controls = _load('controls.run_all', _HERE / 'controls/run_all.py')
+run_controls, DEFAULT_SOURCE = _controls.run_controls, _controls.DEFAULT_SOURCE
+check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 
 
 def independent_review():

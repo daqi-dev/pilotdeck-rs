@@ -1,15 +1,45 @@
 #!/usr/bin/env python3
 """Issue #35 controls: real G03 calls over offline mutated TS fixtures."""
+import sys
+
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution; without it, exit before loading any apparatus module.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-parity-pyc-')
+sys.dont_write_bytecode = True
+
 from copy import deepcopy
 from datetime import datetime, timezone
 from unittest.mock import patch
+import importlib.util
 import json
 from pathlib import Path
 import re
-import tempfile
 
-import g03_compare as G
-import score as S
+_HERE = Path(__file__).resolve().parent
+
+
+def _load(name, path):
+    """Load an apparatus module by explicit path; never resolve via sys.path."""
+    path = Path(path).resolve()
+    existing = sys.modules.get(name)
+    existing_file = getattr(existing, '__file__', None)
+    if existing is not None and existing_file and Path(existing_file).resolve() == path:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path:
+        raise RuntimeError(f'{name}: loaded {module.__file__}, expected {path}')
+    return module
+
+
+G = _load('g03_compare', _HERE.parent / 'g03_compare.py')
+S = _load('score', _HERE.parent / 'score.py')
 
 
 def run_controls(source):
