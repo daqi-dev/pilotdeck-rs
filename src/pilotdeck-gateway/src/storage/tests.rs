@@ -1198,3 +1198,36 @@ fn nonfinite_unknown_sequence_survives_json_null_restart() {
     };
     assert_eq!(recovered.last_applied_sequence, None);
 }
+
+#[test]
+fn writable_transcript_checks_the_matching_diagnostic_not_the_first() {
+    let unrelated = Diagnostic {
+        code: "transcript_line_invalid",
+        severity: "error",
+        line: Some(1),
+        message: "unrelated malformed line".into(),
+    };
+    let mut read = TranscriptRead {
+        entries: vec![],
+        diagnostics: vec![unrelated],
+    };
+    // Non-size errors and an absent diagnostic must not become fatal.
+    read.ensure_writable().unwrap();
+    read.diagnostics.push(Diagnostic {
+        code: "transcript_too_large",
+        severity: "error",
+        line: None,
+        message: "the matching size-limit diagnostic".into(),
+    });
+    assert!(
+        matches!(read.ensure_writable(), Err(LedgerError::Invalid(message))
+        if message == "the matching size-limit diagnostic")
+    );
+    read.diagnostics.reverse();
+    assert!(
+        matches!(read.ensure_writable(), Err(LedgerError::Invalid(message))
+        if message == "the matching size-limit diagnostic")
+    );
+    read.diagnostics.clear();
+    read.ensure_writable().unwrap();
+}

@@ -1,6 +1,9 @@
 use super::*;
 use crate::runtime::project::persistence::PersistenceResources;
-use crate::storage::{SnapshotState, WorkspaceSnapshotInput, recorder::RecorderError};
+use crate::storage::{
+    AdapterError, JsonlLedgerStore, LedgerError, SnapshotState, WorkspaceSnapshotInput,
+    recorder::{Recorder, RecorderError},
+};
 use pilotdeck_protocol::{parse_json, stringify_json};
 use std::fs;
 
@@ -235,6 +238,9 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
     let session = native(&handle)
         .create_session("s".into(), Some(path.clone()))
         .unwrap();
+    // Opening a writer now creates its lock parent. Keep that lock inode
+    // while temporarily making the transcript parent inaccessible.
+    fs::rename(path.parent().unwrap(), scratch.0.join("initial-parent")).unwrap();
     fs::write(path.parent().unwrap(), "blocker").unwrap();
     let error = session
         .recorder
@@ -248,6 +254,7 @@ async fn persistence_append_failure_does_not_commit_and_same_instance_retries() 
     assert_eq!(session.recorder.snapshot_state(), (0, None));
     assert_eq!(oracle()["events"]["stateAfterFailure"]["sequence"], 0);
     fs::remove_file(path.parent().unwrap()).unwrap();
+    fs::rename(scratch.0.join("initial-parent"), path.parent().unwrap()).unwrap();
     session
         .recorder
         .start_turn(&"s".into(), &"ok".into())
@@ -289,8 +296,10 @@ async fn persistence_restore_rejects_io_and_invalid_chain_instead_of_resetting()
     let registry = registry(&scratch, false);
     let lease = registry.acquire(None).unwrap();
     let handle = resource(&lease);
+    let directory = scratch.0.join("directory");
+    fs::create_dir(&directory).unwrap();
     assert!(matches!(
-        native(&handle).create_session("s".into(), Some(scratch.0.clone())),
+        native(&handle).create_session("s".into(), Some(directory)),
         Err(RecorderError::Store(_))
     ));
     let first = oracle()["events"]["firstBytes"]
@@ -419,8 +428,13 @@ async fn persistence_oversized_log_never_publishes_a_reset_writer() {
     let Err(error) = native(&handle).create_session("s".into(), Some(path.clone())) else {
         panic!("size-limit diagnostics must not publish a writable empty chain");
     };
-    assert!(matches!(error, RecorderError::State(_)));
-    assert!(error.to_string().contains("larger than 52428800 bytes"));
+    let expected = format!(
+        "Transcript {} is larger than 52428800 bytes.",
+        path.canonicalize().unwrap().display()
+    );
+    assert!(
+        matches!(error, RecorderError::Store(LedgerError::Invalid(ref message)) if message == &expected)
+    );
     assert_eq!(fs::metadata(&path).unwrap().len(), size);
     // Sibling writable restore must reject the same size-limited projection.
     let chat_dir = scratch.0.clone();
@@ -435,7 +449,16 @@ async fn persistence_oversized_log_never_publishes_a_reset_writer() {
         now: None,
     });
     assert_eq!(storage.transcript_path, path);
-    assert!(storage.restore().is_err());
+    assert!(
+        matches!(storage.restore(), Err(AdapterError::Store(LedgerError::Invalid(message))) if message == expected)
+    );
+    assert!(
+        matches!(JsonlLedgerStore::open(&path, "s"), Err(LedgerError::Invalid(message)) if message == expected)
+    );
+    // Repeated rejection must release the session's lock too.
+    assert!(
+        matches!(native(&handle).create_session("s".into(), Some(path.clone())), Err(RecorderError::Store(LedgerError::Invalid(message))) if message == expected)
+    );
     assert_eq!(storage.transcript.snapshot_state().sequence, 0);
     assert_eq!(fs::metadata(&path).unwrap().len(), size);
     assert_eq!(oracle()["events"]["oversizedSequence"], 1);
@@ -467,5 +490,147 @@ async fn persistence_missing_snapshot_environment_is_explicitly_absent() {
             .is_persistent()
     );
     drop((handle, lease));
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
+async fn persistence_writer_lock_spans_generations_aliases_and_writer_clones() {
+    let scratch = Scratch::new();
+    let registry = registry(&scratch, false);
+    let lease = registry.acquire(None).unwrap();
+    let handle = resource(&lease);
+    let path = scratch.0.join("owned.jsonl");
+    let session = native(&handle)
+        .create_session("s".into(), Some(path.clone()))
+        .unwrap();
+    let blocked = |result| {
+        assert!(matches!(result,
+        Err(RecorderError::Store(LedgerError::Io(error))) if error.kind() == std::io::ErrorKind::WouldBlock))
+    };
+    // The not-yet-created transcript and a lexical alias share one lock.
+    assert!(!path.exists());
+    fs::create_dir(scratch.0.join("nested")).unwrap();
+    blocked(native(&handle).create_session(
+        "other".into(),
+        Some(scratch.0.join("nested/../owned.jsonl")),
+    ));
+    session
+        .recorder
+        .start_turn(&"s".into(), &"first".into())
+        .unwrap();
+    let original = fs::read(&path).unwrap();
+    #[cfg(unix)]
+    {
+        let alias = scratch.0.join("alias.jsonl");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        blocked(native(&handle).create_session("s".into(), Some(alias)));
+    }
+    registry.invalidate(None);
+    let next_lease = registry.acquire(None).unwrap();
+    let next = resource(&next_lease);
+    assert!(!Arc::ptr_eq(&handle, &next));
+    blocked(native(&next).create_session("s".into(), Some(path.clone())));
+    assert!(
+        matches!(JsonlLedgerStore::open(&path,"s"), Err(LedgerError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock)
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    let retained = Recorder::from_writer(session.recorder.writer().clone());
+    drop(session);
+    blocked(native(&next).create_session("s".into(), Some(path.clone())));
+    retained
+        .start_turn(&"s".into(), &"retained".into())
+        .unwrap();
+    drop(retained);
+    // The sibling ledger uses the exact same fence, in both directions.
+    let ledger = JsonlLedgerStore::open(&path, "s").unwrap();
+    blocked(native(&next).create_session("s".into(), Some(path.clone())));
+    drop(ledger);
+    let reopened = native(&next)
+        .create_session("s".into(), Some(path.clone()))
+        .unwrap();
+    assert_eq!(reopened.recorder.snapshot_state().0, 2);
+    reopened
+        .recorder
+        .start_turn(&"s".into(), &"next".into())
+        .unwrap();
+    assert_eq!(reopened.read().unwrap().entries.len(), 3);
+    assert!(fs::read(&path).unwrap().starts_with(&original));
+    assert!(scratch.0.join("owned.jsonl.lock").is_file());
+    drop((reopened, next, next_lease, handle, lease));
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
+async fn persistence_concurrent_open_publishes_exactly_one_writer() {
+    let scratch = Scratch::new();
+    let registry = registry(&scratch, false);
+    let lease = registry.acquire(None).unwrap();
+    let handle = resource(&lease);
+    let path = scratch.0.join("race.jsonl");
+    let barrier = std::sync::Barrier::new(2);
+    let results = std::thread::scope(|scope| {
+        let open = || {
+            barrier.wait();
+            native(&handle).create_session("s".into(), Some(path.clone()))
+        };
+        let a = scope.spawn(open);
+        let b = scope.spawn(open);
+        [a.join().unwrap(), b.join().unwrap()]
+    });
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert_eq!(results.iter().filter(|r| matches!(r,
+        Err(RecorderError::Store(LedgerError::Io(e))) if e.kind() == std::io::ErrorKind::WouldBlock)).count(), 1);
+    results
+        .iter()
+        .find_map(|r| r.as_ref().ok())
+        .unwrap()
+        .recorder
+        .start_turn(&"s".into(), &"winner".into())
+        .unwrap();
+    drop(results);
+    let reopened = native(&handle)
+        .create_session("s".into(), Some(path))
+        .unwrap();
+    assert_eq!(reopened.recorder.snapshot_state().0, 1);
+    drop((reopened, handle, lease));
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn persistence_dangling_symlink_cannot_acquire_a_separate_writer_lock() {
+    let scratch = Scratch::new();
+    let registry = registry(&scratch, false);
+    let lease = registry.acquire(None).unwrap();
+    let handle = resource(&lease);
+    let target = scratch.0.join("target.jsonl");
+    let alias = scratch.0.join("alias.jsonl");
+    std::os::unix::fs::symlink(&target, &alias).unwrap();
+    assert!(
+        matches!(native(&handle).create_session("s".into(), Some(alias.clone())),
+        Err(RecorderError::Store(LedgerError::Io(e))) if e.kind() == std::io::ErrorKind::NotFound)
+    );
+    assert!(matches!(JsonlLedgerStore::open(&alias, "s"),
+        Err(LedgerError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound));
+    assert!(!scratch.0.join("alias.jsonl.lock").exists());
+    assert!(!target.exists());
+    // A plain missing path is valid; once created, the symlink must contend.
+    let session = native(&handle)
+        .create_session("s".into(), Some(target))
+        .unwrap();
+    session
+        .recorder
+        .start_turn(&"s".into(), &"first".into())
+        .unwrap();
+    assert!(
+        matches!(native(&handle).create_session("s".into(), Some(alias.clone())),
+        Err(RecorderError::Store(LedgerError::Io(e))) if e.kind() == std::io::ErrorKind::WouldBlock)
+    );
+    drop(session);
+    let reopened = native(&handle)
+        .create_session("s".into(), Some(alias))
+        .unwrap();
+    assert_eq!(reopened.recorder.snapshot_state().0, 1);
+    drop((reopened, handle, lease));
     bounded(registry.dispose()).await.unwrap();
 }
