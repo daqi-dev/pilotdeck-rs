@@ -8,6 +8,71 @@ use std::path::{Path, PathBuf};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/skills");
 
+thread_local! {
+    static UNKNOWN_TYPE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static UNKNOWN_TYPE_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+// Ordinary filesystems cannot create the unknown inode kind. Match the TS
+// lstat classification hook without fabricating Metadata or the resulting error.
+pub(super) struct CpFileType {
+    native: fs::FileType,
+    unknown: bool,
+}
+impl CpFileType {
+    pub(super) fn is_file(&self) -> bool {
+        !self.unknown && self.native.is_file()
+    }
+}
+impl std::ops::Deref for CpFileType {
+    type Target = fs::FileType;
+    fn deref(&self) -> &Self::Target {
+        &self.native
+    }
+}
+pub(super) fn cp_file_type(native: fs::FileType, src: &str) -> CpFileType {
+    let unknown = UNKNOWN_TYPE.with(|path| path.borrow().as_deref() == Some(src));
+    if unknown {
+        assert!(
+            native.is_file(),
+            "unknown-type probe requires a regular file"
+        );
+        UNKNOWN_TYPE_HITS.with(|hits| hits.set(hits.get() + 1));
+    }
+    CpFileType { native, unknown }
+}
+struct UnknownTypeGuard;
+impl UnknownTypeGuard {
+    fn new(path: Option<String>) -> Self {
+        UNKNOWN_TYPE.with(|active| assert!(active.replace(path).is_none()));
+        UNKNOWN_TYPE_HITS.with(|hits| hits.set(0));
+        Self
+    }
+}
+impl Drop for UnknownTypeGuard {
+    fn drop(&mut self) {
+        UNKNOWN_TYPE.with(|active| active.replace(None));
+    }
+}
+
+struct RestoreReadPermission(PathBuf);
+impl Drop for RestoreReadPermission {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+fn permission_not_run(reason: &str) {
+    use std::io::Write as _;
+    assert!(
+        !reason.trim().is_empty(),
+        "permission skip must explain why"
+    );
+    // Direct stderr also stays visible under libtest's default output capture.
+    writeln!(io::stderr(), "NOT_RUN: {reason}").expect("print permission skip reason");
+}
+
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
@@ -165,13 +230,54 @@ fn replay(m: &SkillManager, steps: &JsValue, root: &str, keep_mtime: bool, label
     };
     let mut cursors: Vec<Option<String>> = vec![];
     for (i, step) in steps.iter().enumerate() {
+        let _permission = step.get("denyReadDir").map(|path| {
+            use std::os::unix::fs::PermissionsExt;
+            let path = Path::new(root).join(str_of(path));
+            let restore = RestoreReadPermission(path.clone());
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+            restore
+        });
+        if let Some(restore) = &_permission {
+            // Independent OS probe, including lazy entry errors. Never let the
+            // manager's swallowed error decide whether permissions are usable.
+            match fs::read_dir(&restore.0)
+                .and_then(|entries| entries.collect::<io::Result<Vec<_>>>())
+            {
+                Err(error) if error.raw_os_error() == Some(libc::EACCES) => {
+                    println!("{label} step {i}: native readdir EACCES");
+                }
+                Ok(entries) => {
+                    assert!(
+                        !entries.is_empty(),
+                        "permission probe directory must contain a file"
+                    );
+                    permission_not_run(&format!(
+                        "{label} step {i}: chmod 000 did not deny native readdir (root or filesystem permissions); healthy scans still replay"
+                    ));
+                    cursors.push(None);
+                    continue;
+                }
+                Err(error) => panic!("unexpected native readdir error: {error}"),
+            }
+        }
         let op = str_of(step.get("op").unwrap());
         let input = substitute(
             step.get("input").unwrap_or(&JsValue::Undefined),
             root,
             &cursors,
         );
-        let result = call(m, &op, &input);
+        let unknown_path = step
+            .get("unknownType")
+            .map(|path| format!("{root}/{}", str_of(path)));
+        let result = {
+            let _unknown = UnknownTypeGuard::new(unknown_path.clone());
+            let result = call(m, &op, &input);
+            if unknown_path.is_some() {
+                UNKNOWN_TYPE_HITS
+                    .with(|hits| assert!(hits.get() > 0, "unknown-type hook was not reached"));
+            }
+            result
+        };
         cursors.push(
             result
                 .as_ref()
@@ -351,6 +457,25 @@ fn real_ts_scenarios_match_outcomes_and_file_trees() {
         panic!("scenarios")
     };
     assert!(scenarios.len() >= 10);
+    for (name, steps) in [
+        ("import-unknown-type", 3),
+        ("import-symlink-to-subdirectory", 1),
+        ("scan-unreadable-child", 3),
+    ] {
+        let matches: Vec<_> = scenarios
+            .iter()
+            .filter(|s| s.get("name") == Some(&name.into()))
+            .collect();
+        assert_eq!(matches.len(), 1, "required scenario {name}");
+        let JsValue::Array(recorded) = matches[0].get("steps").unwrap() else {
+            panic!("{name}: steps")
+        };
+        assert_eq!(
+            recorded.len(),
+            steps,
+            "{name}: all error and recovery steps required"
+        );
+    }
     for scenario in scenarios {
         let name = str_of(scenario.get("name").unwrap());
         let scratch = Scratch::new();
@@ -728,18 +853,21 @@ fn unreadable_scan_child_matches_real_ts_before_denial_and_after_restore() {
     fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
     // Independent OS capability check: never count a privileged read as proof
     // that the manager swallowed an actual EACCES.
-    match fs::read_dir(&blocked) {
-        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
-        Ok(_) => {
-            eprintln!("NOT_RUN: permission-denied scan requires an unprivileged filesystem");
-            return;
-        }
-        Err(e) => panic!("unexpected raw readdir error: {e}"),
+    let denied =
+        match fs::read_dir(&blocked).and_then(|entries| entries.collect::<io::Result<Vec<_>>>()) {
+            Err(e) if e.raw_os_error() == Some(libc::EACCES) => true,
+            Ok(_) => {
+                permission_not_run("permission-denied scan requires an unprivileged filesystem");
+                false
+            }
+            Err(e) => panic!("unexpected raw readdir error: {e}"),
+        };
+    if denied {
+        assert_eq!(scan(), expected.get("denied").unwrap().clone());
     }
-    assert_eq!(scan(), expected.get("denied").unwrap().clone());
     drop(restore);
     assert_eq!(scan(), expected.get("restored").unwrap().clone());
-    println!("PASS: real EACCES and healthy scan controls");
+    println!("PASS: healthy scan controls; real EACCES exercised={denied}");
 }
 
 #[test]
