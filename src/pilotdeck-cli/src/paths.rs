@@ -111,13 +111,11 @@ pub fn js_trim(text: &str) -> &str {
     text.trim_matches(is_js_space)
 }
 
-/// Node fs error message `CODE: description, syscall 'path'`.
+/// Node fs error message `CODE: description, syscall 'path'`, formatted by the
+/// gateway's libuv template (a read-stage error omits the path).
 pub fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> Option<String> {
-    let (code, description) = pilotdeck_gateway::node_fs_errno(error)?;
-    Some(format!(
-        "{code}: {description}, {syscall} '{}'",
-        path.display()
-    ))
+    let path = path.to_string_lossy();
+    pilotdeck_gateway::node_fs_message(error, syscall, Some(path.as_ref()))
 }
 
 #[cfg(test)]
@@ -244,6 +242,22 @@ mod tests {
                 Path::new("/tmp/errno")
             ),
             None
+        );
+    }
+
+    /// The formatter is the gateway's libuv template: a read-stage error omits
+    /// the path, exactly like `node_io::read_file` (Node v22.22.0 renders a
+    /// directory read as `EISDIR: illegal operation on a directory, read`).
+    #[test]
+    fn read_stage_errors_omit_the_path() {
+        assert_eq!(
+            node_fs_message(
+                &std::io::Error::from_raw_os_error(libc::EISDIR),
+                "read",
+                Path::new("/tmp/errno")
+            )
+            .as_deref(),
+            Some("EISDIR: illegal operation on a directory, read")
         );
     }
 

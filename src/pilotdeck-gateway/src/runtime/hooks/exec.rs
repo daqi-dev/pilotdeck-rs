@@ -560,12 +560,58 @@ fn resolve_shell(env: &JsObject) -> Result<String, JsString> {
 }
 
 fn spawn_error(shell: &str, error: &std::io::Error) -> JsString {
-    let code = match error.kind() {
-        std::io::ErrorKind::NotFound => "ENOENT",
-        std::io::ErrorKind::PermissionDenied => "EACCES",
-        _ => return JsString::from(error.to_string()),
+    // Node reports the libuv errno name, which distinguishes EPERM from EACCES
+    // (`ErrorKind::PermissionDenied` does not). Unknown or non-OS errors keep
+    // the kind mapping and, failing that, the Rust Display text.
+    let code = match error
+        .raw_os_error()
+        .and_then(|_| crate::node_io::lookup(error))
+    {
+        Some((code, _)) => code,
+        None => match error.kind() {
+            std::io::ErrorKind::NotFound => "ENOENT",
+            std::io::ErrorKind::PermissionDenied => "EACCES",
+            _ => return JsString::from(error.to_string()),
+        },
     };
     JsString::from(format!("spawn {shell} {code}"))
+}
+
+#[cfg(test)]
+mod spawn_error_tests {
+    use super::spawn_error;
+
+    fn message(error: std::io::Error) -> String {
+        String::from_utf16_lossy(spawn_error("/bin/sh", &error).units())
+    }
+
+    /// Node's spawn failure message is `spawn <file> <CODE>`; the code is the
+    /// libuv errno name, not the `ErrorKind` bucket (PermissionDenied covers
+    /// both EACCES and EPERM).
+    #[test]
+    fn raw_errno_names_come_from_the_libuv_table() {
+        assert_eq!(
+            message(std::io::Error::from_raw_os_error(libc::ENOENT)),
+            "spawn /bin/sh ENOENT"
+        );
+        assert_eq!(
+            message(std::io::Error::from_raw_os_error(libc::EACCES)),
+            "spawn /bin/sh EACCES"
+        );
+        assert_eq!(
+            message(std::io::Error::from_raw_os_error(libc::EPERM)),
+            "spawn /bin/sh EPERM"
+        );
+        assert_eq!(
+            message(std::io::Error::from(std::io::ErrorKind::NotFound)),
+            "spawn /bin/sh ENOENT"
+        );
+        assert_eq!(
+            message(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+            "spawn /bin/sh EACCES"
+        );
+        assert_eq!(message(std::io::Error::other("synthetic")), "synthetic");
+    }
 }
 
 /// Kills the owned process group if the future is dropped before `reap`.

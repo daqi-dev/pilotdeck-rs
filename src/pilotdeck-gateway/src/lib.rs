@@ -44,11 +44,19 @@ pub type ProxyError = Box<dyn Error + Send + Sync>;
 pub type Body = BoxBody<Bytes, ProxyError>;
 pub type HttpClient = Client<HttpConnector, Incoming>;
 
-/// The Node/libuv code and description for an OS error, when the generated
-/// table knows the errno. The CLI shares this table instead of maintaining a
-/// second copy of the libuv message strings.
-pub fn node_fs_errno(error: &std::io::Error) -> Option<(&'static str, &'static str)> {
-    node_io::lookup(error)
+/// Node/libuv `Error.message` for a one-path syscall
+/// (`code: description, syscall 'path'`), when the generated table knows the
+/// errno. A descriptor read carries no path in Node (see `node_io::read_file`:
+/// reading a directory is `EISDIR: illegal operation on a directory, read`),
+/// while an open/stat/mkdir/... error names its path. The CLI shares this
+/// formatter and the libuv table instead of keeping its own copies.
+pub fn node_fs_message(
+    error: &std::io::Error,
+    syscall: &str,
+    path: Option<&str>,
+) -> Option<String> {
+    let path = if syscall == "read" { None } else { path };
+    node_io::diagnostic(error, syscall, path).map(|(_, message)| message)
 }
 
 /// Read the original session bytes without transcript validation or sorting.
