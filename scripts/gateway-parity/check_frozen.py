@@ -16,6 +16,11 @@ import tempfile
 import importlib.util, sys, tempfile
 from pathlib import Path
 
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution.  Without it, exit before loading anything and print the command.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {Path(__file__).resolve()}')
+
 sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-gateway-pyc-')
 sys.dont_write_bytecode = True
 
