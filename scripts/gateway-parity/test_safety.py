@@ -240,6 +240,50 @@ class ApparatusInputs(unittest.TestCase):
                 path.unlink()
         self.assertEqual(unknown_apparatus_files(self.root), [])
 
+    def test_symlinks_and_module_named_dirs_are_rejected(self):
+        # os.walk does not descend a linked directory, and CPython checks a
+        # same-directory package before its .py siblings, so a linked ``compare``
+        # package can run while ``compare.py`` keeps its registered hash.  The
+        # link itself must be unregistered even when the link name looks inert.
+        (self.root / 'common.py').write_text('registered member')
+        outside = Path(tempfile.mkdtemp(prefix='pdrs-apparatus-outside-', dir=self.root.parent))
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        (outside / '__init__.py').write_text('shadow package')
+        (outside / 'evil.js').write_text('shadow module')
+        for name, target, is_dir in [
+                ('linked-dir', outside, True),
+                ('linked-file.txt', outside / 'evil.js', False),
+                ('compare', outside, True),  # same-name shadow of compare.py
+                (f'compare{importlib.machinery.EXTENSION_SUFFIXES[0]}', outside / 'evil.js', False)]:
+            with self.subTest(name=name):
+                path = self.root / name
+                path.symlink_to(target, target_is_directory=is_dir)
+                self.assertEqual(unknown_apparatus_files(self.root), [name])
+                path.unlink()
+        (self.root / 'compare').mkdir()
+        self.assertEqual(unknown_apparatus_files(self.root), ['compare'])
+        (self.root / 'compare').rmdir()
+        self.assertEqual(unknown_apparatus_files(self.root), [])
+
+    def test_node_modules_symlinks_are_digested_not_scanned(self):
+        # Installed dependencies stay pruned from the scan; links inside them are
+        # covered by the node_modules digest, which records the link target.
+        modules = self.root / 'node_modules'
+        modules.mkdir()
+        outside = Path(tempfile.mkdtemp(prefix='pdrs-node-modules-', dir=self.root.parent))
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        for name in ('first', 'second'):
+            (outside / name).mkdir()
+            (outside / name / '__init__.py').write_text('dependency')
+        link = modules / 'pkg'
+        link.symlink_to(outside / 'first', target_is_directory=True)
+        self.assertEqual(unknown_apparatus_files(self.root), [])
+        first = node_modules_entry(self.root)
+        link.unlink()
+        link.symlink_to(outside / 'second', target_is_directory=True)
+        self.assertNotEqual(node_modules_entry(self.root), first)
+        self.assertEqual(unknown_apparatus_files(self.root), [])
+
     def test_bytecode_and_node_modules_classification(self):
         (self.root / '__pycache__').mkdir()
         (self.root / '__pycache__/common.pyc').write_bytes(b'x')
