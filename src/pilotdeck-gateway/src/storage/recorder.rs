@@ -24,7 +24,7 @@
 //! recursively stripped from stream events, tool calls and tool results (never
 //! from a model request), matching `stripRawFields`.
 //!
-//! High-level question/permission/inbox and completeTurn recorder methods are
+//! High-level question/permission/inbox recorder methods are
 //! outside this durable-port surface. Their transcript entries are validated by
 //! the complete shared session-domain state machine when written via the writer.
 //! `restore` only re-seeds the writer sequence/parent chain and the
@@ -144,6 +144,7 @@ struct PendingCompaction {
 struct Inner {
     turns: HashMap<JsString, Turn>,
     compactions: HashMap<JsString, Vec<PendingCompaction>>,
+    completed_turn_id: Option<JsString>,
 }
 
 /// Durable recorder over a session's shared transcript writer.
@@ -201,6 +202,7 @@ impl Recorder {
             inner: Mutex::new(Inner {
                 turns: HashMap::new(),
                 compactions: HashMap::new(),
+                completed_turn_id: None,
             }),
         }
     }
@@ -223,7 +225,36 @@ impl Recorder {
         let mut inner = self.lock();
         let draft = draft("turn_started");
         self.append(session_id, turn_id, draft)?;
+        inner.completed_turn_id = None;
         inner.turns.insert(turn_id.clone(), Turn::started());
+        Ok(())
+    }
+    /// TS `completeTurn`: close the open step before persisting the result.
+    /// The caller supplies the result's session/turn identity, as with the
+    /// shared writer's `record_turn_result`. A failed append stays retryable;
+    /// only a successfully persisted result removes the active recorder turn.
+    pub fn complete_turn(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        result: JsValue,
+    ) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        if inner.completed_turn_id.as_ref() == Some(turn_id) {
+            return Ok(());
+        }
+        self.require_recording(&inner, turn_id)?;
+        let outcome = match field(&result, "type").as_string() {
+            Some(kind) if kind.equals_str("aborted") => "aborted",
+            Some(kind) if kind.equals_str("error") => "failed",
+            _ => "completed",
+        };
+        self.complete_step(&mut inner, session_id, turn_id, outcome)?;
+        let mut draft = draft("turn_result");
+        draft.insert("result".into(), result);
+        self.append(session_id, turn_id, draft)?;
+        inner.turns.remove(turn_id);
+        inner.completed_turn_id = Some(turn_id.clone());
         Ok(())
     }
     /// TS `recordModelRequest`: open a step if needed, append the request, and
@@ -506,6 +537,7 @@ impl Recorder {
         self.writer.restore_recorder_entries(entries)?;
         inner.turns.clear();
         inner.compactions.clear();
+        inner.completed_turn_id = None;
         Ok(())
     }
     /// TS snapshotState, shared with every caller of the injected writer.
