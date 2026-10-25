@@ -2035,6 +2035,135 @@ async fn aborted_execution_releases_validated_wire_reservations() {
 }
 
 #[tokio::test]
+async fn discarded_middle_wire_reservation_preserves_delivery_order() {
+    for reserve_successor_first in [true, false] {
+        let (_, handler, mut rx) = buffered_handler(8);
+        let first = host_event("turn_started");
+        let middle = host_event("input_accepted");
+        let last = host_event("model_event");
+        let first_guard = handler.validate_event(&first).unwrap();
+        let middle_guard = handler.validate_event(&middle).unwrap();
+        // Exercise both an existing successor and a later reservation via tail.
+        let last_guard = if reserve_successor_first {
+            let guard = handler.validate_event(&last).unwrap();
+            drop(middle_guard);
+            guard
+        } else {
+            drop(middle_guard);
+            handler.validate_event(&last).unwrap()
+        };
+        let first_call = handler.event(wire(&first, false));
+        let mut last_call = handler.event(wire(&last, false));
+        // C's application is ready, but B's release must not let it overtake A.
+        assert_pending(&mut last_call).await;
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        timeout(FINAL_SYNC_TIMEOUT, first_call)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(rx.try_recv().unwrap(), first);
+        timeout(FINAL_SYNC_TIMEOUT, last_call)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(rx.try_recv().unwrap(), last);
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        assert!(handler.forwarding.lock().unwrap().wire.is_empty());
+        drop((first_guard, last_guard));
+    }
+}
+
+#[tokio::test]
+async fn discarded_middle_wire_reservation_preserves_pending_module_order() {
+    let (inner, handler, mut rx) = buffered_handler(8);
+    let first = host_event("turn_started");
+    let first_guard = handler.validate_event(&first).unwrap();
+    let middle_guard = handler
+        .validate_event(&host_event("input_accepted"))
+        .unwrap();
+    let last = host_event("module_after_discard");
+    queue_host_events(&inner, std::slice::from_ref(&last));
+    let mut last_call = handler.module_call(JsValue::Null);
+    assert_pending(&mut last_call).await;
+    drop(middle_guard); // C already owns B's completion receiver outside wire.
+    assert_pending(&mut last_call).await;
+    assert!(matches!(
+        rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    timeout(FINAL_SYNC_TIMEOUT, handler.event(wire(&first, false)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rx.try_recv().unwrap(), first);
+    timeout(FINAL_SYNC_TIMEOUT, last_call)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rx.try_recv().unwrap(), last);
+    assert!(matches!(
+        rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    drop(first_guard);
+}
+
+#[tokio::test]
+async fn discarded_middle_wire_reservation_keeps_predecessor_when_successor_is_cancelled() {
+    let (inner, handler, mut rx) = buffered_handler(8);
+    let first = host_event("turn_started");
+    let first_guard = handler.validate_event(&first).unwrap();
+    let middle_guard = handler
+        .validate_event(&host_event("input_accepted"))
+        .unwrap();
+    queue_host_events(&inner, &[host_event("cancelled_module")]);
+    let mut cancelled_call = handler.module_call(JsValue::Null);
+    assert_pending(&mut cancelled_call).await;
+    drop(middle_guard);
+    assert_pending(&mut cancelled_call).await; // now waiting on A through B
+    let last = host_event("module_after_cancel");
+    queue_host_events(&inner, std::slice::from_ref(&last));
+    let mut last_call = handler.module_call(JsValue::Null);
+    drop(cancelled_call);
+    assert_pending(&mut last_call).await;
+    timeout(FINAL_SYNC_TIMEOUT, handler.event(wire(&first, false)))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rx.try_recv().unwrap(), first);
+    timeout(FINAL_SYNC_TIMEOUT, last_call)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rx.try_recv().unwrap(), last);
+    assert!(matches!(
+        rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    drop(first_guard);
+}
+
+#[test]
+fn discarded_delivery_chain_drops_without_a_runtime_or_recursion() {
+    for discard_tail_first in [false, true] {
+        let mut forwarding = Forwarding::default();
+        let slots: Vec<_> = (0..20_000).map(|_| forwarding.reserve()).collect();
+        if discard_tail_first {
+            drop(forwarding.tail.take());
+        }
+        // In forward order each cancelled slot relays the preceding chain.
+        drop(slots);
+        drop(forwarding);
+    }
+}
+
+#[tokio::test]
 async fn discarded_event_guards_release_only_their_own_reservation() {
     let (inner, handler, mut rx) = buffered_handler(8);
     let started = host_event("turn_started");
@@ -2045,7 +2174,8 @@ async fn discarded_event_guards_release_only_their_own_reservation() {
     let reserved = handler.forwarding.lock().unwrap().wire.len();
     assert_eq!(reserved, 1);
     queue_host_events(&inner, &[host_event("after_discard")]);
-    let module = handler.module_call(JsValue::Null);
+    let mut module = handler.module_call(JsValue::Null);
+    assert_pending(&mut module).await;
     drop(first);
     timeout(FINAL_SYNC_TIMEOUT, module).await.unwrap().unwrap();
     assert!(handler.forwarding.lock().unwrap().wire.is_empty());
