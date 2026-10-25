@@ -107,10 +107,10 @@ enum ArtifactIo {
 }
 
 impl ArtifactIo {
-    fn write(&self, root: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
+    fn write(&self, root: &Path, path: &Path, bytes: &[u8], _expected_uid: u32) -> io::Result<()> {
         match self {
             #[cfg(unix)]
-            Self::Secure => write_artifact_secure(root, path, bytes),
+            Self::Secure => write_artifact_secure(root, path, bytes, _expected_uid),
             Self::Hooks {
                 create_directory,
                 write_text,
@@ -190,6 +190,12 @@ pub struct GatewayToolResultArtifactStore {
     threshold_bytes: usize,
     io: ArtifactIo,
     writes: Arc<ArtifactWrites>,
+    /// Test seam: replaces the process euid in the real writer's ownership
+    /// check. Tests cannot create a directory owned by another local user
+    /// without root, so the foreign-uid refusal is exercised by injecting the
+    /// uid here and running the full `write_artifact_secure` path.
+    #[cfg(unix)]
+    euid_override: Option<u32>,
 }
 
 impl GatewayToolResultArtifactStore {
@@ -235,7 +241,28 @@ impl GatewayToolResultArtifactStore {
             threshold_bytes,
             io,
             writes: Arc::new(ArtifactWrites::default()),
+            #[cfg(unix)]
+            euid_override: None,
         }
+    }
+
+    /// Test-only injection point for the euid used by the real writer's
+    /// ownership check; see [`Self::euid_override`].
+    #[cfg(all(test, unix))]
+    pub(crate) fn with_euid_override(mut self, euid: u32) -> Self {
+        self.euid_override = Some(euid);
+        self
+    }
+
+    #[cfg(unix)]
+    fn expected_uid(&self) -> u32 {
+        self.euid_override
+            .unwrap_or_else(|| rustix::process::geteuid().as_raw())
+    }
+
+    #[cfg(not(unix))]
+    fn expected_uid(&self) -> u32 {
+        0
     }
 
     pub fn root_dir(&self) -> &Path {
@@ -261,20 +288,30 @@ impl Default for GatewayToolResultArtifactStore {
 /// Node's `os.tmpdir()` fallbacks (TMPDIR -> TMP -> TEMP -> `/tmp`, skipping
 /// empty values), so a blank TMPDIR cannot turn the artifact root into a
 /// cwd-relative path; a relative tmpdir is resolved against the working
-/// directory like `path.resolve`, and `.`/`..` are normalized lexically.
-fn default_artifact_root(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+/// directory like `path.resolve`.
+fn node_temp_dir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
     let tmp = PathBuf::from(crate::node_io::node_tmpdir(var));
     // `path.resolve` absolutizes before normalizing, so a leading `..` in a
     // relative TMPDIR must keep referring to the parent of the working
     // directory rather than being dropped.
-    let root = if tmp.is_absolute() {
+    if tmp.is_absolute() {
         tmp
     } else {
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(tmp)
-    };
-    resolve_lexically(root.join(TOOL_RESULT_DIR_NAME))
+    }
+}
+
+fn default_artifact_root(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    resolve_lexically(node_temp_dir(var).join(TOOL_RESULT_DIR_NAME))
+}
+
+/// Whether `path` is the OS temp directory itself. macOS ships `/tmp` as a
+/// symlink to `/private/tmp`; the anchor may follow exactly that OS-provided
+/// link, but nothing else.
+fn is_os_temp_dir(path: &Path) -> bool {
+    resolve_lexically(node_temp_dir(|key| std::env::var_os(key))) == path
 }
 
 impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
@@ -291,6 +328,12 @@ impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
         // TS `resolve(rootDir, safePathPart(sessionId), safePathPart(turnId))`
         // normalizes `.`/`..` segments (safePathPart can emit both).
         let root = resolve_lexically(self.root_dir.clone());
+        // The writer pins the directory above `root`; a root with no parent
+        // (only `/`) has no anchor, so its write can never succeed. Refuse it
+        // like an escape instead of handing out a path that stays unwritten.
+        if root.parent().is_none() {
+            return Ok(None);
+        }
         let directory = resolve_lexically(root.join(session_id).join(turn_id));
         let path = resolve_lexically(directory.join(format!("{tool_call_id}.txt")));
         // A `..` path part must not pop the protected root: every security
@@ -307,8 +350,9 @@ impl GatewayToolResultArtifactStorePort for GatewayToolResultArtifactStore {
         let bytes = String::from_utf16_lossy(input.text.units()).into_bytes();
         let io = self.io.clone();
         let job_path = path.clone();
+        let expected_uid = self.expected_uid();
         let accepted = self.writes.enqueue(move || {
-            let _ = io.write(&root, &job_path, &bytes);
+            let _ = io.write(&root, &job_path, &bytes, expected_uid);
         });
         // Never hand out a path whose write was not even queued.
         Ok(accepted.then(|| path.to_string_lossy().into_owned()))
@@ -340,29 +384,44 @@ fn resolve_lexically(path: PathBuf) -> PathBuf {
 /// [`crate::project_files::create_directories_at`]: every lookup and `mkdirat`
 /// is relative to the pinned parent directory and no symlink is followed (a
 /// concurrent `AlreadyExists` is tolerated there, unlike a bare `create_dir`).
-/// Every level under `root` is then reopened with `O_NOFOLLOW|O_DIRECTORY`,
-/// checked for directory type and euid ownership through the descriptor, and
-/// set to 0700 (mkdir/open modes are masked by the process umask; existing
-/// levels left by an older writer are tightened too). The final file is opened
-/// relative to the last descriptor with `O_NOFOLLOW`, so a level swapped
-/// between the check and the open cannot redirect the write. The temp
-/// directory above `root` is intentionally not ownership-checked.
+/// The anchor above `root` (the temp directory for the default root) is pinned
+/// with `O_NOFOLLOW|O_DIRECTORY` too, so a custom root cannot be redirected
+/// through a symlinked parent. Every level under `root` is then reopened with
+/// `O_NOFOLLOW|O_DIRECTORY`, checked for directory type and euid ownership
+/// through the descriptor, and set to 0700 (mkdir/open modes are masked by the
+/// process umask; existing levels left by an older writer are tightened too).
+/// The final file is opened relative to the last descriptor with `O_NOFOLLOW`,
+/// so a level swapped between the check and the open cannot redirect the write;
+/// it must be a singly-linked regular file owned by the same euid, so a
+/// pre-planted hard link or foreign file is refused rather than truncated. The
+/// anchor itself is intentionally not ownership-checked (the shared temp
+/// directory is not ours).
 #[cfg(unix)]
-fn write_artifact_secure(root: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
+fn write_artifact_secure(
+    root: &Path,
+    path: &Path,
+    bytes: &[u8],
+    expected_uid: u32,
+) -> io::Result<()> {
     use rustix::fs::{Mode, OFlags, fchmod, openat};
     use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
 
     let directory = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     let file_name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
+    // Defense in depth: even if a caller bypasses `persist`, the writer must
+    // only ever write below `root` itself (not merely below `root.parent()`,
+    // which would still admit a single `..` escape).
+    if path.strip_prefix(root).is_err() {
+        return Err(refused_artifact_path(path, root));
+    }
     let base = root.parent().ok_or(io::ErrorKind::InvalidInput)?;
     let relative = directory
         .strip_prefix(base)
         .map_err(|_| refused_artifact_path(path, root))?;
-    let euid = rustix::process::geteuid().as_raw();
     // The temp directory (default root's parent) always exists; a custom root
     // may be nested deeper, and the callers expect it to be created.
-    fs::create_dir_all(base)?;
-    let base_fd = fs::File::open(base)?;
+    let base_fd = open_artifact_anchor(base)?;
     crate::project_files::create_directories_at(&base_fd, relative, Mode::from_raw_mode(0o700))?;
 
     let mut current = base.to_path_buf();
@@ -376,30 +435,68 @@ fn write_artifact_secure(root: &Path, path: &Path, bytes: &[u8]) -> io::Result<(
             openat(&parent, name, artifact_directory_flags(), Mode::empty())
                 .map_err(io::Error::from)?,
         );
-        verify_private_directory(&current, &opened.metadata()?, euid)?;
+        verify_private_directory(&current, &opened.metadata()?, expected_uid)?;
         fchmod(&opened, Mode::from_raw_mode(0o700))?;
         parent = opened;
     }
 
-    let mut file = fs::File::from(
+    let file = fs::File::from(
         openat(
             &parent,
             file_name,
             OFlags::WRONLY
                 | OFlags::CREATE
-                | OFlags::TRUNC
                 | OFlags::CLOEXEC
                 // NONBLOCK: a raced-in FIFO must not hang the writer thread.
                 | OFlags::NONBLOCK
                 | OFlags::NOFOLLOW,
+            // No TRUNC: truncation happens only after the inode checks below,
+            // so a pre-planted hard link or foreign file is refused intact.
             Mode::from_raw_mode(0o600),
         )
         .map_err(io::Error::from)?,
     );
-    if !file.metadata()?.is_file() {
+    let metadata = file.metadata()?;
+    // `nlink == 1` refuses a pre-planted hard link (O_NOFOLLOW cannot see one;
+    // the file walk in `create_new_beneath` has the same guard). The owner
+    // check refuses a foreign regular file left in a once world-writable
+    // level. Without both, truncation could destroy or leak another user's file.
+    if !metadata.is_file() || metadata.nlink() != 1 || metadata.uid() != expected_uid {
         return Err(io::Error::from_raw_os_error(libc::EACCES));
     }
+    let mut file = file;
+    file.set_len(0)?;
     file.write_all(bytes)
+}
+
+/// Pin the directory above the artifact root. A custom root may be nested
+/// (the TS CLI wires `tmpdir/pilotdeck-tool-output/<pid>`), so a missing anchor
+/// is created first; the anchor itself is then opened with
+/// `O_NOFOLLOW|O_DIRECTORY`, so a symlink planted in its place is refused
+/// instead of silently following it. The one exception is the OS temp
+/// directory itself: macOS ships `$TMPDIR`-less `/tmp` as a root-owned symlink
+/// to `/private/tmp`, which the default root's anchor has always followed.
+/// Intermediate ancestors of a nested custom root are outside this check (the
+/// platform paths above them, e.g. `/var` -> `/private/var`, are root-owned
+/// symlinks too).
+#[cfg(unix)]
+fn open_artifact_anchor(base: &Path) -> io::Result<fs::File> {
+    use rustix::fs::{Mode, OFlags};
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW;
+    let open = || rustix::fs::open(base, flags, Mode::empty()).map_err(io::Error::from);
+    match rustix::fs::open(base, flags, Mode::empty()) {
+        Ok(fd) => Ok(fs::File::from(fd)),
+        Err(rustix::io::Errno::NOENT) => {
+            fs::create_dir_all(base)?;
+            Ok(fs::File::from(open()?))
+        }
+        Err(rustix::io::Errno::LOOP | rustix::io::Errno::NOTDIR)
+            if is_os_temp_dir(base) && fs::metadata(base).is_ok_and(|meta| meta.is_dir()) =>
+        {
+            Ok(fs::File::open(base)?)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[cfg(unix)]

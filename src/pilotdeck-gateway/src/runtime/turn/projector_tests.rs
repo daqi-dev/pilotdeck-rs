@@ -428,7 +428,10 @@ fn default_store_tmp_root_follows_node_tmpdir_and_stays_absolute() {
 
 #[test]
 fn default_store_only_persists_above_the_byte_threshold() {
-    let root = std::env::temp_dir().join(format!("pdrs-projector-store-{}", std::process::id()));
+    // A fresh UUID, not the pid: macOS reuses pids, and a leftover or
+    // pre-created `/tmp/pdrs-projector-store-<pid>` would make the secure
+    // writer refuse and turn this into a spurious failure.
+    let root = std::env::temp_dir().join(format!("pdrs-projector-store-{}", uuid::Uuid::new_v4()));
     let _ = std::fs::remove_dir_all(&root);
     let store = GatewayToolResultArtifactStore::new(&root, 4);
     let short = GatewayToolResultArtifactInput {
@@ -497,6 +500,39 @@ fn artifact_root_symlink_is_refused_without_touching_its_target() {
     assert!(!target.join("s").exists());
 }
 
+/// The anchor above a custom root (`root.parent()`, the TS CLI wires
+/// `tmpdir/pilotdeck-tool-output/<pid>`) must not be followed through a
+/// symlink: the writer pins it with `O_NOFOLLOW|O_DIRECTORY`. Without that,
+/// `create_dir_all` + `File::open` would follow the planted link and write the
+/// artifact into its target.
+#[cfg(unix)]
+#[test]
+fn artifact_root_parent_symlink_is_refused() {
+    let scratch = Scratch::new("artifact-anchor-symlink");
+    let target = scratch.path().join("target");
+    std::fs::create_dir(&target).expect("target dir");
+    let anchor = scratch.path().join("anchor");
+    std::os::unix::fs::symlink(&target, &anchor).expect("plant anchor symlink");
+    let root = anchor.join(TOOL_RESULT_DIR_NAME);
+
+    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let path = store
+        .persist(&long_artifact_input())
+        .expect("advisory persist never throws")
+        .expect("above threshold");
+    store.wait_for_pending();
+
+    assert!(
+        !Path::new(&path).exists(),
+        "the refused write must not have created {path}"
+    );
+    assert_eq!(
+        std::fs::read_dir(&target).expect("target dir").count(),
+        0,
+        "nothing may be written through the anchor symlink"
+    );
+}
+
 /// A pre-planted symlink at the final file path must not be followed, and its
 /// target must not be truncated or overwritten (`O_NOFOLLOW`).
 #[cfg(unix)]
@@ -528,6 +564,34 @@ fn artifact_file_symlink_is_not_followed_or_truncated() {
             .file_type()
             .is_symlink(),
         "the planted link itself must not be replaced"
+    );
+}
+
+/// `O_NOFOLLOW` cannot see a hard link, but the final `fstat` requires
+/// `nlink == 1` (the same guard as `project_files::create_new_beneath`), so a
+/// pre-planted hard link to another file must be refused, not truncated.
+#[cfg(unix)]
+#[test]
+fn artifact_file_hardlink_is_not_truncated() {
+    let scratch = Scratch::new("artifact-hardlink");
+    let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
+    std::fs::create_dir_all(root.join("s").join("t")).expect("artifact dirs");
+    let victim = scratch.path().join("victim.txt");
+    std::fs::write(&victim, "keep").expect("victim content");
+    let link = root.join("s").join("t").join("c.txt");
+    std::fs::hard_link(&victim, &link).expect("plant hard link");
+
+    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    store
+        .persist(&long_artifact_input())
+        .expect("advisory persist never throws")
+        .expect("above threshold");
+    store.wait_for_pending();
+
+    assert_eq!(
+        std::fs::read_to_string(&victim).expect("victim readable"),
+        "keep",
+        "a pre-planted hard link must not let the writer truncate its target"
     );
 }
 
@@ -568,6 +632,37 @@ fn artifact_directory_owner_check_rejects_a_foreign_uid() {
     let link_metadata = std::fs::symlink_metadata(&link).expect("link metadata");
     verify_private_directory(&link, &link_metadata, euid)
         .expect_err("directory symlinks are refused");
+}
+
+/// Production wiring: the writer must use the store's expected euid, not an
+/// unchecked `geteuid()` reached some other way. Non-root cannot create a
+/// directory owned by another user, so the store injects a foreign uid (the
+/// same seam the pure test uses) and runs the real `write_artifact_secure`.
+/// Deleting the `verify_private_directory` call, or making it stat the path
+/// with a hard-coded euid, turns this red.
+#[cfg(unix)]
+#[test]
+fn artifact_owner_check_is_wired_through_the_real_writer() {
+    let scratch = Scratch::new("artifact-owner-writer");
+    let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
+    let euid = rustix::process::geteuid().as_raw();
+    let store =
+        GatewayToolResultArtifactStore::new(&root, 4).with_euid_override(euid.wrapping_add(1));
+    let path = store
+        .persist(&long_artifact_input())
+        .expect("advisory persist never throws")
+        .expect("above threshold");
+    store.wait_for_pending();
+
+    assert!(
+        !Path::new(&path).exists(),
+        "a directory owned by a foreign uid must not be written through"
+    );
+    // The writer boundary reports the refusal (the advisory `persist` keeps
+    // the TS fire-and-forget path contract; nothing is written at that path).
+    write_artifact_secure(&root, Path::new(&path), b"abcde", euid.wrapping_add(1))
+        .expect_err("the real writer must refuse a foreign-uid directory");
+    assert!(!Path::new(&path).exists());
 }
 
 /// Normal writes keep working: the directory name, file name and content are
@@ -631,6 +726,15 @@ fn artifact_session_parent_dir_escape_is_refused() {
             .expect("escape is not a projection error"),
         None,
         "an escaped path must never be handed out"
+    );
+    // Positive control: the same store still accepts a normal in-root write,
+    // so a writer that failed to start cannot make this test pass vacuously.
+    assert!(
+        store
+            .persist(&long_artifact_input())
+            .expect("normal write")
+            .is_some(),
+        "the store must queue an ordinary in-root write"
     );
     store.wait_for_pending();
     // The would-be path is `<scratch>/t/c.txt`, beside the protected root.
@@ -739,6 +843,43 @@ fn artifact_double_parent_dir_escape_is_refused() {
     assert!(
         !scratch.path().join("a").join("c.txt").exists(),
         "no file may appear above the root"
+    );
+}
+
+/// Writer-level defense in depth must use `root`, not `root.parent()`: a path
+/// beside the root (a single `..` escape) has to be refused even if a caller
+/// reaches `write_artifact_secure` without `persist`'s guard.
+#[cfg(unix)]
+#[test]
+fn artifact_writer_refuses_a_path_beside_the_root() {
+    let scratch = Scratch::new("artifact-writer-escape");
+    let root = scratch.path().join(TOOL_RESULT_DIR_NAME);
+    std::fs::create_dir_all(&root).expect("protected root");
+    let beside = scratch.path().join("t").join("c.txt");
+    let error = write_artifact_secure(
+        &root,
+        &beside,
+        b"abcde",
+        rustix::process::geteuid().as_raw(),
+    )
+    .expect_err("a path beside the root must be refused");
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(!beside.exists(), "nothing may be written beside the root");
+}
+
+/// A root with no parent (`/`) cannot be pinned to an anchor; refusing it
+/// keeps the "a handed-out path can be written" property instead of returning
+/// a path whose write always fails.
+#[cfg(unix)]
+#[test]
+fn artifact_root_without_a_parent_is_refused() {
+    let store = GatewayToolResultArtifactStore::new(Path::new("/"), 4);
+    assert_eq!(
+        store
+            .persist(&long_artifact_input())
+            .expect("no projection error"),
+        None,
+        "a parentless root must not hand out a path"
     );
 }
 
