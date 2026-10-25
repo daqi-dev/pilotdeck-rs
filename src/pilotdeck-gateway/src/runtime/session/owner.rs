@@ -257,6 +257,7 @@ impl SessionOwner {
                         String::from_utf16_lossy(context.session_key.units())
                     ),
                     causes: vec![cause, error],
+                    js_error: None,
                 },
             });
         }

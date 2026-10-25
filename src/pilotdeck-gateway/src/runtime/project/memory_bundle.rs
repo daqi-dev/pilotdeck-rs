@@ -12,16 +12,17 @@
 //! enabled `edgeclaw` configuration fails explicitly instead of succeeding or
 //! being silently disabled.
 //!
-//! Type boundary (follow-up #636): this port's [`ProjectMemoryBundleOptions`]
-//! carries only `project_root`, the normalized `{enabled, provider}` selection,
-//! `agent_model`, and the two factories. The TS composition also passes
-//! `modelConfig`, `now` and `telemetry`
-//! (`ProjectRuntimeResourcesBundle.ts:387-398`), so an injected provider here
-//! cannot receive them. `MemoryProviderError`'s `name`, `code` and
-//! `requires_host` are likewise dropped by `From<MemoryBundleError> for
-//! RuntimeError`, which keeps only the message. Full option/error parity
-//! belongs to the native EdgeClaw provider port in #636; this bundle does not
-//! claim TS equivalence for those fields.
+//! #636 closes the type boundary: [`ProjectMemoryBundleOptions`] now carries
+//! the normalized `modelConfig`, the project clock and the opaque telemetry
+//! client in addition to the full normalized memory config, so an injected
+//! provider factory receives the same composition inputs as
+//! `ProjectRuntimeResourcesBundle.ts:387-398`. `From<MemoryBundleError> for
+//! RuntimeError` retains the factory's original JS `{name, code, message,
+//! requires_host}` instead of collapsing it to `message`.
+//!
+//! The native EdgeClaw provider itself is still not ported (that is #587), so
+//! an enabled `edgeclaw` configuration without an injected factory continues to
+//! fail explicitly.
 
 use super::{
     DisposeFuture, Family, FamilyResource, Resource, ResourceFamilySource, RuntimeError,
@@ -29,7 +30,8 @@ use super::{
 };
 use crate::runtime::context::memory::MemoryResolver;
 use crate::runtime::memory::{
-    MemoryConfig, MemoryMaintenanceService, MemoryManagementService, MemoryProviderFactoryFn,
+    MemoryCaptureStrategy, MemoryConfig, MemoryMaintenanceService, MemoryManagementService,
+    MemoryModelConfig, MemoryModelProvider, MemoryProviderFactoryFn, MemoryScheduleConfig,
     NativeProviderFactoryFn, ProjectMemoryBundle, ProjectMemoryBundleOptions,
 };
 use pilotdeck_protocol::JsValue;
@@ -88,11 +90,15 @@ impl ResourceFamilySource for MemoryBundleFamilySource {
         let snapshot = context.snapshot();
         let options = ProjectMemoryBundleOptions {
             // `ProjectRuntimeResourcesBundle.ts:387-398`: the real project
-            // root, normalized `snapshot.config.memory`, and
-            // `snapshot.config.agent.model.id`.
+            // root, normalized `snapshot.config.memory` / `snapshot.config.model`,
+            // `snapshot.config.agent.model.id`, `options.now` and
+            // `options.telemetry`.
             project_root: context.project_root(),
             config: memory_config(&snapshot),
+            model_config: model_config(&snapshot),
             agent_model: agent_model(&snapshot),
+            now: Some(context.clock()),
+            telemetry: context.telemetry(),
             provider_factory: self.provider_factory.clone(),
             create_provider: self.create_provider.clone(),
         };
@@ -109,8 +115,8 @@ impl ResourceFamilySource for MemoryBundleFamilySource {
             }),
         );
 
-        // The existing `From<MemoryBundleError> for RuntimeError` keeps the
-        // original message unchanged; do not add a staging prefix here.
+        // `From<MemoryBundleError> for RuntimeError` keeps the original JS
+        // error shape and message; do not add a staging prefix here.
         let resources = bundle.stage().map_err(RuntimeError::from)?;
 
         // `Object.assign(this.resources, memoryBundle.stage())`: an absent
@@ -140,18 +146,83 @@ impl ResourceFamilySource for MemoryBundleFamilySource {
     }
 }
 
-/// Normalized `snapshot.config.memory` as the selection fields the memory
-/// bundle consumes. An absent `memory` section stays absent (`None`) and stages
+/// Normalized `snapshot.config.memory` (`PilotMemoryConfig`) as the fields the
+/// bundle carries. An absent `memory` section stays absent (`None`) and stages
 /// no provider, matching `parseMemoryConfig.ts` returning `undefined` (and the
 /// native factory then returning `undefined`) for a missing section. When the
-/// section is present, normalization supplies `enabled` (default true) and
-/// `provider` (default `edgeclaw`).
+/// section is present, normalization supplies the required fields; the
+/// optional fields map to `None` without inventing a default.
 fn memory_config(snapshot: &JsValue) -> Option<MemoryConfig> {
     let memory = snapshot.get("config")?.get("memory")?;
+    let schedule = memory
+        .get("schedule")
+        .and_then(JsValue::as_object)
+        .map(|schedule| MemoryScheduleConfig {
+            reasoning_mode: text(schedule.get("reasoningMode")),
+            auto_index_interval_minutes: schedule
+                .get("autoIndexIntervalMinutes")
+                .and_then(JsValue::as_number),
+            auto_dream_interval_minutes: schedule
+                .get("autoDreamIntervalMinutes")
+                .and_then(JsValue::as_number),
+        });
     Some(MemoryConfig {
         enabled: memory.get("enabled")?.as_bool()?,
         provider: memory.get("provider")?.as_string()?.to_utf8().ok()?,
+        root_dir: text(memory.get("rootDir")).unwrap_or_default(),
+        capture_strategy: match text(memory.get("captureStrategy")).as_deref() {
+            Some("full_session") => MemoryCaptureStrategy::FullSession,
+            _ => MemoryCaptureStrategy::LastTurn,
+        },
+        include_assistant: memory
+            .get("includeAssistant")
+            .and_then(JsValue::as_bool)
+            .unwrap_or(true),
+        max_message_chars: memory.get("maxMessageChars").and_then(JsValue::as_number),
+        retrieval_timeout_ms: memory
+            .get("retrievalTimeoutMs")
+            .and_then(JsValue::as_number),
+        model: text(memory.get("model")),
+        api_type: text(memory.get("apiType")),
+        schedule,
+        heartbeat_batch_size: memory
+            .get("heartbeatBatchSize")
+            .and_then(JsValue::as_number),
     })
+}
+
+/// `snapshot.config.model` reduced to what `createEdgeClawMemoryProviderFromConfig`
+/// reads from `ModelConfig.providers[provider]`
+/// (`createEdgeClawMemoryProviderFromConfig.ts:91-98`). The api key is carried
+/// for the provider factory only and is never logged.
+fn model_config(snapshot: &JsValue) -> Option<MemoryModelConfig> {
+    let providers = snapshot
+        .get("config")?
+        .get("model")?
+        .get("providers")?
+        .as_object()?;
+    let mut config = MemoryModelConfig::default();
+    for (id, provider) in providers.entries() {
+        let Ok(id) = id.to_utf8() else {
+            continue;
+        };
+        let Some(provider) = provider.as_object() else {
+            continue;
+        };
+        config.providers.insert(
+            id,
+            MemoryModelProvider {
+                protocol: text(provider.get("protocol")),
+                url: text(provider.get("url")),
+                api_key: text(provider.get("apiKey")),
+            },
+        );
+    }
+    Some(config)
+}
+
+fn text(value: Option<&JsValue>) -> Option<String> {
+    value?.as_string()?.to_utf8().ok()
 }
 
 /// `snapshot.config.agent.model.id` (normalized by `config::snapshot::agent`).

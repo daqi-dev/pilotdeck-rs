@@ -266,6 +266,7 @@ impl LiveTurnStream {
             Ok(ExecuteResult::Rejected(error)) => Err(RuntimeError {
                 message: "Turn execution rejected.".into(),
                 causes: vec![RuntimeError::new(format!("{:?}", error))],
+                js_error: None,
             }),
             Err(error) => Err(map_host_error(error)),
         }
