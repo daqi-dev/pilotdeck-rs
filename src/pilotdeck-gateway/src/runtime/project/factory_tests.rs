@@ -3564,3 +3564,122 @@ async fn interaction_event_registry_keeps_old_generation_until_lease_drain() {
     bounded(registry.dispose()).await.unwrap();
     assert_eq!(new.release_count(), 1);
 }
+
+fn permission_resource(
+    context: &StageContext,
+) -> super::super::interaction_permission::InteractionPermission {
+    context
+        .resource(Resource::InteractionPermission)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<super::super::interaction_permission::InteractionPermission>()
+        .unwrap()
+        .clone()
+}
+fn bind_permission(
+    resource: &super::super::interaction_permission::InteractionPermission,
+) -> super::super::interaction_permission::TurnPermission {
+    use crate::runtime::{permission, project::interaction_permission::PermissionTurnOptions};
+    struct EmptyCatalog;
+    impl crate::host::modules::capability::ToolCatalog for EmptyCatalog {
+        fn list(
+            &self,
+        ) -> crate::host::HostFuture<Vec<Arc<dyn crate::host::modules::capability::ToolDefinition>>>
+        {
+            Box::pin(async { Ok(vec![]) })
+        }
+    }
+    let mut router = crate::host::modules::ModuleRouter::default();
+    assert!(!router.permission.is_installed());
+    let turn = resource
+        .bind_turn(
+            "session".into(),
+            "run".into(),
+            PermissionTurnOptions {
+                profile: RuntimeProfile::resolve(
+                    &JsValue::Object(JsObject::new()),
+                    &RuntimeProfileOverrides::default(),
+                )
+                .interaction,
+                context: permission::create_default_permission_context(
+                    permission::DefaultPermissionContextOptions {
+                        cwd: "/workspace".into(),
+                        ..Default::default()
+                    },
+                ),
+                rules: crate::config::permission::RuleSetHandle::empty(),
+                coordinator: Arc::default(),
+                emit: Arc::new(|_| false),
+                timeout: std::time::Duration::from_secs(1),
+            },
+            Arc::new(EmptyCatalog),
+            &mut router,
+        )
+        .unwrap();
+    assert!(router.permission.is_installed());
+    turn
+}
+#[tokio::test]
+async fn interaction_permission_factory_binds_and_closes_in_both_builder_orders() {
+    use crate::host::modules::permission::PermissionContext as _;
+    for families in [
+        Families::unwired().with_interaction().with_tools_mcp(),
+        Families::unwired().with_tools_mcp().with_interaction(),
+    ] {
+        let group = interaction_test_group();
+        let context = group.context();
+        families
+            .execution_world
+            .stage(&context, &mut group.sink())
+            .unwrap();
+        let resource = permission_resource(&context);
+        let turn = bind_permission(&resource);
+        assert!(turn.prepare(JsValue::Null).await.is_ok());
+        group.dispose().await.unwrap();
+        group.dispose().await.unwrap();
+        assert!(resource.is_closed());
+        assert_eq!(resource.release_count(), 1);
+        assert!(turn.prepare(JsValue::Null).await.is_err());
+    }
+}
+#[tokio::test]
+async fn interaction_permission_registry_keeps_old_generation_until_lease_drain() {
+    use crate::host::modules::permission::PermissionContext as _;
+    let scratch = Scratch::new();
+    let probe = Arc::new(Probe::default());
+    let registry = interaction_fake_registry(&scratch, &probe);
+    let root = scratch.0.join("a");
+    let runtime = registry.resolve(Some(&root)).unwrap();
+    let mut lease = runtime.acquire().unwrap();
+    let old = permission_resource(
+        &lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .unwrap()
+            .context(),
+    );
+    let old_turn = bind_permission(&old);
+    bounded(registry.reload()).await.unwrap();
+    let current = registry.resolve(Some(&root)).unwrap();
+    let current_lease = current.acquire().unwrap();
+    let new = permission_resource(
+        &current_lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .unwrap()
+            .context(),
+    );
+    let new_turn = bind_permission(&new);
+    assert!(old_turn.prepare(JsValue::Null).await.is_ok());
+    lease.release().await.unwrap();
+    assert!(old.is_closed());
+    assert_eq!(old.release_count(), 1);
+    assert!(old_turn.prepare(JsValue::Null).await.is_err());
+    assert!(new_turn.prepare(JsValue::Null).await.is_ok());
+    drop(current_lease);
+    bounded(registry.dispose()).await.unwrap();
+    assert!(new.is_closed());
+    assert_eq!(new.release_count(), 1);
+}

@@ -27,52 +27,6 @@ use std::{
 };
 use tokio::sync::oneshot;
 
-/// Preserve native checkPermissions implementations without modifying builtins
-/// or selecting a different tool by name. Register this descriptor in the same
-/// trusted catalog used by capability execution.
-pub struct PermissionDefinition<T>(pub Arc<T>);
-impl<T: ToolDefinition + PermissionTool + 'static> ToolDefinition for PermissionDefinition<T> {
-    fn fields(&self) -> &JsObject {
-        self.0.fields()
-    }
-    fn is_read_only(&self, input: &JsValue) -> Result<JsValue, HostError> {
-        ToolDefinition::is_read_only(self.0.as_ref(), input)
-    }
-    fn is_concurrency_safe(&self, input: &JsValue) -> Result<JsValue, HostError> {
-        self.0.is_concurrency_safe(input)
-    }
-    fn requires_user_interaction(&self, input: &JsValue) -> Result<JsValue, HostError> {
-        self.0.requires_user_interaction(input)
-    }
-    fn required_runtime_capabilities(&self) -> Option<Vec<JsString>> {
-        self.0.required_runtime_capabilities()
-    }
-    fn check_permissions<'a>(
-        &'a self,
-        input: &'a JsValue,
-        context: &'a PermissionContext,
-    ) -> PermissionFuture<'a, Option<JsValue>> {
-        PermissionTool::check_permissions(self.0.as_ref(), input, context)
-    }
-}
-impl<T: crate::runtime::tools::ExecutableTool + PermissionTool + 'static>
-    crate::runtime::tools::ExecutableTool for PermissionDefinition<T>
-{
-    fn execute(
-        &self,
-        input: JsValue,
-        context: crate::runtime::tools::ToolRunContext,
-    ) -> crate::runtime::tools::ToolFuture<crate::runtime::tools::ToolOutput> {
-        self.0.execute(input, context)
-    }
-    fn validate_input(
-        &self,
-        input: JsValue,
-        context: crate::runtime::tools::ToolRunContext,
-    ) -> crate::runtime::tools::ToolFuture<Option<Vec<JsObject>>> {
-        self.0.validate_input(input, context)
-    }
-}
 struct ToolAdapter {
     tool: Arc<dyn ToolDefinition>,
     name: JsString,
@@ -337,6 +291,8 @@ impl TurnPermission {
                                     )
                                 })
                                 .any(|v| {
+                                    // TS createGatewayPermissionHook.ts:181-186 intentionally
+                                    // ignores source here, unlike registry grant/merge.
                                     v.tool_name == rule.tool_name
                                         && v.pattern == rule.pattern
                                         && v.behavior.equals_str("allow")
@@ -355,6 +311,7 @@ impl TurnPermission {
                         "message",
                         answer
                             .get("reason")
+                            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
                             .or_else(|| answer.get("message"))
                             .cloned()
                             .unwrap_or("Permission prompt denied.".into()),

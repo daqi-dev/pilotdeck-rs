@@ -99,6 +99,14 @@ impl WebFetchTool {
 }
 
 impl ToolDefinition for WebFetchTool {
+    fn check_permissions<'a>(
+        &'a self,
+        input: &'a JsValue,
+        context: &'a PermissionContext,
+    ) -> PermissionFuture<'a, Option<JsValue>> {
+        PermissionTool::check_permissions(self, input, context)
+    }
+
     fn fields(&self) -> &JsObject {
         &self.fields
     }
