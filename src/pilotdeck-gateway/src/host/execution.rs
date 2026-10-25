@@ -74,6 +74,8 @@ pub(super) struct TurnScope {
     handler: Option<Arc<dyn HostHandler>>,
     runtime: tokio::runtime::Handle,
     timeout: Duration,
+    #[cfg(test)]
+    pub(super) dispose_gate: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 impl TurnScope {
     pub(super) fn new(handler: Arc<dyn HostHandler>, timeout: Duration) -> Self {
@@ -84,6 +86,8 @@ impl TurnScope {
             // on a plain thread even though this runtime is still alive.
             runtime: tokio::runtime::Handle::current(),
             timeout,
+            #[cfg(test)]
+            dispose_gate: None,
         }
     }
     /// Test hook: an in-flight callback that never completes.
@@ -98,8 +102,15 @@ impl TurnScope {
         let handler = self.handler.take()?;
         let mut callbacks = std::mem::take(&mut self.callbacks);
         let duration = self.timeout;
+        #[cfg(test)]
+        let gate = self.dispose_gate.take();
         Some(self.runtime.spawn(async move {
             callbacks.shutdown().await;
+            #[cfg(test)]
+            if let Some((entered, release)) = gate {
+                entered.notify_one();
+                release.notified().await;
+            }
             let _ = timeout(duration, async { handler.dispose().await }).await;
         }))
     }

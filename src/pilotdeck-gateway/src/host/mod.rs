@@ -512,6 +512,10 @@ impl HostClient {
         cancellation: Cancellation,
     ) -> Result<ExecuteResult, HostError> {
         let mut scope = execution::TurnScope::new(handler.clone(), self.limits.close_timeout);
+        #[cfg(test)]
+        {
+            scope.dispose_gate = self.test_signals.dispose_gate.clone();
+        }
         let mut progress = Progress {
             last_applied_sequence: Arc::new(AtomicU64::new((-1.0_f64).to_bits())),
             ..Progress::default()

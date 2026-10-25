@@ -127,6 +127,12 @@ fn wire_options() -> JsValue {
     parse_json(r#"{"sessionId":"session","turnId":"turn","runId":"run"}"#).unwrap()
 }
 async fn client(mode: &str) -> Result<HostClient, HostError> {
+    client_with_close_timeout(mode, Limits::default().close_timeout).await
+}
+async fn client_with_close_timeout(
+    mode: &str,
+    close_timeout: Duration,
+) -> Result<HostClient, HostError> {
     let mut command = Command::new("python3");
     command
         .arg(concat!(
@@ -139,6 +145,7 @@ async fn client(mode: &str) -> Result<HostClient, HostError> {
         Some(&"fixture".into()),
         Limits {
             execution_timeout: Some(Duration::from_secs(5)),
+            close_timeout,
             ..Default::default()
         },
     )
@@ -462,4 +469,313 @@ async fn host_manifest_preserves_ts_property_order_and_live_tools() {
     );
     bounded(turn.dispose()).await.unwrap();
     bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
+async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose() {
+    let scratch = Scratch::new();
+    let registry = Arc::new(interaction_registry(&scratch));
+    let runtime = registry.resolve(None).unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut first = client("live-payload").await.unwrap();
+    first.pause_dispose_for_test(entered.clone(), release.clone());
+    let clients = Mutex::new(std::collections::VecDeque::from([
+        first,
+        client("live-payload").await.unwrap(),
+    ]));
+    let owner = registry.clone();
+    let session = LiveSessionAdapter::with_interaction(move |identity| {
+        let client = clients.lock().unwrap().pop_front().unwrap();
+        let lease = owner.acquire(None).unwrap();
+        Box::pin(async move {
+            Ok(InteractionHost {
+                client,
+                lease,
+                router: router(&identity),
+                input: options(),
+            })
+        })
+    });
+    let mut first = session
+        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .unwrap();
+    bounded(first.next()).await.unwrap().unwrap();
+    drop(first);
+    bounded(entered.notified()).await;
+    println!(
+        "drop sequence: old disposer paused before InteractionTurn::close; leases={}",
+        runtime.lease_count()
+    );
+    let mut next = session
+        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .unwrap();
+    let event = bounded(next.next()).await.unwrap().unwrap();
+    let mut kinds = vec![event.get("type").cloned().unwrap()];
+    assert_eq!(
+        runtime.lease_count(),
+        2,
+        "replacement and detached disposer own separate leases"
+    );
+    release.notify_one();
+    until(|| runtime.lease_count() == 1).await;
+    // The old disposer runs while the replacement is still active. Its stale
+    // handles must not close any of the new turn's interaction resources.
+    while let Some(event) = bounded(next.next()).await.unwrap() {
+        kinds.push(event.get("type").cloned().unwrap());
+    }
+    assert_eq!(
+        kinds,
+        vec![
+            "turn_started".into(),
+            "input_accepted".into(),
+            "turn_completed".into()
+        ]
+    );
+    assert_eq!(runtime.lease_count(), 0);
+    println!(
+        "drop sequence: same-session replacement completed; old disposer released exactly once"
+    );
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[derive(Default)]
+struct CleanupRecorder {
+    rows: Arc<Mutex<Vec<String>>>,
+    hold_discard: std::sync::atomic::AtomicBool,
+    fail_discard: bool,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+impl MutationRecorder for CleanupRecorder {
+    fn record(&self, _: JsString, mutation: JsObject) -> HostFuture<()> {
+        let kind = mutation
+            .get("mutation")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap();
+        self.rows.lock().unwrap().push(format!("{kind}:start"));
+        let hold = kind == "discard" && self.hold_discard.swap(false, Ordering::SeqCst);
+        let fail = kind == "discard" && self.fail_discard;
+        let rows = self.rows.clone();
+        let entered = self.entered.clone();
+        let release = self.release.clone();
+        Box::pin(async move {
+            if hold {
+                entered.notify_one();
+                bounded(release.notified()).await;
+            }
+            rows.lock().unwrap().push(format!("{kind}:end"));
+            if fail {
+                Err(crate::host::ModuleError::new("injected discard failure").into())
+            } else {
+                Ok(())
+            }
+        })
+    }
+}
+fn pending_steer(id: &str) -> crate::runtime::steer::SteerMessage {
+    crate::runtime::steer::SteerMessage {
+        item_id: id.into(),
+        message: parse_json(r#"{"role":"user","content":[]}"#).unwrap(),
+        allowed_read_files: None,
+    }
+}
+
+#[tokio::test]
+async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
+    let scratch = Scratch::new();
+    let registry = Arc::new(interaction_registry(&scratch));
+    let recorder = Arc::new(CleanupRecorder::default());
+    recorder.hold_discard.store(true, Ordering::SeqCst);
+    // All handshakes finish before the critical poll: Pending cannot be
+    // mistaken for client creation instead of the session cleanup barrier.
+    let clients = Mutex::new(std::collections::VecDeque::from([
+        client_with_close_timeout("live-payload", Duration::from_millis(10))
+            .await
+            .unwrap(),
+        client("live-payload").await.unwrap(),
+        client("live-payload").await.unwrap(),
+    ]));
+    let turns = Arc::new(Mutex::new(Vec::new()));
+    let bound = turns.clone();
+    let records = recorder.clone();
+    let owner = registry.clone();
+    let session = LiveSessionAdapter::new(move || {
+        let client = clients.lock().unwrap().pop_front().unwrap();
+        let lease = owner.acquire(None).unwrap();
+        let bound = bound.clone();
+        let mut input = options();
+        input.steer_recorder = Some(records.clone());
+        Box::pin(async move {
+            let turn =
+                InteractionTurn::bind(lease, &identity(), router(&identity()), input).await?;
+            bound.lock().unwrap().push(turn.ports().steer.unwrap());
+            Ok((client, Arc::new(turn) as Arc<dyn HostHandler>))
+        })
+    });
+    let mut first = session
+        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .unwrap();
+    bounded(first.next()).await.unwrap().unwrap();
+    let old = turns.lock().unwrap()[0].clone();
+    old.enqueue(pending_steer("old")).await.unwrap();
+    // Terminal delivery and EOF prove HostClient's actual dispose timeout has
+    // expired while the old recorder remains deliberately blocked.
+    while bounded(first.next()).await.unwrap().is_some() {}
+    bounded(recorder.entered.notified()).await;
+    println!(
+        "timeout sequence: old stream reached EOF with discard held; rows={:?}",
+        recorder.rows.lock().unwrap()
+    );
+    let mut next = session
+        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .unwrap();
+    let mut next_event = next.next();
+    std::future::poll_fn(|cx| {
+        assert!(next_event.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    let premature = turns.lock().unwrap().get(1).cloned();
+    if let Some(turn) = premature {
+        turn.enqueue(pending_steer("premature")).await.unwrap();
+    }
+    println!(
+        "timeout sequence: replacement admission observed; rows={:?}",
+        recorder.rows.lock().unwrap()
+    );
+    assert_eq!(
+        *recorder.rows.lock().unwrap(),
+        ["insert:start", "insert:end", "discard:start"],
+        "new recorder write overtook the old discard"
+    );
+    assert_eq!(
+        turns.lock().unwrap().len(),
+        1,
+        "replacement started before old cleanup completed"
+    );
+    drop(next_event);
+    drop(next); // cancel the partially assembled replacement, including its lease
+    let mut next = session
+        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .unwrap();
+    let mut next_event = next.next();
+    std::future::poll_fn(|cx| {
+        assert!(next_event.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    assert_eq!(
+        turns.lock().unwrap().len(),
+        1,
+        "dropping a waiting binding lost its predecessor barrier"
+    );
+    let runtime = registry.resolve(None).unwrap();
+    until(|| runtime.lease_count() == 2).await; // A and C, not abandoned B
+    recorder.release.notify_one();
+    bounded(next_event).await.unwrap().unwrap();
+    let current = turns.lock().unwrap()[1].clone();
+    current.enqueue(pending_steer("new")).await.unwrap();
+    assert_eq!(
+        *recorder.rows.lock().unwrap(),
+        [
+            "insert:start",
+            "insert:end",
+            "discard:start",
+            "discard:end",
+            "insert:start",
+            "insert:end"
+        ]
+    );
+    while bounded(next.next()).await.unwrap().is_some() {}
+    assert_eq!(old.release_count(), 1);
+    println!(
+        "timeout sequence: old discard completed before new insert; rows={:?}",
+        recorder.rows.lock().unwrap()
+    );
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[test]
+fn host_interaction_cleanup_runtime_shutdown_is_observable() {
+    for close_before_shutdown in [false, true] {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let scratch = Scratch::new();
+        let (registry, runtime, turn) = executor.block_on(async {
+            let registry = interaction_registry(&scratch);
+            let runtime = registry.resolve(None).unwrap();
+            let turn = InteractionTurn::bind(
+                registry.acquire(None).unwrap(),
+                &identity(),
+                router(&identity()),
+                options(),
+            )
+            .await
+            .unwrap();
+            (registry, runtime, turn)
+        });
+        if close_before_shutdown {
+            drop(turn.dispose());
+        }
+        drop(executor);
+        drop(turn.dispose());
+        let observer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        observer.block_on(async {
+            let error = bounded(turn.wait_closed()).await.unwrap_err();
+            assert!(error.to_string().contains("cleanup task"), "{error:?}");
+            assert!(bounded(turn.dispose()).await.unwrap_err().to_string().contains("cleanup task"));
+            assert_eq!(runtime.lease_count(), 0);
+            println!("stopped runtime: close_before_shutdown={close_before_shutdown}, error={error}, leases=0");
+        });
+        drop(registry);
+    }
+}
+
+#[tokio::test]
+async fn host_interaction_child_cleanup_failure_is_aggregated_and_releases_lease() {
+    let scratch = Scratch::new();
+    let registry = interaction_registry(&scratch);
+    let runtime = registry.resolve(None).unwrap();
+    let mut input = options();
+    input.steer_recorder = Some(Arc::new(CleanupRecorder {
+        fail_discard: true,
+        ..Default::default()
+    }));
+    let turn = InteractionTurn::bind(
+        registry.acquire(None).unwrap(),
+        &identity(),
+        router(&identity()),
+        input,
+    )
+    .await
+    .unwrap();
+    let ports = turn.ports();
+    ports
+        .steer
+        .unwrap()
+        .enqueue(pending_steer("pending"))
+        .await
+        .unwrap();
+    let error = bounded(turn.dispose()).await.unwrap_err();
+    assert!(
+        error.to_string().contains("injected discard failure"),
+        "{error:?}"
+    );
+    assert_eq!(
+        bounded(turn.wait_closed()).await.unwrap_err().to_string(),
+        error.to_string()
+    );
+    assert_eq!(ports.hooks.unwrap().release_count(), 1);
+    assert_eq!(runtime.lease_count(), 0);
+    println!("child cleanup: propagated {error}; sibling hooks and lease released");
+    assert!(bounded(registry.dispose()).await.is_err());
 }

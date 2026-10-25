@@ -443,3 +443,117 @@ async fn interaction_steer_failed_cleanup_stays_failed_and_grants_do_not_cross_r
     assert!(resource.dispose().await.is_err());
     assert!(resource.dispose().await.is_err());
 }
+
+#[tokio::test]
+async fn interaction_steer_replacement_barrier_survives_unstarted_bindings() {
+    let resource = InteractionSteer::default();
+    let records = Arc::new(Records::default());
+    let original = resource
+        .bind_session("s".into(), Some(records.clone()))
+        .unwrap();
+    let old = bind(&original, &mut ModuleRouter::default(), Cancellation::new());
+    old.enqueue(item("old")).await.unwrap();
+    let (gate, receiver) = watch::channel(false);
+    *records.gate.lock().unwrap() = Some(receiver);
+    let waiting = resource
+        .bind_session("s".into(), Some(records.clone()))
+        .unwrap();
+    wait_record(&records, 2).await; // the old discard has entered the recorder
+    let mut superseded_wait = Box::pin(waiting.wait_ready());
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(superseded_wait.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    waiting.dispose().await.unwrap(); // no run, but must not erase old's barrier
+    let latest = resource
+        .bind_session("s".into(), Some(records.clone()))
+        .unwrap();
+    let mut latest_wait = Box::pin(latest.wait_ready());
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(latest_wait.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    assert!(
+        latest
+            .start_turn(
+                "t".into(),
+                "r".into(),
+                vec![],
+                Cancellation::new(),
+                &mut ModuleRouter::default()
+            )
+            .is_err(),
+        "direct start bypassed the cleanup barrier"
+    );
+    let independent = resource.bind_session("other".into(), None).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), independent.wait_ready())
+        .await
+        .expect("another session key must not wait on this barrier")
+        .unwrap();
+    bind(
+        &independent,
+        &mut ModuleRouter::default(),
+        Cancellation::new(),
+    );
+    println!(
+        "replacement chain: A discard pending, B disposed without start, C blocked; other key starts"
+    );
+    gate.send_replace(true);
+    latest_wait.await.unwrap();
+    assert!(
+        superseded_wait.await.is_err(),
+        "superseded waiter regained authority"
+    );
+    assert!(waiting.wait_ready().await.is_err());
+    let current = bind(&latest, &mut ModuleRouter::default(), Cancellation::new());
+    original.dispose().await.unwrap();
+    current.enqueue(item("new")).await.unwrap();
+    resource.dispose().await.unwrap();
+    assert_eq!(old.release_count(), 1);
+}
+
+#[tokio::test]
+async fn interaction_steer_failed_cleanup_blocks_same_key_rebinding_only() {
+    let resource = InteractionSteer::default();
+    let records = Arc::new(Records::default());
+    let original = resource
+        .bind_session("s".into(), Some(records.clone()))
+        .unwrap();
+    let old = bind(&original, &mut ModuleRouter::default(), Cancellation::new());
+    old.enqueue(item("old")).await.unwrap();
+    records.fail_discard.store(true, Ordering::SeqCst);
+    assert!(original.dispose().await.is_err());
+    for _ in 0..2 {
+        let replacement = resource.bind_session("s".into(), None).unwrap();
+        assert!(
+            replacement.wait_ready().await.is_err(),
+            "failed cleanup was forgotten on rebind"
+        );
+        assert!(
+            replacement
+                .start_turn(
+                    "t".into(),
+                    "r".into(),
+                    vec![],
+                    Cancellation::new(),
+                    &mut ModuleRouter::default()
+                )
+                .is_err()
+        );
+        replacement.dispose().await.unwrap();
+    }
+    let independent = resource.bind_session("other".into(), None).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), independent.wait_ready())
+        .await
+        .expect("another session key must not wait on this barrier")
+        .unwrap();
+    bind(
+        &independent,
+        &mut ModuleRouter::default(),
+        Cancellation::new(),
+    );
+    assert!(resource.dispose().await.is_err());
+    println!("failed barrier: repeated same-key rebind fails; other key remains usable");
+}
