@@ -824,6 +824,41 @@ fn real_ts_and_rust_read_each_others_skill_trees() {
 }
 
 #[test]
+#[ignore = "needs PDRS_BASELINE; regenerates oracle.json byte-identically"]
+fn skills_fixture_regenerates_identically_from_ts() {
+    let baseline = PathBuf::from(
+        std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE to the PilotDeck checkout"),
+    );
+    let fixtures = Path::new(FIXTURES);
+    // A fresh, owned directory per run; Scratch removes it even on assertion failure.
+    let scratch = Scratch::new();
+    let output = std::process::Command::new("node")
+        .arg("--disable-warning=ExperimentalWarning")
+        .arg("--import")
+        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
+        .arg(fixtures.join("generate.mts"))
+        .arg(&scratch.0)
+        .env("PDRS_BASELINE", &baseline)
+        .env("LANG", "en_US.UTF-8")
+        .env_remove("LC_ALL")
+        .env_remove("LC_MESSAGES")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated = fs::read(scratch.0.join("oracle.json")).unwrap();
+    let committed = fs::read(fixtures.join("oracle.json")).unwrap();
+    assert_eq!(
+        generated, committed,
+        "oracle.json differs from the TS regeneration"
+    );
+}
+
+#[test]
 fn unreadable_scan_child_matches_real_ts_before_denial_and_after_restore() {
     use std::os::unix::fs::PermissionsExt;
     struct Restore(std::path::PathBuf);
