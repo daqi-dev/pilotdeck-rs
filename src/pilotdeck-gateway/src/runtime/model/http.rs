@@ -1506,6 +1506,10 @@ fn is_retryable_stream_error(error: &ModelStreamError) -> bool {
         }
     }
 }
+/// `isRetryableStreamError`'s raw-`Error` branch (`streamModel.ts:587-618`).
+/// This is the stream layer's list; `fallback::canonical_error` ports the
+/// different router-layer `RouterRuntime.isNetworkTransient`
+/// (`RouterRuntime.ts:1280-1304`), so dns/etimedout/abort belong there only.
 fn retryable_message(message: &str) -> bool {
     [
         "network",

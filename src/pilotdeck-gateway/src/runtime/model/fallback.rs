@@ -151,6 +151,10 @@ impl RouterModelInvocation for HttpRouterInvocation {
     }
 }
 
+/// `RouterRuntime.ts:1198-1209` fallback classification for a thrown error:
+/// `classifyNetworkErrorCode` + `isNetworkTransient` (`:1280-1304`), not
+/// `normalizeModelError`. The stream layer's raw list is
+/// `http::retryable_message`; the two TS lists differ on purpose.
 pub(super) fn canonical_error(
     error: ModelStreamError,
     request: &JsValue,
