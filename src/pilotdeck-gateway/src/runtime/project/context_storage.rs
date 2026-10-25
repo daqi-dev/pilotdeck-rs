@@ -101,9 +101,17 @@ impl ContextStorageResources {
     /// never holds a tokio worker through the blocking fs calls. This matches
     /// the TS spill port, whose `node:fs/promises` writes run off the event
     /// loop, and the storage rule in `runtime/context/instructions.rs` (#637).
-    /// Once started a write is never abandoned: dropping the caller's future
-    /// does not abort the blocking task, exactly like the previous
-    /// synchronous call.
+    /// Per-session setup keeps one synchronous `current_dir` read on the
+    /// caller thread (a single getcwd, no spill I/O; `ToolResultBudget::new`).
+    /// Cancellation: one text result's whole persistence sequence — spill
+    /// write, alias copy and replacement-cache registration — is a single
+    /// blocking task behind one await, and a spawned blocking task is never
+    /// aborted, so dropping the caller's future leaves the same state TS
+    /// leaves when an abandoned async function still runs every step
+    /// unobserved; only the caller stops observing the result. Media spills
+    /// complete their write the same way (without an alias). A caller dropped
+    /// between two tool-result blocks simply stops the loop there: those
+    /// blocks are not spilled yet, and a retry re-runs them.
     pub fn create_session(
         &self,
         tool_results_dir: impl Into<PathBuf>,

@@ -90,7 +90,7 @@ pub struct ToolResultBudget {
     max_result_size_tokens: usize,
     preview_bytes: usize,
     tool_results_dir: JsString,
-    state: Mutex<State>,
+    state: std::sync::Arc<Mutex<State>>,
 }
 
 impl ToolResultBudget {
@@ -113,10 +113,10 @@ impl ToolResultBudget {
                 .unwrap_or(DEFAULT_MAX_RESULT_SIZE_TOKENS),
             preview_bytes: options.preview_bytes.unwrap_or(PREVIEW_SIZE_BYTES),
             tool_results_dir,
-            state: Mutex::new(State {
+            state: std::sync::Arc::new(Mutex::new(State {
                 replacements: HashMap::new(),
                 next_read_file_alias_index: 1,
-            }),
+            })),
         }
     }
 
@@ -251,33 +251,60 @@ impl ToolResultBudget {
 
         let is_json = looks_like_json(&flat);
         let extension = if is_json { "json" } else { "txt" };
+        let is_error = block.get("isError").and_then(JsValue::as_bool);
         let replacement_name = String::from_utf16_lossy(replacement_key.units());
         let path = join(
             &self.tool_results_dir,
             &JsString::from(format!("{replacement_name}.{extension}")),
         );
-        self.persist_artifact(&path, &flat).await?;
-        let read_file_path = self.create_read_file_alias(&path, extension).await?;
-
-        let preview = head_tail_preview(&flat, self.preview_bytes);
-        let record = ReplacementRecord {
-            tool_call_id,
-            is_error: block.get("isError").and_then(JsValue::as_bool),
-            path,
-            read_file_path,
-            original_bytes: byte_length,
-            preview,
-            mime_type: if is_json {
-                JsString::from("application/json")
-            } else {
-                JsString::from("text/plain")
-            },
-        };
-        self.state
-            .lock()
-            .unwrap()
-            .replacements
-            .insert(replacement_key, record.clone());
+        // #637 fix-r1 (P0-1): the whole remainder — spill write, alias copy,
+        // preview/record build and cache registration — is ONE blocking task
+        // behind a single await, so the caller observes either the fully
+        // persisted state or nothing at all. A spawn_blocking task is never
+        // aborted once spawned, so dropping this future at the await cannot
+        // strand a written spill without its alias and cached record: the
+        // sequence always runs to completion, exactly like TS where an
+        // abandoned async function still executes every step (measured:
+        // `_tmp/20261025-issue-637/fix-r1/ts-abandoned-async.log`); only the
+        // caller stops observing the result. Callers can still drop between
+        // two tool-result blocks — those blocks are simply not spilled yet,
+        // and a retry re-runs them.
+        let (refs_dir, workspace_root) = self.read_file_alias_location();
+        #[cfg(unix)]
+        let spill_root = workspace_root.clone();
+        #[cfg(not(unix))]
+        let spill_root = self.tool_results_dir.clone();
+        let state = self.state.clone();
+        let preview_bytes = self.preview_bytes;
+        let record = tokio::task::spawn_blocking(move || {
+            write_text_if_absent(&spill_root, &path, &flat)?;
+            let read_file_path =
+                create_read_file_alias_in(&state, &refs_dir, &workspace_root, &path, extension)?;
+            let preview = head_tail_preview(&flat, preview_bytes);
+            let record = ReplacementRecord {
+                tool_call_id,
+                is_error,
+                path,
+                read_file_path,
+                original_bytes: byte_length,
+                preview,
+                mime_type: if is_json {
+                    JsString::from("application/json")
+                } else {
+                    JsString::from("text/plain")
+                },
+            };
+            state
+                .lock()
+                .unwrap()
+                .replacements
+                .insert(replacement_key, record.clone());
+            #[cfg(all(test, unix))]
+            fire_spill_hook(&AFTER_SPILL_REGISTER, &record.path);
+            Ok(record)
+        })
+        .await
+        .map_err(|error| ToolBudgetError::new(error.to_string()))??;
         Ok((to_reference_block(&record), true))
     }
 
@@ -292,39 +319,28 @@ impl ToolResultBudget {
         Ok(estimate_tokens(text, byte_length)? <= self.max_result_size_tokens)
     }
 
+    /// Test-only standalone alias copy with the same offload shape: production
+    /// aliases are created inside the combined text-spill blocking task (the
+    /// single-await rule in `maybe_replace_text_tool_result`), so only the
+    /// TOCTOU tests exercise this entry point directly.
+    #[cfg(all(test, unix))]
     async fn create_read_file_alias(
         &self,
         source: &JsString,
         extension: &str,
     ) -> Result<JsString, ToolBudgetError> {
         let (refs_dir, workspace_root) = self.read_file_alias_location();
-        loop {
-            let index = {
-                let mut state = self.state.lock().unwrap();
-                let index = state.next_read_file_alias_index.max(1);
-                state.next_read_file_alias_index = index + 1;
-                index
-            };
-            let alias = join(
-                &refs_dir,
-                &JsString::from(format!("result-{index:04}.{extension}")),
-            );
-            #[cfg(unix)]
-            let root = workspace_root.clone();
-            #[cfg(not(unix))]
-            let root = refs_dir.clone();
-            // Same #637 offload for the alias's full copy (source read plus
-            // exclusive destination write); the checked paths stay lexical
-            // inside the blocking task so no second resolution is added.
-            let (root, source, target) = (root, source.clone(), alias.clone());
-            let copied =
-                tokio::task::spawn_blocking(move || copy_file_if_absent(&root, &source, &target))
-                    .await
-                    .map_err(|error| ToolBudgetError::new(error.to_string()))??;
-            if copied {
-                return Ok(relative(&workspace_root, &alias));
-            }
-        }
+        let state = self.state.clone();
+        let source = source.clone();
+        let extension = extension.to_owned();
+        // Same #637 offload for the alias's full copy (source read plus
+        // exclusive destination write); the checked paths stay lexical
+        // inside the blocking task so no second resolution is added.
+        tokio::task::spawn_blocking(move || {
+            create_read_file_alias_in(&state, &refs_dir, &workspace_root, &source, &extension)
+        })
+        .await
+        .map_err(|error| ToolBudgetError::new(error.to_string()))?
     }
 
     fn read_file_alias_location(&self) -> (JsString, JsString) {
@@ -355,9 +371,13 @@ impl ToolResultBudget {
         // write) is blocking fs work. TS's spill port awaits `node:fs/promises`
         // (`ToolResultSpillPort.ts`), which runs off the event loop; keep tokio
         // workers equally free, matching `instructions.rs`. Contents, file
-        // names and the error mapping are unchanged, and once started the
-        // write always completes: dropping this future does not abort the
-        // blocking task, exactly like the previous synchronous call.
+        // names and the error mapping are unchanged. A spawn_blocking task is
+        // never aborted once spawned: dropping this future leaves the write
+        // completed but its media reference unobserved — the same state TS
+        // leaves when an abandoned async function finishes its write
+        // unobserved. Text-result spills use the combined single-await task
+        // in `maybe_replace_text_tool_result` instead, which also registers
+        // the replacement before the caller can be dropped.
         let (root, path, content) = (project, path.clone(), content.clone());
         tokio::task::spawn_blocking(move || write_text_if_absent(&root, &path, &content))
             .await
@@ -960,7 +980,10 @@ fn ensure_directory(
 // descendant again after a replacement would trust the attacker's link.
 fn create_spill_file(checked: &(PathBuf, PathBuf), path: &JsString) -> io::Result<fs::File> {
     #[cfg(all(test, unix))]
-    fire_spill_hook(&BEFORE_SPILL_OPEN, path);
+    {
+        fire_spill_hook(&BEFORE_SPILL_OPEN, path);
+        fire_spill_hook(&SLOW_SPILL_OPEN, path);
+    }
     #[cfg(unix)]
     let opened = crate::project_files::create_new_beneath(
         &checked.0,
@@ -1002,24 +1025,49 @@ fn spill_open_error(
 // visible from any tokio worker or blocking thread. Hook tests serialize on
 // SPILL_HOOK_ORDER (installations would otherwise silently overwrite each
 // other) and every installation filters by path so another test's concurrent
-// spill write never triggers a foreign replacement.
+// spill write never triggers a foreign replacement. The slow-I/O probe is
+// the exception (#637 fix-r1, P1-2): it installs into its own SLOW_SPILL_OPEN
+// registry without holding SPILL_HOOK_ORDER, so a whole-run heartbeat test
+// never pauses the TOCTOU/panic hook tests — the two families only share the
+// fire sites, not the installation lock.
 #[cfg(all(test, unix))]
 type SpillHook = std::sync::Arc<dyn Fn(&JsString) + Send + Sync>;
+/// Mid-write probe (#637 fix-r1, P0-2): fires between the two write legs,
+/// after the head bytes reached the disk. A matching hook either injects a
+/// descriptor write error or panics.
+#[cfg(all(test, unix))]
+type SpillWriteHook = std::sync::Arc<dyn Fn(&JsString) -> Option<io::Error> + Send + Sync>;
 #[cfg(all(test, unix))]
 static BEFORE_SPILL_MKDIR: Mutex<Option<SpillHook>> = Mutex::new(None);
 #[cfg(all(test, unix))]
 static BEFORE_SPILL_OPEN: Mutex<Option<SpillHook>> = Mutex::new(None);
 #[cfg(all(test, unix))]
+static MID_SPILL_WRITE: Mutex<Option<SpillWriteHook>> = Mutex::new(None);
+#[cfg(all(test, unix))]
+static AFTER_SPILL_REGISTER: Mutex<Option<SpillHook>> = Mutex::new(None);
+#[cfg(all(test, unix))]
+static SLOW_SPILL_OPEN: Mutex<Option<SpillHook>> = Mutex::new(None);
+#[cfg(all(test, unix))]
 static SPILL_HOOK_ORDER: Mutex<()> = Mutex::new(());
 
 #[cfg(all(test, unix))]
 fn fire_spill_hook(registry: &Mutex<Option<SpillHook>>, path: &JsString) {
-    // Call outside the registry lock so two concurrent spills can both be
-    // inside the slow-I/O probe below without serializing each other.
+    // The hook call runs outside the registry lock, so two concurrent spills
+    // can both be inside a hook (e.g. the slow-I/O probe's stall) without
+    // serializing each other on the lock. Only installation is serialized;
+    // see the registry comment above for the order-lock split.
     let Some(hook) = registry.lock().unwrap().clone() else {
         return;
     };
     hook(path);
+}
+
+/// #637 fix-r1 (P0-2) write-midpoint probe; see `SpillWriteHook`.
+#[cfg(all(test, unix))]
+fn mid_spill_write_probe(path: &JsString) -> Option<io::Error> {
+    // Same clone-outside-lock rule as `fire_spill_hook`.
+    let hook = MID_SPILL_WRITE.lock().unwrap().clone()?;
+    hook(path)
 }
 
 /// #637 test probe: controlled slow I/O on the real spill path. Every spill
@@ -1030,7 +1078,6 @@ fn fire_spill_hook(registry: &Mutex<Option<SpillHook>>, path: &JsString) {
 #[cfg(all(test, unix))]
 pub(crate) struct SlowSpillIo {
     fires: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    _order: std::sync::MutexGuard<'static, ()>,
 }
 
 #[cfg(all(test, unix))]
@@ -1048,12 +1095,10 @@ pub(crate) fn slow_spill_io_under(
         stalled.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         std::thread::sleep(delay);
     });
-    let order = SPILL_HOOK_ORDER.lock().unwrap();
-    BEFORE_SPILL_OPEN.lock().unwrap().replace(hook);
-    SlowSpillIo {
-        fires,
-        _order: order,
-    }
+    // Own registry, no SPILL_HOOK_ORDER (P1-2): installing the probe must not
+    // serialize the TOCTOU/panic hook tests for the probe's whole lifetime.
+    SLOW_SPILL_OPEN.lock().unwrap().replace(hook);
+    SlowSpillIo { fires }
 }
 
 #[cfg(all(test, unix))]
@@ -1066,7 +1111,75 @@ impl SlowSpillIo {
 #[cfg(all(test, unix))]
 impl Drop for SlowSpillIo {
     fn drop(&mut self) {
-        *BEFORE_SPILL_OPEN.lock().unwrap() = None;
+        *SLOW_SPILL_OPEN.lock().unwrap() = None;
+    }
+}
+
+/// #637 fix-r1 (P0-2): an exclusively created spill file that is not fully
+/// written must not stay behind — the next write on the same path swallows
+/// the exclusive-open EEXIST into `created:false` and would serve the
+/// truncated bytes as the spilled result. TS's `writeFile(wx)` keeps the
+/// partial file (measured: a real ENOSPC on a 5 MB volume left 512 KB on
+/// disk and the retry returned `created:false`,
+/// `_tmp/20261025-issue-637/fix-r1/ts-midwrite-failure.log`), so the
+/// cleanup is a registered divergence
+/// (`specs/gateway-parity/diffs/A7.4-TOOLBUDGET-SPILL-PARTIAL-FILE-001`).
+/// The guard also fires when a panic unwinds between the write legs; the
+/// cleanup itself is best-effort, and a failed cleanup leaves exactly TS's
+/// behavior behind.
+struct ExclusiveSpill {
+    file: fs::File,
+    checked: (PathBuf, PathBuf),
+    os_path: PathBuf,
+    complete: bool,
+}
+
+impl ExclusiveSpill {
+    fn new(file: fs::File, checked: &(PathBuf, PathBuf), path: &JsString) -> Self {
+        Self {
+            file,
+            checked: checked.clone(),
+            os_path: os_path(path),
+            complete: false,
+        }
+    }
+
+    /// One leg of the spilled payload. Node's `writeFile`/`copyFile` stream
+    /// the payload in chunks; two legs write the same bytes with the same
+    /// error mapping, and the midpoint probe between them can fault the
+    /// write after the head reached the disk.
+    fn write_leg(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.file.write_all(bytes)
+    }
+
+    fn finish(&mut self) {
+        self.complete = true;
+    }
+
+    /// Remove through the same checked root, so a raced-in link cannot
+    /// redirect the cleanup outside the spill tree; on failure the partial
+    /// file stays behind exactly like TS.
+    #[cfg(unix)]
+    fn remove_partial(&self) {
+        if let Some(name) = self.os_path.file_name()
+            && let Ok(directory) =
+                crate::project_files::open_directory_beneath(&self.checked.0, &self.checked.1)
+        {
+            let _ = crate::project_files::unlink_at(&directory, std::path::Path::new(name));
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn remove_partial(&self) {
+        let _ = fs::remove_file(&self.os_path);
+    }
+}
+
+impl Drop for ExclusiveSpill {
+    fn drop(&mut self) {
+        if !self.complete {
+            self.remove_partial();
+        }
     }
 }
 
@@ -1079,11 +1192,22 @@ fn write_text_if_absent(
     let checked = ensure_directory(root, &parent)?;
     let bytes = utf8_bytes(content);
     match create_spill_file(&checked, path) {
-        Ok(mut file) => {
+        Ok(file) => {
+            let mut spill = ExclusiveSpill::new(file, &checked, path);
             // The TS spill writes `writeFile(path, content, { flag: "wx" })`:
             // a descriptor write error has no path, unlike an open error.
-            file.write_all(&bytes)
+            let (head, tail) = bytes.split_at(bytes.len() / 2);
+            spill
+                .write_leg(head)
                 .map_err(|error| io_error(error, "write", None))?;
+            #[cfg(all(test, unix))]
+            if let Some(error) = mid_spill_write_probe(path) {
+                return Err(io_error(error, "write", None));
+            }
+            spill
+                .write_leg(tail)
+                .map_err(|error| io_error(error, "write", None))?;
+            spill.finish();
             Ok(true)
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
@@ -1137,13 +1261,58 @@ fn copy_file_if_absent(
     file.read_to_end(&mut bytes)
         .map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
     match create_spill_file(&checked, destination) {
-        Ok(mut file) => {
-            file.write_all(&bytes)
+        Ok(file) => {
+            let mut spill = ExclusiveSpill::new(file, &checked, destination);
+            let (head, tail) = bytes.split_at(bytes.len() / 2);
+            spill
+                .write_leg(head)
                 .map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
+            #[cfg(all(test, unix))]
+            if let Some(error) = mid_spill_write_probe(destination) {
+                return Err(io_error(error, "copyfile", Some(&pair)));
+            }
+            spill
+                .write_leg(tail)
+                .map_err(|error| io_error(error, "copyfile", Some(&pair)))?;
+            spill.finish();
             Ok(true)
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
         Err(error) => Err(spill_open_error(error, destination, "copyfile", &pair)),
+    }
+}
+
+/// `ToolResultBudget.createReadFileAlias`'s loop, runnable inside a blocking
+/// task: an existing alias destination is not an error (TS's
+/// `copyFile(COPYFILE_EXCL)` EEXIST is caught by `copyFileIfAbsent` and the
+/// loop advances to the next index); the index counter and the copy share one
+/// state lock so concurrent spills never reuse an index.
+fn create_read_file_alias_in(
+    state: &Mutex<State>,
+    refs_dir: &JsString,
+    workspace_root: &JsString,
+    source: &JsString,
+    extension: &str,
+) -> Result<JsString, ToolBudgetError> {
+    loop {
+        let index = {
+            let mut state = state.lock().unwrap();
+            let index = state.next_read_file_alias_index.max(1);
+            state.next_read_file_alias_index = index + 1;
+            index
+        };
+        let alias = join(
+            refs_dir,
+            &JsString::from(format!("result-{index:04}.{extension}")),
+        );
+        #[cfg(unix)]
+        let root = workspace_root.clone();
+        #[cfg(not(unix))]
+        let root = refs_dir.clone();
+        let copied = copy_file_if_absent(&root, source, &alias)?;
+        if copied {
+            return Ok(relative(workspace_root, &alias));
+        }
     }
 }
 
@@ -1158,6 +1327,8 @@ mod tests {
         fn drop(&mut self) {
             *BEFORE_SPILL_OPEN.lock().unwrap() = None;
             *BEFORE_SPILL_MKDIR.lock().unwrap() = None;
+            *MID_SPILL_WRITE.lock().unwrap() = None;
+            *AFTER_SPILL_REGISTER.lock().unwrap() = None;
         }
     }
 
@@ -1328,6 +1499,347 @@ mod tests {
         assert!(
             !scratch.path().join("spill/call.txt").exists(),
             "a panicked write must not report success"
+        );
+    }
+
+    /// #637 fix-r1 (P0-2): the panic above fires before the open, so "file
+    /// does not exist" is trivially true there. Here the panic lands between
+    /// the two write legs — the head bytes are already on disk — and the
+    /// partial file must still not survive as a valid-looking spill.
+    #[cfg(unix)]
+    #[tokio::test]
+    // Same order-guard-across-await pattern as the panic test above.
+    #[allow(clippy::await_holding_lock)]
+    async fn spill_write_panic_midway_removes_partial_file() {
+        use crate::test_scratch::Scratch;
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
+        let scratch = Scratch::new("spill-panic-mid");
+        let prefix = scratch.path().to_string_lossy().into_owned();
+        MID_SPILL_WRITE
+            .lock()
+            .unwrap()
+            .replace(std::sync::Arc::new(move |path: &JsString| {
+                if String::from_utf16_lossy(path.units()).starts_with(&prefix) {
+                    panic!("spill device broke mid-write");
+                }
+                None
+            }));
+        let _reset = ResetSpillHook;
+        let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: scratch.path().join("spill"),
+            max_result_size_chars: Some(1),
+            max_result_size_tokens: Some(100),
+            preview_bytes: None,
+        });
+        let error = budget
+            .persist_artifact(
+                &JsString::from(scratch.path().join("spill/call.txt").to_str().unwrap()),
+                &JsString::from("0123456789"),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("panicked"), "{}", error.message);
+        assert!(
+            !scratch.path().join("spill/call.txt").exists(),
+            "a half-written spill file must not survive a mid-write panic"
+        );
+    }
+
+    /// #637 fix-r1 (P0-2): a descriptor write failure midway leaves no
+    /// half-written spill behind, and the retry writes the full content
+    /// instead of swallowing the truncated file as `created:false`. TS keeps
+    /// the partial file and its retry returns `created:false` (measured:
+    /// `_tmp/20261025-issue-637/fix-r1/ts-midwrite-failure.log`); the
+    /// divergence is registered in
+    /// `specs/gateway-parity/diffs/A7.4-TOOLBUDGET-SPILL-PARTIAL-FILE-001`.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn spill_write_failure_midway_cleans_up_and_retries() {
+        use crate::test_scratch::Scratch;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
+        let scratch = Scratch::new("spill-write-fail");
+        let prefix = scratch.path().to_string_lossy().into_owned();
+        let fired = std::sync::Arc::new(AtomicBool::new(false));
+        let injected = fired.clone();
+        MID_SPILL_WRITE
+            .lock()
+            .unwrap()
+            .replace(std::sync::Arc::new(move |path: &JsString| {
+                if String::from_utf16_lossy(path.units()).starts_with(&prefix)
+                    && !injected.swap(true, Ordering::SeqCst)
+                {
+                    // The same descriptor error the TS probe hit on a full
+                    // 5 MB volume; node prints `ENOSPC: no space left on
+                    // device, write` without a path for a write failure.
+                    return Some(io::Error::from_raw_os_error(libc::ENOSPC));
+                }
+                None
+            }));
+        let _reset = ResetSpillHook;
+        let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: scratch.path().join("spill"),
+            max_result_size_chars: Some(1),
+            max_result_size_tokens: Some(100),
+            preview_bytes: None,
+        });
+        let path = JsString::from(scratch.path().join("spill/call.txt").to_str().unwrap());
+        let error = budget
+            .persist_artifact(&path, &JsString::from("0123456789"))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.message, "ENOSPC: no space left on device, write",
+            "the mid-write failure keeps TS's descriptor-error wording"
+        );
+        assert!(
+            !scratch.path().join("spill/call.txt").exists(),
+            "a half-written spill file must not survive a mid-write failure"
+        );
+        // The next write of the same target starts from a clean exclusive
+        // create instead of adopting the truncated file.
+        budget
+            .persist_artifact(&path, &JsString::from("0123456789"))
+            .await
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(scratch.path().join("spill/call.txt")).unwrap(),
+            "0123456789"
+        );
+    }
+
+    /// #637 fix-r1 (P0-1): dropping the caller's future at the combined spill
+    /// task's single await must leave exactly TS's abandoned-async state: the
+    /// blocking task still runs every step (spill write, alias copy, cache
+    /// registration), so a retry hits the replacement cache and returns the
+    /// same reference — no orphaned spill, no EEXIST, no second alias
+    /// (measured TS: `_tmp/20261025-issue-637/fix-r1/ts-abandoned-async.log`).
+    #[cfg(unix)]
+    #[tokio::test]
+    // The order guard must stay held across the awaits: it keeps this test's
+    // process-global hook installations exclusive (same pattern as above).
+    #[allow(clippy::await_holding_lock)]
+    async fn spill_text_result_completes_after_caller_drop() {
+        use crate::test_scratch::Scratch;
+        use std::{
+            sync::{
+                Arc, Condvar, Mutex as StdMutex,
+                atomic::{AtomicBool, Ordering},
+            },
+            time::Duration,
+        };
+
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
+        let scratch = Scratch::new("spill-drop");
+        let project = scratch.path().join("proj/.pilotdeck/tool-results");
+        let spill_file = project.join("session/call-1.txt");
+        let alias_file = project.join("refs/result-0001.txt");
+        let prefix = scratch.path().to_string_lossy().into_owned();
+        // The unix spill root is the project directory above `tool-results`
+        // (`read_file_alias_location`), and like a real project it must
+        // already exist when the spill starts.
+        fs::create_dir_all(scratch.path().join("proj")).unwrap();
+
+        // The first spill open parks inside the blocking task; the alias's
+        // open passes through so the whole sequence can finish after release.
+        let parked = Arc::new(AtomicBool::new(false));
+        let released = Arc::new((StdMutex::new(false), Condvar::new()));
+        let gate_parked = parked.clone();
+        let gate_release = released.clone();
+        BEFORE_SPILL_OPEN
+            .lock()
+            .unwrap()
+            .replace(std::sync::Arc::new(move |path: &JsString| {
+                if !String::from_utf16_lossy(path.units()).starts_with(&prefix) {
+                    return;
+                }
+                if gate_parked.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                let (lock, cvar) = &*gate_release;
+                let mut open = lock.lock().unwrap();
+                while !*open {
+                    open = cvar.wait(open).unwrap();
+                }
+            }));
+        // Completion signal: fires after the replacement-cache insert, so
+        // the retry below never races the abandoned task's registration.
+        let registered = Arc::new(AtomicBool::new(false));
+        let signal = registered.clone();
+        let register_prefix = scratch.path().to_string_lossy().into_owned();
+        AFTER_SPILL_REGISTER
+            .lock()
+            .unwrap()
+            .replace(std::sync::Arc::new(move |path: &JsString| {
+                if String::from_utf16_lossy(path.units()).starts_with(&register_prefix) {
+                    signal.store(true, Ordering::SeqCst);
+                }
+            }));
+        let _reset = ResetSpillHook;
+
+        let text = "x".repeat(200_001);
+        let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: project.join("session"),
+            max_result_size_chars: Some(1),
+            max_result_size_tokens: Some(100),
+            preview_bytes: None,
+        });
+        let message = object([
+            ("role", "user".into()),
+            (
+                "content",
+                JsValue::Array(vec![object([
+                    ("type", "tool_result".into()),
+                    ("toolCallId", "call-1".into()),
+                    (
+                        "content",
+                        JsValue::Array(vec![object([
+                            ("type", "text".into()),
+                            ("text", JsValue::String(JsString::from(text.clone()))),
+                        ])]),
+                    ),
+                ])]),
+            ),
+        ]);
+        // Park the blocking task inside the gated open, then abandon the
+        // caller exactly at its single await: the block scope below drops
+        // the suspended future while the write is still parked inside the
+        // gate (`tokio::pin!`'s Pin<&mut> itself is not the owner).
+        let gate_armed = parked.clone();
+        {
+            let spilled = budget.apply_to_message(&message, None);
+            tokio::pin!(spilled);
+            tokio::select! {
+                result = &mut spilled => panic!("spill completed before the gate: {result:?}"),
+                _ = tokio::time::timeout(Duration::from_secs(10), async {
+                    while !gate_armed.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                }) => {}
+            }
+            assert!(!spill_file.exists(), "the gate fires before the open");
+        }
+        {
+            let (lock, cvar) = &*released;
+            *lock.lock().unwrap() = true;
+            cvar.notify_all();
+        }
+        let finished = registered.clone();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !finished.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("abandoned spill task must still complete");
+
+        // Disk state: the abandoned run wrote both the spill and the alias.
+        assert_eq!(fs::read_to_string(&spill_file).unwrap(), text);
+        assert_eq!(fs::read_to_string(&alias_file).unwrap(), text);
+        // The retry is served from the registered replacement: same path and
+        // alias, and no second alias index is consumed.
+        let retried = budget.apply_to_message(&message, None).await.unwrap();
+        let JsValue::Array(content) = retried.get("content").unwrap() else {
+            panic!("content");
+        };
+        assert_eq!(
+            content[0].get("type"),
+            Some(&"tool_result_reference".into())
+        );
+        assert_eq!(
+            content[0]
+                .get("path")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap(),
+            spill_file.to_str().unwrap()
+        );
+        assert_eq!(
+            content[0]
+                .get("readFilePath")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap(),
+            ".pilotdeck/tool-results/refs/result-0001.txt"
+        );
+        let aliases = fs::read_dir(project.join("refs"))
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .is_ok_and(|entry| entry.file_name().to_string_lossy().starts_with("result-"))
+            })
+            .count();
+        assert_eq!(aliases, 1, "the retry must not create a second alias");
+    }
+
+    /// #637 fix-r1 (P2-3 对拍): a pre-existing alias destination is skipped for
+    /// the next index without surfacing an error — TS's
+    /// `copyFile(COPYFILE_EXCL)` EEXIST is caught by `copyFileIfAbsent` and
+    /// `createReadFileAlias`'s loop continues (measured:
+    /// `_tmp/20261025-issue-637/fix-r1/ts-alias-eexist.log`). This is the
+    /// retry state a dropped caller leaves behind when the alias was written
+    /// but the reference never observed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spill_alias_eexist_advances_to_next_index_like_ts() {
+        use crate::test_scratch::Scratch;
+        let scratch = Scratch::new("spill-alias-eexist");
+        let project = scratch.path().join("proj/.pilotdeck/tool-results");
+        fs::create_dir_all(project.join("refs")).unwrap();
+        fs::write(project.join("refs/result-0001.txt"), "older tenant").unwrap();
+        let text = "y".repeat(200_001);
+        let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: project.join("session"),
+            max_result_size_chars: Some(1),
+            max_result_size_tokens: Some(100),
+            preview_bytes: None,
+        });
+        let message = object([
+            ("role", "user".into()),
+            (
+                "content",
+                JsValue::Array(vec![object([
+                    ("type", "tool_result".into()),
+                    ("toolCallId", "call-1".into()),
+                    (
+                        "content",
+                        JsValue::Array(vec![object([
+                            ("type", "text".into()),
+                            ("text", JsValue::String(JsString::from(text.clone()))),
+                        ])]),
+                    ),
+                ])]),
+            ),
+        ]);
+        let replaced = budget.apply_to_message(&message, None).await.unwrap();
+        let JsValue::Array(content) = replaced.get("content").unwrap() else {
+            panic!("content");
+        };
+        // No error surfaced: the reference points at the next free index and
+        // the pre-existing file keeps its own content.
+        assert_eq!(
+            content[0]
+                .get("readFilePath")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap(),
+            ".pilotdeck/tool-results/refs/result-0002.txt"
+        );
+        assert_eq!(
+            fs::read_to_string(project.join("refs/result-0001.txt")).unwrap(),
+            "older tenant"
+        );
+        assert_eq!(
+            fs::read_to_string(project.join("refs/result-0002.txt")).unwrap(),
+            text
         );
     }
 
