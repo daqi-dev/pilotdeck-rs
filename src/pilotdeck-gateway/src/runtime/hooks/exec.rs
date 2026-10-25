@@ -7,7 +7,9 @@
 //! `MAX_STRING_LENGTH` UTF-16 units, the same bound as the bash tool; a chunk
 //! that would not fit reports `Invalid string length`, the message of the
 //! `RangeError` TS's `stdout += text` throws in the shell runner's data
-//! listener. HTTP hooks use the same proxy-aware rustls connector as the model
+//! listener. TS does not catch that asynchronous exception in the hook;
+//! Rust contains it per approved A6.7-HOOK-OUTPUT-001 / -R1.
+//! HTTP hooks use the same proxy-aware rustls connector as the model
 //! transport (`http://` and `https://`); the hook wraps that connector with
 //! undici's 10 s `connectTimeout` so the deadline covers the TLS handshake too,
 //! while the shared model connector's own timeout stays TCP-only. Redirects
@@ -905,10 +907,10 @@ async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellRe
 
     // V8's `stdout += text` throws `RangeError: Invalid string length` once a
     // chunk does not fit (TS `tool/builtin/bash/commandRunner.ts:132`, probed
-    // in `_tmp/20261020-a65-pr7/probes/oom-rule.out`). A timeout/cancel keeps
-    // its own outcome and partial output, like TS's close-based result; a
-    // normal completion with an overflowing stream becomes the hook failure
-    // the executor's catch would have produced from that RangeError.
+    // by `tests/fixtures/hooks-output/generate.mts`). This asynchronous
+    // exception never reaches TS's executor catch. The approved difference
+    // A6.7-HOOK-OUTPUT-001 / -R1 contains it here after draining both pipes;
+    // timeout/cancel retain their existing outcome and partial output.
     //
     // Exit 2 keeps its blocking outcome even when a stream overflowed: exit 2
     // is the hook's own refusal, and turning it into `non_blocking_error`
@@ -1002,11 +1004,26 @@ impl Utf8Decoder {
     }
 }
 
-/// One stream's retained bytes and whether a chunk was dropped at the cap.
+/// One stream's retained bytes, UTF-16 accounting and overflow state.
+/// Keep accounting beside the bytes so every append (including EOF decoder
+/// flush) passes the same bound before allocating retained output.
 #[derive(Default)]
 struct PipeOutput {
     bytes: Vec<u8>,
+    units: usize,
     truncated: bool,
+}
+
+impl PipeOutput {
+    fn append(&mut self, limit: usize, text: &str) {
+        let count = text.encode_utf16().count();
+        if self.units.saturating_add(count) > limit {
+            self.truncated = true;
+            return;
+        }
+        self.units += count;
+        self.bytes.extend_from_slice(text.as_bytes());
+    }
 }
 
 /// Reads one pipe with the bash tool's rule (`StreamText::push`): a decoded
@@ -1025,7 +1042,6 @@ async fn read_pipe(
     };
     let mut output = PipeOutput::default();
     let mut decoder = Utf8Decoder::default();
-    let mut units = 0usize;
     let mut chunk = vec![0u8; 64 * 1024];
     loop {
         let count = match pipe.read(&mut chunk).await {
@@ -1033,22 +1049,16 @@ async fn read_pipe(
             Ok(count) => count,
         };
         let text = decoder.decode(&chunk[..count]);
-        append_capped(&mut output, &mut units, limit, &text);
+        output.append(limit, &text);
     }
     let tail = decoder.flush();
-    append_capped(&mut output, &mut units, limit, &tail);
+    output.append(limit, &tail);
     output
 }
 
-fn append_capped(output: &mut PipeOutput, units: &mut usize, limit: usize, text: &str) {
-    let count = text.encode_utf16().count();
-    if units.saturating_add(count) > limit {
-        output.truncated = true;
-        return;
-    }
-    *units += count;
-    output.bytes.extend_from_slice(text.as_bytes());
-}
+#[cfg(test)]
+#[path = "exec_output_tests.rs"]
+mod output_tests;
 
 fn error_message(_: StackOverflow) -> String {
     StackOverflow::MESSAGE.into()

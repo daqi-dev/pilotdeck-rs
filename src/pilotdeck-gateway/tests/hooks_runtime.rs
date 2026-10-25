@@ -286,8 +286,9 @@ async fn command_executor_matches_real_ts_subprocesses() {
 /// `StreamText` at V8 `MAX_STRING_LENGTH` UTF-16 units. TS's shell runner
 /// appends with `stdout += text` and throws `RangeError: Invalid string
 /// length` for a chunk that does not fit (`tool/builtin/bash/commandRunner.ts:132`,
-/// probe `_tmp/20261020-a65-pr7/probes/oom-rule.out`); the hook executor's
-/// catch turns that message into a `non_blocking_error`. The limit is injected
+/// probe `fixtures/hooks-output/generate.mts`). TS's hook catch does not
+/// receive this asynchronous exception; Rust's `non_blocking_error` is the
+/// approved A6.7-HOOK-OUTPUT-001 / -R1 containment. The limit is injected
 /// small here; the product default is 0x1fffffe8 units.
 #[tokio::test]
 async fn command_output_over_string_limit_is_a_range_error() {
