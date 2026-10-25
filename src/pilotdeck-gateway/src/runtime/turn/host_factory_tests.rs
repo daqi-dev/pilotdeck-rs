@@ -35,6 +35,7 @@ use pilotdeck_protocol::{
 use std::{
     future::Future,
     path::{Path, PathBuf},
+    process::Command,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -140,6 +141,20 @@ async fn bounded<T>(future: impl Future<Output = T>) -> T {
         .await
         .expect("bounded wait timed out")
 }
+/// Regex-safe argv token unique to one test's pid path. `peer()` appends it so
+/// the reaping assertion can prove absence even when the child died before it
+/// published its pid.
+fn peer_marker(pid: &Path) -> String {
+    let mut marker = String::from("pdrs_peer_");
+    marker.extend(pid.to_string_lossy().bytes().map(|byte| {
+        if byte.is_ascii_alphanumeric() {
+            byte as char
+        } else {
+            '_'
+        }
+    }));
+    marker
+}
 fn peer(mode: &str, pid: Option<&Path>) -> Deployment {
     let mut env = Env::new();
     env.insert("PATH".into(), std::env::var("PATH").unwrap_or_default());
@@ -156,7 +171,15 @@ fn peer(mode: &str, pid: Option<&Path>) -> Deployment {
         "PILOTDECK_AGENT_LOOP_SIDECAR_PATH".into(),
         format!("{FIXTURE}/peer.py"),
     );
-    resolve_deployment(&env, Path::new("/tmp")).unwrap()
+    let mut deployment = resolve_deployment(&env, Path::new("/tmp")).unwrap();
+    if let (Deployment::Stdio { args, .. }, Some(pid)) = (&mut deployment, pid) {
+        // Put the pid path (and its marker) in argv as well: the published pid
+        // file is the fast path, the marker proves absence when it is missing.
+        args.push(mode.into());
+        args.push(pid.to_string_lossy().into_owned());
+        args.push(peer_marker(pid));
+    }
+    deployment
 }
 fn factory(
     registry: Arc<ProjectRuntimeRegistry>,
@@ -519,12 +542,7 @@ async fn reload_between_turns_uses_new_generation() {
             .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire())
             .unwrap();
         while bounded(turn.next()).await.unwrap().is_some() {}
-        let pid: u32 = std::fs::read_to_string(&pid_file)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        assert_reaped(pid).await;
+        assert_peer_reaped(&pid_file).await;
         assert_eq!(old.lease_count(), 0);
         let current = registry.resolve(None).unwrap();
         assert_eq!(Arc::ptr_eq(&old, &current), !expected);
@@ -558,12 +576,7 @@ async fn reload_mid_turn_holds_old_lease_until_turn_drops() {
     // The dropped stream releases the execute future; the turn's cleanup
     // releases the lease, and only then may the old generation dispose.
     bounded(old.wait_disposed()).await.unwrap();
-    let pid: u32 = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    assert_reaped(pid).await;
+    assert_peer_reaped(&pid_file).await;
     assert_eq!(old.lease_count(), 0);
     assert_eq!(old.state(), crate::runtime::project::RuntimeState::Disposed);
     assert_ts_lease("after-last-release", 0, 1, "disposed");
@@ -605,6 +618,7 @@ async fn retire_does_not_dispose_while_lease_outstanding() {
     assert_ts_lease("retire-with-second-lease", 1, 0, "retired");
     drop(turn);
     bounded(runtime.wait_disposed()).await.unwrap();
+    assert_peer_reaped(&pid_file).await;
     assert_eq!(runtime.lease_count(), 0);
     assert_eq!(
         runtime.state(),
@@ -691,12 +705,7 @@ async fn handshake_failure_reaps_child_and_releases_lease() {
         "{error:?}"
     );
     assert_eq!(runtime.lease_count(), 0);
-    let pid: u32 = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    assert_reaped(pid).await;
+    assert_peer_reaped(&pid_file).await;
     bounded(registry.dispose()).await.unwrap();
 }
 
@@ -720,7 +729,8 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
         tokio::select! {
             result = &mut pending => panic!("host creation resolved before cancel: {result:?}"),
             _ = async {
-                while !pid_file.exists() {
+                let marker = peer_marker(&pid_file);
+                while !peer_process_running(&marker).await {
                     tokio::task::yield_now().await;
                 }
             } => {}
@@ -736,13 +746,57 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
     drop(pending);
     assert!(bounded(turn.next()).await.unwrap().is_none());
     assert_eq!(runtime.lease_count(), 0);
-    let pid: u32 = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    assert_reaped(pid).await;
+    assert_peer_reaped(&pid_file).await;
     bounded(registry.dispose()).await.unwrap();
+}
+fn published_pid(pid_file: &Path) -> Option<u32> {
+    std::fs::read_to_string(pid_file).ok()?.trim().parse().ok()
+}
+/// Assert the sidecar is gone without assuming it won the pid-publication race.
+/// `peer.py` publishes the pid atomically before reading any frame, so a
+/// missing/empty file means it died before the protocol; prove no process
+/// carrying this test's unique argv marker survives.
+async fn assert_peer_reaped(pid_file: &Path) {
+    match published_pid(pid_file) {
+        Some(pid) => assert_reaped(pid).await,
+        None => assert_no_peer_process(&peer_marker(pid_file)).await,
+    }
+}
+async fn peer_process_running(marker: &str) -> bool {
+    let output = Command::new("pgrep")
+        .arg("-f")
+        .arg(marker)
+        .output()
+        .unwrap_or_else(|error| panic!("cannot run pgrep -f {marker}: {error}"));
+    match output.status.code() {
+        Some(0) => true,
+        Some(1) => false,
+        _ => panic!(
+            "pgrep -f {marker} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    }
+}
+async fn assert_no_peer_process(marker: &str) {
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let output = Command::new("pgrep")
+                .arg("-f")
+                .arg(marker)
+                .output()
+                .unwrap_or_else(|error| panic!("cannot run pgrep -f {marker}: {error}"));
+            match output.status.code() {
+                Some(1) => break,
+                Some(0) => tokio::time::sleep(Duration::from_millis(5)).await,
+                _ => panic!(
+                    "pgrep -f {marker} failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            }
+        }
+    })
+    .await
+    .expect("owned sidecar left a process carrying the test marker");
 }
 async fn assert_reaped(pid: u32) {
     timeout(Duration::from_secs(10), async {

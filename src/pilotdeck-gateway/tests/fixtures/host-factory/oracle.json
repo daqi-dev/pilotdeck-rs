@@ -149,6 +149,76 @@
       }
     },
     {
+      "name": "tcp-port-hex-signed-digits",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "0x+50"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535."
+    },
+    {
+      "name": "tcp-port-binary-signed-digits",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "0b+101"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535."
+    },
+    {
+      "name": "tcp-port-octal-signed-digits",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "0o+17"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535."
+    },
+    {
+      "name": "tcp-port-signed-hex",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "+0x50"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535."
+    },
+    {
+      "name": "tcp-port-negative-hex",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "-0x50"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535."
+    },
+    {
+      "name": "tcp-port-hex-no-digits",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "0x"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535."
+    },
+    {
+      "name": "tcp-port-hex-underscore",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "0x_50"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_TCP_PORT must be an integer between 1 and 65535."
+    },
+    {
       "name": "tcp-port-padded",
       "env": {
         "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
@@ -320,6 +390,83 @@
         "port": 4000,
         "connectTimeoutMs": 80
       }
+    },
+    {
+      "name": "tcp-timeout-hex-signed-digits",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000",
+        "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "0x+50"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS must be a positive integer."
+    },
+    {
+      "name": "tcp-timeout-binary-signed-digits",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000",
+        "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "0b+101"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS must be a positive integer."
+    },
+    {
+      "name": "tcp-timeout-octal-signed-digits",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000",
+        "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "0o+17"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS must be a positive integer."
+    },
+    {
+      "name": "tcp-timeout-signed-hex",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000",
+        "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "+0x50"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS must be a positive integer."
+    },
+    {
+      "name": "tcp-timeout-negative-hex",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000",
+        "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "-0x50"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS must be a positive integer."
+    },
+    {
+      "name": "tcp-timeout-hex-no-digits",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000",
+        "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "0x"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS must be a positive integer."
+    },
+    {
+      "name": "tcp-timeout-hex-underscore",
+      "env": {
+        "PILOTDECK_AGENT_LOOP_TRANSPORT": "tcp",
+        "PILOTDECK_AGENT_LOOP_TCP_PORT": "4000",
+        "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS": "0x_50"
+      },
+      "cwd": "/tmp/pdrs-cwd",
+      "ok": false,
+      "error": "PILOTDECK_AGENT_LOOP_CONNECT_TIMEOUT_MS must be a positive integer."
     },
     {
       "name": "tcp-timeout-padded",
