@@ -574,7 +574,15 @@ fn spawn_error(shell: &str, error: &std::io::Error) -> JsString {
             _ => return JsString::from(error.to_string()),
         },
     };
-    JsString::from(format!("spawn {shell} {code}"))
+    // Same split as `bash::runner::classify_spawn_error` (Node
+    // `internal/child_process.js`): these five come back as an async `error`
+    // event named `spawn <file> <CODE>`; any other errno is thrown
+    // synchronously by `spawn()` as `spawn <CODE>`, without the file.
+    if matches!(code, "EACCES" | "EAGAIN" | "EMFILE" | "ENFILE" | "ENOENT") {
+        JsString::from(format!("spawn {shell} {code}"))
+    } else {
+        JsString::from(format!("spawn {code}"))
+    }
 }
 
 #[cfg(test)]
@@ -600,7 +608,7 @@ mod spawn_error_tests {
         );
         assert_eq!(
             message(std::io::Error::from_raw_os_error(libc::EPERM)),
-            "spawn /bin/sh EPERM"
+            "spawn EPERM"
         );
         assert_eq!(
             message(std::io::Error::from(std::io::ErrorKind::NotFound)),
