@@ -136,9 +136,10 @@ fn required_text(value: Option<&str>, default: &str, name: &str) -> Result<Strin
 /// JS `Number(value)` restricted to the integer forms the deployment profile
 /// consumes. TS parses both numbers with `Number()` + `Number.isInteger`
 /// (`AgentLoopDeploymentProfile.ts:127-141`), so `+80`, `80.0`, `1e3` and
-/// `0x50` are all accepted. `Number()` rejects signed radix prefixes
-/// (`+0x50` is NaN), and Rust's `f64` parser accepts `inf`/`NaN` spellings that
-/// JS rejects, so both cases are filtered explicitly.
+/// `0x50` are all accepted. `Number()` rejects a sign on either side of the
+/// radix prefix (`+0x50` and `0x+50` are NaN), and Rust's `f64` parser accepts
+/// `inf`/`NaN` spellings that JS rejects, so both cases are filtered explicitly.
+/// Keep the radix digit gate in sync with `js_value::string_to_number`.
 fn js_integral_number(value: &str) -> Option<f64> {
     let value = value.trim();
     if value.is_empty() {
@@ -161,7 +162,15 @@ fn js_integral_number(value: &str) -> Option<f64> {
                 .map(|digits| (digits, 8))
         });
     let number = match radix {
-        Some((digits, radix)) => u128::from_str_radix(digits, radix).ok()? as f64,
+        Some((digits, radix)) => {
+            // `Number()` only has a radix literal when at least one valid digit
+            // follows the prefix; `from_str_radix` would also accept signs,
+            // which JS does not (`0x+50` is NaN).
+            if digits.is_empty() || !digits.chars().all(|digit| digit.is_digit(radix)) {
+                return None;
+            }
+            u128::from_str_radix(digits, radix).ok()? as f64
+        }
         None => value.parse::<f64>().ok()?,
     };
     (number.is_finite() && number.fract() == 0.0).then_some(number)

@@ -7,7 +7,8 @@ Modes:
   handshake-reject hello answered with an error, then exit
   handshake-hang   record the pid and never answer hello
   exit             exit before the handshake
-The pid file is written before any protocol work so a test can assert reaping.
+The pid file is published atomically before any protocol work, so a test that
+sees it either sees the complete pid or no file at all.
 """
 import json
 import os
@@ -17,8 +18,12 @@ import time
 mode = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("PDRS_PEER_MODE", "success")
 pid_file = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("PDRS_PEER_PID")
 if pid_file:
-    with open(pid_file, "w", encoding="utf-8") as out:
+    temporary = f"{pid_file}.tmp"
+    with open(temporary, "w", encoding="utf-8") as out:
         out.write(str(os.getpid()))
+        out.flush()
+        os.fsync(out.fileno())
+    os.replace(temporary, pid_file)
 binding = dict(protocolVersion="2.0", moduleId="fixture", moduleInstanceId="instance",
                connectionGeneration="current", capabilitiesVersion="v1")
 
