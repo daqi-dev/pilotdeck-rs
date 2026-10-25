@@ -200,6 +200,62 @@ impl DefaultContextRuntime {
         self.inner.release_caches();
     }
 
+    /// `DefaultContextRuntime.ts:474-488` `captureTurn`: an absent resolver and
+    /// always-on sessions are skipped; fork carryover is filtered before the
+    /// provider sees it; any provider failure is swallowed by design.
+    async fn capture_turn_fields(&self, fields: JsObject) -> Result<(), HostError> {
+        let Some(resolver) = self.inner.memory_resolver.as_ref() else {
+            return Ok(());
+        };
+        let session_id = match fields.get("sessionId") {
+            Some(JsValue::String(value)) => value
+                .to_utf8()
+                .unwrap_or_else(|_| String::from_utf16_lossy(value.units())),
+            Some(JsValue::Null) => {
+                return Err(ModuleError::new(
+                    "Cannot read properties of null (reading 'startsWith')",
+                )
+                .into());
+            }
+            None | Some(JsValue::Undefined) => {
+                return Err(ModuleError::new(
+                    "Cannot read properties of undefined (reading 'startsWith')",
+                )
+                .into());
+            }
+            Some(_) => {
+                return Err(
+                    ModuleError::new("input.sessionId.startsWith is not a function").into(),
+                );
+            }
+        };
+        // `isAlwaysOnSession` sits outside TS's try/catch.
+        if is_always_on_session(&session_id) {
+            return Ok(());
+        }
+        let Some(JsValue::Array(messages)) = fields.get("messages") else {
+            return Ok(());
+        };
+        let input = super::memory::MemoryCaptureTurnInput {
+            session_id,
+            project_root: self.inner.project_root.clone().unwrap_or_default(),
+            messages: messages
+                .iter()
+                .filter(|message| !super::memory::fork_carryover(message))
+                .cloned()
+                .collect(),
+            errored: fields
+                .get("errored")
+                .and_then(JsValue::as_bool)
+                .unwrap_or(false),
+        };
+        match resolver.capture_turn(input).await {
+            Ok(()) => Ok(()),
+            // Memory capture must never break the agent turn.
+            Err(_) => Ok(()),
+        }
+    }
+
     async fn prepare(
         &self,
         fields: JsObject,
@@ -683,7 +739,15 @@ impl ContextRuntime for DefaultContextRuntime {
                 | Operation::ApplyToolResults
                 | Operation::TryAutoCompact
                 | Operation::RecoverFromModelError
+                | Operation::CaptureTurn
         )
+    }
+    fn capture_turn(&self, input: ContextInput) -> HostFuture<JsValue> {
+        let runtime = self.clone();
+        Box::pin(async move {
+            runtime.capture_turn_fields(input.fields).await?;
+            Ok(JsValue::Null)
+        })
     }
     fn try_auto_compact(&self, input: ContextInput) -> HostFuture<JsValue> {
         match &self.inner.compaction {
@@ -1421,6 +1485,20 @@ fn stringify_scalar(value: &JsValue) -> String {
         .ok()
         .flatten()
         .unwrap_or_else(|| "null".into())
+}
+
+/// `DefaultContextRuntime.ts:608-616` `isAlwaysOnSession`. The prefixes end
+/// in ':', so `always-on/discovery` (no colon) is captured.
+fn is_always_on_session(session_id: &str) -> bool {
+    [
+        "always-on/discovery:",
+        "always-on/workspace:",
+        "always-on/execute:",
+        "always-on/report:",
+        "always-on/apply:",
+    ]
+    .iter()
+    .any(|prefix| session_id.starts_with(prefix))
 }
 
 fn truthy(value: &JsValue) -> bool {

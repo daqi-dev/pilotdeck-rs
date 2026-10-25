@@ -15,7 +15,8 @@ use pilotdeck_gateway::runtime::context::{
 use pilotdeck_gateway::runtime::context::{
     cache::PromptCacheCoordinator,
     memory::{
-        MemoryDiagnostic, MemoryFuture, MemoryResolver, MemoryRetrieveInput, MemoryRetrieveResult,
+        MemoryCaptureFuture, MemoryCaptureTurnInput, MemoryDiagnostic, MemoryFuture,
+        MemoryResolver, MemoryRetrieveInput, MemoryRetrieveResult,
     },
 };
 use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
@@ -280,6 +281,9 @@ struct FixtureMemory {
     child: Arc<Mutex<Option<Cancellation>>>,
 }
 impl MemoryResolver for FixtureMemory {
+    fn capture_turn(&self, _: MemoryCaptureTurnInput) -> MemoryCaptureFuture {
+        Box::pin(async { Ok(()) })
+    }
     fn retrieve(&self, input: MemoryRetrieveInput) -> MemoryFuture {
         assert!(!input.signal.is_cancelled(), "fresh forwarded signal");
         *self.child.lock().unwrap() = Some(input.signal.clone());
