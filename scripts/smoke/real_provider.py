@@ -526,12 +526,13 @@ def run_cargo_slots(root: Path) -> dict:
     # root.parent.parent path only worked when the tree happened to be nested
     # two levels under the main checkout, and silently skipped the guard
     # elsewhere. A missing script is BLOCKED, never SKIPPED.
+    # cargo-slots.sh 是 bash 脚本（set -o pipefail）；Linux CI 的 sh 是 dash，不能用 sh 调。
     script = root / "scripts" / "cargo-slots.sh"
     if not script.is_file():
         return {"status": "BLOCKED", "detail": f"missing {script}"}
     try:
         result = run_bounded(
-            ["sh", str(script)], root, os.environ.copy(), CARGO_SLOTS_TIMEOUT_SECONDS
+            ["bash", str(script)], root, os.environ.copy(), CARGO_SLOTS_TIMEOUT_SECONDS
         )
     except OSError as exc:
         return {
