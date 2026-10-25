@@ -275,14 +275,14 @@ fn parser_version_gaps_match_real_ts() {
     baseline::oracle(ORACLE);
     let oracle: serde_json::Value = serde_json::from_str(ORACLE).unwrap();
     let cases = oracle["parserGaps"].as_array().unwrap();
-    assert_eq!(cases.len(), 99);
+    assert_eq!(cases.len(), 105);
     assert_eq!(
         cases
             .iter()
             .map(|case| case["name"].as_str().unwrap())
             .collect::<std::collections::HashSet<_>>()
             .len(),
-        99
+        105
     );
     let mut failures = Vec::new();
     for case in cases {

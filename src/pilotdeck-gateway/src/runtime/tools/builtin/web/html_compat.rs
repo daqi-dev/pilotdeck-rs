@@ -205,9 +205,9 @@ pub(crate) fn domino_compatible(html: &str) -> Cow<'_, str> {
                     table_depth = 0;
                 } else if is_end && eq(name, "template") {
                     pop_frame(&mut frames, &mut table_depth, Context::Template);
-                } else if in_table && is_end && is_table_structure(name) {
+                } else if in_table && is_end && eq(name, "table") {
                     leave_table_element(name, &mut table_depth);
-                } else if !is_end && is_table_structure(name) {
+                } else if !is_end && eq(name, "table") {
                     enter_table_element(name, &mut table_depth);
                 }
             }
@@ -346,32 +346,27 @@ fn raw_text_element(name: &str) -> Option<&'static str> {
     .find(|&element| eq(name, element))
 }
 
+/// Table scope is established only by a `<table>` element. The old scanner
+/// counted every table-structure tag, so an omitted `</td>`/`</tr>` (or a
+/// single `</table>` popping the implicit row/cell stack) left the depth above
+/// zero after the table closed. `tr`/`td`/`th` and the other structure tags do
+/// not create table scope and are ignored here; `</table>` closes the nearest
+/// open table.
 fn enter_table_element(name: &str, table_depth: &mut usize) {
-    if eq(name, "table") || *table_depth > 0 {
+    if eq(name, "table") {
         *table_depth += 1;
     }
 }
 
 fn leave_table_element(name: &str, table_depth: &mut usize) {
-    if is_table_structure(name) {
+    if eq(name, "table") {
         *table_depth = table_depth.saturating_sub(1);
     }
 }
 
-fn is_table_structure(name: &str) -> bool {
-    for element in [
-        "table", "caption", "colgroup", "tbody", "tfoot", "thead", "tr", "td", "th",
-    ] {
-        if eq(name, element) {
-            return true;
-        }
-    }
-    false
-}
-
 /// The old `in select in table` close list: caption, table, tbody, tfoot,
-/// thead, tr, td, th. Unlike table-scope tracking it does not include
-/// `colgroup`/`col`, which the old in-select mode simply ignores.
+/// thead, tr, td, th. `colgroup`/`col` are absent: the old in-select mode
+/// ignores them instead of closing the select.
 fn closes_select_in_table(name: &str) -> bool {
     for element in [
         "caption", "table", "tbody", "tfoot", "thead", "tr", "td", "th",
@@ -573,6 +568,45 @@ mod tests {
         assert_eq!(
             rewritten("<table><tr><td><select><tr><td>b</table>"),
             "<table><tr><td><select></select><tr><td>b</table>"
+        );
+    }
+
+    #[test]
+    fn table_depth_tracks_only_open_table_elements() {
+        // Omitted </td></tr>: the single </table> closes the table scope, so
+        // the following body select is not in-select-in-table and its table
+        // tags are ignored by the old select mode.
+        assert_eq!(
+            rewritten(
+                "<table><tr><td>a</table><select>b<table><tr><td>c</td></tr></table>d</select>"
+            ),
+            "<table><tr><td>a</table><select>bcd</select>"
+        );
+        // Unmatched </td> end tags must not decrement the still-open table.
+        assert_eq!(
+            rewritten(
+                "<table><tr><td>a</td></td></td><select>x<table>y</table>z</select></tr></table>"
+            ),
+            "<table><tr><td>a</td></td></td><select>x</select><table>y</table>z</select></tr></table>"
+        );
+        assert_eq!(
+            rewritten("<table></td></tr><select>x<table>y</table>z</select></table>"),
+            "<table></td></tr><select>x</select><table>y</table>z</select></table>"
+        );
+        // Balanced controls keep their previous rewrite.
+        assert_eq!(
+            rewritten(
+                "<table><tr><td>a</td></tr></table><select>b<table><tr><td>c</td></tr></table>d</select>"
+            ),
+            "<table><tr><td>a</td></tr></table><select>bcd</select>"
+        );
+        // A real nested table inside a cell leaves the outer table scope open:
+        // clearing the depth on every </table> would ignore the second table.
+        assert_eq!(
+            rewritten(
+                "<table><tr><td><table><tr><td>x</td></tr></table><select>y<table><tr><td>z</td></tr></table>w</select></td></tr></table>"
+            ),
+            "<table><tr><td><table><tr><td>x</td></tr></table><select>y</select><table><tr><td>z</td></tr></table>w</select></td></tr></table>"
         );
     }
 

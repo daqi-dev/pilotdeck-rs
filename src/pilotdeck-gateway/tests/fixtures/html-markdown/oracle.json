@@ -1588,6 +1588,36 @@
    "markdown": "x\n\ny"
   },
   {
+   "name": "table-implicit-close-select-table",
+   "html": "<table><tr><td>a</table><select>b<table><tr><td>c</td></tr></table>d</select>",
+   "markdown": "a\n\nbcd"
+  },
+  {
+   "name": "control-table-explicit-close-select-table",
+   "html": "<table><tr><td>a</td></tr></table><select>b<table><tr><td>c</td></tr></table>d</select>",
+   "markdown": "a\n\nbcd"
+  },
+  {
+   "name": "table-extra-cell-close-select-table",
+   "html": "<table><tr><td>a</td></td></td><select>x<table>y</table>z</select></tr></table>",
+   "markdown": "x\n\na\n\ny\n\nz"
+  },
+  {
+   "name": "table-extra-row-close-select-table",
+   "html": "<table></td></tr><select>x<table>y</table>z</select></table>",
+   "markdown": "x\n\ny\n\nz"
+  },
+  {
+   "name": "control-table-nested-close-select-table",
+   "html": "<table><tr><td><table><tr><td>x</td></tr></table><select>y<table><tr><td>z</td></tr></table>w</select></td></tr></table>",
+   "markdown": "x\n\ny\n\nz\n\nw"
+  },
+  {
+   "name": "control-table-implicit-close-select-plain",
+   "html": "<table><tr><td>a</table><select>b</select>",
+   "markdown": "a\n\nb"
+  },
+  {
    "name": "svg-select",
    "html": "<svg><select><div>b</div></select></svg>",
    "markdown": "b"
