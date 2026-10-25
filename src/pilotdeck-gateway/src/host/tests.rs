@@ -1,6 +1,6 @@
 use super::*;
 use pilotdeck_protocol::parse_json;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::Instant};
 
 mod binding;
@@ -21,6 +21,17 @@ pub(super) struct ExecutionSignals {
     pub(super) reconnect_started: tokio::sync::watch::Sender<bool>,
     pub(super) reconnect_completed: tokio::sync::watch::Sender<bool>,
     pub(super) reconnect_gate: Option<Arc<Notify>>,
+}
+
+impl HostClient {
+    /// Test-only observation for the slow-consumer synchronization: the
+    /// execution loop sets this the moment the module final enters its
+    /// application queue, before any handler callback runs. It lets a test
+    /// prove the receive path drained the peer's frames before the consumer
+    /// stalls, without lengthening the post-cancel grace.
+    pub(crate) fn final_received(&self) -> Arc<AtomicBool> {
+        self.test_signals.final_received.clone()
+    }
 }
 
 struct Handler {

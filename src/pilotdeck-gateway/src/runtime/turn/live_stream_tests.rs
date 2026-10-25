@@ -4,10 +4,15 @@ use crate::runtime::turn::projector::{
     GatewayAgentEventProjectionInput, GatewayAgentEventProjector,
 };
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
 use tokio::{process::Command, time::timeout};
+
+/// Upper bound for the slow-consumer sync point. It must stay below the host's
+/// own `POST_CANCEL_EXIT_TIMEOUT` so a genuinely stalled receive path fails as
+/// a clear assertion instead of reaching the cancel exit the test is guarding.
+const FINAL_SYNC_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Default)]
 struct Handler {
@@ -131,6 +136,67 @@ async fn next(turn: &mut dyn LiveTurn) -> Result<Option<JsValue>, RuntimeError> 
     timeout(Duration::from_secs(15), turn.next())
         .await
         .expect("LiveTurn must make progress")
+}
+
+fn event_types(events: &[JsValue]) -> Vec<String> {
+    events
+        .iter()
+        .map(|event| {
+            event
+                .get("type")
+                .and_then(JsValue::as_string)
+                .expect("every delivered event carries a type")
+                .to_utf8()
+                .unwrap()
+        })
+        .collect()
+}
+
+/// Sync point for the slow-consumer tests: drive the turn until the host's
+/// execution loop has read the module final into its application queue
+/// (`final_received`), returning the events the consumer took on the way.
+///
+/// The execution future is only polled from `next()`. When the peer's remaining
+/// frames were still in the pipe or the connection buffer, a consumer that
+/// stalled first starved that receive path, so the post-cancel deadline fired
+/// before the final was even queued and (by design) reported the accepted
+/// timeout. Waiting for the received final removes that race; it does not
+/// lengthen the grace and does not block a handler callback.
+///
+/// `biased` with the `next()` arm first keeps the wait cancellation-safe: a
+/// `next()` that takes an event returns it in the same poll, so the future is
+/// only dropped after reporting `Pending`, when it cannot have taken one.
+async fn drive_until_final_received(
+    turn: &mut dyn LiveTurn,
+    final_received: &AtomicBool,
+) -> Vec<JsValue> {
+    let mut delivered = Vec::new();
+    timeout(FINAL_SYNC_TIMEOUT, async {
+        loop {
+            tokio::select! {
+                biased;
+                event = turn.next() => match event {
+                    Ok(Some(event)) => delivered.push(event),
+                    Ok(None) => panic!("turn ended before the host received its final"),
+                    Err(error) => {
+                        panic!("turn failed before the host received its final: {error:?}")
+                    }
+                },
+                _ = wait_for_final(final_received) => break,
+            }
+        }
+    })
+    .await
+    .expect("the host must receive the module final before the consumer stalls");
+    delivered
+}
+
+async fn wait_for_final(final_received: &AtomicBool) {
+    // The sleep only paces the exact flag check; it can never make the
+    // condition true early.
+    while !final_received.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
 }
 
 fn assert_aborted(event: &JsValue) {
@@ -398,11 +464,22 @@ async fn spawn_client(mode: &str) -> Result<HostClient, HostError> {
 }
 
 async fn session(mode: &str, handler: Arc<Handler>) -> LiveSessionAdapter {
+    session_with_final(mode, handler).await.0
+}
+
+/// `session`, plus the host-side "the module final entered the application
+/// queue" observation the slow-consumer tests synchronize on.
+async fn session_with_final(
+    mode: &str,
+    handler: Arc<Handler>,
+) -> (LiveSessionAdapter, Arc<AtomicBool>) {
     // Pre-connect the first test client so abort-before-execute still exercises
     // HostClient's cleanup. Later turns must create their own connection.
-    let initial = Mutex::new(Some(spawn_client(mode).await.unwrap()));
+    let client = spawn_client(mode).await.unwrap();
+    let final_received = client.final_received();
+    let initial = Mutex::new(Some(client));
     let mode = mode.to_owned();
-    LiveSessionAdapter::new(move || {
+    let session = LiveSessionAdapter::new(move || {
         let initial = initial.lock().unwrap().take();
         let mode = mode.clone();
         // This test double only records lifecycle calls; it owns no modules.
@@ -414,7 +491,8 @@ async fn session(mode: &str, handler: Arc<Handler>) -> LiveSessionAdapter {
             };
             Ok((client, handler as Arc<dyn HostHandler>))
         })
-    })
+    });
+    (session, final_received)
 }
 
 /// A session whose spawned sidecar child PIDs are recorded, so tests can
@@ -802,35 +880,51 @@ async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
     // success rather than a lifecycle error. No handler callback is blocked;
     // the stall is purely the consumer's.
     let handler = Arc::new(Handler::default());
-    let session = session("live-cancel-slow-consumer", handler.clone()).await;
+    let (session, final_received) =
+        session_with_final("live-cancel-slow-consumer", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    assert_eq!(
-        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-        Some(&"turn_started".into())
-    );
+    let mut delivered = vec![next(turn.as_mut()).await.unwrap().unwrap()];
+    assert_eq!(delivered[0].get("type"), Some(&"turn_started".into()));
     session.abort(&"user-stop".into()).unwrap();
     // This next() is the first poll that observes the abort, so it arms the
     // cancel deadline; it delivers model_event and then the consumer stalls.
-    assert_eq!(
-        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-        Some(&"model_event".into())
+    delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
+    assert_eq!(delivered[1].get("type"), Some(&"model_event".into()));
+    // Sync point before the stall: the peer has written every frame and the
+    // host has read the success final into its application queue. Without it,
+    // a slow CI peer could still be in the pipe, the unpolled receive path
+    // would starve, and the deadline would correctly report a timeout.
+    let synced = drive_until_final_received(turn.as_mut(), &final_received).await;
+    assert!(
+        !event_types(&synced).contains(&"turn_completed".to_owned()),
+        "the consumer must stall before the terminal is delivered: {:?}",
+        event_types(&synced)
     );
+    delivered.extend(synced);
     // Do not hard-code the grace: one second past the host's own constant.
     tokio::time::sleep(POST_CANCEL_EXIT_TIMEOUT + Duration::from_secs(1)).await;
-    // The queued input_accepted and success final must still be delivered.
+    while let Some(event) = next(turn.as_mut()).await.unwrap() {
+        delivered.push(event);
+    }
+    // The queued input_accepted and success final must still be delivered, in
+    // order. The sync point may move input_accepted into the pre-stall phase,
+    // but it may not drop it or replace the success terminal with a timeout.
     assert_eq!(
-        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-        Some(&"input_accepted".into())
+        event_types(&delivered),
+        [
+            "turn_started",
+            "model_event",
+            "input_accepted",
+            "turn_completed"
+        ]
     );
-    let completed = next(turn.as_mut()).await.unwrap().unwrap();
-    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
     assert_eq!(
-        completed
-            .get("result")
+        delivered
+            .last()
+            .and_then(|event| event.get("result"))
             .and_then(|result| result.get("type")),
         Some(&"success".into())
     );
-    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
@@ -843,27 +937,40 @@ async fn slow_consumer_still_receives_a_ready_error_terminal() {
     // of being rejected as "terminal without proper lifecycle". No handler
     // callback is blocked; the stall is purely the consumer's.
     let handler = Arc::new(Handler::default());
-    let session = session("live-cancel-slow-consumer-failure", handler.clone()).await;
+    let (session, final_received) =
+        session_with_final("live-cancel-slow-consumer-failure", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    assert_eq!(
-        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-        Some(&"turn_started".into())
-    );
+    let mut delivered = vec![next(turn.as_mut()).await.unwrap().unwrap()];
+    assert_eq!(delivered[0].get("type"), Some(&"turn_started".into()));
     session.abort(&"user-stop".into()).unwrap();
     // As in the success pairing, this next() arms the cancel deadline and
     // delivers model_event before the consumer stalls.
-    assert_eq!(
-        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-        Some(&"model_event".into())
+    delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
+    assert_eq!(delivered[1].get("type"), Some(&"model_event".into()));
+    // Sync point before the stall: the turn_failed and the error final are in
+    // the host's application queue before the consumer stops pulling.
+    let synced = drive_until_final_received(turn.as_mut(), &final_received).await;
+    assert!(
+        !event_types(&synced).contains(&"turn_completed".to_owned()),
+        "the consumer must stall before the terminal is delivered: {:?}",
+        event_types(&synced)
     );
+    delivered.extend(synced);
     tokio::time::sleep(POST_CANCEL_EXIT_TIMEOUT + Duration::from_secs(1)).await;
-    // The queued turn_failed and error final must still be delivered.
+    while let Some(event) = next(turn.as_mut()).await.unwrap() {
+        delivered.push(event);
+    }
+    // The queued turn_failed and error final must still be delivered in order.
     assert_eq!(
-        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
-        Some(&"turn_failed".into())
+        event_types(&delivered),
+        [
+            "turn_started",
+            "model_event",
+            "turn_failed",
+            "turn_completed"
+        ]
     );
-    let completed = next(turn.as_mut()).await.unwrap().unwrap();
-    assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+    let completed = delivered.last().unwrap();
     assert_eq!(
         completed
             .get("result")
@@ -876,7 +983,6 @@ async fn slow_consumer_still_receives_a_ready_error_terminal() {
             .and_then(|result| result.get("stopReason")),
         Some(&"model_error".into())
     );
-    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
@@ -891,7 +997,8 @@ async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
         block_input_accepted: true,
         ..Handler::default()
     });
-    let session = session("live-cancel-slow-consumer", handler.clone()).await;
+    let (session, final_received) =
+        session_with_final("live-cancel-slow-consumer", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
@@ -901,6 +1008,15 @@ async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"model_event".into())
+    );
+    // Sync point before the stall: the success final is in the host's
+    // application queue even though the blocked callback keeps it unapplied.
+    // The blocked input_accepted is not deliverable, so nothing is pulled.
+    let synced = drive_until_final_received(turn.as_mut(), &final_received).await;
+    assert!(
+        synced.is_empty(),
+        "a blocked callback must not deliver the queued lifecycle: {:?}",
+        event_types(&synced)
     );
     tokio::time::sleep(POST_CANCEL_EXIT_TIMEOUT + Duration::from_secs(1)).await;
     // The deadline is already past; a blocked callback must not extend it.
