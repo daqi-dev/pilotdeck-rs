@@ -175,6 +175,15 @@ fn error_value(error: &ModelStreamError) -> JsValue {
             "retryable",
             canonical.get("retryable").unwrap_or(&UNDEFINED).clone(),
         ));
+        // `errors.rs` always stores `status` in the canonical object (Number or
+        // Undefined). Keep a numeric status so the Python consumer can classify
+        // a non-canonical 5xx code (for example `api_error`) as an environment
+        // failure instead of `product-or-protocol`.
+        if let Some(status) = canonical.get("status") {
+            if status.as_number().is_some() {
+                entries.push(("status", status.clone()));
+            }
+        }
     }
     obj(entries)
 }
@@ -815,6 +824,36 @@ mod tests {
         assert!(tally.aborted);
         assert!(tally.post_abort.content);
         assert!(!cancel_ok(tally.aborted, false, &tally.post_abort));
+    }
+
+    #[test]
+    fn provider_error_keeps_the_canonical_status() {
+        // `errors.rs` builds `{code,status,message,retryable,...}`. The Python
+        // side treats status >= 500 as environment, but it can only do that if
+        // the probe copies the field. A non-canonical upstream `type`
+        // (`api_error`) is not in the needle list; `status` is the fallback.
+        let mut canonical = JsObject::new();
+        canonical.insert("code".into(), string("api_error"));
+        canonical.insert("message".into(), string("upstream 503"));
+        canonical.insert("status".into(), number(503.0));
+        canonical.insert("retryable".into(), JsValue::Bool(true));
+        let value = error_value(&ModelStreamError::Provider(canonical));
+        assert_eq!(field(&value, "status").as_number(), Some(503.0));
+        assert_eq!(text(field(&value, "code")), "api_error");
+        assert!(field(&value, "retryable").as_bool() == Some(true));
+        // The probe prints this object through stringify_json; the consumer
+        // can only see the field if it survives serialization.
+        let rendered = json_text(&value);
+        assert!(rendered.contains("\"status\":503"), "{rendered}");
+    }
+
+    #[test]
+    fn provider_error_without_status_does_not_invent_one() {
+        let mut canonical = JsObject::new();
+        canonical.insert("code".into(), string("provider_error"));
+        canonical.insert("message".into(), string("no status"));
+        let value = error_value(&ModelStreamError::Provider(canonical));
+        assert!(field(&value, "status").is_undefined());
     }
 
     #[test]
