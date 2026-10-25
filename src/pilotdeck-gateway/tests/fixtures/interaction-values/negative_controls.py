@@ -1,13 +1,23 @@
-"""Single-writer mutations; assertion failures only, with byte-exact restoration."""
+"""Single-writer mutations through the shared tree lock; assertion failures only.
+
+``negative_process.mutating_sources`` holds the same-tree flock and verifies the
+committed bytes before the first write, so a killed predecessor's residue is a
+refusal instead of a silently captured ``original``. Cargo runs through
+``run_owned`` (fresh process group, total deadline) and a cargo slot is awaited
+before each source write. Evidence goes in a new output folder; every mutant is
+restored byte-for-byte and its SHA-256 is retained.
+"""
 import hashlib
 import os
 from pathlib import Path
-import subprocess
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
-out.mkdir(exist_ok=False)
+out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/interaction/value.rs'
 bus = source.with_name('bus.rs')
 reconnect = source.with_name('reconnect.rs')
@@ -43,31 +53,45 @@ mutations = [
     ('validation-order', bus, 'self.register_with_payload(owner, entry, || to_interaction_replay_value(nodes, root))',
      'let payload = to_interaction_replay_value(nodes, root)?; self.register_with_payload(owner, entry, || Ok(payload))'),
 ]
+selected = set(sys.argv[2:])
+mutations = [mutation for mutation in mutations
+             if not selected or mutation[0] in selected]
+assert len({name for name, *_ in mutations}) == len(mutations), 'duplicate mutation name'
+assert not selected or len(mutations) == len(selected), 'unknown mutation name'
+paths = sorted({path for _name, path, _old, _new in mutations}, key=str)
 env = dict(os.environ, CARGO_TARGET_DIR=str(root / '_build/cargo-target'))
 command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib','interaction_producer_','--','--nocapture']
-selected = set(sys.argv[2:])
-for name, path, old, new in mutations:
-    if selected and name not in selected:
-        continue
-    original = path.read_bytes()
-    text = original.decode()
-    assert text.count(old) == 1, (name, text.count(old))
-    with (out / (name + '.mutation')).open('x') as f:
-        f.write(str(path.relative_to(root)) + '\n' + old + '\n=>\n' + new + '\n')
-    try:
-        path.write_text(text.replace(old,new))
-        with (out / (name + '.log')).open('x') as log:
-            subprocess.run(['bash','scripts/cargo-slots.sh'],cwd=root,stdout=log,stderr=log,check=True)
-            result = subprocess.run(command,cwd=root,env=env,stdout=log,stderr=log,timeout=180)
-        output = (out / (name + '.log')).read_text()
-        assert result.returncode == 101 and 'test result: FAILED.' in output and 'panicked at' in output, name
-        print(name + ': assertion killed', flush=True)
-    finally:
-        path.write_bytes(original)
-        assert path.read_bytes() == original
-        with (out / (name + '.restored-sha256')).open('x') as f:
-            f.write(hashlib.sha256(original).hexdigest()+'\n')
-# All mutations restored before the positive run; compile failures never count.
-with (out / 'restored.log').open('x') as log:
-    subprocess.run(command,cwd=root,env=env,stdout=log,stderr=log,timeout=180,check=True)
+
+with mutating_sources(root, paths) as snapshots:
+    # All anchors are checked against the locked, HEAD-verified snapshots before
+    # the first write: a stale anchor aborts with the tree still pristine.
+    for name, path, old, new in mutations:
+        text = snapshots[path].decode()
+        assert text.count(old) == 1, (name, text.count(old))
+        with (out / (name + '.mutation')).open('x') as f:
+            f.write(str(path.relative_to(root)) + '\n' + old + '\n=>\n' + new + '\n')
+    for name, path, old, new in mutations:
+        original = snapshots[path]
+        text = original.decode()
+        try:
+            slot = wait_for_slot(root / 'scripts/cargo-slots.sh')
+            (out / (name + '.slots.log')).write_text(slot.stdout + slot.stderr)
+            path.write_text(text.replace(old, new))
+            result = run_owned(command, cwd=root, env=env, timeout=180)
+            log = result.stdout + result.stderr
+            (out / (name + '.log')).write_text(log)
+            assert result.returncode == 101 and 'test result: FAILED.' in log and 'panicked at' in log, name
+            print(name + ': KILLED (assertion killed)', flush=True)
+        finally:
+            path.write_bytes(original)
+            assert path.read_bytes() == original
+            with (out / (name + '.restored-sha256')).open('x') as f:
+                f.write(hashlib.sha256(original).hexdigest()+'\n')
+# All mutations restored and checked by mutating_sources; compile failures never count.
+slot = wait_for_slot(root / 'scripts/cargo-slots.sh')
+(out / 'restored.slots.log').write_text(slot.stdout + slot.stderr)
+result = run_owned(command, cwd=root, env=env, timeout=180)
+log = result.stdout + result.stderr
+(out / 'restored.log').write_text(log)
+assert result.returncode == 0 and 'test result: ok.' in log, 'restored positive control failed'
 print('restored: PASS',flush=True)
