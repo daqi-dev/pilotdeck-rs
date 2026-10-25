@@ -68,13 +68,10 @@ impl Drop for Scratch {
     }
 }
 
-fn config(root: &Path) {
+const BASE_CONFIG: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
+fn config(root: &Path, text: &str) {
     std::fs::create_dir_all(root.join(".pilotdeck")).unwrap();
-    std::fs::write(
-        root.join("pilotdeck.yaml"),
-        "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n",
-    )
-    .unwrap();
+    std::fs::write(root.join("pilotdeck.yaml"), text).unwrap();
 }
 struct NoopFamily(Family);
 impl ResourceFamilySource for NoopFamily {
@@ -86,11 +83,14 @@ impl ResourceFamilySource for NoopFamily {
     }
 }
 fn registry(scratch: &Scratch) -> Arc<ProjectRuntimeRegistry> {
+    registry_with_config(scratch, BASE_CONFIG)
+}
+fn registry_with_config(scratch: &Scratch, config_text: &str) -> Arc<ProjectRuntimeRegistry> {
     let root = scratch.0.join("project");
     let home = scratch.0.join("home");
     std::fs::create_dir(&root).unwrap();
     std::fs::create_dir(&home).unwrap();
-    config(&home);
+    config(&home, config_text);
     let mut env = Env::new();
     env.insert("PILOT_HOME".into(), home.to_string_lossy().into_owned());
     let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
@@ -422,6 +422,59 @@ fn deployment_profile_matches_ts_oracle() {
         }
     }
 }
+#[tokio::test]
+async fn budget_uses_configured_model_pricing_from_lease() {
+    let oracle = parse_json(include_str!(
+        "../../../tests/fixtures/host-factory/oracle.json"
+    ))
+    .unwrap();
+    let pricing = field(&oracle, "pricing").unwrap();
+    let provider = text(field(pricing, "provider").unwrap());
+    let model = text(field(pricing, "model").unwrap());
+    let key = format!("{provider}/{model}");
+    let rates = field(pricing, "modelPricing")
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .get(&key)
+        .unwrap()
+        .as_object()
+        .unwrap();
+    let rate = |key: &str| rates.get(key).and_then(JsValue::as_number).unwrap();
+    let config_text = format!(
+        "{BASE_CONFIG}router:\n  stats:\n    modelPricing:\n      {key}: {{input: {}, output: {}, cacheRead: {}}}\n",
+        rate("input"),
+        rate("output"),
+        rate("cacheRead")
+    );
+    let scratch = Scratch::new();
+    let registry = registry_with_config(&scratch, &config_text);
+    let lease = registry.acquire(None).unwrap();
+    let (router, _, lease) = TurnHostFactory::assemble(lease, &identity(), ports(None))
+        .await
+        .unwrap();
+    let usage = field(pricing, "usage").unwrap();
+    let call = parse_json(&format!(
+        r#"{{"payload":{{"operation":"estimate_usage_cost","usage":{},"provider":"{provider}","model":"{model}"}}}}"#,
+        stringify_json(usage).unwrap().unwrap()
+    ))
+    .unwrap();
+    let response = router.budget.call(call).await.unwrap();
+    let expected = field(pricing, "costUsd")
+        .and_then(JsValue::as_number)
+        .unwrap();
+    let actual = response
+        .get("costUsd")
+        .and_then(JsValue::as_number)
+        .unwrap();
+    assert_eq!(
+        actual, expected,
+        "configured modelPricing must reach the lease budget port"
+    );
+    drop(lease);
+    bounded(registry.dispose()).await.unwrap();
+}
+
 fn assert_ts_lease(name: &str, leases: usize, disposals: usize, state: &str) {
     let oracle = parse_json(include_str!(
         "../../../tests/fixtures/host-factory/oracle.json"
@@ -518,6 +571,49 @@ async fn reload_mid_turn_holds_old_lease_until_turn_drops() {
 }
 
 #[tokio::test]
+async fn retire_does_not_dispose_while_lease_outstanding() {
+    let scratch = Scratch::new();
+    let pid_file = scratch.0.join("retire-held.pid");
+    let registry = registry(&scratch);
+    let session =
+        factory(registry.clone(), peer("hold", Some(&pid_file)), None).into_live_session();
+    let runtime = registry.resolve(None).unwrap();
+    let mut turn = session
+        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire())
+        .unwrap();
+    assert_eq!(
+        bounded(turn.next()).await.unwrap().unwrap().get("type"),
+        Some(&"turn_started".into())
+    );
+    assert_eq!(runtime.lease_count(), 1);
+    bounded(registry.reload()).await.unwrap();
+    assert_eq!(
+        runtime.state(),
+        crate::runtime::project::RuntimeState::Retired
+    );
+    assert_eq!(runtime.lease_count(), 1);
+    assert_ts_lease("retire-with-second-lease", 1, 0, "retired");
+    // Give the executor every chance to run the cleanup task. An outstanding
+    // lease must keep the generation retired instead of disposing its
+    // resources under the live turn.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        runtime.state(),
+        crate::runtime::project::RuntimeState::Retired
+    );
+    assert_eq!(runtime.lease_count(), 1);
+    assert_ts_lease("retire-with-second-lease", 1, 0, "retired");
+    drop(turn);
+    bounded(runtime.wait_disposed()).await.unwrap();
+    assert_eq!(runtime.lease_count(), 0);
+    assert_eq!(
+        runtime.state(),
+        crate::runtime::project::RuntimeState::Disposed
+    );
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
 async fn spawn_failure_releases_lease_once_and_returns_host_error() {
     let scratch = Scratch::new();
     let registry = registry(&scratch);
@@ -539,6 +635,42 @@ async fn spawn_failure_releases_lease_once_and_returns_host_error() {
             crate::runtime::project::RuntimeState::Active
         );
     }
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
+async fn spawn_failure_awaits_release_of_concurrently_retired_generation() {
+    let scratch = Scratch::new();
+    let registry = registry(&scratch);
+    let runtime = registry.resolve(None).unwrap();
+    let mut deployment = peer("success", None);
+    if let Deployment::Stdio { command, .. } = &mut deployment {
+        *command = "/nonexistent-pdrs-sidecar".into();
+    }
+    // Retire the generation after `create` acquired its lease but before the
+    // spawn attempt. The explicit `lease.release().await` must then wait for
+    // cleanup; merely dropping the lease only schedules it.
+    let invalidating = registry.clone();
+    let factory = TurnHostFactory::new(
+        registry.clone(),
+        deployment,
+        Limits::default(),
+        Some(JsString::from("fixture")),
+        move |_| {
+            invalidating.invalidate(None);
+            ports(None)
+        },
+    );
+    let error = bounded(factory.create(&identity())).await.err().unwrap();
+    assert!(
+        error.message.contains("No such file") || error.message.contains("not found"),
+        "{error:?}"
+    );
+    assert_eq!(runtime.lease_count(), 0);
+    assert_eq!(
+        runtime.state(),
+        crate::runtime::project::RuntimeState::Disposed
+    );
     bounded(registry.dispose()).await.unwrap();
 }
 
