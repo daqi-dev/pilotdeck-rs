@@ -40,7 +40,7 @@ use pilotdeck_protocol::JsValue;
 use std::{
     any::Any,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -669,7 +669,29 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 pub struct StageContext {
     slots: Arc<Mutex<Slots>>,
 }
+
+/// Resolve a later-staged resource when a session is composed. The reference
+/// is weak because the resource holding it is itself owned by these slots.
+pub(super) struct DeferredResource {
+    slots: Weak<Mutex<Slots>>,
+    resource: Resource,
+}
+impl DeferredResource {
+    pub(super) fn resolve(&self) -> Result<Option<Arc<dyn FamilyResource>>, RuntimeError> {
+        let slots = self.slots.upgrade().ok_or_else(|| {
+            RuntimeError::new("Context storage's project generation is no longer available.")
+        })?;
+        Ok(StageContext { slots }.resource(self.resource))
+    }
+}
 impl StageContext {
+    pub(super) fn defer_resource(&self, resource: Resource) -> DeferredResource {
+        DeferredResource {
+            slots: Arc::downgrade(&self.slots),
+            resource,
+        }
+    }
+
     pub fn project_root(&self) -> PathBuf {
         lock(&self.slots).project_root.clone()
     }
