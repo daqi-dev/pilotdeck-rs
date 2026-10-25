@@ -291,12 +291,44 @@ fn target_address(target: &hyper::Uri) -> String {
     format!("{host}:{}", effective_port(target))
 }
 
+/// The failure path's re-resolution is bounded: the connect has already
+/// failed, so the lookup only decorates the error text, and a resolver
+/// stalled the same way that caused the failure must not stall the *report*
+/// too (macOS / glibc system resolution timeouts run to tens of seconds,
+/// past the outer handshake timer that would swap the message for
+/// `MCP handshake timed out`). The bound is therefore an order of magnitude
+/// below `MCP_CONNECT_TIMEOUT` and far below the handshake deadline. On
+/// expiry the addresses are simply unknown and the URL hostname form is
+/// used, as before the lookup existed.
+const RESOLUTION_DEADLINE: Duration = Duration::from_secs(1);
+
 /// The addresses a hostname URL resolves to, in the platform's `getaddrinfo`
 /// order — the list Node's `dns.lookup(host, { all: true })` feeds to its
 /// connect attempts (`lookupAndConnectMultiple`, node v22.22.0
 /// `lib/net.js:1442-1541`). IP-literal targets skip the lookup: Node never
-/// resolves those, and their address text is the URL's own host.
+/// resolves those, and their address text is the URL's own host. The lookup
+/// runs under [`RESOLUTION_DEADLINE`]; a stalled resolver cancels the wait
+/// (the underlying blocking `getaddrinfo` thread may still finish on its
+/// own, but nothing awaits it).
 async fn resolved_attempts(target: &hyper::Uri) -> Option<Vec<SocketAddr>> {
+    resolved_attempts_with(target, |host, port| async move {
+        tokio::net::lookup_host((host, port))
+            .await
+            .map(|resolved| resolved.collect::<Vec<_>>())
+    })
+    .await
+}
+
+/// [`resolved_attempts`] with the resolver injected, so the deadline is
+/// testable against a resolver that never answers.
+async fn resolved_attempts_with<F, Fut>(
+    target: &hyper::Uri,
+    lookup: F,
+) -> Option<Vec<SocketAddr>>
+where
+    F: FnOnce(String, u16) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<Vec<SocketAddr>>>,
+{
     let host = target.host()?;
     let host = host
         .strip_prefix('[')
@@ -305,10 +337,17 @@ async fn resolved_attempts(target: &hyper::Uri) -> Option<Vec<SocketAddr>> {
     if host.parse::<std::net::IpAddr>().is_ok() {
         return None;
     }
-    tokio::net::lookup_host((host.to_owned(), effective_port(target)))
-        .await
-        .ok()
-        .map(|resolved| resolved.collect::<Vec<_>>())
+    match tokio::time::timeout(
+        RESOLUTION_DEADLINE,
+        lookup(host.to_owned(), effective_port(target)),
+    )
+    .await
+    {
+        Ok(Ok(resolved)) => Some(resolved),
+        // A resolver error or an expired deadline: no addresses known, and
+        // both address texts fall back to the URL's own host.
+        _ => None,
+    }
 }
 
 /// Node's per-attempt address order (`lookupAndConnectMultiple`, node v22.22.0
@@ -378,14 +417,25 @@ fn refused_cause(target: &hyper::Uri, resolved: Option<&[SocketAddr]>) -> String
 /// `Connect Timeout Error (attempted addresses: ::1:60217, 127.0.0.1:60217,
 /// timeout: 10000ms)`).
 fn timeout_cause(target: &hyper::Uri, resolved: Option<&[SocketAddr]>) -> String {
-    let Some(resolved) = resolved.filter(|resolved| resolved.len() > 1) else {
+    // Node decides singular vs. plural after its own dedup
+    // (`toAttempt.length === 1`, node v22.22.0 `lib/net.js:1518`), so a
+    // lookup that answers with the same IP twice (a repeated `/etc/hosts`
+    // line or a duplicated A record) switches back to the plain single
+    // connect and undici reports the URL hostname, singular. Measured
+    // 2026-10-25 (#681 fix-r1, a `dns.lookup` patched to answer
+    // `[127.0.0.1, 127.0.0.1]`): `Connect Timeout Error (attempted
+    // address: dup-probe.invalid:64720, timeout: 10000ms)`.
+    let Some(attempts) = resolved
+        .map(node_attempt_order)
+        .filter(|attempts| attempts.len() > 1)
+    else {
         return format!(
             "Connect Timeout Error (attempted address: {}, timeout: {}ms)",
             target_address(target),
             MCP_CONNECT_TIMEOUT.as_millis()
         );
     };
-    let addresses = node_attempt_order(resolved)
+    let addresses = attempts
         .iter()
         .map(node_address)
         .collect::<Vec<_>>()
@@ -3051,9 +3101,13 @@ mod tests {
     /// `https://localhost:<stall>/sse`（TCP 通、TLS 停滞）10 s 后是
     /// `Connect Timeout Error (attempted addresses: ::1:60217,
     /// 127.0.0.1:60217, timeout: 10000ms)` — 复数、解析地址列表。
-    /// 单地址主机名的超时仍显示 URL 主机名（读码推断，未实测：单地址查找
-    /// 走普通单连接路径，`autoSelectFamilyAttemptedAddresses` 不设置，
-    /// undici 的 `onConnectTimeout` 回退到连接器收到的 URL 主机名）。
+    /// 单地址主机名（含重复解析去重后只剩一个）的超时显示 URL 主机名：
+    /// Node 在去重后才判单复数（`toAttempt.length === 1`，node v22.22.0
+    /// `lib/net.js:1518`），单地址走普通单连接路径、不记录解析，undici 的
+    /// `onConnectTimeout` 回退到连接器收到的 URL 主机名。#681 fix-r1 实测
+    /// （`_tmp/20261025-issue-681/fix-r1/ts-probe-dup.out`，把 `dns.lookup`
+    /// 注入为返回重复 / 单条 127.0.0.1 记录，下游 net.js 与 undici 均为真实
+    /// 代码）。
     #[test]
     fn hostname_connect_timeouts_list_attempted_addresses() {
         let uri = |raw: &str| -> hyper::Uri { raw.parse().unwrap() };
@@ -3067,10 +3121,78 @@ mod tests {
             timeout_cause(&uri("https://example.com:8443/sse"), Some(&single)),
             "Connect Timeout Error (attempted address: example.com:8443, timeout: 10000ms)"
         );
+        // 重复解析（去重前两条、去重后一条）与单条同形：主机名单数。
+        let duplicated = [sock("127.0.0.1", 64720), sock("127.0.0.1", 64720)];
+        assert_eq!(
+            timeout_cause(
+                &uri("https://dup-probe.invalid:64720/sse"),
+                Some(&duplicated)
+            ),
+            "Connect Timeout Error (attempted address: dup-probe.invalid:64720, timeout: 10000ms)"
+        );
         // IP 字面量：`https-sse-handshake-stall` 金样钉住的形状不变。
         assert_eq!(
             timeout_cause(&uri("https://127.0.0.1:9443/sse"), None),
             "Connect Timeout Error (attempted address: 127.0.0.1:9443, timeout: 10000ms)"
+        );
+    }
+
+    /// #681 fix-r1 实测（同上证据）：解析出重复地址的拒连只报一条去重后的
+    /// `connect ECONNREFUSED 127.0.0.1:64718`（Node 先按 IP 去重再连接）。
+    #[test]
+    fn duplicate_resolutions_dedup_in_refusal_texts() {
+        let uri = |raw: &str| -> hyper::Uri { raw.parse().unwrap() };
+        let duplicated = [sock("127.0.0.1", 64718), sock("127.0.0.1", 64718)];
+        assert_eq!(
+            refused_cause(&uri("http://dup-probe.invalid:64718/sse"), Some(&duplicated)),
+            "connect ECONNREFUSED 127.0.0.1:64718"
+        );
+    }
+
+    /// 失败路径的重解析有界：解析器停滞（正是导致连接失败的那种停滞）时，
+    /// 不得在报错前再等一轮系统解析超时，到 [`RESOLUTION_DEADLINE`] 即回退
+    /// `None`（文案回退到 URL 主机名形状）。IP 字面量则根本不查。
+    #[tokio::test(start_paused = true)]
+    async fn stalled_resolution_falls_back_within_the_deadline() {
+        let uri = |raw: &str| -> hyper::Uri { raw.parse().unwrap() };
+        let stalled = |_host: String, _port: u16| async {
+            std::future::pending::<std::io::Result<Vec<SocketAddr>>>().await
+        };
+        let resolved = tokio::time::timeout(
+            // 停滞的解析器若没有被界住，外层这层哨钟就是唯一会到期的计时器，
+            // 测试随之失败（负控：删掉内部 `tokio::time::timeout` 即触发）。
+            RESOLUTION_DEADLINE + Duration::from_millis(50),
+            resolved_attempts_with(&uri("http://slow-dns.example:8080/sse"), stalled),
+        )
+        .await
+        .expect("the stalled lookup must be cut off by RESOLUTION_DEADLINE");
+        assert_eq!(resolved, None);
+        // 解析报错同样回退 None（Node 对查找失败报 ENOTFOUND，不进地址文案）。
+        let erroring = |_host: String, _port: u16| async {
+            Err::<Vec<SocketAddr>, _>(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "dns stalled probe",
+            ))
+        };
+        assert_eq!(
+            resolved_attempts_with(&uri("http://no-dns.example:8080/sse"), erroring).await,
+            None
+        );
+        // 正常解析照常透传。
+        let answering = |_host: String, port: u16| async move {
+            Ok::<Vec<SocketAddr>, std::io::Error>(vec![sock("127.0.0.1", port)])
+        };
+        assert_eq!(
+            resolved_attempts_with(&uri("http://answers.example:8080/sse"), answering).await,
+            Some(vec![sock("127.0.0.1", 8080)])
+        );
+        // IP 字面量不查：解析器被调用即 panic。
+        assert_eq!(
+            resolved_attempts_with(&uri("https://[::1]:9443/sse"), |host, port| async move {
+                panic!("ip literals are never resolved: {host}:{port}")
+            })
+            .await,
+            None
         );
     }
 
