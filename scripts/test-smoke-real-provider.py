@@ -544,6 +544,9 @@ if no_flock:
     rp.fcntl.flock = lambda fd, op: 0
 
 if start is not None:
+    # Announce "module loaded" so the parent can release every worker at once
+    # (a fast worker must not finish its hold before a slow one is ready).
+    (start.parent / f"{start.name}.ready-{os.getpid()}").write_text("", encoding="utf-8")
     deadline = time.time() + 10
     while not start.exists():
         if time.time() > deadline:
@@ -578,6 +581,16 @@ def lock_worker_command(evidence: Path, mode: str = "try",
         str(hold),
         "no-flock" if no_flock else "flock",
     ]
+
+
+def release_when_ready(start: Path, workers: int, timeout: float = 15.0) -> None:
+    """Write the start barrier only after every worker has loaded its module."""
+    deadline = time.time() + timeout
+    while len(list(start.parent.glob(f"{start.name}.ready-*"))) < workers:
+        if time.time() > deadline:
+            break  # workers time out on the barrier and report it
+        time.sleep(0.01)
+    start.write_text("go", encoding="utf-8")
 
 
 def lock_results(stdout: str) -> list[dict]:
@@ -637,11 +650,15 @@ def test_lock_two_processes_only_one_wins() -> None:
             lock_worker_command(evidence, mode="hold", start=start, hold=2.0),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
+        # Both workers hold the lock for 2 s once they win, so whichever wins
+        # the race is still holding when the other tries. With a zero hold the
+        # "try" worker could win, release at once, and let the other acquire
+        # afterwards: two winners on a slow runner (CI merge_group, 10-25).
         second = subprocess.Popen(
-            lock_worker_command(evidence, mode="try", start=start),
+            lock_worker_command(evidence, mode="hold", start=start, hold=2.0),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        start.write_text("go", encoding="utf-8")
+        release_when_ready(start, 2)
         out_first, err_first = first.communicate(timeout=20)
         out_second, err_second = second.communicate(timeout=20)
         results = lock_results(out_first) + lock_results(out_second)
@@ -721,7 +738,7 @@ def test_lock_negative_control_without_flock() -> None:
                                 no_flock=True),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        start.write_text("go", encoding="utf-8")
+        release_when_ready(start, 2)
         out_first, err_first = first.communicate(timeout=20)
         out_second, err_second = second.communicate(timeout=20)
         results = lock_results(out_first) + lock_results(out_second)
