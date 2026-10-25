@@ -6,8 +6,8 @@ use crate::{
     host::{
         HostError, HostFuture, HostHandler, ModuleError,
         modules::{
-            CompositionSwitches, ModuleRouter, capability::serialize_tool_descriptor, event,
-            lifecycle, manifest::PermissionSnapshot,
+            CompositionSwitches, ModuleRouter, event, lifecycle,
+            manifest::{PermissionSnapshot, ToolSnapshot},
         },
     },
     runtime::{
@@ -98,8 +98,7 @@ impl InteractionTurn {
         router.event = Default::default();
         router.permission = Default::default();
         router.lifecycle = Default::default();
-        router.turn.ports.drain_steer = None;
-        router.turn.ports.drain_or_close_steer = None;
+        router.turn.ports = Default::default();
         let mut turn = Self {
             router: Arc::new(router),
             manifest: JsObject::new(),
@@ -176,6 +175,8 @@ impl InteractionTurn {
                 input.signal,
                 router,
             )?);
+        } else {
+            router.turn.authorizations = None;
         }
         let tools = catalog.list().await?;
         // No question/elicitation port is supplied by these four resources.
@@ -183,7 +184,10 @@ impl InteractionTurn {
         turn.manifest = turn
             .router
             .turn_manifest(
-                vec![],
+                tools
+                    .iter()
+                    .map(|tool| ToolSnapshot::from_definition(tool.as_ref()))
+                    .collect(),
                 PermissionSnapshot {
                     cwd: JsValue::String(permission_context.cwd.clone()),
                     permission_mode: JsValue::String(
@@ -197,15 +201,6 @@ impl InteractionTurn {
             .map_err(|missing| {
                 ModuleError::new(format!("Turn handlers missing: {}", missing.join(", ")))
             })?;
-        turn.manifest.insert(
-            "tools".into(),
-            JsValue::Array(
-                tools
-                    .iter()
-                    .map(|tool| JsValue::Object(serialize_tool_descriptor(tool.as_ref())))
-                    .collect(),
-            ),
-        );
         Ok(turn)
     }
     pub fn manifest(&self) -> &JsObject {
