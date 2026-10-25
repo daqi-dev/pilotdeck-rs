@@ -2243,6 +2243,121 @@ mod context_storage_tests {
         assert_eq!(spill(&first, "small later result").await, first_ref);
     }
 
+    /// #637: on a `worker_threads = 2` runtime, several sessions spilling
+    /// large results through the real `apply_tool_results` path must not
+    /// starve unrelated tasks on the same runtime. The slow-I/O probe blocks
+    /// inside the original spill write/alias-copy path (the real exclusive
+    /// open and write still run; the probe is not a sleep replacing the
+    /// I/O), so before the `spawn_blocking` offload each spill occupied a
+    /// worker for both stalls and the heartbeat below went silent for their
+    /// whole duration. The bound is fifteen heartbeat intervals of scheduling
+    /// noise — far below one 300 ms controlled stall, which is what a blocked
+    /// worker would impose; no timeout threshold is relaxed to make this pass.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn context_storage_spill_does_not_starve_same_runtime_tasks() {
+        use crate::runtime::context::tool_budget::slow_spill_io_under;
+        use std::{
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
+            time::Instant,
+        };
+
+        const HEARTBEAT_MS: u64 = 10;
+        const CONTROLLED_STALL_MS: u64 = 300;
+        const MAX_HEARTBEAT_GAP_MS: u64 = 150;
+
+        let scratch = Scratch::new();
+        let group = stage(&scratch.0, snapshot());
+        let resource = group.context().resource(Resource::ToolResultSpill).unwrap();
+        let storage = resource
+            .as_any()
+            .downcast_ref::<ContextStorageResources>()
+            .unwrap();
+        let dir = scratch.0.join(".pilotdeck/tool-results");
+        let sessions: Vec<SessionContextStorage> = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(|id| {
+                storage
+                    .create_session(dir.join(format!("session-{id}")))
+                    .unwrap()
+            })
+            .collect();
+        let slow = slow_spill_io_under(&scratch.0, Duration::from_millis(CONTROLLED_STALL_MS));
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let heartbeat_stop = stop.clone();
+        let heartbeat = tokio::spawn(async move {
+            let mut max_gap = Duration::ZERO;
+            let mut ticks = 0usize;
+            let mut last = Instant::now();
+            while !heartbeat_stop.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(HEARTBEAT_MS)).await;
+                let now = Instant::now();
+                max_gap = max_gap.max(now - last);
+                last = now;
+                ticks += 1;
+            }
+            (max_gap, ticks)
+        });
+
+        let texts: Vec<String> = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(|c| c.repeat(200_001))
+            .collect();
+        // Four concurrent spill tasks, not two: with only one stealable task
+        // queued, tokio work stealing will not take it from the busy worker's
+        // queue, the two sessions serialize on one worker and the starved
+        // heartbeat keeps the other — the red case would be flaky. With a
+        // four-way barrier the idle worker always finds stealable work, so
+        // both workers deterministically hold synchronous spill calls.
+        let barrier = Arc::new(tokio::sync::Barrier::new(texts.len()));
+        let mut launches = Vec::new();
+        for (session, text) in sessions.into_iter().zip(texts.iter().cloned()) {
+            let barrier = barrier.clone();
+            launches.push(tokio::spawn(async move {
+                barrier.wait().await;
+                let reference = spill(&session, &text).await;
+                (session, reference)
+            }));
+        }
+        let mut references = Vec::new();
+        for launch in launches {
+            let (_session, reference) = launch.await.unwrap();
+            references.push(reference);
+        }
+        let stalled_opens = slow.fires();
+        drop(slow);
+        stop.store(true, Ordering::SeqCst);
+        let (max_gap, ticks) = heartbeat.await.unwrap();
+
+        // The real spill files and aliases landed with the expected contents.
+        for ((id, reference), expected) in ["a", "b", "c", "d"].iter().zip(&references).zip(&texts)
+        {
+            let session_id = format!("session-{id}");
+            let path = PathBuf::from(text_field(reference, "path"));
+            assert_eq!(path.parent(), Some(dir.join(&session_id).as_path()));
+            assert_eq!(std::fs::read_to_string(path).unwrap(), *expected);
+            let alias = text_field(reference, "readFilePath");
+            assert_eq!(
+                std::fs::read_to_string(scratch.0.join(alias)).unwrap(),
+                *expected
+            );
+        }
+        // Each session stalled one spill write and one alias-copy open.
+        assert!(
+            stalled_opens >= 8,
+            "the slow-I/O probe must reach the real open path (fires={stalled_opens})"
+        );
+        assert!(
+            max_gap < Duration::from_millis(MAX_HEARTBEAT_GAP_MS),
+            "heartbeat starved for {max_gap:?} while four sessions spilled \
+             (ticks={ticks}, stalled opens={stalled_opens})"
+        );
+    }
+
     #[test]
     fn context_storage_scoped_contexts_accept_same_execution_spill_root() {
         let scratch = Scratch::new();

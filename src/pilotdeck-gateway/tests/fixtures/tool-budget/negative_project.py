@@ -52,14 +52,14 @@ def restore():
 try:
     budget = ORIGINAL[BUDGET].decode()
     # Reproduce the previous spill-root algorithm from the reviewed a656ee8e;
-    # retain the test hook at the same pre-mkdir/check boundary.
+    # retain the test hook at the same pre-mkdir/check boundary. Since #637 the
+    # hooks are process-global statics fired by `fire_spill_hook` (the spill
+    # I/O runs on blocking threads), so the injection calls that helper.
     old = subprocess.check_output(['git', 'show', 'a656ee8ebb73e7043186eb3461a4c51d84c2fc98:src/pilotdeck-gateway/src/runtime/context/tool_budget.rs'], cwd=REPO).decode()
     old = old[old.index('fn ensure_directory('):old.index('// Keep the canonical paths')]
     old = old.replace('    if !within(root, target) {', '''    let root = target; // regression: trust spill root instead of project
     #[cfg(test)]
-    BEFORE_SPILL_MKDIR.with(|hook| {
-        if let Some(hook) = hook.borrow_mut().as_mut() { hook(target); }
-    });
+    fire_spill_hook(&BEFORE_SPILL_MKDIR, target);
     if !within(root, target) {''', 1)
     old = old.replace('create_directories(', 'fs::create_dir_all(')
     start = budget.index('fn ensure_directory(')

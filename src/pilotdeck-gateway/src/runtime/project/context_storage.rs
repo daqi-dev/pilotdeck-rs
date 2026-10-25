@@ -95,15 +95,15 @@ impl ContextStorageResources {
     /// locks the unique-key positive control. This API isolates session state,
     /// not a shared directory's filename namespace.
     ///
-    /// **Executor isolation.** [`ToolResultBudget`] performs the spill write,
-    /// alias copy and path checks synchronously on the calling task
-    /// (`write_text_if_absent`/`copy_file_if_absent`); `apply_tool_results` is
-    /// async but does not offload that I/O with `spawn_blocking`. A gateway
-    /// that shares the runtime must keep this work off workers that also serve
-    /// heartbeat/protocol deadlines (a dedicated blocking pool, or
-    /// `spawn_blocking` around the whole apply), matching the storage rule in
-    /// `runtime/context/instructions.rs`. Moving the spill I/O itself to
-    /// `spawn_blocking` is tracked by #637.
+    /// **Executor isolation.** [`ToolResultBudget`] offloads the spill write,
+    /// alias copy and their path checks to `spawn_blocking`
+    /// (`write_text_if_absent`/`copy_file_if_absent`), so `apply_tool_results`
+    /// never holds a tokio worker through the blocking fs calls. This matches
+    /// the TS spill port, whose `node:fs/promises` writes run off the event
+    /// loop, and the storage rule in `runtime/context/instructions.rs` (#637).
+    /// Once started a write is never abandoned: dropping the caller's future
+    /// does not abort the blocking task, exactly like the previous
+    /// synchronous call.
     pub fn create_session(
         &self,
         tool_results_dir: impl Into<PathBuf>,
