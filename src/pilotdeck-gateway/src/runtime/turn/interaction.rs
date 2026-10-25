@@ -46,6 +46,10 @@ pub struct InteractionTurnInput {
     pub record_message: Option<Arc<dyn Fn(JsValue) -> HostFuture<()> + Send + Sync>>,
     pub messages: Vec<JsValue>,
     pub switches: CompositionSwitches,
+    /// Turn callbacks supplied by the session composition (steer drain plus
+    /// durable compaction). The binder installs these after revoking any stale
+    /// turn authorizations; it never reuses callbacks from a previous turn.
+    pub turn_ports: crate::host::modules::turn::Ports,
 }
 #[derive(Clone, Default)]
 pub struct InteractionPorts {
@@ -96,6 +100,7 @@ impl InteractionTurn {
             .context();
         input.permission.profile = context.profile().interaction;
         input.permission.context.rules = input.permission.rules.snapshot();
+        let turn_ports = std::mem::take(&mut input.turn_ports);
         let permission_context = input.permission.context.clone();
         let catalog = router
             .capability
@@ -108,7 +113,9 @@ impl InteractionTurn {
         router.event = Default::default();
         router.permission = Default::default();
         router.lifecycle = Default::default();
-        router.turn.ports = Default::default();
+        // Replace, never inherit, both the stale steer authorizations and the
+        // session-supplied callbacks for this turn.
+        router.turn.ports = turn_ports;
         let mut turn = Self {
             router: Arc::new(router),
             manifest: JsObject::new(),
