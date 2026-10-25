@@ -20,7 +20,8 @@ Barrier 对两个 kind 各争抢 32 次，断言一个回调、无残留 replay�
 
 payload 只在 Rust 的 `JsValue` 边界内表示；支持 undefined / 非有限数字归一化、
 `__proto__` 赋值语义、嵌套对象与数组，迭代遍历不增加 Rust 调用栈深度限制。
-Date、BigInt、函数、循环对象等宿主对象由将来的 producer 在进入边界前转换。
+Date、BigInt、函数、循环对象等宿主值使用 `register_producer` 图值入口转换，
+见相邻 `interaction-values/README.md`；未来 producer 接线须调用该入口。
 注册句柄须显式 dispose；丢弃句柄本身不取消，与 TS 引用生命周期一致。
 
 复现（从仓库根，输出目录必须为新目录）：

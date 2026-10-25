@@ -82,6 +82,26 @@ impl<const P: bool> PendingBus<P> {
         entry: PendingEntry,
         payload: Option<JsValue>,
     ) -> Result<Registration, JsString> {
+        self.register_with_payload(owner, entry, || Ok(reconnect::replay_payload(payload)))
+            .map_err(|error| error.message)
+    }
+    /// Adapt host values after registration validation, before publishing pending
+    /// state. The arena is only borrowed for this synchronous call.
+    pub fn register_producer(
+        &self,
+        owner: &JsString,
+        entry: PendingEntry,
+        nodes: &[ProducerValue],
+        root: usize,
+    ) -> Result<Registration, ReplayValueError> {
+        self.register_with_payload(owner, entry, || to_interaction_replay_value(nodes, root))
+    }
+    fn register_with_payload(
+        &self,
+        owner: &JsString,
+        entry: PendingEntry,
+        payload: impl FnOnce() -> Result<Option<JsValue>, ReplayValueError>,
+    ) -> Result<Registration, ReplayValueError> {
         let mut state = self.port.state.lock().unwrap();
         let bucket = if let Some(index) = state
             .buckets
@@ -111,10 +131,14 @@ impl<const P: bool> PendingBus<P> {
                 " is already pending for session ".into(),
                 owner.clone(),
                 ".".into(),
-            ]));
+            ])
+            .into());
         }
         if owner.is_empty() || entry.request_id.is_empty() {
-            return Err("Interaction pending request requires ownerId and requestId.".into());
+            return Err(JsString::from(
+                "Interaction pending request requires ownerId and requestId.",
+            )
+            .into());
         }
         if state.requests.iter().any(|r| {
             &r.owner == owner && r.kind == self.kind() && r.entry.request_id == entry.request_id
@@ -125,8 +149,11 @@ impl<const P: bool> PendingBus<P> {
                 " is already pending for ".into(),
                 owner.clone(),
                 ".".into(),
-            ]));
+            ])
+            .into());
         }
+        state.replay_owners.insert(owner.clone());
+        let payload = payload()?;
         let token = state.serial();
         let active = Arc::new(AtomicBool::new(true));
         let binding = reconnect::current(&state, owner);
@@ -135,7 +162,7 @@ impl<const P: bool> PendingBus<P> {
             owner: owner.clone(),
             kind: self.kind(),
             entry: entry.clone(),
-            payload: reconnect::replay_payload(payload),
+            payload,
             binding,
         });
         state.buckets[bucket].entries.lock().unwrap().push(Stored {

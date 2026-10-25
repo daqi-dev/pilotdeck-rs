@@ -1,0 +1,8185 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/interaction/InteractionReplay.ts": "a163b21588c925ee4f5f03a10502a7a2018144457f82c7194b36f60e3a0f9a52",
+    "src/interaction/InteractionReconnect.ts": "da3dc151d66c3a377c0d9e51d7dec78b7e50476471fbeae142d64b1e8a751b80",
+    "src/gateway/permission/GatewayPermissionBus.ts": "b0caf4420156bf71eeaddb03159c80d9bc57c0a678f3d8714878486b96634ba8",
+    "src/gateway/elicitation/GatewayElicitationBus.ts": "f75544dfad91afbdbb37dbfb8e97e418b98ccefc5f1f7d9b0abde0a1ef382904"
+  },
+  "cases": [
+    {
+      "name": "permission/date/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 1735787045678
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "2025-01-02T03:04:05.678Z"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 1735787045678
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "2025-01-02T03:04:05.678Z"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 1735787045678
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "2025-01-02T03:04:05.678Z"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 1735787045678
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "2025-01-02T03:04:05.678Z"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 1735787045678
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "2025-01-02T03:04:05.678Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 1735787045678
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "2025-01-02T03:04:05.678Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/invalid-date/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": "NaN"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "question/invalid-date/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": "NaN"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "permission/invalid-date/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": "NaN"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "question/invalid-date/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": "NaN"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "permission/invalid-date/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": "NaN"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "question/invalid-date/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": "NaN"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "permission/date-upper/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000000
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "+275760-09-13T00:00:00.000Z"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date-upper/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000000
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "+275760-09-13T00:00:00.000Z"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date-upper/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000000
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "+275760-09-13T00:00:00.000Z"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date-upper/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000000
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "+275760-09-13T00:00:00.000Z"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date-upper/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000000
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "+275760-09-13T00:00:00.000Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date-upper/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000000
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "+275760-09-13T00:00:00.000Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date-lower/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -8640000000000000
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "-271821-04-20T00:00:00.000Z"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date-lower/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -8640000000000000
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "-271821-04-20T00:00:00.000Z"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date-lower/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -8640000000000000
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "-271821-04-20T00:00:00.000Z"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date-lower/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -8640000000000000
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "-271821-04-20T00:00:00.000Z"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date-lower/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -8640000000000000
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "-271821-04-20T00:00:00.000Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date-lower/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -8640000000000000
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "-271821-04-20T00:00:00.000Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date-outside/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000001
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "question/date-outside/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000001
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "permission/date-outside/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000001
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "question/date-outside/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000001
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "permission/date-outside/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000001
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "question/date-outside/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": 8640000000000001
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "permission/date-fraction/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -1.9
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "1969-12-31T23:59:59.999Z"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date-fraction/root",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -1.9
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "1969-12-31T23:59:59.999Z"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date-fraction/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -1.9
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "1969-12-31T23:59:59.999Z"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date-fraction/object",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -1.9
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "1969-12-31T23:59:59.999Z"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/date-fraction/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -1.9
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "1969-12-31T23:59:59.999Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/date-fraction/array",
+      "nodes": [
+        {
+          "tag": "date",
+          "value": -1.9
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "1969-12-31T23:59:59.999Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/bigint/root",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "123456789012345678901234567890"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "123456789012345678901234567890"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/bigint/root",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "123456789012345678901234567890"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "123456789012345678901234567890"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/bigint/object",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "123456789012345678901234567890"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "123456789012345678901234567890"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/bigint/object",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "123456789012345678901234567890"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "123456789012345678901234567890"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/bigint/array",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "123456789012345678901234567890"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "123456789012345678901234567890"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/bigint/array",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "123456789012345678901234567890"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "123456789012345678901234567890"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/negative-bigint/root",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "-123456789012345678901234567890"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "-123456789012345678901234567890"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/negative-bigint/root",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "-123456789012345678901234567890"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "-123456789012345678901234567890"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/negative-bigint/object",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "-123456789012345678901234567890"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "-123456789012345678901234567890"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/negative-bigint/object",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "-123456789012345678901234567890"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "-123456789012345678901234567890"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/negative-bigint/array",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "-123456789012345678901234567890"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "-123456789012345678901234567890"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/negative-bigint/array",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "-123456789012345678901234567890"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "-123456789012345678901234567890"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/zero-bigint/root",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "0"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "0"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/zero-bigint/root",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "0"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "0"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/zero-bigint/object",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "0"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "0"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/zero-bigint/object",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "0"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "0"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/zero-bigint/array",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "0"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "0"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/zero-bigint/array",
+      "nodes": [
+        {
+          "tag": "bigint",
+          "value": "0"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "0"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/function/root",
+      "nodes": [
+        {
+          "tag": "function"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/function/root",
+      "nodes": [
+        {
+          "tag": "function"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/function/object",
+      "nodes": [
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/function/object",
+      "nodes": [
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/function/array",
+      "nodes": [
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/function/array",
+      "nodes": [
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/symbol/root",
+      "nodes": [
+        {
+          "tag": "symbol"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/symbol/root",
+      "nodes": [
+        {
+          "tag": "symbol"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/symbol/object",
+      "nodes": [
+        {
+          "tag": "symbol"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/symbol/object",
+      "nodes": [
+        {
+          "tag": "symbol"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/symbol/array",
+      "nodes": [
+        {
+          "tag": "symbol"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/symbol/array",
+      "nodes": [
+        {
+          "tag": "symbol"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/undefined/root",
+      "nodes": [
+        {
+          "tag": "undefined"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/undefined/root",
+      "nodes": [
+        {
+          "tag": "undefined"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/undefined/object",
+      "nodes": [
+        {
+          "tag": "undefined"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/undefined/object",
+      "nodes": [
+        {
+          "tag": "undefined"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/undefined/array",
+      "nodes": [
+        {
+          "tag": "undefined"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/undefined/array",
+      "nodes": [
+        {
+          "tag": "undefined"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/nan/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "NaN"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": null
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/nan/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "NaN"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": null
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/nan/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "NaN"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": null
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/nan/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "NaN"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": null
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/nan/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "NaN"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/nan/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "NaN"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/infinity/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "Infinity"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": null
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/infinity/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "Infinity"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": null
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/infinity/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "Infinity"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": null
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/infinity/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "Infinity"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": null
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/infinity/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "Infinity"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/infinity/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "Infinity"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/negative-infinity/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-Infinity"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": null
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/negative-infinity/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-Infinity"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": null
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/negative-infinity/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-Infinity"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": null
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/negative-infinity/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-Infinity"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": null
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/negative-infinity/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-Infinity"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/negative-infinity/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-Infinity"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/negative-zero/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-0"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "$number": "-0"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/negative-zero/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-0"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "$number": "-0"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/negative-zero/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-0"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "$number": "-0"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/negative-zero/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-0"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "$number": "-0"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/negative-zero/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-0"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "$number": "-0"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/negative-zero/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": "-0"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "$number": "-0"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/null/root",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": null
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": null
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/null/root",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": null
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": null
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/null/object",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": null
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": null
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/null/object",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": null
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": null
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/null/array",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": null
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/null/array",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": null
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              null
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/boolean/root",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": false
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": false
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/boolean/root",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": false
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": false
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/boolean/object",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": false
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": false
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/boolean/object",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": false
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": false
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/boolean/array",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": false
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              false
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/boolean/array",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": false
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              false
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/string/root",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": "中文\ud800"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "中文\ud800"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/string/root",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": "中文\ud800"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": "中文\ud800"
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/string/object",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": "中文\ud800"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "中文\ud800"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/string/object",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": "中文\ud800"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": "中文\ud800"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/string/array",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": "中文\ud800"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "中文\ud800"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/string/array",
+      "nodes": [
+        {
+          "tag": "json",
+          "value": "中文\ud800"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "中文\ud800"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/finite/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": 42.5
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": 42.5
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/finite/root",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": 42.5
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": 42.5
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/finite/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": 42.5
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": 42.5
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/finite/object",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": 42.5
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": 42.5
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/finite/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": 42.5
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              42.5
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/finite/array",
+      "nodes": [
+        {
+          "tag": "number",
+          "value": 42.5
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              42.5
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/cycle/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "self",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "self": "[Circular]"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/cycle/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "self",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "self": "[Circular]"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/cycle/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "self",
+              0
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "self": "[Circular]"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/cycle/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "self",
+              0
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "self": "[Circular]"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/cycle/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "self",
+              0
+            ]
+          ]
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "self": "[Circular]"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/cycle/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "self",
+              0
+            ]
+          ]
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "self": "[Circular]"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/array-cycle/root",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "[Circular]"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/array-cycle/root",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "[Circular]"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/array-cycle/object",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": [
+                "[Circular]"
+              ]
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/array-cycle/object",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": [
+                "[Circular]"
+              ]
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/array-cycle/array",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                "[Circular]"
+              ]
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/array-cycle/array",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                "[Circular]"
+              ]
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "x",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": 1
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "a": {
+                "x": 1
+              },
+              "b": "[Circular]"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "x",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": 1
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "a": {
+                "x": 1
+              },
+              "b": "[Circular]"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "x",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": 1
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 3,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "a": {
+                  "x": 1
+                },
+                "b": "[Circular]"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "x",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": 1
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 3,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "a": {
+                  "x": 1
+                },
+                "b": "[Circular]"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "x",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": 1
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 3,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "a": {
+                  "x": 1
+                },
+                "b": "[Circular]"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "x",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": 1
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 3,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "a": {
+                  "x": 1
+                },
+                "b": "[Circular]"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared-json-object/root",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": {
+            "x": 1
+          }
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "x": 1
+              },
+              "[Circular]"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared-json-object/root",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": {
+            "x": 1
+          }
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "x": 1
+              },
+              "[Circular]"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared-json-object/object",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": {
+            "x": 1
+          }
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": [
+                {
+                  "x": 1
+                },
+                "[Circular]"
+              ]
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared-json-object/object",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": {
+            "x": 1
+          }
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": [
+                {
+                  "x": 1
+                },
+                "[Circular]"
+              ]
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared-json-object/array",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": {
+            "x": 1
+          }
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                {
+                  "x": 1
+                },
+                "[Circular]"
+              ]
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared-json-object/array",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": {
+            "x": 1
+          }
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                {
+                  "x": 1
+                },
+                "[Circular]"
+              ]
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared-json-array/root",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": [
+            1
+          ]
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                1
+              ],
+              "[Circular]"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared-json-array/root",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": [
+            1
+          ]
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                1
+              ],
+              "[Circular]"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared-json-array/object",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": [
+            1
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": [
+                [
+                  1
+                ],
+                "[Circular]"
+              ]
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared-json-array/object",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": [
+            1
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": [
+                [
+                  1
+                ],
+                "[Circular]"
+              ]
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared-json-array/array",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": [
+            1
+          ]
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                [
+                  1
+                ],
+                "[Circular]"
+              ]
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared-json-array/array",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "json",
+          "value": [
+            1
+          ]
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                [
+                  1
+                ],
+                "[Circular]"
+              ]
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared-date/root",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "date",
+          "value": 0
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "1970-01-01T00:00:00.000Z",
+              "1970-01-01T00:00:00.000Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared-date/root",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "date",
+          "value": 0
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              "1970-01-01T00:00:00.000Z",
+              "1970-01-01T00:00:00.000Z"
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared-date/object",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "date",
+          "value": 0
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": [
+                "1970-01-01T00:00:00.000Z",
+                "1970-01-01T00:00:00.000Z"
+              ]
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared-date/object",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "date",
+          "value": 0
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": [
+                "1970-01-01T00:00:00.000Z",
+                "1970-01-01T00:00:00.000Z"
+              ]
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/shared-date/array",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "date",
+          "value": 0
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                "1970-01-01T00:00:00.000Z",
+                "1970-01-01T00:00:00.000Z"
+              ]
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/shared-date/array",
+      "nodes": [
+        {
+          "tag": "array",
+          "items": [
+            1,
+            1
+          ]
+        },
+        {
+          "tag": "date",
+          "value": 0
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              [
+                "1970-01-01T00:00:00.000Z",
+                "1970-01-01T00:00:00.000Z"
+              ]
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/key-order/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "b",
+              1
+            ],
+            [
+              "2",
+              1
+            ],
+            [
+              "1",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "1": {},
+              "2": "[Circular]",
+              "b": "[Circular]"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/key-order/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "b",
+              1
+            ],
+            [
+              "2",
+              1
+            ],
+            [
+              "1",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "1": {},
+              "2": "[Circular]",
+              "b": "[Circular]"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/key-order/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "b",
+              1
+            ],
+            [
+              "2",
+              1
+            ],
+            [
+              "1",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "1": {},
+                "2": "[Circular]",
+                "b": "[Circular]"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/key-order/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "b",
+              1
+            ],
+            [
+              "2",
+              1
+            ],
+            [
+              "1",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "1": {},
+                "2": "[Circular]",
+                "b": "[Circular]"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/key-order/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "b",
+              1
+            ],
+            [
+              "2",
+              1
+            ],
+            [
+              "1",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "1": {},
+                "2": "[Circular]",
+                "b": "[Circular]"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/key-order/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "b",
+              1
+            ],
+            [
+              "2",
+              1
+            ],
+            [
+              "1",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "1": {},
+                "2": "[Circular]",
+                "b": "[Circular]"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/proto-alias/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ],
+            [
+              "x",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "x": "[Circular]"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/proto-alias/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ],
+            [
+              "x",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "x": "[Circular]"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/proto-alias/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ],
+            [
+              "x",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "x": "[Circular]"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/proto-alias/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ],
+            [
+              "x",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "x": "[Circular]"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/proto-alias/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ],
+            [
+              "x",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "x": "[Circular]"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/proto-alias/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ],
+            [
+              "x",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "object",
+          "fields": []
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "x": "[Circular]"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/proto-invalid/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "date",
+          "value": "NaN"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "question/proto-invalid/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "date",
+          "value": "NaN"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "permission/proto-invalid/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "date",
+          "value": "NaN"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "question/proto-invalid/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "date",
+          "value": "NaN"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "permission/proto-invalid/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "date",
+          "value": "NaN"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "question/proto-invalid/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "__proto__",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "date",
+          "value": "NaN"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "snapshot": [],
+        "count": 0
+      }
+    },
+    {
+      "name": "permission/map/root",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": []
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/map/root",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": []
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/map/object",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": []
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {}
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/map/object",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": []
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {}
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/map/array",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": []
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {}
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/map/array",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": []
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {}
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/set/root",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": []
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/set/root",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": []
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/set/object",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": []
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {}
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/set/object",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": []
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {}
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/set/array",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": []
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {}
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/set/array",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": []
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 1,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {}
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/map-fields/root",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "bigint",
+          "value": "7"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "own": "7"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/map-fields/root",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "bigint",
+          "value": "7"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "own": "7"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/map-fields/object",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "bigint",
+          "value": "7"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "own": "7"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/map-fields/object",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "bigint",
+          "value": "7"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "own": "7"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/map-fields/array",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "bigint",
+          "value": "7"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "own": "7"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/map-fields/array",
+      "nodes": [
+        {
+          "tag": "map",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "bigint",
+          "value": "7"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "own": "7"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/set-fields/root",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/set-fields/root",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {}
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/set-fields/object",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {}
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/set-fields/object",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {}
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/set-fields/array",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {}
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/set-fields/array",
+      "nodes": [
+        {
+          "tag": "set",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {}
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/class/root",
+      "nodes": [
+        {
+          "tag": "class",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "own": "field"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/class/root",
+      "nodes": [
+        {
+          "tag": "class",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "own": "field"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/class/object",
+      "nodes": [
+        {
+          "tag": "class",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "own": "field"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/class/object",
+      "nodes": [
+        {
+          "tag": "class",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "own": "field"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/class/array",
+      "nodes": [
+        {
+          "tag": "class",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "own": "field"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/class/array",
+      "nodes": [
+        {
+          "tag": "class",
+          "fields": [
+            [
+              "own",
+              1
+            ]
+          ]
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 2,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "own": "field"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/toJSON/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "toJSON",
+              1
+            ],
+            [
+              "own",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "own": "field"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/toJSON/root",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "toJSON",
+              1
+            ],
+            [
+              "own",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        }
+      ],
+      "root": 0,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "own": "field"
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/toJSON/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "toJSON",
+              1
+            ],
+            [
+              "own",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 3,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "own": "field"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/toJSON/object",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "toJSON",
+              1
+            ],
+            [
+              "own",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        },
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "root": 3,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": {
+              "value": {
+                "own": "field"
+              }
+            }
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "permission/toJSON/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "toJSON",
+              1
+            ],
+            [
+              "own",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 3,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "permission",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "own": "field"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    },
+    {
+      "name": "question/toJSON/array",
+      "nodes": [
+        {
+          "tag": "object",
+          "fields": [
+            [
+              "toJSON",
+              1
+            ],
+            [
+              "own",
+              2
+            ]
+          ]
+        },
+        {
+          "tag": "function"
+        },
+        {
+          "tag": "json",
+          "value": "field"
+        },
+        {
+          "tag": "array",
+          "items": [
+            0
+          ]
+        }
+      ],
+      "root": 3,
+      "expected": {
+        "error": null,
+        "snapshot": [
+          {
+            "ownerId": "s",
+            "requestId": "r",
+            "kind": "question",
+            "toolCallId": "t",
+            "toolName": "tool",
+            "payload": [
+              {
+                "own": "field"
+              }
+            ]
+          }
+        ],
+        "count": 1
+      }
+    }
+  ],
+  "ordering": [
+    {
+      "kind": "permission",
+      "state": "duplicate",
+      "error": {
+        "name": "Error",
+        "message": "Permission request r is already pending for session s."
+      },
+      "snapshot": [
+        {
+          "ownerId": "s",
+          "requestId": "r",
+          "kind": "permission",
+          "toolCallId": "t",
+          "toolName": "tool"
+        }
+      ],
+      "count": 1
+    },
+    {
+      "kind": "permission",
+      "state": "shared-duplicate",
+      "error": {
+        "name": "Error",
+        "message": "Interaction request r is already pending for s."
+      },
+      "snapshot": [
+        {
+          "ownerId": "s",
+          "requestId": "r",
+          "kind": "permission",
+          "toolCallId": "t",
+          "toolName": "tool"
+        }
+      ],
+      "count": 0
+    },
+    {
+      "kind": "permission",
+      "state": "empty-owner",
+      "error": {
+        "name": "Error",
+        "message": "Interaction pending request requires ownerId and requestId."
+      },
+      "snapshot": [],
+      "count": 0
+    },
+    {
+      "kind": "permission",
+      "state": "empty-request",
+      "error": {
+        "name": "Error",
+        "message": "Interaction pending request requires ownerId and requestId."
+      },
+      "snapshot": [],
+      "count": 0
+    },
+    {
+      "kind": "permission",
+      "state": "retry-after-error",
+      "error": {
+        "name": "RangeError",
+        "message": "Invalid time value"
+      },
+      "snapshot": [
+        {
+          "ownerId": "s",
+          "requestId": "r",
+          "kind": "permission",
+          "toolCallId": "t",
+          "toolName": "tool",
+          "payload": "1970-01-01T00:00:00.000Z"
+        }
+      ],
+      "count": 1
+    },
+    {
+      "kind": "question",
+      "state": "duplicate",
+      "error": {
+        "name": "Error",
+        "message": "Elicitation request r is already pending for session s."
+      },
+      "snapshot": [
+        {
+          "ownerId": "s",
+          "requestId": "r",
+          "kind": "question",
+          "toolCallId": "t",
+          "toolName": "tool"
+        }
+      ],
+      "count": 1
+    },
+    {
+      "kind": "question",
+      "state": "shared-duplicate",
+      "error": {
+        "name": "Error",
+        "message": "Interaction request r is already pending for s."
+      },
+      "snapshot": [
+        {
+          "ownerId": "s",
+          "requestId": "r",
+          "kind": "question",
+          "toolCallId": "t",
+          "toolName": "tool"
+        }
+      ],
+      "count": 0
+    },
+    {
+      "kind": "question",
+      "state": "empty-owner",
+      "error": {
+        "name": "Error",
+        "message": "Interaction pending request requires ownerId and requestId."
+      },
+      "snapshot": [],
+      "count": 0
+    },
+    {
+      "kind": "question",
+      "state": "empty-request",
+      "error": {
+        "name": "Error",
+        "message": "Interaction pending request requires ownerId and requestId."
+      },
+      "snapshot": [],
+      "count": 0
+    },
+    {
+      "kind": "question",
+      "state": "retry-after-error",
+      "error": {
+        "name": "RangeError",
+        "message": "Invalid time value"
+      },
+      "snapshot": [
+        {
+          "ownerId": "s",
+          "requestId": "r",
+          "kind": "question",
+          "toolCallId": "t",
+          "toolName": "tool",
+          "payload": "1970-01-01T00:00:00.000Z"
+        }
+      ],
+      "count": 1
+    }
+  ],
+  "lifecycle": [
+    {
+      "kind": "permission",
+      "cleanup": "none",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "reject",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "bus-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "owner-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": false,
+        "next": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": true,
+        "nextAgain": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "port-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": false,
+        "next": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": true,
+        "nextAgain": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "register-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": true,
+        "nextAgain": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "register-consume",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": true,
+        "nextAgain": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "stale-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "stale-port-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "stale-consume",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "permission",
+      "cleanup": "stale-reject",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "none",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "reject",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "bus-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "owner-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": false,
+        "next": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": true,
+        "nextAgain": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "port-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": false,
+        "next": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": true,
+        "nextAgain": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "register-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": true,
+        "nextAgain": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "register-consume",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": true,
+        "nextAgain": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "stale-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "stale-port-dispose",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "stale-consume",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    },
+    {
+      "kind": "question",
+      "cleanup": "stale-reject",
+      "expected": {
+        "first": {
+          "outcome": "no_pending",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "error": {
+          "name": "RangeError",
+          "message": "Invalid time value"
+        },
+        "disconnected": true,
+        "next": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        },
+        "disconnectedAgain": false,
+        "nextAgain": {
+          "outcome": "stale_binding",
+          "binding": {
+            "connectionId": "c",
+            "generation": 1
+          },
+          "requests": []
+        }
+      }
+    }
+  ]
+}
