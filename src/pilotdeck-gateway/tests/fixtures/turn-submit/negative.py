@@ -22,12 +22,15 @@ repo = rust.parent
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 source = rust / 'pilotdeck-gateway/src/runtime/turn/submit.rs'
-with mutating_sources(repo, [source]) as snapshots:
+host_source = rust / 'pilotdeck-gateway/src/runtime/turn/submit_host.rs'
+with mutating_sources(repo, [source, host_source]) as snapshots:
     original = snapshots[source]
+    host_original = snapshots[host_source]
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
     assert Path(env['CARGO_TARGET_DIR']).resolve() == rust / 'target'
     assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
     test = 'runtime::turn::submit::tests'
+    host_test = 'runtime::turn::submit_host::tests'
     # Each mutation changes production behavior. The chosen case names are real
     # generated scenarios; all golden assertions remain unchanged.
     mutants = [
@@ -79,19 +82,33 @@ with mutating_sources(repo, [source]) as snapshots:
         ('snapshot-capability-refusal-skipped', 'if workspace.snapshots_required &&', 'if false && workspace.snapshots_required &&', 'invalid-mode', 'snapshot-recorder-unavailable: explicit capability refusal', 'snapshot-recorder-unavailable'),
         ('snapshot-cwd-refusal-skipped', 'return Err(SubmitError::new(\n                    "CAPABILITY_UNAVAILABLE",\n                    "Workspace snapshot cwd is unavailable.",\n                ));', '/* silently skip missing snapshot cwd */', 'invalid-mode', 'snapshot-cwd-unavailable: explicit capability refusal', 'snapshot-cwd-unavailable'),
         ('cwd-capability-error-ignored', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd)', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd).or(Ok::<(), SubmitError>(()))', 'invalid-mode', 'cwd-host-unavailable: explicit capability refusal', 'cwd-host-unavailable'),
+        # Production-host mutants live in submit_host.rs; the lease guard's
+        # exactly-once assertion lives in the unit tests there.
+        ('guard-config-not-provided', 'self.services\n            .run_policy()\n            .and_then(|policy| policy.get("failureGuard").cloned())', 'None', 'guard-model-trip', 'guard-model-trip: step', None),
+        ('lease-release-guard-removed', 'let release = self\n            .leases\n            .lock()\n            .unwrap()\n            .remove(&(run.session_key.clone(), run.run_id.clone()));', 'let release: Option<SubmitLeaseRelease> = None;', None, 'finish_pump_releases_a_lease_exactly_once', None),
     ]
+    mutant_source = {'guard-config-not-provided': host_source,
+                     'lease-release-guard-removed': host_source}
+    mutant_test = {'lease-release-guard-removed': host_test}
     summary = []
     try:
         for name, before, _, _, _, _ in mutants:
-            assert original.decode().count(before) == 1, (name, 'anchor is not unique')
-        (output / 'original-sha256.json').write_text(json.dumps({str(source.relative_to(repo)): hashlib.sha256(original).hexdigest()}, indent=2)+'\n')
+            anchor_source = mutant_source.get(name, source)
+            anchor_text = (host_original if anchor_source == host_source else original).decode()
+            assert anchor_text.count(before) == 1, (name, 'anchor is not unique')
+        (output / 'original-sha256.json').write_text(json.dumps({
+            str(source.relative_to(repo)): hashlib.sha256(original).hexdigest(),
+            str(host_source.relative_to(repo)): hashlib.sha256(host_original).hexdigest()}, indent=2)+'\n')
         selected = [('baseline', None, None, None, None, None)] + mutants
         if len(sys.argv) > 2:
             selected = [entry for entry in selected if entry[0] in sys.argv[2:]]
             assert selected, 'unknown control'
         for name, before, after, case, marker, capability in selected:
-            assert source.read_bytes() == original, 'source changed outside this run'
-            if before: source.write_text(original.decode().replace(before, after, 1))
+            assert source.read_bytes() == original and host_source.read_bytes() == host_original, 'source changed outside this run'
+            target = mutant_source.get(name, source)
+            target_original = host_original if target == host_source else original
+            used_test = mutant_test.get(name, test)
+            if before: target.write_text(target_original.decode().replace(before, after, 1))
             slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
             slot_deadline = time.monotonic() + 1800
             while slots.returncode == 1:
@@ -99,7 +116,7 @@ with mutating_sources(repo, [source]) as snapshots:
                 time.sleep(30)
                 slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
             assert slots.returncode == 0
-            command = ['cargo', 'test', '--offline', '--manifest-path', str(rust / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', test, '--', '--nocapture']
+            command = ['cargo', 'test', '--offline', '--manifest-path', str(rust / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', used_test, '--', '--nocapture']
             run_env = dict(env)
             if case: run_env['PDRS_SUBMIT_CASE'] = case
             else: run_env.pop('PDRS_SUBMIT_CASE', None)
@@ -110,15 +127,21 @@ with mutating_sources(repo, [source]) as snapshots:
                 run = run_owned(command, cwd=repo, env=run_env, timeout=240)
                 raw = run.stdout + run.stderr
                 returncode = run.returncode
+                if name == 'baseline':
+                    # The production-host unit filter must also be green before
+                    # any mutation of submit_host.rs is judged.
+                    host_run = run_owned(['cargo', 'test', '--offline', '--manifest-path', str(rust / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', host_test, '--', '--nocapture'], cwd=repo, env=run_env, timeout=240)
+                    raw += '\n' + host_run.stdout + host_run.stderr
+                    returncode = returncode or host_run.returncode
             except subprocess.TimeoutExpired as error:
                 timed_out = True
                 raw = (error.output or '') + (error.stderr or '')
                 returncode = -signal.SIGKILL
             finally:
-                source.write_bytes(original)
-            valid = not timed_out and ((returncode == 0 and 'test result: ok. 3 passed' in raw) if name == 'baseline' else (
+                target.write_bytes(target_original)
+            valid = not timed_out and ((returncode == 0 and 'test result: ok. 3 passed' in raw and 'test result: ok. 8 passed' in raw) if name == 'baseline' else (
                 returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw
-                and 'assertion' in raw and marker in raw and test in raw))
+                and 'assertion' in raw and marker in raw and used_test in raw))
             (output / f'{name}.log').write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={returncode}\n')
             summary.append(dict(name=name, case=case, before=before, after=after, exit=returncode, marker=marker, valid=valid))
             (output/'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
@@ -126,5 +149,7 @@ with mutating_sources(repo, [source]) as snapshots:
             if not valid: raise SystemExit(1)
     finally:
         source.write_bytes(original)
+        host_source.write_bytes(host_original)
         assert source.read_bytes() == original
+        assert host_source.read_bytes() == host_original
     print(f'{len(summary)} controls checked; original bytes restored', flush=True)

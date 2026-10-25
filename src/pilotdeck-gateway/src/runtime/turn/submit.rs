@@ -153,7 +153,7 @@ struct PumpContext<'a> {
 /// after SDK configuration, with the completion cancellation signal.
 /// They return wire events
 /// (including usage/command short-circuits); empty means admission may proceed.
-/// The production host/WS adapter is assembled by pr5/pr6.
+/// The production host lives in [`super::submit_host`].
 pub trait SubmitHost: Send + Sync {
     fn workspace(&self, input: &JsValue) -> Result<SubmitWorkspace, SubmitError>;
     /// Normalized runPolicy.failureGuard snapshot, resolved after refresh.

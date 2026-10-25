@@ -1,6 +1,10 @@
 use super::super::{
     projector::GatewayAgentEventProjectorOptions,
     publish::{FileRegistry, RegistryFuture},
+    submit_host::{
+        GatewaySubmitHost, SubmitAdmission, SubmitAttachmentLease, SubmitCwdService,
+        SubmitHostServices, SubmitReplacement,
+    },
 };
 use super::*;
 use crate::{
@@ -230,57 +234,14 @@ impl SubmitSnapshots for TestSnapshots {
         })
     }
 }
+/// Admission windows, as wired by the admission packages; the host windows run
+/// through the production [`GatewaySubmitHost`] below.
 struct Host {
     session: Arc<Session>,
-    refreshed: AtomicBool,
-    prepare: Gate,
     sdk: Gate,
     recovery: Gate,
 }
-impl SubmitHost for Host {
-    fn workspace(&self, _: &JsValue) -> Result<SubmitWorkspace, SubmitError> {
-        Ok(SubmitWorkspace {
-            id: self.session.setup["workspace"].as_str().map(Into::into),
-            snapshots_required: self.session.setup["snapshots"] == true,
-            recorder: if self.session.setup["snapshots"] == true
-                && self.session.setup["snapshotsUnavailable"] != true
-            {
-                Some(Arc::new(TestSnapshots {
-                    session: self.session.clone(),
-                }))
-            } else {
-                None
-            },
-        })
-    }
-    fn failure_guard_config(&self) -> Option<JsValue> {
-        let config = if self.refreshed.load(Ordering::SeqCst) {
-            self.session
-                .setup
-                .get("guardAfterRefresh")
-                .or_else(|| self.session.setup.get("failureGuard"))
-        } else {
-            self.session.setup.get("failureGuard")
-        };
-        config.map(js)
-    }
-    fn set_session_cwd(&self, _: &JsString, _: &JsString) -> Result<(), SubmitError> {
-        if self.session.setup["cwdUnavailable"] == true {
-            return Err(SubmitError::new(
-                "CAPABILITY_UNAVAILABLE",
-                "Session cwd host capability is unavailable.",
-            ));
-        }
-        self.session.log.host("cwd");
-        Ok(())
-    }
-    fn now_ms(&self) -> f64 {
-        0.0
-    }
-    fn abort_turn_timeout_ms(&self) -> u64 {
-        20
-    }
-
+impl SubmitAdmission for Host {
     fn normalize<'a>(
         &'a self,
         _: &'a mut JsValue,
@@ -372,16 +333,47 @@ impl SubmitHost for Host {
             Ok(self.session.setup["sdkChanged"] == true)
         })
     }
-    fn finish_pump<'a>(&'a self, _: &'a RunRef) -> SubmitFuture<'a, Result<(), SubmitError>> {
-        Box::pin(async {
-            if self.session.setup["lease"] == true {
-                self.session.log.host("lease_release");
-            }
-            if self.session.setup["leaseFailure"] == true {
-                Err(SubmitError::new("LEASE", "injected lease release failure"))
-            } else {
-                Ok(())
-            }
+    fn reject_pending(&self, _: &JsString, reason: &str) -> Result<(), SubmitError> {
+        self.session.log.host(&format!("reject:{reason}"));
+        Ok(())
+    }
+}
+struct Cwd {
+    session: Arc<Session>,
+}
+impl SubmitCwdService for Cwd {
+    fn set(&self, _: &JsString, _: &JsString) -> Result<(), SubmitError> {
+        self.session.log.host("cwd");
+        Ok(())
+    }
+}
+/// The oracle's gateway options, as `SubmitHostServices` ports.
+struct Services {
+    session: Arc<Session>,
+    refreshed: AtomicBool,
+    prepare: Gate,
+}
+impl SubmitHostServices for Services {
+    fn workspace_id(&self, _: &JsValue) -> Result<Option<JsString>, SubmitError> {
+        Ok(self.session.setup["workspace"].as_str().map(Into::into))
+    }
+    fn snapshots(&self) -> Option<Arc<dyn SubmitSnapshots>> {
+        (self.session.setup["snapshots"] == true
+            && self.session.setup["snapshotsUnavailable"] != true)
+            .then(|| {
+                Arc::new(TestSnapshots {
+                    session: self.session.clone(),
+                }) as Arc<dyn SubmitSnapshots>
+            })
+    }
+    fn snapshots_required(&self) -> bool {
+        self.session.setup["snapshots"] == true
+    }
+    fn cwd(&self) -> Option<Arc<dyn SubmitCwdService>> {
+        (self.session.setup["cwdUnavailable"] != true).then(|| {
+            Arc::new(Cwd {
+                session: self.session.clone(),
+            }) as Arc<dyn SubmitCwdService>
         })
     }
     fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
@@ -395,12 +387,46 @@ impl SubmitHost for Host {
             }
         })
     }
-    fn prepare<'a>(
+    fn run_policy(&self) -> Option<JsValue> {
+        let config = if self.refreshed.load(Ordering::SeqCst) {
+            self.session
+                .setup
+                .get("guardAfterRefresh")
+                .or_else(|| self.session.setup.get("failureGuard"))
+        } else {
+            self.session.setup.get("failureGuard")
+        };
+        config.map(|config| object([("failureGuard", js(config))]))
+    }
+    fn resolve_attachments<'a>(
         &'a self,
-        input: &'a JsValue,
-        run: &'a RunRef,
-    ) -> SubmitFuture<'a, Result<PreparedTurn, SubmitError>> {
-        Box::pin(async move {
+        _: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<SubmitAttachmentLease, SubmitError>> {
+        let session = self.session.clone();
+        Box::pin(async {
+            Ok(SubmitAttachmentLease {
+                attachments: vec![],
+                release: Box::new(move || {
+                    Box::pin(async move {
+                        session.log.host("lease_release");
+                        if session.setup["leaseFailure"] == true {
+                            Err(SubmitError::new("LEASE", "injected lease release failure"))
+                        } else {
+                            Ok(())
+                        }
+                    })
+                }),
+            })
+        })
+    }
+    fn prepare_attachment_turn<'a>(
+        &'a self,
+        message: &'a JsValue,
+        _attachments: Vec<JsValue>,
+        _: Option<&JsString>,
+        _: Option<&JsString>,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        Box::pin(async {
             self.session.log.host("prepare");
             if self.session.setup["prepareGate"] == true {
                 self.prepare.wait().await;
@@ -408,40 +434,19 @@ impl SubmitHost for Host {
             if self.session.setup["epochFailure"] == true {
                 return Err(SubmitError::new("HISTORY_EPOCH", "history epoch changed"));
             }
-            Ok(PreparedTurn {
-                model_selection: if self.session.setup["selection"].is_object() {
-                    js(&self.session.setup["selection"])
-                } else {
-                    object([("source", "default".into())])
-                },
-                input: object([
-                    ("type", "text".into()),
-                    ("text", field(input, "message").clone()),
-                ]),
-                options: object([
-                    ("turnId", JsValue::String(run.run_id.clone())),
-                    (
-                        "execution",
-                        object([
-                            ("runId", JsValue::String(run.run_id.clone())),
-                            ("operationId", JsValue::String(run.run_id.clone())),
-                        ]),
-                    ),
-                ]),
-            })
+            Ok(object([("type", "text".into()), ("text", message.clone())]))
         })
     }
-    fn commit_accepted_input<'a>(
+    fn resolve_model_selection<'a>(
         &'a self,
-        _: &'a RunRef,
-    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        _: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
         Box::pin(async {
-            self.session.log.host("commit");
-            if self.session.setup["commitFailure"] == true {
-                Err(SubmitError::new("COMMIT", "injected commit failure"))
+            Ok(if self.session.setup["selection"].is_object() {
+                js(&self.session.setup["selection"])
             } else {
-                Ok(())
-            }
+                object([("source", "default".into())])
+            })
         })
     }
     fn record_failure<'a>(
@@ -465,13 +470,6 @@ impl SubmitHost for Host {
             }
         })
     }
-    fn reject_pending(&self, _: &JsString, reason: &str) -> Result<(), SubmitError> {
-        self.session.log.host(&format!("reject:{reason}"));
-        Ok(())
-    }
-    fn release_claim(&self, _: &JsString, _: &JsString) {
-        self.session.log.host("release");
-    }
     fn after_turn(&self, _: &RunRef) -> Result<(), SubmitError> {
         self.session.log.host("after");
         if self.session.setup["finallyFailure"] == true {
@@ -479,6 +477,34 @@ impl SubmitHost for Host {
         } else {
             Ok(())
         }
+    }
+    fn now_ms(&self) -> f64 {
+        0.0
+    }
+    fn abort_turn_timeout_ms(&self) -> u64 {
+        20
+    }
+}
+struct FakeReplacement {
+    session: Arc<Session>,
+}
+impl SubmitReplacement for FakeReplacement {
+    fn commit_accepted_input<'a>(
+        &'a self,
+        _: &'a JsString,
+        _: &'a JsString,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async {
+            self.session.log.host("commit");
+            if self.session.setup["commitFailure"] == true {
+                Err(SubmitError::new("COMMIT", "injected commit failure"))
+            } else {
+                Ok(())
+            }
+        })
+    }
+    fn release_claim(&self, _: &JsString, _: &JsString) {
+        self.session.log.host("release");
     }
 }
 struct Registry {
@@ -635,13 +661,23 @@ async fn replay_case(case: &Value) {
         setup: setup.clone(),
         pending: Arc::default(),
     });
-    let host = Arc::new(Host {
+    let services = Arc::new(Services {
         session: session.clone(),
         refreshed: AtomicBool::new(false),
         prepare: Gate::new(),
+    });
+    let admission = Arc::new(Host {
+        session: session.clone(),
         sdk: Gate::new(),
         recovery: Gate::new(),
     });
+    let host = Arc::new(GatewaySubmitHost::new(
+        services.clone(),
+        Arc::new(FakeReplacement {
+            session: session.clone(),
+        }),
+        admission.clone(),
+    ));
     let submitter = Arc::new(TurnSubmitter {
         owner: owner.clone(),
         coordinator,
@@ -683,9 +719,9 @@ async fn replay_case(case: &Value) {
             "accept" => session.accepted.open(),
             "terminal" => session.terminal.open(),
             "end" => session.end.open(),
-            "prepare" => host.prepare.open(),
-            "sdk" => host.sdk.open(),
-            "recovery" => host.recovery.open(),
+            "prepare" => services.prepare.open(),
+            "sdk" => admission.sdk.open(),
+            "recovery" => admission.recovery.open(),
             "resume" => log.consumer_hold.lock().unwrap().as_ref().unwrap().open(),
             "timeout" => {
                 tokio::time::advance(Duration::from_millis(1000)).await;
