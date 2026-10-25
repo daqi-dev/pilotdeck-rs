@@ -145,6 +145,11 @@ def test_classify_failure() -> None:
         # fell back to provider_error.
         ({"status": "FAIL", "error": {"code": "provider_error", "status": 503}},
          "environment-or-provider"),
+        # The probe now copies the canonical `status`. An upstream 5xx whose
+        # non-canonical `type` became the code (`api_error`) is not in the
+        # needle list, so status is the only environment signal.
+        ({"status": "FAIL", "error": {"code": "api_error", "status": 503}},
+         "environment-or-provider"),
     ]
     for payload, expected in cases:
         got = rp.classify_failure(payload)
@@ -200,8 +205,44 @@ def test_self_check() -> None:
         skipped = rp.self_check([clean, vanished], {"K": secret})
         check("vanished artifact is skipped, not a traceback",
               skipped.get("filesSkipped", 0) >= 1, repr(skipped))
-        check("vanished artifact does not fail the self-check",
-              rp.self_check_ok(skipped) is True, repr(skipped))
+        # A partial scan is not evidence of "no leak": the file list is short,
+        # so 未命中 over it would be a false negative.
+        check("vanished artifact marks the scan truncated",
+              skipped.get("scanTruncated") is True, repr(skipped))
+        check("vanished artifact does not make the self-check green",
+              rp.self_check_ok(skipped) is False, repr(skipped))
+
+        truncated = rp.ArtifactScan([clean], walk_errors=1,
+                                    skipped_dirs=[str(directory / "gone")])
+        truncated_check = rp.self_check(truncated, {"K": secret})
+        check("walk error is surfaced as a truncated scan",
+              truncated_check["walkErrors"] == 1
+              and truncated_check["scanTruncated"] is True,
+              repr(truncated_check))
+        check("walk error fails the self-check",
+              rp.self_check_ok(truncated_check) is False,
+              repr(truncated_check))
+
+        # Real os.walk(onerror=...) path: one unreadable directory must be
+        # skipped while a sibling is still scanned, not abort the whole walk.
+        nested = directory / "nested"
+        nested.mkdir()
+        (nested / "ok.txt").write_text("readable\n", encoding="utf-8")
+        blocked_dir = nested / "blocked"
+        blocked_dir.mkdir()
+        (blocked_dir / "hidden.txt").write_text("unreadable\n", encoding="utf-8")
+        os.chmod(blocked_dir, 0)
+        try:
+            scanned = rp.collect_artifacts(directory)
+        finally:
+            os.chmod(blocked_dir, 0o755)
+        names = {path.name for path in scanned}
+        check("collect_artifacts keeps walking after one directory error",
+              "ok.txt" in names, repr(sorted(names)))
+        check("collect_artifacts records the skipped directory",
+              scanned.walk_errors >= 1, repr(scanned.skipped_dirs))
+        check("a walk error fails the self-check",
+              rp.self_check_ok(rp.self_check(scanned, {"K": secret})) is False)
 
 
 def test_output_tokens() -> None:
@@ -222,6 +263,7 @@ def empty_limits() -> dict:
         "requestsUnknown": [],
         "outputTokensReported": 0,
         "usageMissing": [],
+        "echoMissing": [],
         "violations": [],
     }
 
@@ -237,6 +279,8 @@ def test_account_scenario() -> None:
           and limits["usageMissing"] == ["model_runtime_text"]
           and limits["outputTokensReported"] == 0,
           repr((payload, limits)))
+    check("missing maxOutputTokens echo is recorded, not assumed",
+          limits["echoMissing"] == ["model_runtime_text"], repr(limits))
 
     limits = empty_limits()
     payload = {"requests": 1, "requestsUnknown": True,
@@ -271,6 +315,55 @@ def test_account_scenario() -> None:
     check("echoed maxOutputTokens mismatch is enforced",
           any("maxOutputTokens=99" in item for item in violations),
           repr(violations))
+
+    # Request budget is checked after the fact, not only before the next
+    # scenario: a probe retry can send 2 in one scenario and still report.
+    limits = empty_limits()
+    payload = {"requests": 2, "maxOutputTokens": 128,
+               "usage": {"outputTokens": 1}}
+    violations = rp.account_scenario(limits, "model_runtime_text", payload)
+    check("more than one request in one scenario is a violation",
+          any("sent 2 requests > 1" in item for item in violations),
+          repr(violations))
+    check("over-budget known requests are counted",
+          limits["requestsSent"] == 2, repr(limits))
+
+    limits = empty_limits()
+    limits["requestsSent"] = 2
+    payload = {"requests": 2, "maxOutputTokens": 128,
+               "usage": {"outputTokens": 1}}
+    violations = rp.account_scenario(limits, "model_runtime_tool", payload)
+    check("known total above MAX_REQUESTS is a violation",
+          any("total requests=4" in item for item in violations),
+          repr(violations))
+
+    limits = empty_limits()
+    limits["requestsSent"] = 1
+    limits["requestsUnknown"] = ["model_runtime_text"]
+    payload = {"requests": 2, "maxOutputTokens": 128,
+               "usage": {"outputTokens": 1}}
+    violations = rp.account_scenario(limits, "model_runtime_tool", payload)
+    check("known + unknown above MAX_REQUESTS is a violation",
+          any("total requests=4" in item for item in violations),
+          repr(violations))
+
+    # Negative control for the budget: exactly at the cap is not a violation.
+    limits = empty_limits()
+    limits["requestsSent"] = 2
+    payload = {"requests": 1, "maxOutputTokens": 128,
+               "usage": {"outputTokens": 1}}
+    violations = rp.account_scenario(limits, "model_runtime_tool", payload)
+    check("exactly MAX_REQUESTS is not a budget violation",
+          not any("total requests" in item for item in violations),
+          repr(violations))
+
+    # A well-formed echo is not recorded as missing.
+    limits = empty_limits()
+    payload = {"requests": 1, "maxOutputTokens": 128,
+               "usage": {"outputTokens": 1}}
+    rp.account_scenario(limits, "model_runtime_text", payload)
+    check("present maxOutputTokens echo is not marked missing",
+          limits["echoMissing"] == [], repr(limits))
 
 
 def test_exit_codes() -> None:
@@ -312,6 +405,32 @@ def test_exit_codes() -> None:
     ]}
     check("FAIL wins over BLOCKED (exit 1)",
           rp.final_exit_code(fail_and_blocked, True, 1) == rp.EXIT_FAIL)
+
+    # Unverified token caps are not a green run: all scenarios PASS but no
+    # usage / no echoed cap means the check never ran.
+    usage_missing = {"scenarios": [
+        {"layer": "model-runtime", "status": "PASS"},
+    ], "limits": {"usageMissing": ["model_runtime_stream_cancel"],
+                  "echoMissing": []}}
+    check("all PASS but usage missing is BLOCKED (exit 3)",
+          rp.final_exit_code(usage_missing, True, 1) == rp.EXIT_BLOCKED)
+    echo_missing = {"scenarios": [
+        {"layer": "model-runtime", "status": "PASS"},
+    ], "limits": {"usageMissing": [],
+                  "echoMissing": ["model_runtime_text"]}}
+    check("all PASS but maxOutputTokens echo missing is BLOCKED (exit 3)",
+          rp.final_exit_code(echo_missing, True, 1) == rp.EXIT_BLOCKED)
+    verified = {"scenarios": [
+        {"layer": "model-runtime", "status": "PASS"},
+    ], "limits": {"usageMissing": [], "echoMissing": []}}
+    check("all PASS with usage and echo verified is exit 0",
+          rp.final_exit_code(verified, True, 1) == rp.EXIT_OK)
+    fail_and_unverified = {"scenarios": [
+        {"layer": "model-runtime", "status": "FAIL"},
+    ], "limits": {"usageMissing": ["model_runtime_text"],
+                  "echoMissing": []}}
+    check("FAIL still wins over unverified (exit 1)",
+          rp.final_exit_code(fail_and_unverified, True, 1) == rp.EXIT_FAIL)
 
 
 def test_lock() -> None:
@@ -458,6 +577,259 @@ def test_lock_release_checks_owner() -> None:
         shutil.rmtree(evidence / ".smoke.lock")
 
 
+def test_lock_age_escape_hatch() -> None:
+    """A live-looking pid must not pin the lock forever.
+
+    The pid can be reused (or `kill(pid, 0)` can raise PermissionError for a
+    process owned by another uid). A lock older than the cap is reclaimed; a
+    young one with a live pid is still held.
+    """
+    old = time.time() - 10 * 365 * 24 * 3600
+    with tempfile.TemporaryDirectory() as d:
+        evidence = Path(d)
+        lock_path = evidence / ".smoke.lock"
+        lock_path.mkdir()
+        (lock_path / "owner.json").write_text(
+            json.dumps({"pid": os.getpid(),
+                        "startedAt": "2020-01-01T00:00:00+00:00"}),
+            encoding="utf-8",
+        )
+        os.utime(lock_path / "owner.json", (old, old))
+        os.utime(lock_path, (old, old))
+        lock = rp.EvidenceLock(evidence)
+        lock.max_age_seconds = 60
+        ok, reason = lock.acquire()
+        check("alive pid with an over-age lock is reclaimed", ok, reason)
+        check("age reclaim is recorded in the report note",
+              "age cap" in lock.reclaim_note, repr(lock.reclaim_note))
+        lock.release()
+
+    with tempfile.TemporaryDirectory() as d:
+        evidence = Path(d)
+        lock_path = evidence / ".smoke.lock"
+        lock_path.mkdir()
+        (lock_path / "owner.json").write_text(
+            json.dumps({"pid": os.getpid(), "startedAt": rp.iso_now()}),
+            encoding="utf-8",
+        )
+        lock = rp.EvidenceLock(evidence)
+        lock.max_age_seconds = 3600
+        ok, reason = lock.acquire()
+        check("alive pid with a young lock still refuses",
+              not ok and "another run holds" in reason, reason)
+        shutil.rmtree(lock_path)
+
+    # PermissionError is "unknown", not proof of life: a young lock refuses,
+    # an over-age lock uses the same age cap.
+    with tempfile.TemporaryDirectory() as d:
+        evidence = Path(d)
+        lock_path = evidence / ".smoke.lock"
+        lock_path.mkdir()
+        (lock_path / "owner.json").write_text(
+            json.dumps({"pid": 4711, "startedAt": rp.iso_now()}),
+            encoding="utf-8",
+        )
+        original_state = rp.pid_state
+        rp.pid_state = lambda pid: "unknown"
+        try:
+            lock = rp.EvidenceLock(evidence)
+            lock.max_age_seconds = 3600
+            ok, reason = lock.acquire()
+            check("unverifiable young pid refuses with an explanation",
+                  not ok and "cannot verify owner pid" in reason, reason)
+            (lock_path / "owner.json").write_text(
+                json.dumps({"pid": 4711,
+                            "startedAt": "2020-01-01T00:00:00+00:00"}),
+                encoding="utf-8",
+            )
+            os.utime(lock_path / "owner.json", (old, old))
+            os.utime(lock_path, (old, old))
+            lock = rp.EvidenceLock(evidence)
+            lock.max_age_seconds = 60
+            ok, reason = lock.acquire()
+            check("unverifiable over-age pid is reclaimed", ok, reason)
+            check("unverifiable reclaim is recorded",
+                  "unverifiable" in lock.reclaim_note,
+                  repr(lock.reclaim_note))
+            lock.release()
+        finally:
+            rp.pid_state = original_state
+
+
+def test_lock_reclaim_checks_inode() -> None:
+    """Same owner bytes but a different inode is a different lock."""
+    with tempfile.TemporaryDirectory() as d:
+        evidence = Path(d)
+        lock_path = evidence / ".smoke.lock"
+        lock_path.mkdir()
+        dead_owner = {"pid": 999999, "startedAt": "2020-01-01T00:00:00+00:00"}
+        (lock_path / "owner.json").write_text(
+            json.dumps(dead_owner), encoding="utf-8"
+        )
+        lock = rp.EvidenceLock(evidence)
+
+        def swap_directory() -> None:
+            # Same owner content, new inode: the path was re-created after the
+            # reclaim decided the old directory was stale.
+            shutil.rmtree(lock_path)
+            lock_path.mkdir()
+            (lock_path / "owner.json").write_text(
+                json.dumps(dead_owner), encoding="utf-8"
+            )
+
+        lock.before_reclaim_rename = swap_directory
+        ok, reason = lock.acquire()
+        check("reclaim refuses when the directory inode changed",
+              not ok and "identity changed" in reason, reason)
+        check("the moved lock is put back over the empty reservation",
+              lock_path.is_dir(), reason)
+        check("no stale lock is left behind",
+              not list(evidence.glob(".smoke.lock.stale-*")))
+        check("the refused claim does not report held", lock.held is False)
+        shutil.rmtree(lock_path)
+
+
+def test_lock_failed_restore_keeps_reservation() -> None:
+    """If the moved lock cannot be put back, keep the empty reservation.
+
+    Removing it would reopen `.smoke.lock` while the moved owner may still
+    believe it holds the lock. Fail-closed: leave an ownerless directory for
+    the documented manual recovery, and do not let `abandon()` delete it.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        evidence = Path(d)
+        lock_path = evidence / ".smoke.lock"
+        lock_path.mkdir()
+        dead_owner = {"pid": 999999, "startedAt": "2020-01-01T00:00:00+00:00"}
+        (lock_path / "owner.json").write_text(
+            json.dumps(dead_owner), encoding="utf-8"
+        )
+        lock = rp.EvidenceLock(evidence)
+
+        def swap_directory() -> None:
+            shutil.rmtree(lock_path)
+            lock_path.mkdir()
+            (lock_path / "owner.json").write_text(
+                json.dumps(dead_owner), encoding="utf-8"
+            )
+
+        lock.before_reclaim_rename = swap_directory
+        real_rename = rp.os.rename
+        calls = {"n": 0}
+
+        def flaky_rename(src, dst):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("simulated restore failure")
+            return real_rename(src, dst)
+
+        rp.os.rename = flaky_rename
+        try:
+            ok, reason = lock.acquire()
+        finally:
+            rp.os.rename = real_rename
+        check("failed restore still refuses the reclaim",
+              not ok and "manual" in reason, reason)
+        check("failed restore keeps the empty reservation",
+              lock_path.is_dir(), reason)
+        lock.abandon()
+        check("abandon does not remove a kept reservation",
+              lock_path.is_dir())
+        check("the moved lock is kept for manual recovery",
+              bool(list(evidence.glob(".smoke.lock.stale-*"))))
+        shutil.rmtree(lock_path)
+        for stale in evidence.glob(".smoke.lock.stale-*"):
+            shutil.rmtree(stale)
+
+
+def test_lock_release_checks_inode() -> None:
+    """release() must not rmtree a replacement directory with our pid."""
+    with tempfile.TemporaryDirectory() as d:
+        evidence = Path(d)
+        lock = rp.EvidenceLock(evidence)
+        ok, reason = lock.acquire()
+        check("release-inode test acquired the lock", ok, reason)
+        lock_path = evidence / ".smoke.lock"
+        aside = evidence / ".smoke.lock.aside"
+        os.rename(lock_path, aside)
+        lock_path.mkdir()
+        (lock_path / "owner.json").write_text(
+            json.dumps({"pid": os.getpid(), "startedAt": rp.iso_now()}),
+            encoding="utf-8",
+        )
+        lock.release()
+        check("release leaves a replacement inode in place", lock_path.is_dir())
+        check("release does not claim to hold", lock.held is False)
+        shutil.rmtree(lock_path)
+        shutil.rmtree(aside)
+
+
+def test_lock_owner_write_survives_directory_move() -> None:
+    """owner.json must be written relative to the fd, not the path name.
+
+    This is the deterministic form of the three-process race: after our mkdir,
+    a reclaimer moves our directory aside and a replacement lock appears at
+    `.smoke.lock`. A path-based owner write lands in the replacement and makes
+    two processes believe they own the same lock.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        evidence = Path(d)
+        lock_path = evidence / ".smoke.lock"
+        moved = evidence / ".smoke.lock.moved"
+        foreign = {"pid": 1, "startedAt": "2020-01-01T00:00:00+00:00"}
+        lock = rp.EvidenceLock(evidence)
+
+        def move_and_replace() -> None:
+            os.rename(lock_path, moved)
+            lock_path.mkdir()
+            (lock_path / "owner.json").write_text(
+                json.dumps(foreign), encoding="utf-8"
+            )
+
+        lock.after_mkdir = move_and_replace
+        ok, reason = lock.acquire()
+        check("owner write survives a directory move", ok, reason)
+        moved_owner = json.loads(
+            (moved / "owner.json").read_text(encoding="utf-8")
+        )
+        check("owner.json is written into the directory this process created",
+              moved_owner.get("pid") == os.getpid(), repr(moved_owner))
+        replacement_owner = json.loads(
+            (lock_path / "owner.json").read_text(encoding="utf-8")
+        )
+        check("owner write does not overwrite a replacement lock",
+              replacement_owner == foreign, repr(replacement_owner))
+        lock.release()
+        check("release does not delete the replacement directory",
+              lock_path.is_dir())
+        shutil.rmtree(lock_path)
+        shutil.rmtree(moved)
+
+
+def test_lock_abandon_after_interrupt() -> None:
+    """Ctrl-C between mkdir and the owner write must not leave a stuck lock."""
+    with tempfile.TemporaryDirectory() as d:
+        evidence = Path(d)
+        lock = rp.EvidenceLock(evidence)
+
+        def interrupt() -> None:
+            raise KeyboardInterrupt
+
+        lock.after_mkdir = interrupt
+        raised = False
+        try:
+            lock.acquire()
+        except KeyboardInterrupt:
+            raised = True
+        check("interrupted acquisition re-raises", raised)
+        check("interrupted acquisition temporarily leaves its directory",
+              (evidence / ".smoke.lock").is_dir())
+        lock.abandon()
+        check("abandon removes this attempt's partial lock",
+              not (evidence / ".smoke.lock").exists())
+        check("abandon does not claim to hold", lock.held is False)
+
+
 def test_run_dirs() -> None:
     with tempfile.TemporaryDirectory() as d:
         evidence = Path(d)
@@ -550,6 +922,70 @@ def test_run_bounded_keyboard_interrupt() -> None:
             time.sleep(0.05)
         check("Ctrl-C kills the whole child process group", gone,
               f"grandchild {grandchild} is still alive")
+
+
+def test_run_bounded_popen_window() -> None:
+    """Ctrl-C delivered inside `Popen` must still kill the child group.
+
+    Without blocking SIGINT across `Popen`, the signal is raised after
+    fork/exec but before the returned handle is assigned; the harness has no
+    `proc` to kill and the detached grandchild survives. The injected
+    `Popen` replacement sends a real SIGINT to this process while the mask is
+    held, so the pending signal can only be delivered after the assignment.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        directory = Path(d)
+        pidfile = directory / "grandchild.pid"
+        script = write_exec(
+            directory / "spawn.sh",
+            "#!/bin/sh\n"
+            "sleep 8 &\n"
+            f"echo $! > {pidfile}\n"
+            "wait\n",
+        )
+        real_popen = rp.subprocess.Popen
+
+        def racing_popen(*args, **kwargs):
+            handle = real_popen(*args, **kwargs)
+            for _ in range(200):
+                if pidfile.is_file() and pidfile.read_text().strip():
+                    break
+                time.sleep(0.01)
+            os.kill(os.getpid(), signal.SIGINT)
+            return handle
+
+        rp.subprocess.Popen = racing_popen
+        raised = False
+        try:
+            try:
+                rp.run_bounded(
+                    ["/bin/sh", str(script)], directory, os.environ.copy(), 30
+                )
+            except KeyboardInterrupt:
+                raised = True
+        finally:
+            rp.subprocess.Popen = real_popen
+        check("Ctrl-C inside Popen is re-raised after cleanup", raised)
+        try:
+            grandchild = int(pidfile.read_text().strip())
+        except (OSError, ValueError):
+            check("Popen-window test started a grandchild", False, "no pid file")
+            return
+        gone = False
+        for _ in range(100):
+            try:
+                os.kill(grandchild, 0)
+            except ProcessLookupError:
+                gone = True
+                break
+            time.sleep(0.05)
+        check("Ctrl-C inside Popen kills the whole child group", gone,
+              f"grandchild {grandchild} is still alive")
+        if not gone:
+            try:
+                os.kill(grandchild, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_build_timeout() -> None:
@@ -754,6 +1190,28 @@ def test_build_probe_absolute_target() -> None:
               Path(build["binary"]).is_absolute(), build["binary"])
 
 
+PROBE_RUST_TEST_TIMEOUT_SECONDS = 900
+
+
+def run_probe_rust_tests(repo: Path, cargo: str, timeout: float) -> dict:
+    """Run the probe crate tests through the group-killing runner.
+
+    `cargo test` spawns rustc and the test binary. A bare
+    `subprocess.run(timeout=...)` kills only the direct cargo child; the
+    orphan test process keeps writing the shared target directory and
+    `cargo-slots.sh` cannot see it (it only counts `cargo` processes). This
+    helper is the single cargo-test call site so the timeout always kills the
+    process group.
+    """
+    manifest = repo / "scripts" / "smoke" / "probe" / "Cargo.toml"
+    return rp.run_bounded(
+        [cargo, "test", "--offline", "--locked", "--manifest-path", str(manifest)],
+        repo,
+        os.environ.copy(),
+        timeout,
+    )
+
+
 def test_probe_rust_tests() -> None:
     """Run the standalone probe crate's unit tests.
 
@@ -769,27 +1227,72 @@ def test_probe_rust_tests() -> None:
     if cargo is None:
         check("probe Rust tests: cargo is on PATH", False, "cargo not found")
         return
-    slots = subprocess.run(
+    slots = rp.run_bounded(
         ["sh", str(repo / "scripts" / "cargo-slots.sh")],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        timeout=60,
+        repo,
+        os.environ.copy(),
+        60,
     )
-    if slots.returncode != 0:
+    if slots["timedOut"] or slots["exit"] != 0:
         check("probe Rust tests: cargo slot is available", False,
-              (slots.stdout + slots.stderr).strip()[-300:])
+              (slots["stdout"] + slots["stderr"]).strip()[-300:])
         return
-    manifest = repo / "scripts" / "smoke" / "probe" / "Cargo.toml"
-    result = subprocess.run(
-        [cargo, "test", "--offline", "--locked", "--manifest-path", str(manifest)],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        timeout=900,
-    )
-    tail = "\n".join((result.stdout + result.stderr).splitlines()[-15:])
-    check("probe Rust tests pass", result.returncode == 0, tail)
+    try:
+        result = run_probe_rust_tests(
+            repo, cargo, PROBE_RUST_TEST_TIMEOUT_SECONDS
+        )
+    except OSError as exc:
+        check("probe Rust tests pass", False, f"{type(exc).__name__}: {exc}")
+        return
+    tail = "\n".join((result["stdout"] + result["stderr"]).splitlines()[-15:])
+    if result["timedOut"]:
+        tail += (
+            f"\n[harness] cargo test exceeded {PROBE_RUST_TEST_TIMEOUT_SECONDS}s; "
+            "killed the whole process group"
+        )
+    check("probe Rust tests pass",
+          result["exit"] == 0 and not result["timedOut"], tail)
+
+
+def test_probe_rust_tests_timeout_kills_group() -> None:
+    """The cargo-test runner must kill orphan rustc/test children on timeout."""
+    with tempfile.TemporaryDirectory() as d:
+        directory = Path(d)
+        pidfile = directory / "grandchild.pid"
+        fake_cargo = write_exec(
+            directory / "cargo",
+            "#!/bin/sh\n"
+            "sleep 8 &\n"
+            f"echo $! > {pidfile}\n"
+            "wait\n",
+        )
+        started = time.monotonic()
+        result = run_probe_rust_tests(directory, str(fake_cargo), 5.0)
+        elapsed = time.monotonic() - started
+        check("cargo test timeout is reported",
+              result["timedOut"] is True, repr(result))
+        check("cargo test timeout kills the process group", elapsed < 10.0,
+              f"elapsed={elapsed:.2f}s")
+        try:
+            grandchild = int(pidfile.read_text().strip())
+        except (OSError, ValueError):
+            check("cargo timeout test started a grandchild", False, "no pid file")
+            return
+        gone = False
+        for _ in range(100):
+            try:
+                os.kill(grandchild, 0)
+            except ProcessLookupError:
+                gone = True
+                break
+            time.sleep(0.05)
+        check("cargo test timeout leaves no orphan test process", gone,
+              f"grandchild {grandchild} is still alive")
+        if not gone:
+            try:
+                os.kill(grandchild, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def test_constants() -> None:
@@ -800,6 +1303,9 @@ def test_constants() -> None:
           == rp.MAX_REQUESTS * rp.MAX_OUTPUT_TOKENS_PER_REQUEST)
     check("outer probe timeout exceeds the inner scenario timeout",
           rp.PROBE_TIMEOUT_SECONDS > rp.PROBE_SCENARIO_TIMEOUT_SECONDS)
+    check("lock age cap exceeds one bounded run",
+          rp.LOCK_MAX_AGE_SECONDS
+          > rp.BUILD_TIMEOUT_SECONDS + rp.MAX_REQUESTS * rp.PROBE_TIMEOUT_SECONDS)
 
 
 def main() -> int:
@@ -815,9 +1321,16 @@ def main() -> int:
     test_lock_concurrent_acquire_window()
     test_lock_reclaim_verifies_owner()
     test_lock_release_checks_owner()
+    test_lock_age_escape_hatch()
+    test_lock_reclaim_checks_inode()
+    test_lock_failed_restore_keeps_reservation()
+    test_lock_release_checks_inode()
+    test_lock_owner_write_survives_directory_move()
+    test_lock_abandon_after_interrupt()
     test_run_dirs()
     test_run_bounded_timeout()
     test_run_bounded_keyboard_interrupt()
+    test_run_bounded_popen_window()
     test_build_timeout()
     test_cargo_slots_path()
     test_probe_exit_integration()
@@ -825,6 +1338,7 @@ def main() -> int:
     test_probe_result_without_requests_is_unknown()
     test_probe_outer_timeout()
     test_build_probe_absolute_target()
+    test_probe_rust_tests_timeout_kills_group()
     test_probe_rust_tests()
     test_constants()
     print(f"test-smoke-real-provider: {'OK' if not FAILS else f'{FAILS} FAIL'}")
