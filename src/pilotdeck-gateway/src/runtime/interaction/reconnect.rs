@@ -129,7 +129,7 @@ impl InteractionReconnectPort {
                 request.binding = None;
             }
         }
-        if !state.requests.iter().any(|request| &request.owner == owner) {
+        if !state.replay_owners.contains(owner) {
             state.last.retain(|(key, _)| key != owner);
         }
         Ok(true)
@@ -140,6 +140,7 @@ impl InteractionReconnectPort {
     pub fn dispose_owner(&self, owner: &JsString) {
         let mut state = self.state.lock().unwrap();
         state.requests.retain(|request| &request.owner != owner);
+        state.replay_owners.remove(owner);
         state.bindings.retain(|(key, _)| key != owner);
         state.last.retain(|(key, _)| key != owner);
     }
@@ -147,6 +148,7 @@ impl InteractionReconnectPort {
     pub fn dispose(&self) {
         let mut state = self.state.lock().unwrap();
         state.requests.clear();
+        state.replay_owners.clear();
         state.bindings.clear();
         state.last.clear();
     }
@@ -214,9 +216,20 @@ pub(super) fn snapshot(
         .collect()
 }
 pub(super) fn remove(state: &mut State, token: u64, owner: &JsString) {
+    // An old registration cannot remove an owner bucket created after port disposal.
+    if !state
+        .requests
+        .iter()
+        .any(|r| r.token == token && &r.owner == owner)
+    {
+        return;
+    }
     state.requests.retain(|r| r.token != token);
-    if current(state, owner).is_none() && !state.requests.iter().any(|r| &r.owner == owner) {
-        state.last.retain(|(key, _)| key != owner);
+    if !state.requests.iter().any(|r| &r.owner == owner) {
+        state.replay_owners.remove(owner);
+        if current(state, owner).is_none() {
+            state.last.retain(|(key, _)| key != owner);
+        }
     }
 }
 pub(super) fn is_current(
