@@ -126,7 +126,7 @@ pub(super) struct PluginRegistry {
     disposal_waiters: Vec<Arc<LoadedPlugin>>,
     // Batches reserve instances under the state lock, but execute user code
     // outside it. A start barrier preserves order across concurrent events.
-    disposal_start_receiver: Option<watch::Receiver<Option<()>>>,
+    disposal_start_receiver: Option<watch::Receiver<Option<Result<(), PluginRuntimeError>>>>,
     #[cfg(test)]
     after_disposal_first_poll: Option<Box<dyn FnOnce(bool) + Send>>,
     lease_counts: HashMap<usize, usize>,
@@ -684,27 +684,51 @@ fn start_ready_disposals(
     let previous_start = registry.disposal_start_receiver.take();
     let (started_tx, started_rx) = watch::channel(None);
     registry.disposal_start_receiver = Some(started_rx);
+    // Build each per-plugin guard before the outer task runs: if the outer
+    // future is dropped unpolled, every reserved disposal still settles.
+    let ready: Vec<_> = ready
+        .into_iter()
+        .map(|(plugin, tx)| {
+            (
+                plugin,
+                super::cleanup_task::Completion::new(
+                    tx,
+                    PluginRuntimeError::new(
+                        "Plugin disposal task was dropped or panicked before completion.",
+                    ),
+                ),
+            )
+        })
+        .collect();
     #[cfg(test)]
     let mut hook = registry.after_disposal_first_poll.take();
     let state = Arc::clone(state_mutex);
-    tokio::spawn(async move {
-        if let Some(previous) = previous_start {
-            wait_watch(previous).await;
-        }
-        let mut started = Vec::new();
-        for (plugin, tx) in ready {
-            let callback_plugin = Arc::clone(&plugin);
-            let mut future = Box::pin(async move {
-                if let Some(dispose) = &callback_plugin.dispose {
-                    dispose().await.map_err(PluginRuntimeError::new)?;
-                }
-                Ok(())
-            });
-            // TS's async IIFE owns synchronous throws as rejected promises
-            // (PluginRegistry.ts:148-160). Catch both construction panics and
-            // panics on any poll, so all peers still start and settle.
-            let mut callback = Box::pin(std::future::poll_fn(move |cx| {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| future.as_mut().poll(cx)))
+    super::cleanup_task::spawn_with_error(
+        &tokio::runtime::Handle::current(),
+        started_tx,
+        PluginRuntimeError::new(
+            "Plugin disposal start task was dropped or panicked before completion.",
+        ),
+        async move {
+            if let Some(previous) = previous_start {
+                let _ = wait_watch(previous).await;
+            }
+            let mut started = Vec::new();
+            for (plugin, completion) in ready {
+                let callback_plugin = Arc::clone(&plugin);
+                let mut future = Box::pin(async move {
+                    if let Some(dispose) = &callback_plugin.dispose {
+                        dispose().await.map_err(PluginRuntimeError::new)?;
+                    }
+                    Ok(())
+                });
+                // TS's async IIFE owns synchronous throws as rejected promises
+                // (PluginRegistry.ts:148-160). Catch both construction panics and
+                // panics on any poll, so all peers still start and settle.
+                let mut callback = Box::pin(std::future::poll_fn(move |cx| {
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        future.as_mut().poll(cx)
+                    }))
                     .unwrap_or_else(|payload| {
                         let message = payload
                             .downcast_ref::<String>()
@@ -713,42 +737,47 @@ fn start_ready_disposals(
                             .unwrap_or_else(|| "Plugin dispose callback panicked.".to_owned());
                         std::task::Poll::Ready(Err(PluginRuntimeError::new(message)))
                     })
-            }));
-            // Keep this same pinned future: a notification delivered to the
-            // noop waker remains in its state. The spawned task unconditionally
-            // polls it once, then pending polls register the real task waker.
-            let first = callback
-                .as_mut()
-                .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
-            #[cfg(test)]
-            if let Some(hook) = hook.take() {
-                hook(first.is_pending());
+                }));
+                // Keep this same pinned future: a notification delivered to the
+                // noop waker remains in its state. The spawned task unconditionally
+                // polls it once, then pending polls register the real task waker.
+                let first = callback
+                    .as_mut()
+                    .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+                #[cfg(test)]
+                if let Some(hook) = hook.take() {
+                    hook(first.is_pending());
+                }
+                started.push((plugin, completion, callback, first));
             }
-            started.push((plugin, tx, callback, first));
-        }
-        // Every synchronous prologue has run before any callback can resume.
-        for (plugin, tx, callback, first) in started {
-            let state = Arc::clone(&state);
-            tokio::spawn(async move {
-                let result = match first {
-                    std::task::Poll::Ready(result) => {
-                        drop(callback);
+            // Every synchronous prologue has run before any callback can resume.
+            for (plugin, completion, callback, first) in started {
+                let state = Arc::clone(&state);
+                super::cleanup_task::spawn_completion(
+                    &tokio::runtime::Handle::current(),
+                    completion,
+                    async move {
+                        let result = match first {
+                            std::task::Poll::Ready(result) => {
+                                drop(callback);
+                                result
+                            }
+                            std::task::Poll::Pending => callback.await,
+                        };
+                        let mut st = state.lock().await;
+                        st.registry
+                            .pending_disposals
+                            .retain(|pending| !Arc::ptr_eq(&pending.plugin, &plugin));
+                        st.registry
+                            .retired_plugins
+                            .retain(|p| !Arc::ptr_eq(p, &plugin));
                         result
-                    }
-                    std::task::Poll::Pending => callback.await,
-                };
-                let mut st = state.lock().await;
-                let _ = tx.send(Some(result));
-                st.registry
-                    .pending_disposals
-                    .retain(|pending| !Arc::ptr_eq(&pending.plugin, &plugin));
-                st.registry
-                    .retired_plugins
-                    .retain(|p| !Arc::ptr_eq(p, &plugin));
-            });
-        }
-        let _ = started_tx.send(Some(()));
-    });
+                    },
+                );
+            }
+            Ok(())
+        },
+    );
 }
 
 async fn settle_disposals(pending: Vec<DisposalReceiver>) -> Vec<PluginRuntimeError> {

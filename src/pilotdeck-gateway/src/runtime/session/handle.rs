@@ -291,15 +291,28 @@ pub(super) fn aggregate(message: &str, failures: Vec<RuntimeError>) -> RuntimeRe
     }
 }
 
-pub(super) async fn wait_result<T: Clone>(mut receiver: watch::Receiver<Option<T>>) -> T {
+/// Results carried by the session lifecycle completion channel. A sender that
+/// disappears without a value (for example a detached task rejected by a
+/// stopped executor) becomes this stable error instead of a panic.
+pub(super) trait LifecycleCompletion: Clone {
+    fn lifecycle_stopped() -> Self;
+}
+impl<T: Clone> LifecycleCompletion for Result<T, RuntimeError> {
+    fn lifecycle_stopped() -> Self {
+        Err(RuntimeError::new("Session lifecycle executor stopped."))
+    }
+}
+
+pub(super) async fn wait_result<T: LifecycleCompletion>(
+    mut receiver: watch::Receiver<Option<T>>,
+) -> T {
     loop {
         if let Some(result) = receiver.borrow_and_update().clone() {
             return result;
         }
-        receiver
-            .changed()
-            .await
-            .expect("session lifecycle executor stopped");
+        if receiver.changed().await.is_err() {
+            return T::lifecycle_stopped();
+        }
     }
 }
 

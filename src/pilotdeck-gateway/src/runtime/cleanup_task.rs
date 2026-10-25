@@ -3,12 +3,19 @@ use crate::host::{HostError, ModuleError};
 use std::{future::Future, panic::AssertUnwindSafe};
 use tokio::{runtime::Handle, sync::watch};
 
-struct Completion<T, E> {
+pub(crate) struct Completion<T, E> {
     done: Option<watch::Sender<Option<Result<T, E>>>>,
     dropped_error: Option<E>,
 }
 impl<T, E> Completion<T, E> {
-    fn finish(mut self, result: Result<T, E>) {
+    /// Construct before spawning: an unpolled task must own the guard too.
+    pub(crate) fn new(done: watch::Sender<Option<Result<T, E>>>, dropped_error: E) -> Self {
+        Self {
+            done: Some(done),
+            dropped_error: Some(dropped_error),
+        }
+    }
+    pub(crate) fn finish(mut self, result: Result<T, E>) {
         self.done.take().unwrap().send_replace(Some(result));
     }
 }
@@ -62,15 +69,24 @@ fn spawn_after_with_error<T: Send + Sync + 'static, E: Send + Sync + 'static>(
     prepare: impl FnOnce(),
     cleanup: impl Future<Output = Result<T, E>> + Send + 'static,
 ) {
-    // Construct before spawning: an unpolled task must own the guard too.
-    let completion = Completion {
-        done: Some(done),
-        dropped_error: Some(dropped_error),
-    };
+    let completion = Completion::new(done, dropped_error);
     // Tokio can reject a spawn during shutdown. Never unwind through the
     // synchronous resource shutdown path; dropping completion reports failure.
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
         prepare();
+        executor.spawn(async move { completion.finish(cleanup.await) })
+    }));
+}
+
+/// Spawn a cleanup future whose completion guard was already built. Callers
+/// that must hand the guard to an outer task use this so an unpolled outer
+/// future still settles every receiver it owns.
+pub(crate) fn spawn_completion<T: Send + Sync + 'static, E: Send + Sync + 'static>(
+    executor: &Handle,
+    completion: Completion<T, E>,
+    cleanup: impl Future<Output = Result<T, E>> + Send + 'static,
+) {
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
         executor.spawn(async move { completion.finish(cleanup.await) })
     }));
 }

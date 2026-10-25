@@ -18,7 +18,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
 };
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 /// One context-facing memory resolver handle. Retrieve/capture semantics are
 /// owned by the context work package; the bundle owns only the exact handle
@@ -384,9 +384,10 @@ struct BundleState {
     /// call is still the one scheduled.
     published: bool,
     dispose_started: bool,
-    disposed: bool,
     disposer: Option<MemoryDisposeFn>,
-    dispose_error: Option<RuntimeError>,
+    /// The one scheduled disposal. Every caller clones this receiver, so a
+    /// dropped or panicked task is observed as the same stable error.
+    disposal: Option<watch::Receiver<Option<Result<(), RuntimeError>>>>,
 }
 struct BundleShared {
     state: Mutex<BundleState>,
@@ -442,9 +443,8 @@ impl ProjectMemoryBundle {
                     staged: false,
                     published: false,
                     dispose_started: false,
-                    disposed: false,
                     disposer: None,
-                    dispose_error: None,
+                    disposal: None,
                 }),
                 notify: Notify::new(),
             }),
@@ -529,78 +529,62 @@ impl ProjectMemoryBundle {
     /// the caller's stack. Must be called inside a Tokio runtime.
     pub fn dispose(&self) -> DisposeFuture<'_> {
         let executor = tokio::runtime::Handle::current();
-        let first = {
+        let completion = {
             let mut state = self.shared.state.lock().unwrap();
-            if state.dispose_started {
-                false
+            if let Some(completion) = &state.disposal {
+                completion.clone()
             } else {
                 state.dispose_started = true;
-                true
+                let (done, completion) = watch::channel(None);
+                state.disposal = Some(completion.clone());
+                drop(state);
+                let wait_shared = Arc::clone(&self.shared);
+                super::cleanup_task::spawn_with_error(
+                    &executor,
+                    done,
+                    RuntimeError::new(
+                        "Memory provider dispose task was dropped or panicked before completion.",
+                    ),
+                    async move {
+                        let disposer = loop {
+                            // Register before the publication check; `enable()`
+                            // makes this waiter visible to `notify_waiters()`.
+                            let notified = wait_shared.notify.notified();
+                            tokio::pin!(notified);
+                            notified.as_mut().enable();
+                            {
+                                let mut state = wait_shared.state.lock().unwrap();
+                                // Dispose before stage: `staged` is still false,
+                                // so TS resolves immediately and a later stage
+                                // sees `AlreadyDisposing`. During a stage the
+                                // exact disposer is not known yet, so wait for
+                                // publication.
+                                if !state.staged || state.published {
+                                    break state.disposer.take();
+                                }
+                            }
+                            notified.await;
+                        };
+                        match disposer {
+                            Some(disposer) => disposer().await,
+                            None => Ok(()),
+                        }
+                    },
+                );
+                completion
             }
         };
-        if first {
-            let wait_shared = Arc::clone(&self.shared);
-            let task = executor.spawn(async move {
-                let disposer = loop {
-                    // Register before the publication check; `enable()` makes
-                    // this waiter visible to `notify_waiters()` immediately.
-                    let notified = wait_shared.notify.notified();
-                    tokio::pin!(notified);
-                    notified.as_mut().enable();
-                    {
-                        let mut state = wait_shared.state.lock().unwrap();
-                        // Dispose before stage: `staged` is still false, so TS
-                        // resolves immediately and a later stage sees
-                        // `AlreadyDisposing`. During a stage the exact
-                        // disposer is not known yet, so wait for publication.
-                        if !state.staged || state.published {
-                            break state.disposer.take();
-                        }
-                    }
-                    notified.await;
-                };
-                match disposer {
-                    Some(disposer) => disposer().await,
-                    None => Ok(()),
-                }
-            });
-            let shared = Arc::clone(&self.shared);
-            executor.spawn(async move {
-                let result = match task.await {
-                    Ok(result) => result,
-                    Err(error) => Err(RuntimeError::new(format!(
-                        "Memory provider dispose task failed: {error}"
-                    ))),
-                };
-                if let Err(error) = result {
-                    shared.state.lock().unwrap().dispose_error = Some(error);
-                }
-                let mut state = shared.state.lock().unwrap();
-                state.disposed = true;
-                drop(state);
-                shared.notify.notify_waiters();
-            });
-        }
-        let shared = Arc::clone(&self.shared);
         Box::pin(async move {
+            let mut completion = completion;
             loop {
-                // Register before looking at the flag: `enable()` makes this
-                // waiter visible to `notify_waiters()` immediately, so a
-                // completion between the flag check and the first poll cannot
-                // be missed.
-                let notified = shared.notify.notified();
-                tokio::pin!(notified);
-                notified.as_mut().enable();
-                {
-                    let state = shared.state.lock().unwrap();
-                    if state.disposed {
-                        return match &state.dispose_error {
-                            Some(error) => Err(error.clone()),
-                            None => Ok(()),
-                        };
-                    }
+                if let Some(result) = completion.borrow_and_update().clone() {
+                    return result;
                 }
-                notified.await;
+                if completion.changed().await.is_err() {
+                    return Err(RuntimeError::new(
+                        "Memory provider dispose task was dropped or panicked before completion.",
+                    ));
+                }
             }
         })
     }

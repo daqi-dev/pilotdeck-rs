@@ -884,3 +884,58 @@ async fn host_bind_waits_for_old_hook_cleanup_before_returning_replacement() {
     std::fs::remove_dir_all(&root).unwrap();
     bounded(registry.dispose()).await.unwrap();
 }
+
+#[test]
+fn interaction_cleanup_completion_survives_stopped_executor() {
+    for close_before_shutdown in [false, true] {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let scratch = Scratch::new();
+        let registry = {
+            let _entered = executor.enter();
+            interaction_registry(&scratch)
+        };
+        let mut turn = Some(
+            executor
+                .block_on(InteractionTurn::bind(
+                    registry.acquire(None).unwrap(),
+                    &identity(),
+                    router(&identity()),
+                    options(),
+                ))
+                .unwrap(),
+        );
+        let first = turn.as_ref().unwrap().wait_closed();
+        let second = turn.as_ref().unwrap().wait_closed();
+        if close_before_shutdown {
+            drop(turn.take());
+        }
+        drop(executor);
+        if !close_before_shutdown {
+            // Cleanup is initiated after the executor is gone; the guard must
+            // turn the rejected spawn into the same stable completion.
+            drop(turn.take());
+        }
+        let observer = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        observer.block_on(async {
+            for done in [first, second] {
+                let error = tokio::time::timeout(std::time::Duration::from_secs(1), done)
+                    .await
+                    .expect("interaction cleanup completion must survive stopped executor")
+                    .unwrap_err();
+                assert!(
+                    error.to_string().ends_with(
+                        "Interaction cleanup task was dropped or panicked before completion."
+                    ),
+                    "{error}"
+                );
+            }
+        });
+        drop(registry);
+    }
+}
