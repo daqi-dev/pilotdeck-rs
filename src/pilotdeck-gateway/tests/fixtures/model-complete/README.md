@@ -145,6 +145,11 @@ EOF、EOF 残片计入），r7 的 cap 负控随之改锚到 `CappedText::push` 
 恢复：变异前把原始字节与 SHA-256 写到 worktree 外的状态目录（默认
 `$TMPDIR/pdrs-negctl-<worktree哈希>`），SIGTERM/SIGINT/SIGHUP 处理器同步恢复；
 SIGKILL 无法执行处理器，下一次启动会因源文件仍等于记录的变异哈希而拒绝运行。
+入口另外统一走 `negative_process.mutating_sources`：先取树内共享
+`.negative-source.lock` 并逐字节确认整个 gateway 产品树等于 HEAD，才允许写第一个
+变异；因此其它负控组 SIGKILL 留下的残留也会让本脚本拒绝启动，而不是把残留当原件。
+`--recover` 是唯一例外：它按自己的 sidecar 哈希恢复已记录的变异，无法要求源文件等于
+HEAD；除此之外 `--self-test-hold` 与正常负控都在同一把锁和同一基线校验内。
 
 处理器同时记录当前 `run_bounded` 的进程组：收到上述信号时先对该组做**有界**
 回收（SIGTERM，宽限 `NEGCTL_SIGNAL_GRACE`（默认 5s）后 SIGKILL），确认组已结束，

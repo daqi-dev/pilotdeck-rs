@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 
 def main():
@@ -16,7 +16,6 @@ def main():
     output = Path(sys.argv[1]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs'
-    original = source.read_text()
     env = dict(os.environ)
     env.setdefault('CARGO_TARGET_DIR', str(root / '_build/target'))
     command = ['cargo', 'test', '--offline', '--locked', '--manifest-path', str(root / 'src/Cargo.toml'),
@@ -29,53 +28,64 @@ def main():
          'same-root provider operation must finish within 5s'),
         ('operation-lock-dropped',
          '        self.core.execute(method, input)',
-         '        drop(_guard);\n        self.core.execute(method, input)',
+         '        drop(_guards);\n        self.core.execute(method, input)',
          'concurrent_same_origin_keeps_one_record_like_real_ts',
-         'same-origin concurrent writes created extra files'),
+         # Without the guard one worker panics before the final extra-file
+         # assertion; both are runtime detections of the same lost lock.
+         'same-origin concurrent writes created extra files|called `Result::unwrap()` on an `Err` value: Any'),
         ('edit-meta-passes-dream-field',
          'copy(&mut next, input, &["projectName", "description", "status"]);',
          'next = input.clone();',
          'rust_reads_and_writes_the_real_ts_transcripts',
          'edit-meta-whitelist operation 0 editProjectMeta'),
     ]
-    for name, before, _, _, _ in mutants:
-        assert original.count(before) == 1, (name, 'mutation anchor must be unique')
     results = []
 
-    def run(name, test):
-        with (output / f'{name}.log').open('w') as log:
-            gate = wait_for_slot(root / 'scripts/cargo-slots.sh')
-            log.write(gate.stdout + gate.stderr)
-            log.flush()
-            result = run_owned(command + ([test, '--', '--exact', '--nocapture'] if test else []),
-                               cwd=root, env=env, timeout=600)
-            log.write(result.stdout + result.stderr)
-            return result.returncode
+    # The flock covers reading the pristine bytes, every mutation and the
+    # restored run, so no concurrent in-place runner can capture a mutant.
+    with mutating_sources(root, [source]) as snapshots:
+        original = snapshots[source].decode()
+        for name, before, _, _, _ in mutants:
+            assert original.count(before) == 1, (name, 'mutation anchor must be unique')
 
-    assert run('positive', '') == 0, 'positive tests must pass before mutating'
-    try:
-        for name, before, after, test, marker in mutants:
-            assert source.read_text() == original, 'another writer changed the product source'
-            mutated = original.replace(before, after, 1)
-            source.write_text(mutated)
-            try:
-                code = run(name, test)
-                raw = (output / f'{name}.log').read_text()
-                killed = code == 101 and 'test result: FAILED' in raw and marker in raw
-                results.append(dict(name=name, test=test, exit=code, marker=marker, killed=killed))
-                print(f'{name}: killed={killed}, exit={code}', flush=True)
-                assert killed, f'{name}: expected a compiled test assertion failure'
-            finally:
-                assert source.read_text() == mutated, 'another writer changed the mutant'
-                source.write_text(original)
-    finally:
-        restored = source.read_text() == original
-        (output / 'summary.json').write_text(json.dumps(dict(
-            results=results, restored=restored,
-            beforeSha256=hashlib.sha256(original.encode()).hexdigest(),
-            afterSha256=hashlib.sha256(source.read_bytes()).hexdigest()), indent=2) + '\n')
-        assert restored
-    assert run('restored', '') == 0, 'restored product must pass'
+        def run(name, test, gate=None):
+            with (output / f'{name}.log').open('w') as log:
+                gate = gate or wait_for_slot(root / 'scripts/cargo-slots.sh')
+                log.write(gate.stdout + gate.stderr)
+                log.flush()
+                result = run_owned(command + ([test, '--', '--exact', '--nocapture'] if test else []),
+                                   cwd=root, env=env, timeout=600)
+                log.write(result.stdout + result.stderr)
+                return result.returncode
+
+        assert run('positive', '') == 0, 'positive tests must pass before mutating'
+        try:
+            for name, before, after, test, marker in mutants:
+                assert source.read_text() == original, 'another writer changed the product source'
+                mutated = original.replace(before, after, 1)
+                # Reserve the Cargo slot before exposing the mutation.
+                gate = wait_for_slot(root / 'scripts/cargo-slots.sh')
+                source.write_text(mutated)
+                try:
+                    code = run(name, test, gate)
+                    raw = (output / f'{name}.log').read_text()
+                    killed = (code == 101 and 'test result: FAILED' in raw
+                              and 'could not compile' not in raw
+                              and any(m in raw for m in marker.split('|')))
+                    results.append(dict(name=name, test=test, exit=code, marker=marker, killed=killed))
+                    print(f'{name}: killed={killed}, exit={code}', flush=True)
+                    assert killed, f'{name}: expected a compiled test assertion failure'
+                finally:
+                    assert source.read_text() == mutated, 'another writer changed the mutant'
+                    source.write_text(original)
+        finally:
+            restored = source.read_text() == original
+            (output / 'summary.json').write_text(json.dumps(dict(
+                results=results, restored=restored,
+                beforeSha256=hashlib.sha256(original.encode()).hexdigest(),
+                afterSha256=hashlib.sha256(source.read_bytes()).hexdigest()), indent=2) + '\n')
+            assert restored
+        assert run('restored', '') == 0, 'restored product must pass'
 
 
 if __name__ == '__main__':

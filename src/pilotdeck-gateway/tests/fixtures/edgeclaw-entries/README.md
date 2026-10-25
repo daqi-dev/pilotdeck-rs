@@ -10,7 +10,7 @@ SQL schema、L0 与 pipeline 行。`oracle.json` 的数据库 base64 和期望�
 复用 snapshots 的磁盘观测与固定时钟；只归一化临时根、SQL updated_at，保留完整 JSON 文本
 及字段顺序、文件内容、错误类别和 SQL 原文。固定 Node v22.22.0、locale en-US。
 
-27 场景、146 步覆盖 count、按原 ids 保序和重复、跨 global/workspace/external 的读取、编辑、
+28 场景、152 步覆盖 count、按原 ids 保序和重复、跨 global/workspace/external 的读取、编辑、
 meta、重复 deprecate/restore/delete、非法路径与 archive 错误、snapshot version、三种 clear。
 clear 故障包含 SQL 第二语句失败的已提交 L0 删除、恢复设置失败、workspace/global/snapshot
 删除失败的文件树残留、entry/meta 写盘失败，以及符号链接和悬空根。
@@ -30,6 +30,8 @@ PDRS_BASELINE=/absolute/PilotDeck cargo test --manifest-path src/Cargo.toml \
   -p pilotdeck-gateway --test edgeclaw_entries -- --include-ignored
 python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-entries/negative.py \
   --out _tmp/20261023-a66-pr10g-entries/negative
+python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-entries/negative_ids.py \
+  --out _tmp/20261025-issue-680/fix-r1/negative-ids
 ```
 
 普通测试恢复 TS 创建的库和文件逐步回放。ignored 反向测试由 Rust 原生创建数据库、文件、
@@ -38,6 +40,21 @@ metadata 和 pipeline，再跑 CRUD/clear，最后让真实 TS 重开所有成�
 
 负控逐项改坏生产实现、要求运行到具体 scenario/observation 后断言失败，finally 恢复原字节并
 记录 SHA256；编译失败不算杀死。`PDRS_ENTRIES_CASE` 可筛选单场景（仅调试用，未命中即失败）。
+原地改写生产源码的负控统一走 `negative_process.mutating_sources`：先取树内固定
+`.negative-source.lock` 的 `fcntl.flock`（内核在进程退出、含 SIGKILL 时自动释放；不做 pid 判活或
+旧锁回收），再逐字节比较 `git show HEAD:<path>`；有残留变异或人的未提交改动就报错并提示
+`git checkout -- <path>`，绝不把现状当原件覆盖。基线通过后快照、yield、finally 逐字节恢复并再次
+比对 HEAD；等 Cargo 槽位与变异写入都在锁内。`edgeclaw-entries`、`edgeclaw-accessors`、
+`edgeclaw-export`、`edgeclaw-file-memory`、`edgeclaw-dangling-links` 中改写同一组
+`entries.rs` / `accessors.rs` / `file_memory.rs` / `snapshots.rs` / `overview.rs` 的脚本都调用同一
+实现；plugin-runtime 与 session-domain 等其它原地改源码脚本也一样。`summary.json` 只在恢复运行和
+字节校验都成功后写 `restoredPass:true`。
+
+`idAudit` 回放容器形状与单元素 ids；`idBatchAudit` 另采 15 条真实 TS 多元素批次
+（`["合法 id", 5]`、`[null, 5]`、`[]`，含 `archiveTmpEntries` 的 `{ids}` 入口），每例用独立新库，
+锁住「先校验全部元素、再碰 store」以及空批次不报形状错误。空批次会修复 manifest，因此该例同时
+记录完整残留树 `diskAfter`，Rust 逐字节比对而不只比较「磁盘变过」。
+`negative_ids.py` 的短锚点分别改坏容器、容器 nullish、元素、nullish 元素、元素顺序与空数组分支。
 
 修复轮 1：IO 结果同时比较 errno 和完整 Node message（含 syscall、路径；仍只归一化临时根）。
 `invalid-entry-operations` 的复合 mutation 不再混入 `../escape`：安全偏离由专用测试覆盖，
@@ -48,4 +65,4 @@ store 读、edit、delete、deprecate、restore；`direct_entry_write_rejects_un
 拒绝错误取自真实 TS `editEntry(missing)` 金样，只替换输入路径。
 `negative_fix1.py --out <目录>` 分别移除每个入口的路径校验、snapshot-version 操作锁，
 必须运行时断言失败；既有 `negative.py` 还覆盖 IO message、global id 分类和映射回归。
-两个负控脚本均保留调用者的 Cargo 环境，恢复并核对源文件字节。
+`negative.py` / `negative_ids.py` / `negative_fix1.py` 均保留调用者的 Cargo 环境，恢复并核对源文件字节。

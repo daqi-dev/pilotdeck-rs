@@ -15,7 +15,7 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot
 
 
 READ_BEFORE = '''            let Some(mut e) = self.entry(id)? else {
@@ -188,7 +188,6 @@ def main():
     output = Path(sys.argv[1]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     source = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/file_memory.rs'
-    original = source.read_text()
     env = dict(os.environ)
     env['CARGO_TERM_COLOR'] = 'never'
     command = ['cargo', 'test', '--offline', '--locked', '--manifest-path',
@@ -196,68 +195,75 @@ def main():
                '--test', 'edgeclaw_dangling_links']
     results = []
 
-    def run(name, selected=None):
-        with (output / f'{name}.log').open('w') as log:
-            gate = wait_for_slot(root / 'scripts/cargo-slots.sh')
-            log.write(gate.stdout + gate.stderr)
-            log.flush()
-            args = command + (
-                ['--', selected, '--test-threads', '2', '--nocapture']
-                if selected
-                else ['--', '--test-threads', '2'])
-            result = run_owned(args, cwd=root, env=env, timeout=900)
-            log.write(result.stdout + result.stderr)
-            return result
+    # Hold the shared flock from the pristine read through the final restored
+    # run; the other edgeclaw in-place runners use the same lock file.
+    with mutating_sources(root, [source]) as snapshots:
+        original = snapshots[source].decode()
 
-    positive = run('positive')
-    assert positive.returncode == 0, 'positive tests must pass before mutating'
-    try:
-        for mutant in MUTANTS:
-            assert source.read_text() == original, 'another writer changed the product source'
-            mutated = original
-            for before, after in mutant['replacements']:
-                assert mutated.count(before) == 1, \
-                    f"{mutant['name']}: mutation anchor must be unique: {before!r}"
-                mutated = mutated.replace(before, after, 1)
-            source.write_text(mutated)
-            try:
-                negative = run(mutant['name'], 'dangling_link_')
-                raw = (output / f"{mutant['name']}.log").read_text()
-                statuses = dict(STATUS.findall(raw))
-                suite = [line for line in raw.splitlines() if TESTS.match(line)]
-                target = mutant['test']
-                others = {name: statuses.get(name) for name in OPERATION_TESTS
-                          if name != target}
-                marker = f"{mutant['scenario']} must be rejected"
-                compiled = 'error: could not compile' not in raw
-                killed = (negative.returncode == 101
-                          and compiled
-                          and 'test result: FAILED' in raw
-                          and statuses.get(target) == 'FAILED'
-                          and all(value == 'ok' for value in others.values())
-                          and marker in raw)
-                record = dict(name=mutant['name'], test=target,
-                              scenario=mutant['scenario'], exit=negative.returncode,
-                              target=statuses.get(target), others=others,
-                              suite=suite, marker=marker, killed=killed)
-                results.append(record)
-                print(f"{mutant['name']}: killed={killed}, "
-                      f"target={statuses.get(target)}, others={others}",
-                      flush=True)
-                assert killed, \
-                    f"{mutant['name']}: expected only {target} to fail, got {record}"
-            finally:
-                assert source.read_text() == mutated, 'another writer changed the mutant'
-                source.write_text(original)
-    finally:
-        restored = source.read_text() == original
-        (output / 'summary.json').write_text(json.dumps(dict(
-            results=results, restored=restored,
-            beforeSha256=hashlib.sha256(original.encode()).hexdigest(),
-            afterSha256=hashlib.sha256(source.read_bytes()).hexdigest()), indent=2) + '\n')
-        assert restored
-    restored_run = run('restored')
-    assert restored_run.returncode == 0, 'restored product must pass'
+        def run(name, selected=None, gate=None):
+            with (output / f'{name}.log').open('w') as log:
+                gate = gate or wait_for_slot(root / 'scripts/cargo-slots.sh')
+                log.write(gate.stdout + gate.stderr)
+                log.flush()
+                args = command + (
+                    ['--', selected, '--test-threads', '2', '--nocapture']
+                    if selected
+                    else ['--', '--test-threads', '2'])
+                result = run_owned(args, cwd=root, env=env, timeout=900)
+                log.write(result.stdout + result.stderr)
+                return result
+
+        positive = run('positive')
+        assert positive.returncode == 0, 'positive tests must pass before mutating'
+        try:
+            for mutant in MUTANTS:
+                assert source.read_text() == original, 'another writer changed the product source'
+                mutated = original
+                for before, after in mutant['replacements']:
+                    assert mutated.count(before) == 1, \
+                        f"{mutant['name']}: mutation anchor must be unique: {before!r}"
+                    mutated = mutated.replace(before, after, 1)
+                # Reserve the Cargo slot before exposing the mutation.
+                gate = wait_for_slot(root / 'scripts/cargo-slots.sh')
+                source.write_text(mutated)
+                try:
+                    negative = run(mutant['name'], 'dangling_link_', gate)
+                    raw = (output / f"{mutant['name']}.log").read_text()
+                    statuses = dict(STATUS.findall(raw))
+                    suite = [line for line in raw.splitlines() if TESTS.match(line)]
+                    target = mutant['test']
+                    others = {name: statuses.get(name) for name in OPERATION_TESTS
+                              if name != target}
+                    marker = f"{mutant['scenario']} must be rejected"
+                    compiled = 'error: could not compile' not in raw
+                    killed = (negative.returncode == 101
+                              and compiled
+                              and 'test result: FAILED' in raw
+                              and statuses.get(target) == 'FAILED'
+                              and all(value == 'ok' for value in others.values())
+                              and marker in raw)
+                    record = dict(name=mutant['name'], test=target,
+                                  scenario=mutant['scenario'], exit=negative.returncode,
+                                  target=statuses.get(target), others=others,
+                                  suite=suite, marker=marker, killed=killed)
+                    results.append(record)
+                    print(f"{mutant['name']}: killed={killed}, "
+                          f"target={statuses.get(target)}, others={others}",
+                          flush=True)
+                    assert killed, \
+                        f"{mutant['name']}: expected only {target} to fail, got {record}"
+                finally:
+                    assert source.read_text() == mutated, 'another writer changed the mutant'
+                    source.write_text(original)
+        finally:
+            restored = source.read_text() == original
+            (output / 'summary.json').write_text(json.dumps(dict(
+                results=results, restored=restored,
+                beforeSha256=hashlib.sha256(original.encode()).hexdigest(),
+                afterSha256=hashlib.sha256(source.read_bytes()).hexdigest()), indent=2) + '\n')
+            assert restored
+        restored_run = run('restored')
+        assert restored_run.returncode == 0, 'restored product must pass'
 
 
 if __name__ == '__main__':

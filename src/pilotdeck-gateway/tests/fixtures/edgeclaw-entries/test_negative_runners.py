@@ -26,80 +26,126 @@ ROOT = FIXTURES.parents[4]
 class RunnerControls(unittest.TestCase):
     def check_runner(self, name):
         source = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw'
-        originals = {p: p.read_bytes() for p in [source/'file_memory.rs',
-                     source/'storage/entries.rs', source/'storage/accessors.rs']}
-        owned = negative_process.run_owned
-        wait = negative_process.wait_for_slot
-        before_cwd = Path.cwd()
-        calls = []
-        with tempfile.TemporaryDirectory(prefix='pdrs-entry-runner-') as temp:
-            temp = Path(temp)
-            marker, pids_file = temp/'slot', temp/'pids'
-            gate = temp/'gate.sh'
-            gate.write_text(f'if [ ! -f "{marker}" ]; then touch "{marker}"; echo full; exit 1; fi\necho free\n')
+        with negative_process.mutating_sources(ROOT, [source/'file_memory.rs',
+                source/'storage/entries.rs', source/'storage/accessors.rs',
+                source/'storage/overview.rs']) as snapshots:
+            originals = {p: snapshots[p] for p in [source/'file_memory.rs',
+                         source/'storage/entries.rs', source/'storage/accessors.rs',
+                         source/'storage/overview.rs']}
+            owned = negative_process.run_owned
+            wait = negative_process.wait_for_slot
+            before_cwd = Path.cwd()
+            calls = []
+            with tempfile.TemporaryDirectory(prefix='pdrs-entry-runner-') as temp:
+                temp = Path(temp)
+                marker, pids_file = temp/'slot', temp/'pids'
+                gate = temp/'gate.sh'
+                gate.write_text(f'if [ ! -f "{marker}" ]; then touch "{marker}"; echo full; exit 1; fi\necho free\n')
 
-            def wait_slot(script):
-                self.assertEqual(Path(script), ROOT/'scripts/cargo-slots.sh')
-                result = wait(gate, timeout=5, interval=0.02)
-                self.assertEqual(result.stdout, 'full\nfree\n')
-                calls.append('slot')
-                return result
+                def wait_slot(script):
+                    self.assertEqual(Path(script), ROOT/'scripts/cargo-slots.sh')
+                    result = wait(gate, timeout=5, interval=0.02)
+                    self.assertEqual(result.stdout, 'full\nfree\n')
+                    calls.append('slot')
+                    return result
 
-            child = "import time; print('ready',flush=True); time.sleep(20)"
-            leader = ("import os,pathlib,subprocess,sys,time; "
-                      f"p=subprocess.Popen([sys.executable,'-c',{child!r}],stdout=subprocess.PIPE,text=True); "
-                      "assert p.stdout.readline().strip()=='ready'; "
-                      "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())+' '+str(p.pid)); "
-                      "print('owned-ready',flush=True); time.sleep(20)")
+                child = "import time; print('ready',flush=True); time.sleep(20)"
+                leader = ("import os,pathlib,subprocess,sys,time; "
+                          f"p=subprocess.Popen([sys.executable,'-c',{child!r}],stdout=subprocess.PIPE,text=True); "
+                          "assert p.stdout.readline().strip()=='ready'; "
+                          "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())+' '+str(p.pid)); "
+                          "print('owned-ready',flush=True); time.sleep(20)")
 
-            def payload(command, **kwargs):
-                self.assertEqual(command[0], 'cargo')
-                self.assertEqual(calls, ['slot'])
-                calls.append('cargo')
-                return owned([sys.executable, '-c', leader, str(pids_file)], timeout=1)
+                def payload(command, **kwargs):
+                    self.assertEqual(command[0], 'cargo')
+                    self.assertEqual(calls, ['slot'])
+                    calls.append('cargo')
+                    return owned([sys.executable, '-c', leader, str(pids_file)], timeout=1)
 
-            try:
-                with patch.object(sys, 'argv', [name, '--out', str(temp/'logs')]), \
-                     patch.object(negative_process, 'wait_for_slot', side_effect=wait_slot), \
-                     patch.object(negative_process, 'run_owned', side_effect=payload), \
-                     patch.object(subprocess, 'run', side_effect=AssertionError('unowned subprocess.run')):
-                    # wait_for_slot itself delegates to run_owned. Its native gate
-                    # command must stay owned while the Cargo payload is replaced.
-                    def dispatch(command, **kwargs):
-                        return owned(command, **kwargs) if command[0] == 'bash' else payload(command, **kwargs)
-                    with patch.object(negative_process, 'run_owned', side_effect=dispatch):
-                        with self.assertRaises(subprocess.TimeoutExpired) as caught:
-                            runpy.run_path(str(FIXTURES/name), run_name='__main__')
-                self.assertIn('owned-ready', caught.exception.output)
-                self.assertEqual(calls, ['slot', 'cargo'])
-                pids = [int(p) for p in pids_file.read_text().split()]
-                for pid in pids:
-                    deadline = time.monotonic() + 5
-                    while True:
-                        try:
-                            os.kill(pid, 0)
-                        except OSError as error:
-                            self.assertEqual(error.errno, errno.ESRCH)
-                            break
-                        self.assertLess(time.monotonic(), deadline, f'orphan PID {pid}')
-                        time.sleep(0.02)
-                print(f'{name}: retried full slot; owned PIDs {pids} gone (ESRCH); bytes restored', flush=True)
-            finally:
-                if pids_file.exists():
-                    for pid in reversed([int(p) for p in pids_file.read_text().split()]):
-                        try:
-                            os.kill(pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                os.chdir(before_cwd)
-                for path, content in originals.items():
-                    self.assertEqual(path.read_bytes(), content, f'{name} left a mutation in {path}')
+                try:
+                    with patch.object(sys, 'argv', [name, '--out', str(temp/'logs')]), \
+                         patch.object(negative_process, 'wait_for_slot', side_effect=wait_slot), \
+                         patch.object(negative_process, 'run_owned', side_effect=payload), \
+                         patch.object(subprocess, 'run', side_effect=AssertionError('unowned subprocess.run')):
+                        # wait_for_slot itself delegates to run_owned. Its native gate
+                        # command must stay owned while the Cargo payload is replaced.
+                        def dispatch(command, **kwargs):
+                            return owned(command, **kwargs) if command[0] == 'bash' else payload(command, **kwargs)
+                        with patch.object(negative_process, 'run_owned', side_effect=dispatch):
+                            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                                runpy.run_path(str(FIXTURES/name), run_name='__main__')
+                    self.assertIn('owned-ready', caught.exception.output)
+                    self.assertEqual(calls, ['slot', 'cargo'])
+                    pids = [int(p) for p in pids_file.read_text().split()]
+                    for pid in pids:
+                        deadline = time.monotonic() + 5
+                        while True:
+                            try:
+                                os.kill(pid, 0)
+                            except OSError as error:
+                                self.assertEqual(error.errno, errno.ESRCH)
+                                break
+                            self.assertLess(time.monotonic(), deadline, f'orphan PID {pid}')
+                            time.sleep(0.02)
+                    print(f'{name}: retried full slot; owned PIDs {pids} gone (ESRCH); bytes restored', flush=True)
+                finally:
+                    if pids_file.exists():
+                        for pid in reversed([int(p) for p in pids_file.read_text().split()]):
+                            try:
+                                os.kill(pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                    os.chdir(before_cwd)
+                    for path, content in originals.items():
+                        self.assertEqual(path.read_bytes(), content, f'{name} left a mutation in {path}')
 
     def test_negative(self):
         self.check_runner('negative.py')
 
     def test_negative_fix1(self):
         self.check_runner('negative_fix1.py')
+
+    def test_negative_ids(self):
+        self.check_runner('negative_ids.py')
+
+    def test_tree_lock_serializes(self):
+        # A second runner must not read or rewrite the source while the first
+        # one owns the tree lock. A marker file stands in for entries.rs so the
+        # probe never touches production bytes.
+        child = """\
+import pathlib, sys, time
+sys.path.insert(0, sys.argv[1])
+from negative_process import tree_lock
+p = pathlib.Path(sys.argv[2])
+with tree_lock(sys.argv[3]):
+    p.write_text('mutated')
+    print('mutated', flush=True)
+    time.sleep(1.2)
+    p.write_text('clean')
+"""
+        with tempfile.TemporaryDirectory(prefix='pdrs-entry-lock-') as temp:
+            marker = Path(temp)/'source'
+            marker.write_text('clean')
+            root = Path(temp)/'tree'
+            root.mkdir()
+            holder = subprocess.Popen(
+                [sys.executable, '-c', child, str(FIXTURES.parent), str(marker), str(root)],
+                stdout=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(holder.stdout.readline().strip(), 'mutated')
+                start = time.monotonic()
+                with negative_process.tree_lock(root, timeout=5):
+                    self.assertEqual(marker.read_text(), 'clean')
+                self.assertGreaterEqual(time.monotonic()-start, 0.5)
+                holder.wait(timeout=5)
+            finally:
+                if holder.poll() is None:
+                    holder.kill()
+                holder.wait(timeout=5)
+                holder.stdout.close()
+                # The lock is a persistent flock file. Never unlink it here:
+                # a live external holder may still own that inode, and a new
+                # opener would otherwise create a second "exclusive" lock.
 
 
 if __name__ == '__main__':
