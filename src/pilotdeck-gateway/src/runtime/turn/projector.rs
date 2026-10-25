@@ -182,6 +182,23 @@ fn spawn_artifact_writer() -> Option<mpsc::Sender<ArtifactWriteJob>> {
 /// Default `GatewayToolResultArtifactStore`: best-effort files under the OS
 /// temp directory once the text exceeds the 4096-byte threshold.
 ///
+/// **Filename collisions.** The artifact file name is derived from the
+/// *sanitized* `(sessionId, turnId, toolCallId)` parts by [`safe_path_part`]
+/// (trim, a run of characters other than `[A-Za-z0-9_.-]` collapses to one
+/// `-`, edge dashes are trimmed, empty becomes `value`), so distinct raw ids
+/// can sanitize to the same name: `c/1` and `c-1` both become `c-1`, and `""`
+/// becomes `value`. Unlike the tool-budget spill store
+/// (`runtime/project/context_storage.rs`, write-if-absent), this store's
+/// advisory write *truncates and overwrites*: the last write to a colliding
+/// path wins, and every already-returned ref then shows the last body (both
+/// returned paths are the same string). No filename-uniqueness promise is
+/// made for a shared `(session, turn)` root; callers must keep the sanitized
+/// derived name unique and must not rely on unsafe characters to keep
+/// results apart. The `sanitize_colliding_tool_call_ids_*` tests lock the
+/// write sequence on the shared `job_path` and the final on-disk bytes,
+/// both against the measured TS store
+/// (`_tmp/20261025-issue-640/ts-probe/`, #640).
+///
 /// Writer hooks mirror the TS `createDirectory`/`writeText` options so tests
 /// can observe the fire-and-forget contract.
 #[derive(Clone)]

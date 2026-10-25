@@ -455,6 +455,137 @@ fn default_store_only_persists_above_the_byte_threshold() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// #640: `safe_path_part` is not injective, so `c/1` and `c-1` in one
+/// (session, turn) derive the same artifact path. Both `persist` calls
+/// return that one path, and the advisory writer truncates it in order:
+/// the second write wins and both already-returned refs then show the
+/// second body. The same writer hooks observed the measured TS store
+/// (`_tmp/20261025-issue-640/ts-probe/probe.mts`, scenario A) issue two
+/// `writeText` calls on the identical `job_path`.
+#[test]
+fn sanitize_colliding_tool_call_ids_write_one_truncating_job_path() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mkdir_calls = calls.clone();
+    let write_calls = calls.clone();
+    let store = GatewayToolResultArtifactStore::with_io(
+        "/tmp/pdrs-640-collision",
+        4,
+        Arc::new(move |path| {
+            mkdir_calls
+                .lock()
+                .unwrap()
+                .push((String::from("mkdir"), path.to_path_buf(), 0));
+            Ok(())
+        }),
+        Arc::new(move |path, bytes| {
+            write_calls.lock().unwrap().push((
+                String::from("write"),
+                path.to_path_buf(),
+                bytes.len(),
+            ));
+            Ok(())
+        }),
+    );
+    let body_a = format!("BODY-A/{}", "a".repeat(500));
+    let body_b = format!("BODY-B/{}", "b".repeat(90));
+    let input = |tool_call_id: &str| GatewayToolResultArtifactInput {
+        session_id: text("s"),
+        turn_id: text("t"),
+        tool_call_id: text(tool_call_id),
+        text: JsString::from(if tool_call_id == "c/1" {
+            body_a.clone()
+        } else {
+            body_b.clone()
+        }),
+    };
+    let ref_a = store
+        .persist(&input("c/1"))
+        .expect("persisted")
+        .expect("above threshold");
+    let ref_b = store
+        .persist(&input("c-1"))
+        .expect("persisted")
+        .expect("above threshold");
+    // `c/1` and `c-1` sanitize to the same path part, so both callers are
+    // handed the identical (already advisory) path.
+    assert_eq!(ref_a, ref_b, "both tool results return the same path");
+    assert_eq!(ref_a, "/tmp/pdrs-640-collision/s/t/c-1.txt");
+    store.wait_for_pending();
+    let calls = calls.lock().unwrap().clone();
+    let writes: Vec<_> = calls
+        .iter()
+        .filter(|(kind, _, _)| kind == "write")
+        .collect();
+    assert_eq!(
+        writes.len(),
+        2,
+        "two advisory writes on one job_path: {calls:?}"
+    );
+    assert_eq!(
+        writes[0].1,
+        Path::new("/tmp/pdrs-640-collision/s/t/c-1.txt"),
+        "the first write targets the colliding path"
+    );
+    assert_eq!(writes[1].1, writes[0].1, "the second write overwrites it");
+    assert_eq!(
+        writes
+            .iter()
+            .map(|(_, _, bytes)| *bytes)
+            .collect::<Vec<_>>(),
+        vec![body_a.len(), body_b.len()],
+        "first the c/1 body, then the c-1 body (last write wins)"
+    );
+}
+
+/// #640: with the real (secure) writer, the colliding second write truncates
+/// the first: the final file holds exactly the second body, and the ref
+/// returned by the *first* persist now shows the second body. The measured
+/// TS store does the same (`_tmp/20261025-issue-640/ts-probe/probe.mts`,
+/// scenario B: first write `BODY-A` at 5007 bytes, then an exact `BODY-B` at
+/// 4097 bytes with no `A` tail residue).
+#[test]
+fn sanitize_colliding_tool_call_ids_truncate_overwrite_on_disk() {
+    // A fresh UUID, not the pid: macOS reuses pids, and a leftover root would
+    // make the secure writer refuse (same shape as the threshold test above).
+    let root = std::env::temp_dir().join(format!("pdrs-projector-640-{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::remove_dir_all(&root);
+    let store = GatewayToolResultArtifactStore::new(&root, 4);
+    let body_a = format!("BODY-A/{}", "a".repeat(500));
+    let body_b = format!("BODY-B/{}", "b".repeat(90));
+    let input = |tool_call_id: &str, body: String| GatewayToolResultArtifactInput {
+        session_id: text("s"),
+        turn_id: text("t"),
+        tool_call_id: text(tool_call_id),
+        text: JsString::from(body),
+    };
+    let ref_a = store
+        .persist(&input("c/1", body_a.clone()))
+        .expect("persisted")
+        .expect("above threshold");
+    store.wait_for_pending();
+    assert_eq!(
+        std::fs::read_to_string(&ref_a).expect("first artifact"),
+        body_a
+    );
+    let ref_b = store
+        .persist(&input("c-1", body_b.clone()))
+        .expect("persisted")
+        .expect("above threshold");
+    assert_eq!(ref_a, ref_b, "both tool results return the same path");
+    store.wait_for_pending();
+    let final_bytes = std::fs::read(&ref_b).expect("final artifact");
+    // Truncate, not an in-place overwrite: `body_a` is longer, so any exact
+    // match with `body_b` proves the first body's tail was cut away.
+    assert_eq!(final_bytes, body_b.as_bytes());
+    assert_eq!(final_bytes.len(), body_b.len());
+    // The ref handed out by the first persist now shows the second body.
+    assert_eq!(
+        std::fs::read_to_string(&ref_a).expect("ref a reread"),
+        body_b
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Shared owner-token scratch guard (`tests/common/scratch.rs`), not a copy.
 #[cfg(unix)]
 use crate::test_scratch::Scratch;
