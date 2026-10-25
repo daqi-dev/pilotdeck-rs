@@ -10,12 +10,17 @@
 //! 字面量目标做传递闭包得到的全部编译源（不按扩展名过滤，`.rs.data` 与无扩展名
 //! 文件同样扫描）；闭包中的每个目标都必须留在该 vendored 包目录内、是文件、
 //! 不是 symlink。扫描面是 rustc 的 fail-closed 超集：目录下所有 `.rs` 文件，以及
-//! 所有含 `#[path` / `include!` / `r#path`（忽略空白，故 `# [ path`、`include ! (`
-//! 也算）的常规文件，不论扩展名；UTF-8 解码失败的二进制数据不会被 rustc 当源码
-//! 编译，跳过。inline `mod name { ... }` 内的 `#[path]` 一律拒绝：rustc 以
-//! `<文件目录>/<模块名>/` 为基准，与本扫描器的「文件目录 + 字面量」不一致，
-//! 否则会审到诱饵文件而漏掉真正编译的文件。vendored 包内部的 unsafe 本身仍不
-//! 属于本守卫范围。
+//! 所有含 `#[path` / `#[r#path` / `path=`（cfg_attr 形式）/ `include!` /
+//! `r#include!` 的常规文件，不论扩展名；marker 匹配先剥注释（含嵌套 `/* */` 与
+//! `//`）再忽略空白，故 `#/*c*/[/*c*/path`、`include/*c*/!(` 也算。UTF-8 解码
+//! 失败的二进制数据不会被 rustc 当源码编译，跳过；命中的非 `.rs` 文件若
+//! tokenizer 失败则 fail-closed。`#[path]` 只允许出现在文件顶层：用 tokenizer
+//! 跟踪全部 `{}` `()` `[]` 的嵌套深度（该属性自身的 `#[...]` 与 cfg_attr 参数
+//! 括号除外），任何非顶层 `#[path]`（宏体、`mod $i { ... }`、inline module、
+//! 函数体、宏调用实参）一律拒绝，因为其基准目录取决于展开上下文，与本扫描器
+//! 的「文件目录 + 字面量」不一致，否则会审到诱饵文件而漏掉真正编译的文件。
+//! `macro_rules!` 定义体内的 `include!` 同样拒绝：展开处与定义处文件可能不同，
+//! 基准不可静态确定。vendored 包内部的 unsafe 本身仍不属于本守卫范围。
 //! vendored 源码内容不做哈希 pin：内容本身是否可信属于冻结件/人工评审边界；
 //! 本守卫只锁“声明边与源码包含边不能引出该目录”。
 //! CI yml 与脚本自行替换编译器（包括 source .env、设置 CARGO_HOME、RUSTC /
@@ -303,49 +308,134 @@ fn assert_vendored_source_target(
     target
 }
 
+// Match the delimiter that closes `open_index`, using the tokenizer's own
+// delimiter vocabulary. Used to find the end of a `macro_rules!` body.
+fn matching_delimiter(tokens: &[SourceToken], open_index: usize) -> Option<usize> {
+    let SourceToken::Punct(open) = tokens.get(open_index)? else {
+        return None;
+    };
+    let mut stack = vec![match open {
+        '{' => '}',
+        '(' => ')',
+        '[' => ']',
+        _ => return None,
+    }];
+    for (index, token) in tokens.iter().enumerate().skip(open_index + 1) {
+        match token {
+            SourceToken::Punct('{') => stack.push('}'),
+            SourceToken::Punct('(') => stack.push(')'),
+            SourceToken::Punct('[') => stack.push(']'),
+            SourceToken::Punct(close @ ('}' | ')' | ']')) if stack.last() == Some(close) => {
+                stack.pop();
+                if stack.is_empty() {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 // Fail closed on escaped strings and macro-generated (non-literal) paths:
 // parsing arbitrary macro expansion is out of scope, so a new literal shape
 // must extend this scanner instead of silently skipping an edge.
 fn vendored_source_edges(package: &str, directory: &Path, file: &Path) -> Vec<PathBuf> {
     let source = fs::read_to_string(file).unwrap();
     let tokens = source_tokens(&source);
-    // rustc resolves a `#[path]` inside an inline `mod name { ... }` block
-    // against `<containing dir>/<module name>/`, not against the containing
-    // file's directory as this scanner does. Reproducing rustc's directory
-    // ownership rules (they also differ for crate roots and `mod.rs`) is out
-    // of scope, so the shape is rejected: otherwise the scanner could audit a
-    // decoy file inside the package while rustc compiles a different,
-    // unscanned file. Track brace nesting, marking the `{` of `mod <ident> {`.
-    let inline_opens: HashSet<_> = tokens
-        .iter()
-        .enumerate()
-        .filter_map(|(index, token)| match token {
-            SourceToken::Ident(word)
-                if word == "mod"
-                    && matches!(tokens.get(index + 1), Some(SourceToken::Ident(_)))
-                    && tokens.get(index + 2) == Some(&SourceToken::Punct('{')) =>
-            {
-                Some(index + 2)
-            }
-            _ => None,
-        })
-        .collect();
-    let mut targets = Vec::new();
-    let mut inline_depth = 0usize;
-    let mut braces = Vec::new();
+    // A `#[path]` is only auditable when it belongs to the source file itself.
+    // Inside any other `{}` / `()` / `[]` (a `macro_rules!` body, an inline
+    // `mod name { ... }`, the `mod $i { ... }` shape a macro expands to, a
+    // function body, or macro invocation arguments) rustc derives the base
+    // directory from the expansion context; this scanner would instead audit
+    // `<file dir>/<literal>` and could pass a decoy while rustc compiles a
+    // different file. Reproducing rustc's directory ownership rules (they also
+    // differ for crate roots and `mod.rs`) is out of scope, so the shape is
+    // rejected. The attribute's own `#[...]` and `cfg_attr(...)` argument
+    // parentheses are part of the attribute syntax, not a surrounding context,
+    // and are excluded from the depth. Record the nesting depth before every
+    // token so a `path` token can be checked without re-scanning.
+    let mut top_level_before = Vec::with_capacity(tokens.len());
+    let mut attribute_stack: Vec<bool> = Vec::new();
+    let mut depth = 0usize;
+    let mut non_attribute_depth = 0usize;
     for (index, token) in tokens.iter().enumerate() {
+        top_level_before.push(depth > 0 && non_attribute_depth == 0);
         match token {
-            SourceToken::Punct('{') => {
-                let inline = inline_opens.contains(&index);
-                braces.push(inline);
-                if inline {
-                    inline_depth += 1;
+            SourceToken::Punct(open @ ('{' | '(' | '[')) => {
+                let attribute = match open {
+                    // `#[...]` and `#![...]`.
+                    '[' => {
+                        matches!(
+                            tokens.get(index.wrapping_sub(1)),
+                            Some(SourceToken::Punct('#'))
+                        ) || (matches!(
+                            tokens.get(index.wrapping_sub(1)),
+                            Some(SourceToken::Punct('!'))
+                        ) && matches!(
+                            tokens.get(index.wrapping_sub(2)),
+                            Some(SourceToken::Punct('#'))
+                        ))
+                    }
+                    // The `cfg_attr(...)` argument list that belongs to an
+                    // enclosing attribute.
+                    '(' => {
+                        matches!(
+                            tokens.get(index.wrapping_sub(1)),
+                            Some(SourceToken::Ident(word)) if word == "cfg_attr"
+                        ) && attribute_stack.last() == Some(&true)
+                    }
+                    _ => false,
+                };
+                if !attribute {
+                    non_attribute_depth += 1;
                 }
+                attribute_stack.push(attribute);
+                depth += 1;
             }
-            SourceToken::Punct('}') => {
-                inline_depth -= usize::from(braces.pop() == Some(true));
+            SourceToken::Punct('}' | ')' | ']') => {
+                if attribute_stack.pop() == Some(false) {
+                    non_attribute_depth = non_attribute_depth.saturating_sub(1);
+                }
+                depth = depth.saturating_sub(1);
             }
             _ => {}
+        }
+    }
+    // `include!` inside a `macro_rules!` definition is resolved at the
+    // expansion site, which may be a different file from the definition, so
+    // the base directory is not statically knowable here. Record every
+    // `macro_rules! name <body>` body delimiter and its close.
+    let mut macro_opens = HashSet::new();
+    let mut macro_closes = HashSet::new();
+    let mut index = 0;
+    while index + 1 < tokens.len() {
+        if matches!(&tokens[index], SourceToken::Ident(word) if word == "macro_rules")
+            && tokens.get(index + 1) == Some(&SourceToken::Punct('!'))
+        {
+            let mut cursor = index + 2;
+            if matches!(tokens.get(cursor), Some(SourceToken::Ident(_))) {
+                cursor += 1;
+            }
+            if let Some(SourceToken::Punct('{' | '(' | '[')) = tokens.get(cursor) {
+                if let Some(close) = matching_delimiter(&tokens, cursor) {
+                    macro_closes.insert(close);
+                }
+                // If the body is unterminated, treat everything after the
+                // opener as inside it: fail closed rather than skip.
+                macro_opens.insert(cursor);
+            }
+        }
+        index += 1;
+    }
+    let mut targets = Vec::new();
+    let mut macro_depth = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        if macro_opens.contains(&index) {
+            macro_depth += 1;
+        }
+        if macro_closes.contains(&index) {
+            macro_depth -= 1;
         }
         let SourceToken::Ident(word) = token else {
             continue;
@@ -361,8 +451,8 @@ fn vendored_source_edges(package: &str, directory: &Path, file: &Path) -> Vec<Pa
             && tokens.get(index + 1) == Some(&SourceToken::Punct('='))
         {
             assert!(
-                inline_depth == 0,
-                "vendored package {package} #[path] appears inside an inline module block, where rustc resolves targets against the module directory instead of the containing file's directory; fail closed: {}",
+                top_level_before[index],
+                "vendored package {package} #[path] must appear at the file top level; a non-top-level #[path] (macro body, `mod $i {{ ... }}`, inline module, function body, or macro argument) has a base directory determined by the expansion context, so this scanner rejects it: {}",
                 file.display()
             );
             match tokens.get(index + 2) {
@@ -392,6 +482,11 @@ fn vendored_source_edges(package: &str, directory: &Path, file: &Path) -> Vec<Pa
                     | Some(SourceToken::Punct('{'))
             )
         {
+            assert!(
+                macro_depth == 0,
+                "vendored package {package} include! appears inside a macro_rules! definition body; the expansion site may be a different file, so the base directory cannot be determined statically; fail closed: {}",
+                file.display()
+            );
             match tokens.get(index + 3) {
                 Some(SourceToken::Str { value, escaped }) => {
                     assert!(
@@ -413,19 +508,102 @@ fn vendored_source_edges(package: &str, directory: &Path, file: &Path) -> Vec<Pa
     targets
 }
 
+// Remove Rust comments while preserving strings, raw strings, and char
+// literals: comment text is not compiled, but a `/*` or `//` inside a string
+// must not swallow code that follows it. Block comments nest, matching rustc.
+fn strip_comments(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"//") {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            out.push(b' ');
+        } else if bytes[i..].starts_with(b"/*") {
+            i += 2;
+            let mut depth = 1usize;
+            while depth != 0 && i < bytes.len() {
+                if bytes[i..].starts_with(b"/*") {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i..].starts_with(b"*/") {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            out.push(b' ');
+        } else if bytes[i] == b'r'
+            && bytes[i + 1..].iter().copied().find(|&byte| byte != b'#') == Some(b'"')
+        {
+            let hashes = bytes[i + 1..]
+                .iter()
+                .take_while(|&&byte| byte == b'#')
+                .count();
+            let mut end = i + hashes + 2;
+            while end < bytes.len() {
+                if bytes[end] == b'"'
+                    && bytes
+                        .get(end + 1..end + 1 + hashes)
+                        .is_some_and(|suffix| suffix.iter().all(|&byte| byte == b'#'))
+                {
+                    end += hashes + 1;
+                    break;
+                }
+                end += 1;
+            }
+            out.extend_from_slice(&bytes[i..end]);
+            i = end;
+        } else if bytes[i] == b'"' {
+            let start = i;
+            i += 1;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\\' => i += 2,
+                    b'"' => {
+                        i += 1;
+                        break;
+                    }
+                    _ => i += 1,
+                }
+            }
+            out.extend_from_slice(&bytes[start..i.min(bytes.len())]);
+            i = i.min(bytes.len());
+        } else if bytes[i] == b'\''
+            && (bytes.get(i + 2) == Some(&b'\'')
+                || (bytes.get(i + 1) == Some(&b'\\') && bytes.get(i + 3) == Some(&b'\'')))
+        {
+            let end = i + if bytes[i + 1] == b'\\' { 4 } else { 3 };
+            out.extend_from_slice(&bytes[i..end.min(bytes.len())]);
+            i = end.min(bytes.len());
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).expect("comment stripping preserves UTF-8")
+}
+
 // Scan every file that can name a source edge, not only `.rs`: `#[path]` and
-// `include!` compile targets with any extension or none. Matching after
-// removing whitespace also covers `# [ path` and `include ! (`, so a spacing
-// variant cannot fall out of the superset. Non-UTF-8 files are binary payloads
-// (e.g. the ICU collator blobs), which rustc cannot compile as Rust source and
-// which therefore cannot introduce an edge; skip them instead of failing the
-// whole guard on data files.
+// `include!` compile targets with any extension or none. Strip comments first
+// (nested block and line comments), then whitespace, so `include/*c*/!(` and
+// `#/*c*/[/*c*/path = ...]` cannot hide a marker. Non-UTF-8 files are binary
+// payloads (e.g. the ICU collator blobs), which rustc cannot compile as Rust
+// source and which therefore cannot introduce an edge; skip them instead of
+// failing the whole guard on data files.
 fn vendored_source_mentions_edge(path: &Path) -> bool {
     let Ok(text) = String::from_utf8(fs::read(path).unwrap()) else {
         return false;
     };
-    let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
-    ["#[path", "r#path", "include!"]
+    let uncommented = strip_comments(&text);
+    let compact: String = uncommented
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    ["#[path", "#[r#path", "path=", "include!", "r#include!"]
         .iter()
         .any(|marker| compact.contains(marker))
 }
@@ -1434,7 +1612,7 @@ mod vendored_edge_negative_controls {
             let message = rejection(|| {
                 scan(&fixture.package, &source);
             });
-            assert!(message.contains("inline module"), "{attribute}: {message}");
+            assert!(message.contains("file top level"), "{attribute}: {message}");
         }
         // Nested inline modules are rejected too; the depth must not pop early.
         let source = fixture.source(
@@ -1444,7 +1622,7 @@ mod vendored_edge_negative_controls {
         let message = rejection(|| {
             scan(&fixture.package, &source);
         });
-        assert!(message.contains("inline module"), "{message}");
+        assert!(message.contains("file top level"), "{message}");
     }
 
     #[test]
@@ -1455,6 +1633,97 @@ mod vendored_edge_negative_controls {
             "mod a { pub fn f() {} mod b { pub fn g() {} } }\n",
         );
         assert!(scan(&fixture.package, &source).is_empty());
+    }
+
+    #[test]
+    fn macro_expanded_inline_module_path_is_rejected_with_decoy_present() {
+        let fixture = Fixture::new();
+        // Coordinator's rustc repro: `gen!(inner)` expands to `mod inner { ... }`,
+        // so rustc's base is `src/inner/`. The old scanner only recognized
+        // `mod <ident> {`, treated this as a file-top-level `#[path]`, and
+        // audited `src/leaf.inc` (the decoy).
+        fixture.source("leaf.inc", "// decoy: what the old scanner audits\n");
+        fixture.source("inner/leaf.inc", "// rustc target after gen!(inner)\n");
+        let source = fixture.source(
+            "evil.rs",
+            "macro_rules! gen { ($i:ident) => { mod $i { #[path = \"leaf.inc\"] pub mod m; } } }\n\
+             gen!(inner);\n",
+        );
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(message.contains("file top level"), "{message}");
+        assert!(message.contains("expansion context"), "{message}");
+    }
+
+    #[test]
+    fn macro_argument_path_attribute_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.source("x", "// decoy target for the old file-directory join\n");
+        let source = fixture.source("evil.rs", "gen!( #[path = \"x\"] mod m; );\n");
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(message.contains("file top level"), "{message}");
+    }
+
+    #[test]
+    fn function_body_module_path_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.source("x", "// decoy target\n");
+        let source = fixture.source("evil.rs", "fn f() { mod m { #[path = \"x\"] mod n; } }\n");
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(message.contains("file top level"), "{message}");
+    }
+
+    #[test]
+    fn macro_definition_include_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.source("data.inc", "// target that the old scanner resolves\n");
+        for invocation in ["include!", "r#include!"] {
+            let source = fixture.source(
+                "evil.rs",
+                &format!("macro_rules! gen {{ () => {{ {invocation}(\"data.inc\"); }} }}\n"),
+            );
+            let message = rejection(|| {
+                scan(&fixture.package, &source);
+            });
+            assert!(message.contains("macro_rules!"), "{invocation}: {message}");
+        }
+    }
+
+    #[test]
+    fn non_rust_comment_obfuscated_edges_are_scanned() {
+        let fixture = Fixture::new();
+        fixture.outside("outside.rs", "// outside the package\n");
+        let include = fixture.source(
+            "data/obfuscated.inc",
+            "include/*c*/!(\"../../../outside.rs\");\n",
+        );
+        let path = fixture.source(
+            "data/obfuscated_path.inc",
+            "#/*c*/[/*c*/path = \"../../../outside.rs\"] mod m;\n",
+        );
+        let mut files = Vec::new();
+        collect_vendored_source_candidates("fixture", &fixture.package, &mut files);
+        assert!(files.contains(&include), "{files:?}");
+        assert!(files.contains(&path), "{files:?}");
+        let message = rejection(|| {
+            scan(&fixture.package, &include);
+        });
+        assert!(
+            message.contains("escapes its package directory"),
+            "{message}"
+        );
+        let message = rejection(|| {
+            scan(&fixture.package, &path);
+        });
+        assert!(
+            message.contains("escapes its package directory"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -1515,6 +1784,21 @@ mod vendored_edge_negative_controls {
             scan(&fixture.package, &include);
         });
         assert!(message.contains("is a symlink"), "{message}");
+    }
+
+    #[test]
+    fn non_rust_tokenizer_failure_is_fail_closed() {
+        let fixture = Fixture::new();
+        // The marker makes the non-`.rs` file a candidate; a tokenizer failure
+        // must reject it instead of skipping the file.
+        let source = fixture.source("data/broken.inc", "include!(\"x\");\n\"unclosed\n");
+        let mut files = Vec::new();
+        collect_vendored_source_candidates("fixture", &fixture.package, &mut files);
+        assert!(files.contains(&source), "{files:?}");
+        let message = rejection(|| {
+            scan(&fixture.package, &source);
+        });
+        assert!(message.contains("unclosed string"), "{message}");
     }
 
     #[test]
