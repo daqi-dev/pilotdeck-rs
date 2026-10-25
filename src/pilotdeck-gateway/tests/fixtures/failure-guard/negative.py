@@ -14,7 +14,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, run_owned
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
@@ -99,27 +99,30 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
             run_env = dict(env)
             if control.get('case'): run_env['PDRS_SUBMIT_CASE'] = control['case']
             cmd = command + [control['test'], '--', '--exact', '--nocapture']
-            process = subprocess.Popen(cmd, cwd=repo, env=run_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
             timed_out = False
+            budget = min(240, max(1, deadline - time.monotonic()))
             try:
-                raw, _ = process.communicate(timeout=min(240, max(1, deadline - time.monotonic())))
-            except subprocess.TimeoutExpired:
+                run = run_owned(cmd, cwd=repo, env=run_env, timeout=budget)
+                raw = run.stdout + run.stderr
+                returncode = run.returncode
+            except subprocess.TimeoutExpired as error:
                 timed_out = True
-                os.killpg(process.pid, signal.SIGKILL)
-                raw, _ = process.communicate()
+                raw = (error.output or '') + (error.stderr or '')
+                returncode = -signal.SIGKILL
             finally:
                 for path, data in original.items():
                     assert path.read_bytes() == modified[path], f'concurrent edit preserved: {path}'
                     if modified[path] != data: path.write_bytes(data)
             marker = control['marker']
-            valid = not timed_out and ((process.returncode == 0 and 'test result: ok. 1 passed; 0 failed;' in raw
+            valid = not timed_out and ((returncode == 0 and 'test result: ok. 1 passed; 0 failed;' in raw
                 and f'test {control["test"]} ... ok' in raw) if marker is None else (
-                process.returncode == 101 and 'test result: FAILED' in raw and 'assertion' in raw
+                returncode == 101 and 'test result: FAILED' in raw and 'assertion' in raw
                 and marker in raw and 'could not compile' not in raw))
-            (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr + raw + f'\nexit={process.returncode} timed_out={timed_out}\n')
-            summary.append(dict(name=control['name'], case=control.get('case'), marker=marker, before=control.get('before'), after=control.get('after'), pid=process.pid, reaped=True, exit=process.returncode, timed_out=timed_out, valid=valid))
+            (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr + raw + f'\nexit={returncode} timed_out={timed_out}\n')
+            # run_owned reaps the group itself, so the leader pid is not exported.
+            summary.append(dict(name=control['name'], case=control.get('case'), marker=marker, before=control.get('before'), after=control.get('after'), pid=None, reaped=True, exit=returncode, timed_out=timed_out, valid=valid))
             (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-            print(f'{control["name"]}: {"PASS" if valid else "INVALID"} exit={process.returncode}', flush=True)
+            print(f'{control["name"]}: {"PASS" if valid else "INVALID"} exit={returncode}', flush=True)
             if not valid: break
     finally:
         assert all(p.read_bytes() == data for p, data in original.items()), 'original bytes not restored'

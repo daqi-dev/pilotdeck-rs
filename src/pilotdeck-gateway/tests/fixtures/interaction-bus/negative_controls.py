@@ -14,7 +14,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, run_owned
 
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
@@ -126,8 +126,8 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
                 'injected-grants-ignored': 'interaction_injected_options_share_the_supplied_components',
                 'injected-elicitation-ignored': 'interaction_injected_options_share_the_supplied_components',
             }.get(name, 'interaction_real_ts_stepwise_oracle')
-            result = subprocess.run(['cargo','test','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',
-                f'runtime::interaction::tests::{test}'], cwd=root, env=env, capture_output=True, text=True)
+            result = run_owned(['cargo','test','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',
+                f'runtime::interaction::tests::{test}'], cwd=root, env=env, timeout=240)
             log = result.stdout + result.stderr
             (out / f'{name}.log').write_text(log)
             killed = result.returncode == 101 and f'{test} ... FAILED' in log and ('assertion `left == right` failed' in log or 'late response:' in log)

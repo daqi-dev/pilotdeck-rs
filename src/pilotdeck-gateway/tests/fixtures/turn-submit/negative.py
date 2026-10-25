@@ -14,7 +14,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import mutating_sources, run_owned
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
@@ -103,23 +103,24 @@ with mutating_sources(repo, [source]) as snapshots:
             else: run_env.pop('PDRS_SUBMIT_CASE', None)
             if capability: run_env['PDRS_SUBMIT_CAPABILITY'] = capability
             else: run_env.pop('PDRS_SUBMIT_CAPABILITY', None)
-            process = subprocess.Popen(command, cwd=repo, env=run_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
             timed_out = False
             try:
-                raw, _ = process.communicate(timeout=240)
-            except subprocess.TimeoutExpired:
+                run = run_owned(command, cwd=repo, env=run_env, timeout=240)
+                raw = run.stdout + run.stderr
+                returncode = run.returncode
+            except subprocess.TimeoutExpired as error:
                 timed_out = True
-                os.killpg(process.pid, signal.SIGKILL)
-                raw, _ = process.communicate()
+                raw = (error.output or '') + (error.stderr or '')
+                returncode = -signal.SIGKILL
             finally:
                 source.write_bytes(original)
-            valid = not timed_out and ((process.returncode == 0 and 'test result: ok. 3 passed' in raw) if name == 'baseline' else (
-                process.returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw
+            valid = not timed_out and ((returncode == 0 and 'test result: ok. 3 passed' in raw) if name == 'baseline' else (
+                returncode == 101 and 'test result: FAILED' in raw and 'could not compile' not in raw
                 and 'assertion' in raw and marker in raw and test in raw))
-            (output / f'{name}.log').write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={process.returncode}\n')
-            summary.append(dict(name=name, case=case, before=before, after=after, exit=process.returncode, marker=marker, valid=valid))
+            (output / f'{name}.log').write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={returncode}\n')
+            summary.append(dict(name=name, case=case, before=before, after=after, exit=returncode, marker=marker, valid=valid))
             (output/'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
-            print(f'{name}: {"PASS" if valid else "INVALID"} exit={process.returncode}', flush=True)
+            print(f'{name}: {"PASS" if valid else "INVALID"} exit={returncode}', flush=True)
             if not valid: raise SystemExit(1)
     finally:
         source.write_bytes(original)
