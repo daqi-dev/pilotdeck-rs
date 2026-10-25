@@ -1332,3 +1332,53 @@ async fn double_timeout(after_ready: bool) {
     started.expect("W2 must not be superseded by a stale timeout");
     assert_eq!(read_logs(&dir).len(), 2, "only W1 and W2 may exist");
 }
+
+/// #681（A6.5-MCP-CONNECT-HOSTNAME-001）：主机名 URL 的拒连文案显示解析出
+/// 的地址，而不是 URL 主机名。TS 金样 2026-10-25 实测（证据
+/// `_tmp/20261025-issue-681/ts-probe.out`）：legacy SSE 连
+/// `http://localhost:<closed>/sse` 报
+/// `MCP handshake failed: SSE error: TypeError: fetch failed: connect
+/// ECONNREFUSED ::1:60169, connect ECONNREFUSED 127.0.0.1:60169`。
+/// `localhost` 的解析结果与顺序由本机 getaddrinfo 决定，所以这里钉住两条
+/// 不变量：文案不含 URL 主机名，且以解析地址逐条列举。
+#[tokio::test]
+async fn hostname_refusal_reports_resolved_addresses_not_the_hostname() {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind probe port");
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let resolved = tokio::net::lookup_host(("localhost", port))
+        .await
+        .expect("localhost resolves on the test host");
+    let attempts: Vec<String> = resolved
+        .map(|address| format!("connect ECONNREFUSED {}:{}", address.ip(), port))
+        .collect();
+    assert!(!attempts.is_empty(), "localhost must resolve to loopback");
+    let client = McpClient::new(
+        McpServerSpec {
+            id: "hostname-refused".into(),
+            transport: McpTransportSpec::Sse {
+                url: format!("http://localhost:{port}/sse"),
+                headers: None,
+            },
+            call_timeout_ms: None,
+        },
+        McpClientOptions::default(),
+    );
+    let message = client
+        .start()
+        .await
+        .expect_err("a closed port must refuse")
+        .message()
+        .to_owned();
+    client.close().await;
+    assert!(
+        !message.contains("localhost"),
+        "the URL hostname must not appear: {message}"
+    );
+    for attempt in &attempts {
+        assert!(
+            message.contains(attempt),
+            "the message must list {attempt}: {message}"
+        );
+    }
+}
