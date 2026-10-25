@@ -195,6 +195,18 @@ export const parserGaps = [
   ['select-in-table-row', '<table><tr><td>a<select><tr><td>b</td></tr></select>c</td></tr></table>'],
   ['select-in-table-div', '<table><tr><td>a<select><div>b</div></select>c</td></tr></table>'],
   ['select-in-table-table', '<table><tr><td><select><table><tr><td>x</td></tr></table></select>y</td></tr></table>'],
+  // Table scope is tracked by <table> elements only. Omitted </td></tr> must
+  // not leave a residual depth after </table>, and unmatched </td></tr> must
+  // not drop a still-open table; otherwise a later body select is mistaken for
+  // in-select-in-table (or an in-table select no longer closes on <table>).
+  ['table-implicit-close-select-table', '<table><tr><td>a</table><select>b<table><tr><td>c</td></tr></table>d</select>'],
+  ['control-table-explicit-close-select-table', '<table><tr><td>a</td></tr></table><select>b<table><tr><td>c</td></tr></table>d</select>'],
+  ['table-extra-cell-close-select-table', '<table><tr><td>a</td></td></td><select>x<table>y</table>z</select></tr></table>'],
+  ['table-extra-row-close-select-table', '<table></td></tr><select>x<table>y</table>z</select></table>'],
+  // A real nested table inside a cell must still leave the outer table scope
+  // open: clearing the depth on every </table> would break this control.
+  ['control-table-nested-close-select-table', '<table><tr><td><table><tr><td>x</td></tr></table><select>y<table><tr><td>z</td></tr></table>w</select></td></tr></table>'],
+  ['control-table-implicit-close-select-plain', '<table><tr><td>a</table><select>b</select>'],
   // Foreign content must stay on its own parser rules.
   ['svg-select', '<svg><select><div>b</div></select></svg>'],
   ['svg-search', '<svg><search><div>b</div></search></svg>'],
