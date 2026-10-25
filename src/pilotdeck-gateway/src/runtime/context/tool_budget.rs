@@ -29,15 +29,17 @@ pub const PREVIEW_SIZE_BYTES: usize = 12_000;
 
 /// #637 fix-r3 (DeepSeek P2-1): bound on a retry's wait for an in-flight
 /// spill ticket. Without it, an in-flight attempt whose underlying I/O never
-/// returns parks every retry on the same spill path forever. Same magnitude
-/// as the host's other bounded wait on a concurrent file writer —
+/// returns parks every retry on the same spill path forever. Same bound as
+/// the host's other bounded wait on a concurrent file writer —
 /// `storage/run_registry.rs`'s `FILE_LOCK_TIMEOUT` (30 s, TS
 /// `RunRegistry.ts:43-44`) — and far above any real spill write (a few MB of
 /// local disk, the heartbeat tests' 500 ms controlled stall included), so
 /// only a genuinely stuck writer ever reaches it. On expiry the retry gets
 /// the explicit `spill_wait_timeout_error` instead of adopting the half-
-/// written file or hanging.
-const SPILL_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+/// written file or hanging. #637 fix-r4 (opus P2c): derived from
+/// `FILE_LOCK_TIMEOUT` instead of a second hardcoded 30 s, so the comment's
+/// "same bound" cannot silently drift when one of the two is retuned.
+const SPILL_WAIT_TIMEOUT: Duration = crate::storage::FILE_LOCK_TIMEOUT;
 
 const EXACT_TOKEN_COUNT_MAX_BYTES: usize = 40_000;
 const TOKEN_ESTIMATE_SAMPLE_BYTES: usize = 6_000;
@@ -118,6 +120,13 @@ struct State {
 struct InFlightSpill {
     done: Mutex<bool>,
     completed: Condvar,
+    /// #637 fix-r4 (DeepSeek r4 P2): armed by the first follower whose wait
+    /// expired on this ticket. Later claims read it under the state lock —
+    /// they return the same explicit error immediately instead of re-paying
+    /// the full bound on a leader that already outlived one. The flag dies
+    /// with the ticket when the leader's `ResolveSpill` deregisters it, so a
+    /// leader that eventually ends restores the path for a clean next claim.
+    abandoned: std::sync::atomic::AtomicBool,
 }
 
 impl InFlightSpill {
@@ -127,18 +136,29 @@ impl InFlightSpill {
         self.completed.notify_all();
     }
 
+    /// #637 fix-r4 (DeepSeek r4 P2): whether a follower's wait already
+    /// expired on this still-registered ticket.
+    fn wait_expired(&self) -> bool {
+        self.abandoned.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     /// #637 fix-r3 (DeepSeek P2-1): park on the ticket for at most `bound`.
     /// Returns whether the leader resolved it; on expiry the caller surfaces
     /// `spill_wait_timeout_error` instead of adopting the leader's
     /// half-written file. The wait runs inside the caller's `spawn_blocking`
     /// task, so the blocking-pool thread itself wakes at the deadline — no
-    /// thread stays parked behind an abandoned future.
+    /// thread stays parked behind an abandoned future. Expiry arms the
+    /// ticket's abandoned flag (fix-r4): the leader was given one full bound
+    /// and did not finish, so later retries on the same path fail fast
+    /// instead of each parking for another bound.
     fn wait_for(&self, bound: Duration) -> bool {
         let mut done = self.done.lock().unwrap();
         let deadline = Instant::now() + bound;
         while !*done {
             let now = Instant::now();
             if now >= deadline {
+                self.abandoned
+                    .store(true, std::sync::atomic::Ordering::Release);
                 return false;
             }
             let (guard, _timed_out) = self.completed.wait_timeout(done, deadline - now).unwrap();
@@ -179,6 +199,13 @@ enum SpillClaim {
     /// re-check (a succeeded leader registered the replacement, a failed
     /// one freed the path for this caller's own attempt).
     InFlight(std::sync::Arc<InFlightSpill>),
+    /// #637 fix-r4 (DeepSeek r4 P2): the registered attempt already outlived
+    /// one follower's full wait bound. The retry returns the same explicit
+    /// timeout error without waiting again — a stuck leader used to cost
+    /// every retry another full bound, forever. The path still recovers on
+    /// its own when that leader's task eventually ends and its `ResolveSpill`
+    /// deregisters the ticket.
+    Abandoned,
 }
 
 /// Register the caller as the spill writer for `path`, or hand back the
@@ -186,6 +213,12 @@ enum SpillClaim {
 /// held, so the lookup-and-insert is one atomic step (#637 fix-r2).
 fn claim_spill_locked(state: &mut State, path: &JsString) -> SpillClaim {
     if let Some(ticket) = state.in_flight_spills.get(path).cloned() {
+        // Still-registered means the leader's blocking task has not exited
+        // yet (`ResolveSpill` deregisters on every exit path), so this is
+        // not a stale verdict: the leader really is still holding the path.
+        if ticket.wait_expired() {
+            return SpillClaim::Abandoned;
+        }
         return SpillClaim::InFlight(ticket);
     }
     let ticket = std::sync::Arc::new(InFlightSpill::default());
@@ -483,6 +516,12 @@ impl ToolResultBudget {
                 SpillClaim::InFlight(ticket) => {
                     self.wait_for_spill(ticket).await?;
                 }
+                // #637 fix-r4 (DeepSeek r4 P2): the parked leader already
+                // outlived one full wait bound — return the same explicit
+                // error without re-paying the bound on every retry.
+                SpillClaim::Abandoned => {
+                    return Err(spill_wait_timeout_error(spill_wait_timeout()));
+                }
             }
         }
     }
@@ -604,6 +643,10 @@ impl ToolResultBudget {
                 }
                 SpillClaim::InFlight(ticket) => {
                     self.wait_for_spill(ticket).await?;
+                }
+                // Same fix-r4 fast fail as the text path above.
+                SpillClaim::Abandoned => {
+                    return Err(spill_wait_timeout_error(spill_wait_timeout()));
                 }
             }
         }
@@ -2380,6 +2423,192 @@ was returned; retry this request",
         );
     }
 
+    /// #637 fix-r4 (DeepSeek r4 P2): the fix-r3 bound alone left a stuck
+    /// leader costing every same-path retry another full wait, forever — the
+    /// timed-out ticket stayed registered, so each retry re-parked for the
+    /// bound. The first timed-out retry now arms the ticket: the next retry
+    /// fails fast with the SAME explicit error (measured, not just watchdog-
+    /// bounded), and once the stuck writer finally ends and deregisters its
+    /// ticket the path recovers — the next retry runs its own clean spill.
+    /// The elapsed-time assertion is the negative-control anchor: with the
+    /// arming removed the second retry re-parks for the full 200 ms bound and
+    /// the measured elapsed fails the `< 150 ms` check.
+    #[cfg(unix)]
+    #[tokio::test]
+    // The order guard spans the awaits (same pattern as the tests above).
+    #[allow(clippy::await_holding_lock)]
+    async fn spill_retry_after_timeout_fails_fast_until_writer_resolves() {
+        use crate::test_scratch::Scratch;
+        use std::{
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
+            time::{Duration, Instant},
+        };
+
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
+        // 200 ms bound: fast enough to time the first retry out inside the
+        // watchdog, long enough that a broken fast-fail (re-parking for the
+        // bound) lands clearly above the 150 ms ceiling below.
+        let _bound = SpillWaitTimeoutOverride::new(Duration::from_millis(200));
+        let scratch = Scratch::new("spill-timeout-fastfail");
+        let project = scratch.path().join("proj/.pilotdeck/tool-results");
+        let spill_file = project.join("session/call-1.txt");
+        fs::create_dir_all(scratch.path().join("proj")).unwrap();
+        let spill_target = spill_file.to_string_lossy().into_owned();
+        // First fire parks between the write legs until the test releases
+        // the gate (and then fails with ENOSPC, exercising the fix-r1
+        // cleanup); the recovery retry's own write is the second fire and
+        // must pass.
+        let parked = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let fired = Arc::new(AtomicBool::new(false));
+        let (parked_hook, gate_hook, fired_hook) = (parked.clone(), gate.clone(), fired.clone());
+        MID_SPILL_WRITE
+            .lock()
+            .unwrap()
+            .replace(std::sync::Arc::new(move |path: &JsString| {
+                if String::from_utf16_lossy(path.units()) != spill_target {
+                    return None;
+                }
+                if !fired_hook.swap(true, Ordering::SeqCst) {
+                    parked_hook.store(true, Ordering::SeqCst);
+                    let (lock, cvar) = &*gate_hook;
+                    let mut open = lock.lock().unwrap();
+                    while !*open {
+                        open = cvar.wait(open).unwrap();
+                    }
+                    return Some(io::Error::from_raw_os_error(libc::ENOSPC));
+                }
+                None
+            }));
+        let _reset = ResetSpillHook;
+        let _release_gate = ReleaseSpillGate(gate.clone());
+
+        let text = "x".repeat(200_001);
+        let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: project.join("session"),
+            max_result_size_chars: Some(1),
+            max_result_size_tokens: Some(100),
+            preview_bytes: None,
+        });
+        let message = object([
+            ("role", "user".into()),
+            (
+                "content",
+                JsValue::Array(vec![object([
+                    ("type", "tool_result".into()),
+                    ("toolCallId", "call-1".into()),
+                    (
+                        "content",
+                        JsValue::Array(vec![object([
+                            ("type", "text".into()),
+                            ("text", JsValue::String(JsString::from(text.clone()))),
+                        ])]),
+                    ),
+                ])]),
+            ),
+        ]);
+
+        // A: park between the write legs, then abandon the caller exactly at
+        // the combined task's single await.
+        {
+            let spilled = budget.apply_to_message(&message, None);
+            tokio::pin!(spilled);
+            tokio::select! {
+                result = &mut spilled => panic!("spill completed before the mid-write gate: {result:?}"),
+                _ = tokio::time::timeout(Duration::from_secs(10), async {
+                    while !parked.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                }) => {}
+            }
+            assert!(spill_file.exists(), "the gate parks after the head leg");
+        }
+        // B: the first retry pays the full bound and surfaces the explicit
+        // still-writing error.
+        let first = tokio::time::timeout(
+            Duration::from_secs(5),
+            budget.apply_to_message(&message, None),
+        )
+        .await
+        .expect("the bounded wait must return before the test watchdog")
+        .unwrap_err();
+        // C: the second retry must NOT wait the bound again — the ticket A
+        // still holds was already waited out once. Same explicit error,
+        // measured well under the bound (a re-park would take >= 200 ms).
+        let second_started = Instant::now();
+        let second = tokio::time::timeout(
+            Duration::from_secs(2),
+            budget.apply_to_message(&message, None),
+        )
+        .await
+        .expect("the fast-fail retry must return before the test watchdog")
+        .unwrap_err();
+        let second_elapsed = second_started.elapsed();
+        assert_eq!(
+            first.message, second.message,
+            "the fast-failed retry must surface the same explicit error"
+        );
+        assert!(
+            second_elapsed < Duration::from_millis(150),
+            "the second retry must not re-pay the wait bound, took {second_elapsed:?}"
+        );
+        // Neither retry adopted A's half-written file or built an alias.
+        assert_eq!(
+            fs::metadata(&spill_file).unwrap().len(),
+            100_000,
+            "the retries must not write the missing tail into the half-written spill"
+        );
+        assert!(
+            !project.join("refs").exists(),
+            "the retries must not create an alias for the half-written spill"
+        );
+        // Release A: its write fails mid-way, the fix-r1 cleanup unlinks the
+        // half-written file, and `ResolveSpill` deregisters the in-flight
+        // ticket — the abandoned verdict dies with it.
+        {
+            let (lock, cvar) = &*gate;
+            *lock.lock().unwrap() = true;
+            cvar.notify_all();
+        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !budget.state.lock().unwrap().in_flight_spills.is_empty() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the released writer must deregister its in-flight ticket");
+        // D: with A gone the path is usable again — the retry runs its own
+        // clean spill (full content, its own alias, exactly one alias).
+        let recovered = budget.apply_to_message(&message, None).await.unwrap();
+        let JsValue::Array(content) = recovered.get("content").unwrap() else {
+            panic!("content");
+        };
+        assert_eq!(
+            content[0].get("type"),
+            Some(&"tool_result_reference".into())
+        );
+        assert_eq!(fs::read_to_string(&spill_file).unwrap(), text);
+        assert_eq!(
+            fs::read_to_string(project.join("refs/result-0001.txt")).unwrap(),
+            text
+        );
+        let aliases = fs::read_dir(project.join("refs"))
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .is_ok_and(|entry| entry.file_name().to_string_lossy().starts_with("result-"))
+            })
+            .count();
+        assert_eq!(
+            aliases, 1,
+            "the recovered retry must not create a second alias"
+        );
+    }
+
     /// #637 fix-r2: the media artifact write gets the same in-flight
     /// protection — a dropped caller's artifact task parked between its write
     /// legs, a retry entering, then the abandoned writer failing. The retry
@@ -2510,6 +2739,160 @@ was returned; retry this request",
         // B's own write ran after A's failure and cleanup: the referenced
         // artifact holds the full payload, not the half-written file.
         assert_eq!(fs::read_to_string(&path).unwrap(), data);
+    }
+
+    /// #637 fix-r3 (opus P2): the media artifact path shares
+    /// `wait_for_spill` with the text path, so its retry is bounded too —
+    /// this is the timeout counterpart of `media_retry_waits_for_abandoned_
+    /// inflight_writer`, pairing the text-path timeout test above. An
+    /// in-flight artifact writer that never returns surfaces as the explicit
+    /// still-writing error (no `media_reference` to the half-written
+    /// artifact), the artifact stays at its half-written length, and — fix-r4
+    /// — a second retry fails fast with the same error instead of re-paying
+    /// the bound. The watchdogs and the elapsed measurement are the
+    /// negative-control anchors.
+    #[cfg(unix)]
+    #[tokio::test]
+    // Same order-guard-across-await pattern as the tests above.
+    #[allow(clippy::await_holding_lock)]
+    async fn media_retry_times_out_when_inflight_writer_never_finishes() {
+        use crate::test_scratch::Scratch;
+        use std::{
+            sync::{
+                Arc,
+                atomic::{AtomicBool, Ordering},
+            },
+            time::{Duration, Instant},
+        };
+
+        let _order = SPILL_HOOK_ORDER.lock().unwrap();
+        let _bound = SpillWaitTimeoutOverride::new(Duration::from_millis(200));
+        let scratch = Scratch::new("media-wait-timeout");
+        let project = scratch.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        let session = project.join(".pilotdeck/tool-results/session");
+        let prefix = scratch.path().to_string_lossy().into_owned();
+        // A parks between the artifact write legs and stays parked until the
+        // test scope ends (ReleaseSpillGate covers a failing unwind, so the
+        // runtime's blocking pool can always shut down).
+        let parked = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let (parked_hook, gate_hook) = (parked.clone(), gate.clone());
+        MID_SPILL_WRITE
+            .lock()
+            .unwrap()
+            .replace(std::sync::Arc::new(move |path: &JsString| {
+                if !String::from_utf16_lossy(path.units()).starts_with(&prefix) {
+                    return None;
+                }
+                parked_hook.store(true, Ordering::SeqCst);
+                let (lock, cvar) = &*gate_hook;
+                let mut open = lock.lock().unwrap();
+                while !*open {
+                    open = cvar.wait(open).unwrap();
+                }
+                Some(io::Error::from_raw_os_error(libc::ENOSPC))
+            }));
+        let _reset = ResetSpillHook;
+        let _release_gate = ReleaseSpillGate(gate.clone());
+
+        let data = "y".repeat(200_001);
+        let budget = ToolResultBudget::new(ToolResultBudgetOptions {
+            tool_results_dir: session.clone(),
+            max_result_size_chars: Some(1),
+            max_result_size_tokens: Some(100),
+            preview_bytes: None,
+        });
+        let message = object([
+            ("role", "user".into()),
+            (
+                "content",
+                JsValue::Array(vec![object([
+                    ("type", "tool_result".into()),
+                    ("toolCallId", "call-1".into()),
+                    (
+                        "content",
+                        JsValue::Array(vec![object([
+                            ("type", "image".into()),
+                            ("data", JsValue::String(JsString::from(data.clone()))),
+                            ("mimeType", "image/png".into()),
+                        ])]),
+                    ),
+                ])]),
+            ),
+        ]);
+
+        // A: park between the artifact write legs, then abandon the caller.
+        {
+            let spilled = budget.apply_to_message(&message, None);
+            tokio::pin!(spilled);
+            tokio::select! {
+                result = &mut spilled => panic!("artifact write completed before the mid-write gate: {result:?}"),
+                _ = tokio::time::timeout(Duration::from_secs(10), async {
+                    while !parked.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                }) => {}
+            }
+        }
+        // B: the retry on the same content-hash artifact path must return the
+        // explicit still-writing error inside the watchdog — not a
+        // `media_reference` and not a hang.
+        let first = tokio::time::timeout(
+            Duration::from_secs(5),
+            budget.apply_to_message(&message, None),
+        )
+        .await
+        .expect("the bounded media wait must return before the test watchdog")
+        .unwrap_err();
+        assert_eq!(
+            first.message,
+            "timed out waiting for the in-flight spill after 200ms: the same tool \
+result is still being written to disk; no reference to the partially written spill \
+was returned; retry this request",
+            "the timed-out media retry must surface the explicit still-writing error"
+        );
+        // B never adopted A's half-written artifact: it stays exactly A's
+        // head leg (100_000 of 200_001 bytes) and nothing else was created.
+        let artifacts: Vec<_> = fs::read_dir(&session)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(
+            artifacts.len(),
+            1,
+            "the retry must not add a second artifact"
+        );
+        assert_eq!(
+            fs::metadata(&artifacts[0]).unwrap().len(),
+            100_000,
+            "the retry must not write the missing tail into the half-written artifact"
+        );
+        // C (fix-r4): the second retry fails fast with the same error — the
+        // media loop shares the armed-ticket fast fail, and a re-park would
+        // land above the 150 ms ceiling.
+        let second_started = Instant::now();
+        let second = tokio::time::timeout(
+            Duration::from_secs(2),
+            budget.apply_to_message(&message, None),
+        )
+        .await
+        .expect("the fast-failed media retry must return before the test watchdog")
+        .unwrap_err();
+        let second_elapsed = second_started.elapsed();
+        assert_eq!(
+            first.message, second.message,
+            "the fast-failed media retry must surface the same explicit error"
+        );
+        assert!(
+            second_elapsed < Duration::from_millis(150),
+            "the second media retry must not re-pay the wait bound, took {second_elapsed:?}"
+        );
+        assert_eq!(
+            fs::metadata(&artifacts[0]).unwrap().len(),
+            100_000,
+            "the fast-failed retry must not touch the half-written artifact"
+        );
     }
 
     /// #637 fix-r2 (评审第 3 条): the alias-copy leg of the half-write cleanup

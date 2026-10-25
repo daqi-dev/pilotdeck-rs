@@ -22,8 +22,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-// RunRegistry.ts:43-44.
-const FILE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+// RunRegistry.ts:43-44. `pub(crate)` so the tool-result spill wait
+// (`runtime/context/tool_budget.rs::SPILL_WAIT_TIMEOUT`, #637 fix-r4) can
+// derive from it instead of keeping a second 30 s copy that could drift.
+pub(crate) const FILE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 const FILE_LOCK_STALE: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]

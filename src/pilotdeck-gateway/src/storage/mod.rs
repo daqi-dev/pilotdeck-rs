@@ -16,6 +16,9 @@ mod workspace_snapshot;
 pub use run_registry::{
     FileRunRegistry, RunAcceptInput, RunAccepted, RunRecord, RunRef, RunRegistryError, RunState,
 };
+// #637 fix-r4: shared "wait for a concurrent file writer" bound; the spill
+// wait derives from it rather than duplicating the 30 s.
+pub(crate) use run_registry::FILE_LOCK_TIMEOUT;
 pub use transcript_adapter::{
     AdapterError, AdapterResult, AsyncTranscriptAdapter, Clock, JsonlTranscriptStore, ProjectKey,
     SessionStorage, SessionStorageInput, StoreResult, StoredSession, SubagentHandle, TranscriptKey,
