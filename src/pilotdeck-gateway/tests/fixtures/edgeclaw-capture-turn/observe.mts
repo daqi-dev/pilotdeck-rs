@@ -88,6 +88,60 @@ export const scenarios = () => [
     errored: false,
   },
   {
+    name: 'messages-null',
+    resolver: 'recording',
+    projectRoot: '/pdrs-fixture/project',
+    sessionId: 'session',
+    messages: null,
+    errored: false,
+  },
+  {
+    name: 'messages-object',
+    resolver: 'recording',
+    projectRoot: '/pdrs-fixture/project',
+    sessionId: 'session',
+    messages: { filter: 'not-a-function' },
+    errored: false,
+  },
+  {
+    name: 'messages-missing',
+    resolver: 'recording',
+    projectRoot: '/pdrs-fixture/project',
+    sessionId: 'session',
+    errored: false,
+  },
+  {
+    name: 'errored-truthy-number',
+    resolver: 'recording',
+    projectRoot: '/pdrs-fixture/project',
+    sessionId: 'session',
+    messages: [user(text('number'))],
+    errored: 1,
+  },
+  {
+    name: 'errored-truthy-string',
+    resolver: 'recording',
+    projectRoot: '/pdrs-fixture/project',
+    sessionId: 'session',
+    messages: [user(text('string'))],
+    errored: 'yes',
+  },
+  {
+    name: 'errored-null',
+    resolver: 'recording',
+    projectRoot: '/pdrs-fixture/project',
+    sessionId: 'session',
+    messages: [user(text('null'))],
+    errored: null,
+  },
+  {
+    name: 'errored-missing',
+    resolver: 'recording',
+    projectRoot: '/pdrs-fixture/project',
+    sessionId: 'session',
+    messages: [user(text('missing'))],
+  },
+  {
     name: 'throwing-resolver',
     resolver: 'throwing',
     projectRoot: '/pdrs-fixture/project',
@@ -185,12 +239,16 @@ export async function runScenario(
       },
       async captureTurn(input: any) {
         invoked = true;
-        calls.push({
+        const call: any = {
           sessionId: input.sessionId,
           projectRoot: input.projectRoot,
           errored: input.errored,
           messages: convert(input.messages, { includeForkCarryover: false }),
-        });
+        };
+        // `JSON.stringify` drops an undefined property; mirror that here so a
+        // fresh in-memory TS run deep-equals the serialized oracle.
+        if (input.errored === undefined) delete call.errored;
+        calls.push(call);
       },
     };
   } else if (spec.resolver === 'throwing') {
