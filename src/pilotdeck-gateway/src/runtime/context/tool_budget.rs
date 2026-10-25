@@ -32,13 +32,10 @@ pub const PREVIEW_SIZE_BYTES: usize = 12_000;
 /// returns parks every retry on the same spill path forever. Same bound as
 /// the host's other bounded wait on a concurrent file writer —
 /// `storage/run_registry.rs`'s `FILE_LOCK_TIMEOUT` (30 s, TS
-/// `RunRegistry.ts:43-44`) — and far above any real spill write (a few MB of
-/// local disk, the heartbeat tests' 500 ms controlled stall included), so
-/// only a genuinely stuck writer ever reaches it. On expiry the retry gets
-/// the explicit `spill_wait_timeout_error` instead of adopting the half-
-/// written file or hanging. #637 fix-r4 (opus P2c): derived from
-/// `FILE_LOCK_TIMEOUT` instead of a second hardcoded 30 s, so the comment's
-/// "same bound" cannot silently drift when one of the two is retuned.
+/// `RunRegistry.ts:43-44`). This limits followers, not an unopposed writer:
+/// a slow successful disk write may take longer than this bound. On expiry
+/// a retry receives `spill_wait_timeout_error` and isolates the old attempt.
+/// Keep the bound derived from FILE_LOCK_TIMEOUT rather than duplicating 30 s.
 const SPILL_WAIT_TIMEOUT: Duration = crate::storage::FILE_LOCK_TIMEOUT;
 
 const EXACT_TOKEN_COUNT_MAX_BYTES: usize = 40_000;
@@ -97,10 +94,29 @@ struct ReplacementRecord {
 struct State {
     replacements: HashMap<JsString, ReplacementRecord>,
     next_read_file_alias_index: u64,
-    /// #637 fix-r2: the spill attempt currently owning each spill target
+}
+
+#[derive(Default)]
+struct SpillState {
+    /// The process-shared spill attempt currently owning each normalized target
     /// path, so a retry never races an abandoned mid-write attempt.
     in_flight_spills: HashMap<JsString, std::sync::Arc<InFlightSpill>>,
     spill_paths: HashMap<JsString, JsString>,
+}
+
+// Root partitions are weak: dropping the last budget/writer releases the registry.
+// Every context using the same normalized root shares final-file tickets.
+fn spill_registry(root: &JsString) -> std::sync::Arc<Mutex<SpillState>> {
+    use std::sync::{Arc, OnceLock, Weak};
+    static ROOTS: OnceLock<Mutex<HashMap<JsString, Weak<Mutex<SpillState>>>>> = OnceLock::new();
+    let mut roots = ROOTS.get_or_init(Mutex::default).lock().unwrap();
+    roots.retain(|_, value| value.strong_count() > 0);
+    if let Some(state) = roots.get(root).and_then(Weak::upgrade) {
+        return state;
+    }
+    let state = Arc::new(Mutex::new(SpillState::default()));
+    roots.insert(root.clone(), Arc::downgrade(&state));
+    state
 }
 
 /// #637 fix-r2: per-path "one writer at a time" for spill files. Dropping the
@@ -119,6 +135,9 @@ struct State {
 /// (`specs/gateway-parity/diffs/A7.4-TOOLBUDGET-SPILL-PARTIAL-FILE-001`).
 struct InFlightSpill {
     started: Instant,
+    #[cfg(all(test, unix))]
+    age: Mutex<Option<Duration>>,
+    bound: Duration,
     path: JsString,
     done: Mutex<bool>,
     completed: Condvar,
@@ -128,17 +147,23 @@ struct InFlightSpill {
 }
 
 impl InFlightSpill {
+    fn elapsed(&self) -> Duration {
+        #[cfg(all(test, unix))]
+        if let Some(age) = *self.age.lock().unwrap() {
+            return age;
+        }
+        self.started.elapsed()
+    }
+
     fn resolve(&self) {
         let mut done = self.done.lock().unwrap();
         *done = true;
         self.completed.notify_all();
     }
 
-    /// #637 fix-r4 (DeepSeek r4 P2): whether a follower's wait already
-    /// expired on this still-registered ticket.
+    /// Only a claimant may use elapsed time to supersede a slow writer.
     fn wait_expired(&self) -> bool {
-        self.abandoned.load(std::sync::atomic::Ordering::Acquire)
-            || self.started.elapsed() >= spill_wait_timeout()
+        self.abandoned.load(std::sync::atomic::Ordering::Acquire) || self.elapsed() >= self.bound
     }
 
     /// Wait off the async executor, bounded even when the leader never ends.
@@ -148,8 +173,6 @@ impl InFlightSpill {
         while !*done {
             let now = Instant::now();
             if now >= deadline {
-                self.abandoned
-                    .store(true, std::sync::atomic::Ordering::Release);
                 return false;
             }
             let (guard, _timed_out) = self.completed.wait_timeout(done, deadline - now).unwrap();
@@ -157,17 +180,6 @@ impl InFlightSpill {
         }
         true
     }
-}
-
-/// The effective in-flight spill wait bound: `SPILL_WAIT_TIMEOUT`, or the
-/// test-only override (the timeout tests shrink it instead of sleeping out
-/// the production 30 s).
-fn spill_wait_timeout() -> Duration {
-    #[cfg(all(test, unix))]
-    if let Some(timeout) = *SPILL_WAIT_TIMEOUT_OVERRIDE.lock().unwrap() {
-        return timeout;
-    }
-    SPILL_WAIT_TIMEOUT
 }
 
 /// An expired writer may still be blocked, or may just have finished late.
@@ -185,12 +197,15 @@ enum SpillClaim {
 }
 
 // Retire the logical slot without ever reusing the old writer's physical file.
-fn retire_spill(state: &mut State, key: &JsString, ticket: &std::sync::Arc<InFlightSpill>) {
+fn retire_spill(state: &mut SpillState, key: &JsString, ticket: &std::sync::Arc<InFlightSpill>) {
     if state
         .in_flight_spills
         .get(key)
         .is_some_and(|t| std::sync::Arc::ptr_eq(t, ticket))
     {
+        ticket
+            .abandoned
+            .store(true, std::sync::atomic::Ordering::Release);
         state.in_flight_spills.remove(key);
         state.spill_paths.insert(
             key.clone(),
@@ -207,7 +222,7 @@ fn retire_spill(state: &mut State, key: &JsString, ticket: &std::sync::Arc<InFli
     }
 }
 
-fn claim_spill_locked(state: &mut State, path: &JsString) -> SpillClaim {
+fn claim_spill_locked(state: &mut SpillState, path: &JsString, bound: Duration) -> SpillClaim {
     if let Some(ticket) = state.in_flight_spills.get(path).cloned() {
         if !ticket.wait_expired() {
             return SpillClaim::InFlight(ticket);
@@ -216,6 +231,9 @@ fn claim_spill_locked(state: &mut State, path: &JsString) -> SpillClaim {
     }
     let ticket = std::sync::Arc::new(InFlightSpill {
         started: Instant::now(),
+        #[cfg(all(test, unix))]
+        age: Mutex::new(None),
+        bound,
         path: state.spill_paths.get(path).unwrap_or(path).clone(),
         done: Mutex::new(false),
         completed: Condvar::new(),
@@ -226,14 +244,14 @@ fn claim_spill_locked(state: &mut State, path: &JsString) -> SpillClaim {
 }
 
 struct ResolveSpill {
-    state: std::sync::Arc<Mutex<State>>,
+    state: std::sync::Arc<Mutex<SpillState>>,
     path: JsString,
     ticket: std::sync::Arc<InFlightSpill>,
 }
 
 impl ResolveSpill {
     fn new(
-        state: &std::sync::Arc<Mutex<State>>,
+        state: &std::sync::Arc<Mutex<SpillState>>,
         path: &JsString,
         ticket: std::sync::Arc<InFlightSpill>,
     ) -> Self {
@@ -243,12 +261,15 @@ impl ResolveSpill {
             ticket,
         }
     }
-    fn current(&self, state: &State) -> bool {
+    fn current(&self, state: &SpillState) -> bool {
         state
             .in_flight_spills
             .get(&self.path)
             .is_some_and(|t| std::sync::Arc::ptr_eq(t, &self.ticket))
-            && !self.ticket.wait_expired()
+            && !self
+                .ticket
+                .abandoned
+                .load(std::sync::atomic::Ordering::Acquire)
     }
 }
 
@@ -260,7 +281,11 @@ impl Drop for ResolveSpill {
             .get(&self.path)
             .is_some_and(|t| std::sync::Arc::ptr_eq(t, &self.ticket))
         {
-            if self.ticket.wait_expired() {
+            if self
+                .ticket
+                .abandoned
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
                 retire_spill(&mut state, &self.path, &self.ticket);
             } else {
                 state.in_flight_spills.remove(&self.path);
@@ -276,8 +301,21 @@ pub struct ToolResultBudget {
     max_result_size_tokens: usize,
     preview_bytes: usize,
     tool_results_dir: JsString,
-    spill_directory: JsString,
+    context_token: String,
+    spill_wait_timeout: Duration,
+    spills: std::sync::Arc<Mutex<SpillState>>,
     state: std::sync::Arc<Mutex<State>>,
+}
+
+impl Drop for ToolResultBudget {
+    fn drop(&mut self) {
+        let prefix = format!("{}-", self.context_token);
+        self.spills
+            .lock()
+            .unwrap()
+            .spill_paths
+            .retain(|key, _| !String::from_utf16_lossy(basename(key).units()).starts_with(&prefix));
+    }
 }
 
 impl ToolResultBudget {
@@ -299,16 +337,13 @@ impl ToolResultBudget {
                 .max_result_size_tokens
                 .unwrap_or(DEFAULT_MAX_RESULT_SIZE_TOKENS),
             preview_bytes: options.preview_bytes.unwrap_or(PREVIEW_SIZE_BYTES),
-            spill_directory: join(
-                &tool_results_dir,
-                &JsString::from(format!("context-{}", uuid::Uuid::new_v4())),
-            ),
+            context_token: format!("context-{}", uuid::Uuid::new_v4()),
+            spill_wait_timeout: SPILL_WAIT_TIMEOUT,
+            spills: spill_registry(&tool_results_dir),
             tool_results_dir,
             state: std::sync::Arc::new(Mutex::new(State {
                 replacements: HashMap::new(),
                 next_read_file_alias_index: 1,
-                in_flight_spills: HashMap::new(),
-                spill_paths: HashMap::new(),
             })),
         }
     }
@@ -317,9 +352,27 @@ impl ToolResultBudget {
         &self.tool_results_dir
     }
 
-    /// This context's effective spill namespace under the configured root.
+    /// Flat session directory, also consumed by native_archive_artifact.
     pub fn spill_directory(&self) -> &JsString {
-        &self.spill_directory
+        &self.tool_results_dir
+    }
+
+    /// Context isolation lives in a single safe filename, never a subdirectory.
+    pub fn spill_path(&self, name: &JsString) -> JsString {
+        join(
+            &self.tool_results_dir,
+            &JsString::from(format!(
+                "{}-{}",
+                self.context_token,
+                String::from_utf16_lossy(name.units())
+            )),
+        )
+    }
+
+    #[cfg(all(test, unix))]
+    fn with_wait_timeout(mut self, bound: Duration) -> Self {
+        self.spill_wait_timeout = bound;
+        self
     }
 
     /// `ToolResultBudget.applyToMessage`.
@@ -451,17 +504,14 @@ impl ToolResultBudget {
         let extension = if is_json { "json" } else { "txt" };
         let is_error = block.get("isError").and_then(JsValue::as_bool);
         let replacement_name = String::from_utf16_lossy(replacement_key.units());
-        let path = join(
-            &self.spill_directory,
-            &JsString::from(format!("{replacement_name}.{extension}")),
-        );
+        let path = self.spill_path(&JsString::from(format!("{replacement_name}.{extension}")));
         // #637 fix-r1 (P0-1): the whole remainder — spill write, alias copy,
         // preview/record build and cache registration — is ONE blocking task
         // behind a single await, so the caller observes either the fully
         // persisted state or nothing at all. A spawn_blocking task is never
         // aborted once spawned, so dropping this future at the await cannot
         // strand a written spill without its alias and cached record: the
-        // sequence runs to completion unless its lease expires. An expired
+        // sequence runs to completion unless a follower supersedes it. A superseded
         // writer cannot publish over its successor. TS lets an
         // abandoned async function still executes every step (measured:
         // `_tmp/20261025-issue-637/fix-r1/ts-abandoned-async.log`); only the
@@ -486,20 +536,25 @@ impl ToolResultBudget {
             // record, a follower of the running attempt, or the leader —
             // no window where a retry races a just-registered spill.
             let claim = {
-                let mut state = self.state.lock().unwrap();
+                let state = self.state.lock().unwrap();
                 if let Some(record) = state.replacements.get(&replacement_key).cloned() {
                     return Ok((to_reference_block(&record), true));
                 }
-                claim_spill_locked(&mut state, &path)
+                claim_spill_locked(
+                    &mut self.spills.lock().unwrap(),
+                    &path,
+                    self.spill_wait_timeout,
+                )
             };
             match claim {
                 SpillClaim::Leader(ticket) => {
                     let state = self.state.clone();
+                    let spills = self.spills.clone();
                     let extension = extension.to_owned();
                     let record = tokio::task::spawn_blocking(move || {
                         // First statement: every exit of this task resolves
                         // the in-flight ticket, panic unwinds included.
-                        let resolve = ResolveSpill::new(&state, &path, ticket.clone());
+                        let resolve = ResolveSpill::new(&spills, &path, ticket.clone());
                         let path = ticket.path.clone();
                         write_text_if_absent(&spill_root, &path, &flat)?;
                         let read_file_path = create_read_file_alias_in(
@@ -525,8 +580,9 @@ impl ToolResultBudget {
                         };
                         {
                             let mut state = state.lock().unwrap();
-                            if !resolve.current(&state) {
-                                return Err(spill_wait_timeout_error(spill_wait_timeout()));
+                            let spills = spills.lock().unwrap();
+                            if !resolve.current(&spills) {
+                                return Err(spill_wait_timeout_error(ticket.bound));
                             }
                             state.replacements.insert(replacement_key, record.clone());
                         }
@@ -594,7 +650,7 @@ impl ToolResultBudget {
     ) -> Result<(), ToolBudgetError> {
         #[cfg(all(test, unix))]
         let _counted = CountedSpillWaiter::new();
-        let bound = spill_wait_timeout();
+        let bound = self.spill_wait_timeout;
         let waiting = ticket.clone();
         let resolved = tokio::task::spawn_blocking(move || waiting.wait_for(bound))
             .await
@@ -602,7 +658,7 @@ impl ToolResultBudget {
         if resolved {
             return Ok(());
         }
-        retire_spill(&mut self.state.lock().unwrap(), path, &ticket);
+        retire_spill(&mut self.spills.lock().unwrap(), path, &ticket);
         Err(spill_wait_timeout_error(bound))
     }
 
@@ -649,19 +705,19 @@ impl ToolResultBudget {
         // open reports `created:false` for the finished file.
         loop {
             let claim = {
-                let mut state = self.state.lock().unwrap();
-                claim_spill_locked(&mut state, path)
+                let mut spills = self.spills.lock().unwrap();
+                claim_spill_locked(&mut spills, path, self.spill_wait_timeout)
             };
             match claim {
                 SpillClaim::Leader(ticket) => {
-                    let state = self.state.clone();
+                    let spills = self.spills.clone();
                     let (root, path, content) = (project, path.clone(), content.clone());
                     return tokio::task::spawn_blocking(move || {
-                        let resolve = ResolveSpill::new(&state, &path, ticket.clone());
+                        let resolve = ResolveSpill::new(&spills, &path, ticket.clone());
                         let path = ticket.path.clone();
                         write_text_if_absent(&root, &path, &content)?;
-                        if !resolve.current(&state.lock().unwrap()) {
-                            return Err(spill_wait_timeout_error(spill_wait_timeout()));
+                        if !resolve.current(&spills.lock().unwrap()) {
+                            return Err(spill_wait_timeout_error(ticket.bound));
                         }
                         Ok(path)
                     })
@@ -718,10 +774,7 @@ impl ToolResultBudget {
             index,
             &hash[..12.min(hash.len())]
         );
-        let path = join(
-            &self.spill_directory,
-            &JsString::from(format!("{id}.{extension}")),
-        );
+        let path = self.spill_path(&JsString::from(format!("{id}.{extension}")));
         let path = self.persist_artifact(&path, &data).await?;
 
         let preview = media_preview(media_type, &mime_type, original_bytes, block);
@@ -1346,33 +1399,6 @@ static SPILL_HOOK_ORDER: Mutex<()> = Mutex::new(());
 /// sleep there would be a timing assumption.
 #[cfg(all(test, unix))]
 static SPILL_WAITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-/// #637 fix-r3: test-only override of `SPILL_WAIT_TIMEOUT` so the timeout
-/// tests exercise the real bounded wait in milliseconds instead of sleeping
-/// out the production 30 s. Held under `SPILL_HOOK_ORDER` like every other
-/// process-global test installation, so it cannot shorten another test's
-/// legitimate wait.
-#[cfg(all(test, unix))]
-static SPILL_WAIT_TIMEOUT_OVERRIDE: Mutex<Option<Duration>> = Mutex::new(None);
-
-/// #637 fix-r3: RAII guard restoring `SPILL_WAIT_TIMEOUT_OVERRIDE`.
-#[cfg(all(test, unix))]
-struct SpillWaitTimeoutOverride;
-
-#[cfg(all(test, unix))]
-impl SpillWaitTimeoutOverride {
-    fn new(timeout: Duration) -> Self {
-        *SPILL_WAIT_TIMEOUT_OVERRIDE.lock().unwrap() = Some(timeout);
-        Self
-    }
-}
-
-#[cfg(all(test, unix))]
-impl Drop for SpillWaitTimeoutOverride {
-    fn drop(&mut self) {
-        *SPILL_WAIT_TIMEOUT_OVERRIDE.lock().unwrap() = None;
-    }
-}
-
 /// #637 fix-r2: RAII counter for `SPILL_WAITERS`; see the static above.
 #[cfg(all(test, unix))]
 #[derive(Default)]
@@ -2029,8 +2055,7 @@ mod tests {
             max_result_size_tokens: Some(100),
             preview_bytes: None,
         });
-        let spill_file =
-            PathBuf::from(budget.spill_directory.to_utf8().unwrap()).join("call-1.txt");
+        let spill_file = PathBuf::from(budget.spill_path(&"call-1.txt".into()).to_utf8().unwrap());
         let alias_file = project.join("refs/result-0001.txt");
         let prefix = scratch.path().to_string_lossy().into_owned();
         // The unix spill root is the project directory above `tool-results`
@@ -2202,8 +2227,7 @@ mod tests {
             max_result_size_tokens: Some(100),
             preview_bytes: None,
         });
-        let spill_file =
-            PathBuf::from(budget.spill_directory.to_utf8().unwrap()).join("call-1.txt");
+        let spill_file = PathBuf::from(budget.spill_path(&"call-1.txt".into()).to_utf8().unwrap());
         fs::create_dir_all(scratch.path().join("proj")).unwrap();
         let spill_target = spill_file.to_string_lossy().into_owned();
         // The first mid-write fire on the spill path parks between the write
@@ -2354,7 +2378,6 @@ mod tests {
         // 200 ms bound inside a 5 s watchdog: 25x headroom, so scheduling
         // noise cannot turn a working bound into a watchdog miss — only a
         // genuinely unbounded wait falls out of the watchdog.
-        let _bound = SpillWaitTimeoutOverride::new(Duration::from_millis(200));
         let scratch = Scratch::new("spill-wait-timeout");
         let project = scratch.path().join("proj/.pilotdeck/tool-results");
         let budget = ToolResultBudget::new(ToolResultBudgetOptions {
@@ -2362,9 +2385,9 @@ mod tests {
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
-        let spill_file =
-            PathBuf::from(budget.spill_directory.to_utf8().unwrap()).join("call-1.txt");
+        })
+        .with_wait_timeout(Duration::from_millis(200));
+        let spill_file = PathBuf::from(budget.spill_path(&"call-1.txt".into()).to_utf8().unwrap());
         fs::create_dir_all(scratch.path().join("proj")).unwrap();
         let spill_target = spill_file.to_string_lossy().into_owned();
         // A parks between its write legs and stays parked until the test
@@ -2604,7 +2627,6 @@ expired attempt was returned; the expired attempt is isolated",
         };
 
         let _order = SPILL_HOOK_ORDER.lock().unwrap();
-        let _bound = SpillWaitTimeoutOverride::new(Duration::from_millis(200));
         let scratch = Scratch::new("media-wait-timeout");
         let project = scratch.path().join("proj");
         fs::create_dir_all(&project).unwrap();
@@ -2640,7 +2662,8 @@ expired attempt was returned; the expired attempt is isolated",
             max_result_size_chars: Some(1),
             max_result_size_tokens: Some(100),
             preview_bytes: None,
-        });
+        })
+        .with_wait_timeout(Duration::from_millis(200));
         let message = object([
             ("role", "user".into()),
             (
@@ -2691,7 +2714,7 @@ expired attempt was returned; the expired attempt is isolated",
         );
         // B never adopted A's half-written artifact: it stays exactly A's
         // head leg (100_000 of 200_001 bytes) and nothing else was created.
-        let artifacts: Vec<_> = fs::read_dir(budget.spill_directory.to_utf8().unwrap())
+        let artifacts: Vec<_> = fs::read_dir(budget.spill_directory().to_utf8().unwrap())
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .collect();
