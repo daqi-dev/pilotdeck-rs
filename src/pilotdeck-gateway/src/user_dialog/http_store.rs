@@ -36,7 +36,10 @@ use std::{
     future::Future,
     io,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll, Waker},
     time::Duration,
 };
@@ -1735,6 +1738,10 @@ fn store_key_value(key: &StoreKey) -> JsValue {
 pub struct GatewayUserDialogStoreHttpServer {
     url: String,
     shutdown: Option<watch::Sender<bool>>,
+    /// Monotonic shutdown signal shared with every connection timer. It is set
+    /// before the watch notification so a response body that finishes while
+    /// `close()` is running records that the close raced with it (#702 P1).
+    shutdown_started: Arc<AtomicBool>,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 impl fmt::Debug for GatewayUserDialogStoreHttpServer {
@@ -1753,6 +1760,7 @@ impl GatewayUserDialogStoreHttpServer {
     /// (which runs `closeIdleConnections()` before `net.Server.close()` and
     /// invokes its callback once every connection has ended).
     pub async fn close(mut self) {
+        self.shutdown_started.store(true, Ordering::SeqCst);
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(true);
         }
@@ -1835,6 +1843,69 @@ enum ExpiredTimer {
     Headers,
 }
 
+/// Counts response bytes that actually reached the socket. `KeepAliveBody`
+/// reports a body as finished as soon as hyper has pulled its frame into the
+/// write buffer, which can be the whole body; the lifecycle must not mistake
+/// that for "on the wire" (#702 P1).
+#[derive(Debug, Default)]
+struct ResponseWrite {
+    /// Exact response body length hyper is going to write.
+    expected_body: usize,
+    /// The response head's blank line has reached the socket.
+    head_done: bool,
+    /// Body bytes handed to the socket so far (head bytes excluded).
+    body_written: usize,
+    /// Last up to three head bytes, for a blank line split across writes.
+    head_tail: Vec<u8>,
+}
+
+impl ResponseWrite {
+    fn flushed(&self) -> bool {
+        self.head_done && self.body_written >= self.expected_body
+    }
+
+    fn record(&mut self, bytes: &[u8]) {
+        if self.head_done {
+            self.body_written = self.body_written.saturating_add(bytes.len());
+            return;
+        }
+        let mut scan = std::mem::take(&mut self.head_tail);
+        scan.extend_from_slice(bytes);
+        if let Some(position) = scan.windows(4).position(|window| window == b"\r\n\r\n") {
+            self.head_done = true;
+            self.body_written = self
+                .body_written
+                .saturating_add(scan.len() - (position + 4));
+        } else {
+            let keep = scan.len().saturating_sub(3);
+            self.head_tail = scan[keep..].to_vec();
+        }
+    }
+}
+
+/// Tracks whether closing this connection would contradict a keep-alive
+/// advertisement that is already on the wire (#702).
+///
+/// `advertised_keep_alive` is set by the service closure in the same lock that
+/// reads the shutdown watch, so the shutdown path can never observe a stale
+/// `false` for a response that already chose keep-alive. It is cleared when the
+/// next request starts (the advertisement was honoured) or by a new response
+/// decision.
+///
+/// `close_after_response` records that `close()` was observed while such a
+/// response was still in flight. In that case the connection task deliberately
+/// does **not** run hyper's `graceful_shutdown`: the response keeps its
+/// advertised keep-alive and the connection stays reusable until the idle
+/// timer closes it, exactly like Node's in-flight `server.close()` behaviour
+/// (`lifecycle-matrix/node-lifecycle-matrix.json`,
+/// `s3_body_flushing_close_reuses_same_socket`).
+#[derive(Debug, Default)]
+struct ConnectionLifecycle {
+    advertised_keep_alive: bool,
+    close_after_response: bool,
+    response_write: ResponseWrite,
+}
+
 /// Node v22.22.0 connection timers, reproduced on top of hyper:
 ///
 /// * the first request head is bounded by `headersTimeout` (60 s);
@@ -1856,9 +1927,22 @@ struct KeepAliveTimer {
     /// Connection read waker. A state change (arm/disarm/reset) must wake a
     /// `poll_read` that is parked on an older deadline.
     waker: Mutex<Option<Waker>>,
+    lifecycle: Mutex<ConnectionLifecycle>,
+    /// The server-level shutdown signal, sampled at response completion so a
+    /// `close()` that raced with the in-flight body is not mistaken for an
+    /// idle-connection close.
+    shutdown_started: Arc<AtomicBool>,
+    /// An early response closed the connection while the request body still had
+    /// unread bytes; drain the receive side before dropping the last handle so
+    /// the kernel does not answer with an RST that discards the response.
+    unread_body_close: AtomicBool,
 }
 impl KeepAliveTimer {
-    fn new(headers_timeout: Duration, keep_alive_timeout: Duration) -> Self {
+    fn new(
+        headers_timeout: Duration,
+        keep_alive_timeout: Duration,
+        shutdown_started: Arc<AtomicBool>,
+    ) -> Self {
         let now = tokio::time::Instant::now();
         Self {
             headers_timeout,
@@ -1870,7 +1954,39 @@ impl KeepAliveTimer {
                 shutting_down: false,
             }),
             waker: Mutex::new(None),
+            lifecycle: Mutex::new(ConnectionLifecycle::default()),
+            shutdown_started,
+            unread_body_close: AtomicBool::new(false),
         }
+    }
+
+    /// Called by the connection task after `wait_for_shutdown` fired. A `true`
+    /// result means the connection already advertised keep-alive for a
+    /// response that was in flight when `close()` started; hyper must not turn
+    /// that advertisement into a lie.
+    fn close_raced_with_advertised_keep_alive(&self) -> bool {
+        let lifecycle = self.lifecycle.lock().unwrap();
+        lifecycle.close_after_response
+            || (lifecycle.advertised_keep_alive && !lifecycle.response_write.flushed())
+    }
+
+    /// Count response bytes as they reach the socket. `KeepAliveBody` reports a
+    /// body as finished as soon as hyper has pulled its frame into the write
+    /// buffer, which can be the whole body; the lifecycle must not mistake
+    /// that for "on the wire" (#702 P1).
+    fn record_response_write(&self, bytes: &[u8]) {
+        let mut lifecycle = self.lifecycle.lock().unwrap();
+        if lifecycle.advertised_keep_alive {
+            lifecycle.response_write.record(bytes);
+        }
+    }
+
+    fn mark_unread_body_close(&self) {
+        self.unread_body_close.store(true, Ordering::SeqCst);
+    }
+
+    fn has_unread_body_close(&self) -> bool {
+        self.unread_body_close.load(Ordering::SeqCst)
     }
 
     fn store_waker(&self, cx: &Context<'_>) {
@@ -1962,6 +2078,19 @@ impl KeepAliveTimer {
             state.phase = TimeoutPhase::Idle;
             state.header_deadline = None;
             state.idle_deadline = Some(now + self.keep_alive_timeout);
+        }
+        {
+            let mut lifecycle = self.lifecycle.lock().unwrap();
+            // The body completed after close() started, so the response that
+            // was already advertised keep-alive is the one being closed.
+            // Remember that: the connection task must let the advertisement
+            // stand (idle timeout), not run `graceful_shutdown`.
+            if lifecycle.advertised_keep_alive
+                && !lifecycle.response_write.flushed()
+                && self.shutdown_started.load(Ordering::SeqCst)
+            {
+                lifecycle.close_after_response = true;
+            }
         }
         self.wake();
     }
@@ -2397,6 +2526,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for TimeoutStream<S> {
             Poll::Ready(Ok(written)) => {
                 if written > 0 {
                     this.timer.write_activity();
+                    this.timer.record_response_write(&buffer[..written]);
                 }
                 Poll::Ready(Ok(written))
             }
@@ -2520,7 +2650,9 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
     // Node arms `socket.setTimeout(keepAliveTimeout + keepAliveTimeoutBuffer)`.
     let keep_alive_timeout = limits.keep_alive_timeout + limits.keep_alive_timeout_buffer;
     let connections = Arc::new(Semaphore::new(limits.max_connections));
+    let shutdown_started = Arc::new(AtomicBool::new(false));
     let (shutdown, shutdown_rx) = watch::channel(false);
+    let task_shutdown_started = shutdown_started.clone();
     let task = tokio::spawn(async move {
         let mut shutdown_rx = shutdown_rx;
         let mut tasks = JoinSet::new();
@@ -2543,11 +2675,20 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                     };
                     let handler = handler.clone();
                     let mut connection_shutdown = shutdown_rx.clone();
+                    let connection_shutdown_started = task_shutdown_started.clone();
                     tasks.spawn(async move {
                         let _permit = permit;
+                        // Keep a duplicate of the socket so the unread request
+                        // body can be drained after hyper drops its handle;
+                        // dropping the last handle while the kernel still has
+                        // unread bytes turns close into an RST (#702 P2).
+                        let Ok((stream, drain_stream)) = duplicate_for_drain(stream) else {
+                            return;
+                        };
                         let timer = Arc::new(KeepAliveTimer::new(
                             limits.headers_timeout,
                             keep_alive_timeout,
+                            connection_shutdown_started,
                         ));
                         let shutdown_timer = timer.clone();
                         let service_timer = timer.clone();
@@ -2565,31 +2706,75 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                     request.headers(),
                                     limits.keep_alive_timeout,
                                 );
+                                let body_pending =
+                                    request.body().size_hint().exact() != Some(0);
+                                // HEAD responses are encoded with length 0 and
+                                // hyper discards the body, so no body bytes
+                                // will ever reach the socket.
+                                let head_request = request.method() == Method::HEAD;
                                 timer.request_started();
                                 let mut response = serve(handler, request, limits).await;
-                                if version == Version::HTTP_10 {
-                                    // Node answers HTTP/1.0 with
-                                    // `Connection: close` even when the request
-                                    // says `Connection: keep-alive` (probed on
-                                    // v22.22.0 against the real TS server: the
-                                    // implicit content-length is not known when
-                                    // Node's `_storeHeader` picks keep-alive, so
-                                    // it closes). Pinning the response version
-                                    // stops hyper's `fix_keep_alive` from
-                                    // turning the parser keep-alive into an
-                                    // advertisement of a connection it will
-                                    // close.
-                                    *response.version_mut() = Version::HTTP_10;
-                                    insert_close(&mut response);
-                                } else if *shutdown.borrow() {
-                                    // `graceful_shutdown` already disabled
-                                    // hyper's keep-alive. Advertising here would
-                                    // leave `connection: close` next to a stale
-                                    // `Keep-Alive: timeout=5` (measured before
-                                    // the fix).
-                                    insert_close(&mut response);
-                                } else {
-                                    add_keep_alive_headers(&mut response, keep_alive);
+                                // The shutdown sample and the keep-alive
+                                // decision are one critical section, so the
+                                // connection task can never observe "no
+                                // advertisement" and then race a response that
+                                // already wrote one (#702 P1).
+                                {
+                                    let mut lifecycle = timer.lifecycle.lock().unwrap();
+                                    lifecycle.advertised_keep_alive = false;
+                                    lifecycle.close_after_response = false;
+                                    lifecycle.response_write = ResponseWrite::default();
+                                    if version == Version::HTTP_10 {
+                                        // Node answers HTTP/1.0 with
+                                        // `Connection: close` even when the
+                                        // request says `Connection: keep-alive`
+                                        // (probed on v22.22.0 against the real
+                                        // TS server: the implicit content-length
+                                        // is not known when Node's `_storeHeader`
+                                        // picks keep-alive, so it closes).
+                                        // Pinning the response version stops
+                                        // hyper's `fix_keep_alive` from turning
+                                        // the parser keep-alive into an
+                                        // advertisement of a connection it will
+                                        // close.
+                                        *response.version_mut() = Version::HTTP_10;
+                                        insert_close(&mut response);
+                                    } else if *shutdown.borrow() {
+                                        // `graceful_shutdown` already disabled
+                                        // hyper's keep-alive. Advertising here
+                                        // would leave `connection: close` next
+                                        // to a stale `Keep-Alive: timeout=5`
+                                        // (measured before the fix).
+                                        insert_close(&mut response);
+                                    } else if add_keep_alive_headers(
+                                        &mut response,
+                                        keep_alive,
+                                    ) {
+                                        lifecycle.advertised_keep_alive = true;
+                                        lifecycle.response_write.expected_body = if head_request {
+                                            0
+                                        } else {
+                                            response
+                                                .body()
+                                                .size_hint()
+                                                .exact()
+                                                .unwrap_or(0) as usize
+                                        };
+                                    }
+                                }
+                                // A response written before the request body
+                                // was consumed makes hyper close the read half
+                                // after one poll; the unread bytes in the
+                                // kernel queue would turn the close into an
+                                // RST. The connection task drains them after
+                                // the response (#702 P2).
+                                if body_pending
+                                    && response.headers().get(header::CONNECTION)
+                                        .is_some_and(|value| {
+                                            value.as_bytes().eq_ignore_ascii_case(b"close")
+                                        })
+                                {
+                                    timer.mark_unread_body_close();
                                 }
                                 Ok::<_, Infallible>(
                                     response.map(|body| KeepAliveBody::new(body, timer)),
@@ -2623,28 +2808,45 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                             // gets hyper's 123-byte 431 (registered in R3).
                             .max_headers(4096)
                             .max_buf_size(hyper_buffer_bytes);
-                        let connection = builder.serve_connection(
+                        let mut connection = Box::pin(builder.serve_connection(
                             TokioIo::new(TimeoutStream::new(
                                 stream,
                                 timer,
                                 max_header_bytes,
                             )),
                             service,
-                        );
-                        tokio::pin!(connection);
+                        ));
                         tokio::select! {
                             _ = wait_for_shutdown(&mut connection_shutdown) => {
                                 // Node `server.close()` closes idle
                                 // connections and lets an in-flight request
-                                // finish; hyper's graceful shutdown has the
-                                // same shape. Suppress the 408 a header
-                                // deadline would otherwise write while the
-                                // close is waiting.
+                                // finish. Suppress the 408 a header deadline
+                                // would otherwise write while the close is
+                                // waiting.
                                 shutdown_timer.begin_shutdown();
-                                connection.as_mut().graceful_shutdown();
-                                let _ = connection.await;
+                                if shutdown_timer.close_raced_with_advertised_keep_alive() {
+                                    // The response head already advertised
+                                    // keep-alive. `graceful_shutdown` would
+                                    // close right after that response and turn
+                                    // the advertisement into a lie; let the
+                                    // existing idle timer close the connection
+                                    // once it is genuinely idle, like Node's
+                                    // in-flight `server.close()`.
+                                    let _ = connection.as_mut().await;
+                                } else {
+                                    connection.as_mut().graceful_shutdown();
+                                    let _ = connection.as_mut().await;
+                                }
                             }
-                            _ = &mut connection => {}
+                            _ = connection.as_mut() => {}
+                        }
+                        // Release hyper's handle first so the duplicate is the
+                        // last owner of the socket while we drain.
+                        drop(connection);
+                        if shutdown_timer.has_unread_body_close()
+                            && let Some(drain) = drain_stream
+                        {
+                            drain_after_early_close(drain).await;
                         }
                     });
                 }
@@ -2673,8 +2875,42 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
     Ok(GatewayUserDialogStoreHttpServer {
         url: format!("http://{host}:{}{STORE_PATH_PREFIX}", address.port()),
         shutdown: Some(shutdown),
+        shutdown_started,
         task: Some(task),
     })
+}
+
+/// Duplicate the accepted socket for the post-response drain. Tokio exposes no
+/// `try_clone`; `into_std` + `std::net::TcpStream::try_clone` + `from_std`
+/// keeps this safe without raw fd arithmetic.
+fn duplicate_for_drain(stream: TcpStream) -> io::Result<(TcpStream, Option<TcpStream>)> {
+    let std_stream = stream.into_std()?;
+    let _ = std_stream.set_nonblocking(true);
+    let drain = std_stream
+        .try_clone()
+        .ok()
+        .and_then(|clone| TcpStream::from_std(clone).ok());
+    Ok((TcpStream::from_std(std_stream)?, drain))
+}
+
+/// Drain the unread request body after an early close response, so the last
+/// `close` finds an empty receive queue and sends a FIN instead of an RST that
+/// would discard the already-written response. Same bounded-drain shape as
+/// [`reject_over_capacity`], but a slow sender keeps the window alive: stop
+/// after 100 ms without a byte (the peer stopped or is only reading) with a
+/// hard 1 s cap, so an actively dribbling peer still cannot park the task.
+async fn drain_after_early_close(mut stream: TcpStream) {
+    let mut buffer = [0u8; 1024];
+    let _ = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            match tokio::time::timeout(Duration::from_millis(100), stream.read(&mut buffer)).await {
+                // EOF/reset, or 100 ms of silence: nothing is left to drain.
+                Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+                Ok(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
 }
 
 const SERVICE_UNAVAILABLE: &[u8] =
@@ -2912,17 +3148,20 @@ fn close_if_body_pending(
     response
 }
 
+/// Returns `true` when this call actually advertised keep-alive, so the caller
+/// can record it in the connection lifecycle under the same lock that read the
+/// shutdown watch (#702).
 fn add_keep_alive_headers(
     response: &mut Response<Full<Bytes>>,
     keep_alive: Option<KeepAliveHeader>,
-) {
+) -> bool {
     let Some(keep_alive) = keep_alive else {
-        return;
+        return false;
     };
     // Explicit closes (431/408, HTTP/1.0, an early response whose request body
     // was not read) must never be overwritten by an advertisement.
     if response.headers().contains_key(header::CONNECTION) {
-        return;
+        return false;
     }
     response.headers_mut().insert(
         header::CONNECTION,
@@ -2935,6 +3174,7 @@ fn add_keep_alive_headers(
             .headers_mut()
             .insert(header::HeaderName::from_static("keep-alive"), value);
     }
+    true
 }
 
 fn build(response: HttpStoreHttpResponse) -> Response<Full<Bytes>> {
