@@ -873,6 +873,99 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
     );
 }
 
+/// A7.2-COORDINATOR-DELIVERY-001-R1: every external emit enters the one
+/// current-thread host, so concurrent callers queue behind each other and the
+/// sink never runs off the host thread or overlaps another call. The mutation
+/// `emit-bypasses-serial-host` in tests/fixtures/turn-gateway/negative.py
+/// calls the coordinator directly and turns the thread/overlap assertions red.
+#[tokio::test]
+async fn concurrent_external_emits_are_serialized_on_the_serial_host() {
+    const CALLERS: usize = 8;
+    let host = empty_gateway_with_clock(0, Arc::new(Clock::default()));
+    let host_thread = host
+        .call(async { std::thread::current().id() })
+        .await
+        .unwrap();
+    let coordinator = host.gateway.0.submitter.coordinator.clone();
+    let in_sink = Arc::new(AtomicBool::new(false));
+    let overlap = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let sink_threads = Arc::new(Mutex::new(Vec::new()));
+    let registration = {
+        let in_sink = in_sink.clone();
+        let overlap = overlap.clone();
+        let calls = calls.clone();
+        let sink_threads = sink_threads.clone();
+        host.call(async move {
+            coordinator.start(&"s".into(), &"r".into(), move |_| {
+                if in_sink.swap(true, Ordering::SeqCst) {
+                    overlap.store(true, Ordering::SeqCst);
+                }
+                // Widen the window a non-serialized emitter would need; the
+                // assertion itself does not depend on this sleep.
+                std::thread::sleep(Duration::from_millis(2));
+                sink_threads
+                    .lock()
+                    .unwrap()
+                    .push(std::thread::current().id());
+                calls.fetch_add(1, Ordering::SeqCst);
+                in_sink.store(false, Ordering::SeqCst);
+            })
+        })
+        .await
+        .unwrap()
+    };
+    let barrier = Arc::new(std::sync::Barrier::new(CALLERS));
+    let mut callers = Vec::new();
+    for _ in 0..CALLERS {
+        let gateway = host.clone();
+        let barrier = barrier.clone();
+        callers.push(std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            barrier.wait();
+            runtime.block_on(async move {
+                gateway
+                    .emit(
+                        "s".into(),
+                        parse_json(r#"{"type":"text","text":"concurrent"}"#).unwrap(),
+                    )
+                    .await
+            })
+        }));
+    }
+    let accepted = callers
+        .into_iter()
+        .map(|caller| caller.join().expect("caller thread").unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        accepted.iter().all(|accepted| *accepted),
+        "A7.2-COORDINATOR-DELIVERY-001-R1: every concurrent external emit must be accepted"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        CALLERS,
+        "A7.2-COORDINATOR-DELIVERY-001-R1: every accepted event must reach the sink once"
+    );
+    assert!(
+        !overlap.load(Ordering::SeqCst),
+        "A7.2-COORDINATOR-DELIVERY-001-R1: sink calls must not overlap"
+    );
+    let sink_threads = sink_threads.lock().unwrap();
+    assert_eq!(
+        sink_threads.len(),
+        CALLERS,
+        "A7.2-COORDINATOR-DELIVERY-001-R1: every accepted event must reach the sink once"
+    );
+    assert!(
+        sink_threads.iter().all(|thread| *thread == host_thread),
+        "A7.2-COORDINATOR-DELIVERY-001-R1: the sink must run on the serial host thread, not on callers"
+    );
+    drop(registration);
+}
+
 // Poll exactly at fixture observation points. This makes the abort await and
 // replacement deterministic without sleeps or assumptions about scheduler turns.
 #[tokio::test]

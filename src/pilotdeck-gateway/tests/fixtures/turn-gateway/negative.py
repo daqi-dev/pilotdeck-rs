@@ -29,6 +29,7 @@ def mutation(name, path, before, after, case=None, marker='assertion'):
 
 mutants = [
     mutation('transport-bypasses-serial-host', gateway, 'self.host\n            .call(async move { connection.receive(&text).await })\n            .await?', 'connection.receive(&text).await', 'permission-before-event-and-final', 'gateway host thread'),
+    mutation('emit-bypasses-serial-host', gateway, 'let gateway = self.gateway.clone();\n        self.call(async move { gateway.0.submitter.coordinator.emit(&session, &event) })\n            .await', 'Ok(self.gateway.0.submitter.coordinator.emit(&session, &event))', None, 'A7.2-COORDINATOR-DELIVERY-001-R1'),
     mutation('dropped-event', gateway, '                emit(event);', '                let _ = event;', 'permission-before-event-and-final', 'transport observation did not arrive'),
     mutation('duplicated-event', gateway, '                emit(event);', '                emit(event.clone()); emit(event);', 'permission-before-event-and-final'),
     mutation('early-final', gateway, '                emit(event);', '                emit(event); break;', 'permission-before-event-and-final'),
@@ -99,6 +100,7 @@ baseline_tests = [
     'serial_timer_cancels_queued_callbacks_and_replacements',
     'abort_waits_for_latest_real_ts_session_fence',
     'abort_snapshots_before_ungated_cleanup_replacement',
+    'concurrent_external_emits_are_serialized_on_the_serial_host',
 ]
 command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::gateway::tests', '--', '--nocapture', '--test-threads=1']
 (out / 'original-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest() for p, data in original.items()}, indent=2)+'\n')
