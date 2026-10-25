@@ -36,12 +36,13 @@ def replace(old, new):
     assert TEXT.count(old) == 1, f'unique mutation anchor required: {old!r}'
     return TEXT.replace(old, new)
 
-serial = replace('        for (plugin, tx) in ready {',
-                 '        let mut previous: Option<DisposalReceiver> = None;\n        for (plugin, tx) in ready {\n            let preceding = previous.replace(tx.subscribe());')
-serial = serial.replace('            let mut future = Box::pin(async move {',
-                        '            let mut future = Box::pin(async move {\n                if let Some(preceding) = preceding { let _ = wait_watch(preceding).await; }')
-stop = replace('            started.push((plugin, tx, callback, first));',
-               '            let stop = matches!(&first, std::task::Poll::Ready(Err(_)));\n            started.push((plugin, tx, callback, first));\n            if stop { break; }')
+serial = replace('            for (plugin, completion) in ready {',
+                 '            let serial = std::sync::Arc::new(TokioMutex::new(()));\n            for (plugin, completion) in ready {\n                let serial = std::sync::Arc::clone(&serial);')
+assert serial.count('                let mut future = Box::pin(async move {') == 1, 'serial future anchor'
+serial = serial.replace('                let mut future = Box::pin(async move {',
+                        '                let mut future = Box::pin(async move {\n                    let _serial = serial.lock().await;')
+stop = replace('                started.push((plugin, completion, callback, first));',
+               '                let stop = matches!(&first, std::task::Poll::Ready(Err(_)));\n                started.push((plugin, completion, callback, first));\n                if stop { break; }')
 CASES = [
     ('restore-old-order', OLD, 'runtime_dispose_retired_and_active_together', '"dispose-retired-and-active-together" calls'),
     ('serial-instead-of-parallel', serial, 'runtime_dispose_active_order_and_parallel', '"dispose-active-order-and-parallel" step 3'),
@@ -59,9 +60,9 @@ CASES = [
     ('ignore-leases', replace('if registry.is_plugin_referenced(&plugin) {',
                              'if false && registry.is_plugin_referenced(&plugin) {'),
      'runtime_dispose_retired_generations', '"dispose-retired-generations" step 11'),
-    ('stop-on-callback-error', stop, 'runtime_dispose_errors_aggregate', 'dispose-errors-aggregate timed out'),
-    ('reverse-error-causes', replace('.map(|pending| pending.receiver.clone())\n                            .collect();',
-                                     '.map(|pending| pending.receiver.clone()).rev()\n                            .collect();'),
+    ('stop-on-callback-error', stop, 'runtime_dispose_errors_aggregate', '"dispose-errors-aggregate" step 2'),
+    ('reverse-error-causes', replace('.map(|pending| pending.receiver.clone())\n                                .collect();',
+                                     '.map(|pending| pending.receiver.clone()).rev()\n                                .collect();'),
      'runtime_dispose_mixed_errors_and_pending_callback', '"dispose-mixed-errors-and-pending-callback" step 14'),
     ('duplicate-retired-instance', replace('if !self.retired_plugins.iter().any(|old| Arc::ptr_eq(old, p)) {',
                                            'if true {'),
