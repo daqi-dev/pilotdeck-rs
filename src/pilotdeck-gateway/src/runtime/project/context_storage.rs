@@ -95,32 +95,14 @@ impl ContextStorageResources {
     /// `ProjectSessionRuntimeBundle.ts:520,574`. There is no project-flat
     /// default.
     ///
-    /// **Isolation.** Every call owns an independent in-memory replacement
-    /// cache and [`ToolResultBudget`]. The directory itself is not namespaced
-    /// per session: [`ToolResultBudget`] derives the spill file name from the
-    /// *sanitized* scoped `(turnId, toolCallId)` key (a run of characters other
-    /// than `[A-Za-z0-9_.-]` becomes one `-`, edge dashes are trimmed, and an
-    /// empty `toolCallId` becomes `tool-call`) and derives the read alias from
-    /// its own counter. Callers sharing one root must therefore keep that
-    /// derived file name unique within the root; uniqueness of the raw scoped
-    /// key is not sufficient, and callers must not rely on unsafe characters
-    /// to keep results apart. Distinct raw keys can sanitize to the same name,
-    /// for example `c/1` with `c-1`, `c--` with `c`, or `""` with
-    /// `"tool-call"`. Within one budget the replacement cache is keyed by the
-    /// same sanitized key, so a later sanitize-equal tool result returns the
-    /// earlier record without writing. If two contexts in one directory
-    /// collide, the second write leaves the first file in place (so the second
-    /// result is not persisted) while its preview describes the second result:
-    /// the second context's record references the first context's artifact.
-    /// The measured TS baseline exhibits the same behavior for this input;
-    /// this API makes no shared-directory filename-isolation promise.
-    /// `context_storage_shared_directory_requires_unique_scoped_keys` locks
-    /// the identical-raw-key input boundary,
-    /// `context_storage_shared_directory_requires_unique_sanitized_filenames`
-    /// locks the sanitize-equal boundary (`c/1` versus `c-1`), and
-    /// `context_storage_shared_directory_distinguishes_unique_scoped_keys`
-    /// locks the unique-key positive control. This API isolates session state,
-    /// not a shared directory's filename namespace.
+    /// **Isolation.** Each budget owns a UUID subdirectory under the supplied
+    /// root; identical or sanitize-equal IDs in different contexts cannot
+    /// alias a spill file. Read aliases remain exclusive-created under refs.
+    /// Within one budget a sanitized key still identifies its cached record.
+    /// Expired writes are retired after the bounded wait; their successors
+    /// use different physical files, so an uncancellable blocking writer
+    /// cannot corrupt or publish over its successor. See the unapproved
+    /// difference A7.4-TOOLBUDGET-CONTEXT-ISOLATION-001.
     ///
     /// **Executor isolation.** [`ToolResultBudget`] offloads the spill write,
     /// alias copy and their path checks to `spawn_blocking`
@@ -135,7 +117,8 @@ impl ContextStorageResources {
     /// blocking task behind one await, and a spawned blocking task is never
     /// aborted, so dropping the caller's future leaves the same state TS
     /// leaves when an abandoned async function still runs every step
-    /// unobserved; only the caller stops observing the result. Media spills
+    /// unobserved while its lease remains valid. Expiry prevents cache
+    /// publication and releases the slot on the next claim or timed wait. Media spills
     /// complete their write the same way (without an alias). A caller dropped
     /// between two tool-result blocks simply stops the loop there: those
     /// blocks are not spilled yet, and a retry re-runs them.
