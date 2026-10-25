@@ -18,8 +18,21 @@ function requireRule(ok, rule) {
   if (!ok) throw Object.assign(new Error(`${rule}: ${RULES[rule]}`), { rule });
 }
 
-// Python validate_calibration derives the expected variant/phase/repetition
-// from the preregistered ID; the direct Node oracle must not trust the labels.
+// Mirrors the three same-named label checks in Python
+// validate_calibration (session_domain.py:205-210): both derive the expected
+// variant/phase/repetition from the preregistered ID, so the direct Node oracle
+// must not trust the labels either.
+//
+// Structural JavaScript limit, deliberately NOT papered over: JSON.parse turns
+// `"repetition": 1.0` into the number 1, indistinguishable from the integer
+// literal, so a float-typed repetition can never be rejected here. Python
+// validate_calibration checks `type(...) is int` and does reject 1.0 as
+// COVERAGE; that is the authority on every real gate, because E1 calibrate
+// runs validate_calibration before its Node bridge (session_domain.py:205-226)
+// and controls/session_domain.py replays the float variant against it. Only a
+// direct `node session_observations.mjs` run over hand-written JSON -- not a
+// gate -- can accept it. Registered in specs/gateway-parity/FROZEN.md
+// (2026-10-25 fix-r1).
 function requireLabel(ok, detail) {
   if (!ok) throw Object.assign(new Error(`COVERAGE: ${detail}`), { rule: 'COVERAGE' });
 }

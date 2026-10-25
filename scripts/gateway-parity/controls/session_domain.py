@@ -23,10 +23,35 @@ CALIBRATION_CASES = {
     'calibration-identity': 'IDENTITY',
 }
 
+# Direct Node-path label controls, paired with the Python calibration-* variants.
+# Each mutates exactly one label while the id (the expected source) stays fixed,
+# so checkObservationLabels must reject with COVERAGE.
 LABEL_CASES = {
-    'observation-repetition-label': ('repetition', 2),
+    'observation-repetition-zero': ('repetition', 0),
+    'observation-repetition-wrong-round': ('repetition', 2),
+    'observation-repetition-out-of-range': ('repetition', 6),
+    'observation-repetition-boolean': ('repetition', True),
+    'observation-repetition-string': ('repetition', '1'),
+    'observation-repetition-null': ('repetition', None),
     'observation-phase-label': ('phase', 'tool'),
     'observation-variant-label': ('variant', {'name': 'unknown-first'}),
+    'observation-variant-null': ('variant', None),
+    'observation-variant-array': ('variant', ['unknown-first']),
+    # Five segments: only the four-segment shape check rejects, so removing just
+    # that clause must accept (the remaining labels still match the first four).
+    'observation-id-shape': ('id', '/extra'),
+    # Non-canonical id repetition segment ('01' parses to the same number as the
+    # observation label, so only the canonical-integer regex can reject it).
+    'observation-id-repetition-noncanonical': ('id-repetition', '01'),
+}
+
+# float 1.0 is structurally undetectable on the Node side: JSON.parse turns it
+# into the number 1, so neither Number.isInteger nor === can tell it apart. Do
+# NOT pretend this is a negative control. Pin the documented acceptance instead
+# (a canary: if Node ever rejects it, docs must be updated); the rejecting
+# oracle for this variant is Python validate_calibration via calibration-repetition.
+LABEL_KNOWN_ACCEPT = {
+    'observation-repetition-float-known-accept': ('repetition', 1.0),
 }
 
 CASES = {
@@ -49,6 +74,7 @@ CASES = {
     'calibration-unavailable': 'CAPABILITY',
     **CALIBRATION_CASES,
     **{name: 'COVERAGE' for name in LABEL_CASES},
+    **{name: None for name in LABEL_KNOWN_ACCEPT},
 }
 
 
@@ -217,9 +243,17 @@ def check_case(name, output, source=None):
     elif name == 'empty-observer':
         evidence['observer']['rows'] = []
         evidence['observer']['connections'] = 0
-    elif name in LABEL_CASES:
-        field, value = LABEL_CASES[name]
-        observation[field] = value
+    elif name in LABEL_CASES or name in LABEL_KNOWN_ACCEPT:
+        field, value = (LABEL_CASES[name] if name in LABEL_CASES
+                        else LABEL_KNOWN_ACCEPT[name])
+        if field == 'id':
+            observation['id'] += value
+        elif field == 'id-repetition':
+            parts = observation['id'].split('/')
+            parts[3] = value
+            observation['id'] = '/'.join(parts)
+        else:
+            observation[field] = value
     elif name == 'both-sides-bad':
         observation['frames'].pop()
     elif name == 'exec-identity-mismatch':
@@ -262,9 +296,10 @@ def run_all(output, source=None):
         except ValueError:
             verdict = {}
         expected = CASES.get(name)
-        passed = (proc.returncode == (0 if name == 'healthy' else 1)
+        accept = name == 'healthy' or name in LABEL_KNOWN_ACCEPT
+        passed = (proc.returncode == (0 if accept else 1)
                   and verdict.get('rule') == expected
-                  and verdict.get('status') == ('PASS' if name == 'healthy' else 'FAIL'))
+                  and verdict.get('status') == ('PASS' if accept else 'FAIL'))
         results.append({'case': name, 'command': command, 'exitCode': proc.returncode,
                         'expectedRule': expected, 'firstRule': verdict.get('rule'), 'passed': passed})
     report = {'status': 'PASS' if all(r['passed'] for r in results) else 'FAIL',
