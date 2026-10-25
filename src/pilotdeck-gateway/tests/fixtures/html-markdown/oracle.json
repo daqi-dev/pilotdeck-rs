@@ -1493,6 +1493,86 @@
    "markdown": "d"
   },
   {
+   "name": "select-unquoted-double-quote",
+   "html": "<select><div a=b\"c>d</select>",
+   "markdown": "d"
+  },
+  {
+   "name": "select-unquoted-single-quote",
+   "html": "<select><div a=b'c>d</select>",
+   "markdown": "d"
+  },
+  {
+   "name": "select-unquoted-mixed-quote",
+   "html": "<select><div a=b\"c' d>e</select>",
+   "markdown": "e"
+  },
+  {
+   "name": "select-attr-name-double-quote",
+   "html": "<select><div a\"b c>d</select>",
+   "markdown": "d"
+  },
+  {
+   "name": "select-unquoted-quote-slash",
+   "html": "<select><div a=b\"c/>d</select>",
+   "markdown": "d"
+  },
+  {
+   "name": "select-space-eq-quoted",
+   "html": "<select><div a = \"b>c\">d</select>",
+   "markdown": "d"
+  },
+  {
+   "name": "bogus-comment-double-quote",
+   "html": "<? a \" > <select><hr></select>",
+   "markdown": ""
+  },
+  {
+   "name": "bogus-comment-single-quote",
+   "html": "<!x a ' > <select><hr></select>",
+   "markdown": ""
+  },
+  {
+   "name": "bogus-comment-unbalanced-quote",
+   "html": "<!x \" a> <select><hr></select> tail",
+   "markdown": "tail"
+  },
+  {
+   "name": "cdata-double-quote",
+   "html": "<![CDATA[ \" > <select><hr></select>",
+   "markdown": ""
+  },
+  {
+   "name": "comment-bang-close",
+   "html": "<!-- x --!><select><hr></select>",
+   "markdown": ""
+  },
+  {
+   "name": "select-unmatched-template-end",
+   "html": "<div>a<select>b</template><hr>c</select>d</div>",
+   "markdown": "abcd"
+  },
+  {
+   "name": "select-unmatched-template-end-div",
+   "html": "<div>a<select>b</template><div>x</div>c</select>d</div>",
+   "markdown": "abxcd"
+  },
+  {
+   "name": "select-unmatched-template-end-only",
+   "html": "<select>b</template><hr>c</select>",
+   "markdown": "bc"
+  },
+  {
+   "name": "select-template-match-end",
+   "html": "<template><select>b</template><hr>c</select>d",
+   "markdown": "* * *\n\ncd"
+  },
+  {
+   "name": "select-template-inside-end",
+   "html": "<select><template></template><hr>b</select>",
+   "markdown": "b"
+  },
+  {
    "name": "select-in-table-row",
    "html": "<table><tr><td>a<select><tr><td>b</td></tr></select>c</td></tr></table>",
    "markdown": "c\n\na\n\nb"
