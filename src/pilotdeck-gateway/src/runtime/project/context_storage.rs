@@ -7,6 +7,7 @@ use super::{
     Family, FamilyResource, Resource, ResourceFamilySource, RuntimeError, RuntimeResult,
     StageContext, StageSink,
 };
+use super::{factory::DeferredResource, memory_bundle::MemoryResolverResource};
 use crate::runtime::context::tool_budget::{ToolResultBudget, ToolResultBudgetOptions};
 use crate::runtime::context::{
     DefaultContextRuntime, InstructionDiscovery, Options as ContextOptions,
@@ -28,6 +29,9 @@ impl ResourceFamilySource for ContextStorageFamilySource {
             snapshot: context.snapshot(),
             project_root: context.project_root(),
             pilot_home: context.pilot_home(),
+            // Memory is staged after context storage. Resolve it only when
+            // composing a session from the published project generation.
+            memory: context.defer_resource(Resource::Memory),
             runtime_context_surface: convert_runtime_context_surface(
                 context.profile().runtime_context_surface,
             ),
@@ -50,6 +54,7 @@ pub struct ContextStorageResources {
     snapshot: Arc<JsValue>,
     project_root: PathBuf,
     pilot_home: PathBuf,
+    memory: DeferredResource,
     runtime_context_surface: ContextRuntimeContextSurface,
     now: Arc<dyn Fn() -> f64 + Send + Sync>,
 }
@@ -62,6 +67,9 @@ pub struct SessionContextStorage {
 
 impl ContextStorageResources {
     /// Build one session/context composition over `tool_results_dir`.
+    /// Keep the corresponding `RuntimeLease` alive while creating and using
+    /// the session: the resolver is owned by that generation's memory bundle.
+    /// A retained storage handle alone does not prevent provider disposal.
     ///
     /// The caller supplies the session storage's directory (normally
     /// `.pilotdeck/tool-results/<safeId>`) or execution-world spill root, as in
@@ -117,6 +125,19 @@ impl ContextStorageResources {
         tool_results_dir: impl Into<PathBuf>,
     ) -> Result<SessionContextStorage, RuntimeError> {
         let max_context_tokens = self.max_context_tokens()?;
+        let memory_resolver = self
+            .memory
+            .resolve()?
+            .map(|resource| {
+                resource
+                    .as_any()
+                    .downcast_ref::<MemoryResolverResource>()
+                    .map(|memory| memory.resolver().clone())
+                    .ok_or_else(|| {
+                        RuntimeError::new("Project memory resource is not a memory resolver.")
+                    })
+            })
+            .transpose()?;
         let tool_result_budget = Arc::new(ToolResultBudget::new(ToolResultBudgetOptions::new(
             tool_results_dir,
         )));
@@ -137,6 +158,7 @@ impl ContextStorageResources {
             )),
             tool_result_budget: Some(tool_result_budget.clone()),
             project_root: Some(self.project_root.to_string_lossy().into_owned()),
+            memory_resolver,
             memory_retrieval_timeout_ms,
             now: Some(self.now.clone()),
             ..ContextOptions::default()
