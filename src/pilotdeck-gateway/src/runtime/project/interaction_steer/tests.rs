@@ -684,10 +684,16 @@ async fn next_event(
 ///
 /// Which half of the pre-durable `check` rejected is observed, not assumed:
 /// `check` reports `reject-cancelled`/`reject-closed` through the
-/// `close_events` hook, so a scheduler that polls the monitor before the
-/// spawned applying task turns the cancel-side assertion red instead of
-/// silently degrading both halves into closed-side rejections (which would
-/// also let the NC-2 negative control pass).
+/// `close_events` hook. The spawn-before-cancel half relies on the tokio
+/// current-thread run queue being FIFO — the applying task spawned above is
+/// polled before the cancel-woken monitor — and is deterministic under that
+/// premise only: arbitration verified the exact assertion 80/80 runs, 40 of
+/// them under 6-way full CPU load (coordinator tree
+/// `_tmp/20261025-issue-708-gate/r2/arbitration.txt`). If that premise ever
+/// changes, the cancel-side assertion turns red instead of silently degrading
+/// both halves into closed-side rejections (which would also let the NC-2
+/// negative control pass). The cancel-before-spawn half waits for the
+/// `closed` event before spawning, so it is order-independent.
 #[tokio::test]
 async fn interaction_steer_persist_and_apply_after_cancel_rejects_and_discards() {
     let resource = InteractionSteer::default();
@@ -705,9 +711,14 @@ async fn interaction_steer_persist_and_apply_after_cancel_rejects_and_discards()
     turn.enqueue(item("a")).await.unwrap();
     drain(&router, false).await.unwrap();
     // Spawn before cancelling: the pre-durable `check` must observe external
-    // cancellation while the run is still open. The `reject-cancelled` event
-    // proves the rejection came from the cancel half (the monitor had not
-    // closed at that moment); the queue order behind it is not relied on.
+    // cancellation while the run is still open. This half relies on the tokio
+    // current-thread run queue being FIFO — the applying task spawned above is
+    // polled before the cancel-woken monitor, so `check` runs while the run is
+    // still open and rejects from the cancel half. Deterministic under that
+    // premise only (arbitration: exact assertion 80/80, 40 runs under 6-way
+    // full CPU load); if the premise changes, the `reject-cancelled`
+    // assertion below turns red — it cannot silently degrade into a
+    // closed-side rejection.
     let applying = turn.persist_and_apply("a".into(), item("a").message, |_| {
         Box::pin(async { Ok(()) })
     });
