@@ -2,7 +2,7 @@
 """review-deepseek.py — DeepSeek 评审通道（第三谱系），直连 API，替代 dsh。
 
 只把输入文件的文本发给模型、把回复落盘；模型拿不到任何工具，天然只读（dsh 只能靠提示词约束）。
-密钥取环境变量 DEEPSEEK_API_KEY，没有再读 `.env.local`（先当前检出根，再主仓根，worktree 里也能找到）；
+密钥取环境变量 DEEPSEEK_API_KEY（`--channel official` 时为 DS_ORI_PARA_API_KEY），没有再读 `.env.local`（先当前检出根，再主仓根，worktree 里也能找到）；
 本脚本不打印、不落盘密钥，错误信息里出现的密钥一律替换成 ***。
 
 用法：
@@ -29,6 +29,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 API = "https://llm-center.modelbest.co/v1/messages"  # Anthropic Messages 协议（x-api-key + anthropic-version）
 DEFAULT_MODEL = "deepseek-v4.1-flash-mb"
+# 通道：llm-center（默认，与 dsh 实现共用 50 RPM key）· official（DeepSeek 官方 Anthropic 兼容端点，支持并发；
+# 2026-10-25 人提供 DS_ORI_PARA_API_KEY，实测 /models 列出 deepseek-flash = DeepSeek-V4.1-Flash）
+CHANNELS = {
+    "llm-center": (API, "DEEPSEEK_API_KEY", DEFAULT_MODEL),
+    "official": ("https://api.deepseek.com/anthropic/v1/messages", "DS_ORI_PARA_API_KEY", "deepseek-flash"),
+}
 DEFAULT_MAX_TOKENS = 16384  # Messages 协议必填 max_tokens；--max-tokens 可覆盖
 THINKING_BUDGET = 8192  # --thinking enabled 时的 budget_tokens（须小于 max_tokens）
 MAX_INPUT_BYTES = 2 * 1024 * 1024    # 任务书 + 材料合计；超限失败，不静默截断
@@ -66,19 +72,19 @@ def env_files() -> list[Path]:
     return [r / ".env.local" for r in dict.fromkeys(roots)]
 
 
-def parse_env_value(raw: str) -> str:
+def parse_env_value(raw: str, name: str = "DEEPSEEK_API_KEY") -> str:
     """dotenv 子集：成对引号内原样；不带引号时去掉「空白+#」起的行尾注释。"""
     raw = raw.strip()
     if raw[:1] in ("'", '"'):
         end = raw.find(raw[0], 1)
         if end < 0:
-            raise Fail(2, ".env.local 中 DEEPSEEK_API_KEY 引号不配对")
+            raise Fail(2, f".env.local 中 {name} 引号不配对")
         return raw[1:end]
     return re.split(r"\s+#", raw, maxsplit=1)[0].strip() if not raw.startswith("#") else ""
 
 
-def load_key() -> str:
-    key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+def load_key(key_name: str = "DEEPSEEK_API_KEY") -> str:
+    key = os.environ.get(key_name, "").strip()
     if not key:
         for env in env_files():
             if not env.is_file():
@@ -90,14 +96,14 @@ def load_key() -> str:
             for line in lines:
                 name, sep, value = line.strip().partition("=")
                 name = name.removeprefix("export ").strip()
-                if sep and name == "DEEPSEEK_API_KEY":
-                    key = parse_env_value(value)
+                if sep and name == key_name:
+                    key = parse_env_value(value, key_name)
             if key:
                 break
     if not key:
-        raise Fail(2, "缺 DEEPSEEK_API_KEY（环境变量或 .env.local）")
+        raise Fail(2, f"缺 {key_name}（环境变量或 .env.local）")
     if not KEY_RE.fullmatch(key):
-        raise Fail(2, "DEEPSEEK_API_KEY 含空白或非法字符（内容不打印）")
+        raise Fail(2, f"{key_name} 含空白或非法字符（内容不打印）")
     return key
 
 
@@ -291,18 +297,26 @@ def main() -> int:
     ap.add_argument("--input", action="append", default=[], type=Path, help="附带材料（diff、源码），可重复")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--force", action="store_true", help="允许覆盖已存在的 --out")
-    ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--channel", choices=sorted(CHANNELS), default=os.environ.get("PDRS_DEEPSEEK_CHANNEL", "llm-center"),
+                    help="llm-center（默认，DEEPSEEK_API_KEY）或 official（DeepSeek 官方，DS_ORI_PARA_API_KEY，可并发）；也可用环境变量 PDRS_DEEPSEEK_CHANNEL")
+    ap.add_argument("--model", help="不给时取通道默认（llm-center：deepseek-v4.1-flash-mb；official：deepseek-flash）")
     ap.add_argument("--max-tokens", type=int, help=f"输出上限；不给用 {DEFAULT_MAX_TOKENS}（Messages 协议必填；截断时按失败退出）")
     ap.add_argument("--thinking", choices=["disabled", "enabled"], default="disabled",
                     help="默认 disabled：2026-10-17 实测 37K token 输入的评审，开思考时 16K/65K 输出额度全被 reasoning 吃光、正文为空"
                          "（_tmp/20261017-deepseek-diag/），关思考 19 s 给出完整结论。enabled 时 budget_tokens 取 8192 与 max_tokens-1 的较小者")
     ap.add_argument("--timeout", type=int, default=1800, help="整个请求的墙钟总时限（也是单次 socket 超时），秒")
-    ap.add_argument("--api", default=API, help=argparse.SUPPRESS)  # 测试用假服务
+    ap.add_argument("--api", help=argparse.SUPPRESS)  # 测试用假服务
     a = ap.parse_args()
+    if a.channel not in CHANNELS:
+        say(f"review-deepseek: 未知通道 {a.channel}")
+        return 2
+    api, key_name, model = CHANNELS[a.channel]
+    a.api = a.api or api
+    a.model = a.model or model
 
     key, stage = "", 2
     try:
-        key = load_key()
+        key = load_key(key_name)
         check_paths(a)
         body = build_body(a)
         stage = 1
