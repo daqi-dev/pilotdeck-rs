@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import os
 import shutil
@@ -35,6 +36,15 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def patch_fingerprint(wt: str, base: str, head: str) -> str:
+    """补丁指纹与闸门比对共用 check-pr-gate.py 的同一实现（结果块 patch= 键）。"""
+    spec = importlib.util.spec_from_file_location("check_pr_gate", ROOT / "scripts" / "check-pr-gate.py")
+    gate = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(gate)
+    return gate.patch_fingerprint(wt, base, head)
 TEMPLATE_DIR = ROOT / ".claude" / "workflows"
 COMMON = "review-common.md"
 ROLES = {
@@ -267,6 +277,7 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     diff_path = out / "diff.patch"
+    patch_kv = ""
     if a.diff_file:
         shutil.copyfile(a.diff_file, diff_path)
         head = "（外部 diff 文件）"
@@ -279,6 +290,9 @@ def main() -> int:
             return 2
         diff_path.write_text(cp.stdout, encoding="utf-8")
         head = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        # 整个 PR 的补丁指纹（不受 --paths 限制）：之后纯 rebase、内容不变时闸门凭它沿用本块
+        fingerprint = patch_fingerprint(str(wt), a.base, head)
+        patch_kv = f" patch={fingerprint}" if fingerprint else ""
     diff_lines = diff_path.read_text(encoding="utf-8", errors="replace").count("\n")
     if diff_lines == 0:
         print("run-review-roles: 空 diff，无可审内容", file=sys.stderr)
@@ -338,7 +352,7 @@ def main() -> int:
     paths_kv = f" paths={','.join(a.paths)}" if a.paths else ""
     lines = [
         "## pr-ready 角色审计（scripts/run-review-roles.py）", "",
-        f"<!-- pr-gate:v1 head={head} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv} runner={a.runner} model={model} readonly=tools -->", "",
+        f"<!-- pr-gate:v1 head={head}{patch_kv} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv} runner={a.runner} model={model} readonly=tools -->", "",
         "| 角色 | 状态 | P0 | P1 | P2 | P3 | 秒 | 说明 |", "|---|---|---|---|---|---|---|---|",
     ]
     for r in roles:
