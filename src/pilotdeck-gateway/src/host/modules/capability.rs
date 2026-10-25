@@ -17,6 +17,14 @@ pub trait ToolDefinition: Send + Sync {
     fn requires_user_interaction(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
     }
+    /// Trusted permission predicate; never sourced from a sidecar descriptor.
+    fn check_permissions<'a>(
+        &'a self,
+        _input: &'a JsValue,
+        _context: &'a crate::runtime::permission::PermissionContext,
+    ) -> crate::runtime::permission::PermissionFuture<'a, Option<JsValue>> {
+        Box::pin(async { Ok(None) })
+    }
     fn required_runtime_capabilities(&self) -> Option<Vec<JsString>> {
         None
     }
