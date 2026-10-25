@@ -26,9 +26,11 @@ class Fake(http.server.BaseHTTPRequestHandler):
     drip = 0.0  # >0 时逐字节慢滴
     raw_mode = None  # "headers"：慢滴响应头；"chunked"：慢滴 chunked 正文（都按每段 <1 s 间隔）
     last_body = b""
+    last_key = ""
 
     def do_POST(self):
         Fake.last_body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        Fake.last_key = self.headers.get("x-api-key", "")
         if Fake.raw_mode:
             try:
                 if Fake.raw_mode == "headers":
@@ -288,10 +290,21 @@ def main() -> int:
                                capture_output=True, text=True, env=env, cwd=tmp)
             sent = json.loads(Fake.last_body or b"{}").get("model")
             ok = r.returncode == want_code and (want_model is None or sent == want_model) and FAKE_KEY not in r.stderr + r.stdout
+            if want_code == 0:
+                ok = ok and Fake.last_key == FAKE_KEY  # 发出去的是 DS_ORI_PARA_API_KEY 的值
             if want_code == 2:
                 ok = ok and "DS_ORI_PARA_API_KEY" in r.stderr
             print(f"{'PASS' if ok else 'FAIL'} {label} exit={r.returncode} model={sent}")
             fails += not ok
+
+    # 端点常量与 --api 限本机
+    ok = rd.CHANNELS["official"][0] == "https://api.deepseek.com/anthropic/v1/messages" and rd.CHANNELS["llm-center"][0] == rd.API
+    print(f"{'PASS' if ok else 'FAIL'} 通道端点常量")
+    fails += not ok
+    r = run(Path(tempfile.mkdtemp()), "https://evil.example/", "--channel", "official")
+    ok = r.returncode == 2 and "本机测试地址" in r.stderr
+    print(f"{'PASS' if ok else 'FAIL'} --api 非本机拒绝 exit={r.returncode}")
+    fails += not ok
 
     # stdout 消费者提前关闭：已发布的结果仍以 0 退出
     with tempfile.TemporaryDirectory() as d:
