@@ -1,4 +1,6 @@
 //! Real registry/lease + turn binding + stdio LiveSession path; no sockets.
+#[path = "interaction_fresh_router_tests.rs"]
+mod fresh_router;
 use super::*;
 use crate::{
     host::{
@@ -63,9 +65,17 @@ impl MutationRecorder for Ports {
         Box::pin(async { Ok(()) })
     }
 }
-fn router() -> ModuleRouter {
+fn router(identity: &ExecutionIdentity) -> ModuleRouter {
     ModuleRouter {
-        model: model::Handler::with_ports(Arc::new(Ports), None, Default::default()),
+        model: model::Handler::with_ports(
+            Arc::new(Ports),
+            None,
+            model::TurnContext {
+                session_id: identity.session_id.clone(),
+                turn_id: identity.turn_id.clone(),
+                ..Default::default()
+            },
+        ),
         capability: capability::Handler::new(Arc::new(Ports), Arc::new(Ports), Arc::new(Ports)),
         ..Default::default()
     }
@@ -135,13 +145,13 @@ async fn client(mode: &str) -> Result<HostClient, HostError> {
     .await
 }
 fn adapter(registry: Arc<ProjectRuntimeRegistry>, mode: &'static str) -> LiveSessionAdapter {
-    LiveSessionAdapter::with_interaction(move |_| {
+    LiveSessionAdapter::with_interaction(move |identity| {
         let lease = registry.acquire(None).unwrap();
         Box::pin(async move {
             Ok(InteractionHost {
                 client: client(mode).await?,
                 lease,
-                router: router(),
+                router: router(&identity),
                 input: options(),
             })
         })
@@ -243,7 +253,7 @@ async fn host_manifest_uses_each_resource_not_marker_and_preserves_native_checks
                 },
             ),
         );
-        let mut reused = router();
+        let mut reused = router(&identity());
         reused.turn.ports = reused.turn.ports.with_persist_compaction(Arc::new(|_, _| {
             panic!("old generation compaction port must never run")
         }));
@@ -316,7 +326,7 @@ async fn host_explicit_close_and_drop_reject_old_handles_and_release_once() {
     let turn = InteractionTurn::bind(
         registry.acquire(None).unwrap(),
         &identity(),
-        router(),
+        router(&identity()),
         options(),
     )
     .await
@@ -334,7 +344,7 @@ async fn host_explicit_close_and_drop_reject_old_handles_and_release_once() {
     let replacement = InteractionTurn::bind(
         registry.acquire(None).unwrap(),
         &identity(),
-        router(),
+        router(&identity()),
         options(),
     )
     .await
@@ -366,7 +376,7 @@ async fn host_missing_bounded_recorder_rolls_back_all_bound_ports() {
         let error = InteractionTurn::bind(
             registry.acquire(None).unwrap(),
             &identity(),
-            router(),
+            router(&identity()),
             input,
         )
         .await
@@ -378,7 +388,7 @@ async fn host_missing_bounded_recorder_rolls_back_all_bound_ports() {
         let next = InteractionTurn::bind(
             registry.acquire(None).unwrap(),
             &identity(),
-            router(),
+            router(&identity()),
             options(),
         )
         .await
@@ -422,7 +432,7 @@ async fn host_manifest_preserves_ts_property_order_and_live_tools() {
     let turn = InteractionTurn::bind(
         registry.acquire(None).unwrap(),
         &identity(),
-        router(),
+        router(&identity()),
         options(),
     )
     .await

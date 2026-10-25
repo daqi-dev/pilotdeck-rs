@@ -320,8 +320,10 @@ impl StreamPhase {
     }
 }
 
-/// Turn-owned model handler. The router constructs one instance per turn, so
-/// `preparations`/`streams` are naturally scoped to that turn.
+/// Turn-owned model handler. Composition must construct one instance per turn
+/// with that turn's leased ports and TurnContext. Cloning shares preparations
+/// and streams; it is only for callbacks within the same turn, never for
+/// assembling another turn's router (including InteractionTurn::bind).
 #[derive(Clone, Default)]
 pub struct Handler {
     execution: Option<Arc<dyn ModelExecution>>,
