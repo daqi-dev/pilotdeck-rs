@@ -801,14 +801,28 @@ async fn replay_case(case: &Value) {
     // the real-TS probe ts-probe-lease-after-order.out; pinned for every
     // scenario that acquires a lease.
     let host = log.host.lock().unwrap().clone();
-    if let (Some(lease), Some(after)) = (
-        host.iter().position(|call| call == "lease_release"),
-        host.iter().position(|call| call == "after"),
-    ) {
-        assert!(
+    // Tri-state: a scenario that presents attachments must acquire a lease,
+    // so a missing record is a harness failure, not a pass. A scenario that
+    // presents none must not record a release; otherwise the harness could
+    // fake the lease path without the fixture asking for it.
+    let expects_lease = matches!(
+        input.get("uploadedAttachments").and_then(Value::as_array),
+        Some(values) if !values.is_empty()
+    );
+    let lease = host.iter().position(|call| call == "lease_release");
+    let after = host.iter().position(|call| call == "after");
+    match (expects_lease, lease, after) {
+        (true, Some(lease), Some(after)) => assert!(
             lease < after,
             "{name}: lease_release must precede after_turn (lease@{lease} after@{after}): {host:?}"
-        );
+        ),
+        (true, lease, after) => panic!(
+            "{name}: attachments must record lease_release and after_turn (lease@{lease:?} after@{after:?}): {host:?}"
+        ),
+        (false, Some(lease), _) => panic!(
+            "{name}: lease_release recorded without an attachment lease (lease@{lease}): {host:?}"
+        ),
+        (false, None, _) => {}
     }
     if let Some(abort) = abort {
         abort.await.unwrap();
@@ -925,7 +939,7 @@ async fn lease_release_precedes_after_turn_across_exit_paths() {
             "lease-normal",
             json!({"input": {"uploadedAttachments": [{"uploadId": "fixture"}]}}),
             json!(["observe", "accept", "terminal", "end"]),
-            native,
+            native.clone(),
         ),
         (
             "lease-pump-failed",
@@ -938,6 +952,13 @@ async fn lease_release_precedes_after_turn_across_exit_paths() {
             json!({"input": {"timeoutMs": 100, "uploadedAttachments": [{"uploadId": "fixture"}]}}),
             json!(["observe", "accept", "timeout"]),
             aborted,
+        ),
+        // No uploadedAttachments: the same exit path must not invent a lease.
+        (
+            "lease-absent",
+            json!({}),
+            json!(["observe", "accept", "terminal", "end"]),
+            native,
         ),
     ];
     for (name, setup, steps, native) in cases {
