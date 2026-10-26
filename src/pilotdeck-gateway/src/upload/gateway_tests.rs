@@ -1,5 +1,7 @@
 //! Replays the real-TS gateway oracle and pins projection/ordering rules.
-use super::gateway::{UploadGateway, UploadProvider};
+use super::gateway::{
+    MAX_REMOTE_UPLOAD_PART_BYTES, UploadGateway, UploadProvider, decode_upload_part,
+};
 use super::*;
 use sha2::{Digest, Sha256};
 use std::sync::{
@@ -51,13 +53,13 @@ impl Recorder {
 impl UploadProvider for Recorder {
     fn create(
         &self,
-        project_key: &str,
+        project_key: &JsString,
         files: &JsValue,
         idempotency_key: Option<&JsValue>,
     ) -> Result<UploadRecord> {
         self.log(object([
             ("method", text("create")),
-            ("projectKey", text(project_key)),
+            ("projectKey", JsValue::String(project_key.clone())),
             ("files", files.clone()),
             (
                 "idempotencyKey",
@@ -76,13 +78,13 @@ impl UploadProvider for Recorder {
     fn write_part(
         &self,
         upload_id: &str,
-        client_file_id: &str,
+        client_file_id: &JsString,
         bytes: &[u8],
     ) -> Result<UploadedAttachment> {
         self.log(object([
             ("method", text("writePart")),
             ("uploadId", text(upload_id)),
-            ("clientFileId", text(client_file_id)),
+            ("clientFileId", JsValue::String(client_file_id.clone())),
             ("bytes", JsValue::Number(bytes.len() as f64)),
             ("sha256", text(&format!("{:x}", Sha256::digest(bytes)))),
         ]));
@@ -112,18 +114,22 @@ struct Harness {
 }
 
 fn harness(project: &Path, unavailable: bool) -> Harness {
+    // The parameter-fidelity scenario resolves real U+FFFD to this sibling.
+    fs::create_dir_all(project.join("replacement")).unwrap();
     let now = Arc::new(AtomicI64::new(EPOCH));
     let resolved = project.to_owned();
-    let listed = project.to_owned();
+    let listed = vec![project.to_owned(), project.join("replacement")];
     let mut options = UploadStoreOptions::new(
-        move |key| {
-            Ok(if key == "missing" {
+        move |key: &JsString| {
+            Ok(if key.equals_str("missing") {
                 resolved.join("absent")
+            } else if key.equals_str("p\u{fffd}") {
+                resolved.join("replacement")
             } else {
                 resolved.clone()
             })
         },
-        move || Ok(vec![listed.clone()]),
+        move || Ok(listed.clone()),
     );
     let clock = now.clone();
     options.now = Arc::new(move || clock.load(Ordering::SeqCst));
@@ -160,8 +166,16 @@ fn expand(value: &JsValue) -> JsValue {
     if let JsValue::Object(fields) = value
         && let Some(bytes) = fields.get("$zerosBytes").and_then(JsValue::as_number)
     {
-        // 4 chars per 3 decoded bytes; fixture sizes are multiples of 3.
-        return text(&"A".repeat(4 * (bytes as usize).div_ceil(3)));
+        // Base64 of `bytes` zero bytes, including its trailing padding.
+        let bytes = bytes as usize;
+        let (full, rem) = (bytes / 3, bytes % 3);
+        let mut encoded = "A".repeat(full * 4 + if rem == 0 { 0 } else { rem + 1 });
+        encoded.push_str(match rem {
+            0 => "",
+            1 => "==",
+            _ => "=",
+        });
+        return text(&encoded);
     }
     match value {
         JsValue::Array(items) => JsValue::Array(items.iter().map(expand).collect()),
@@ -202,6 +216,13 @@ fn tamper(project: &Path, kind: &str) {
             set(&mut record, "status", text("failed"));
             set(&mut record, "errorCode", text("E_RECORDED"));
             set(&mut record, "errorMessage", text("recorded failure"));
+        }
+        "attachments-null" => {
+            set(
+                &mut record,
+                "attachments",
+                JsValue::Array(vec![JsValue::Null]),
+            );
         }
         other => panic!("unknown tamper {other}"),
     }
@@ -281,8 +302,8 @@ fn upload_gateway_oracle_replay_matches_ts_results() {
             operations += 1;
         }
     }
-    assert_eq!(array(&oracle, "scenarios").len(), 7, "scenario coverage");
-    assert!(operations >= 130, "operation coverage: {operations}");
+    assert_eq!(array(&oracle, "scenarios").len(), 9, "scenario coverage");
+    assert!(operations >= 145, "operation coverage: {operations}");
     println!("PDRS_UPLOAD_GATEWAY operations={operations}");
 }
 
@@ -311,7 +332,11 @@ fn upload_gateway_never_projects_attachment_disk_path() {
     let h = harness(&scratch.project("path"), false);
     let upload_id = created(&h);
     let attachment = part(&h, &upload_id).unwrap();
-    assert!(!compact(&attachment).contains("\"path\""));
+    assert!(
+        !compact(&attachment).contains("\"path\""),
+        "attachment projection must drop the store path: {}",
+        compact(&attachment)
+    );
     h.gateway
         .complete(&object([("uploadId", text(&upload_id))]))
         .unwrap();
@@ -319,7 +344,11 @@ fn upload_gateway_never_projects_attachment_disk_path() {
         .gateway
         .get(&object([("uploadId", text(&upload_id))]))
         .unwrap();
-    assert!(!compact(&record).contains("\"path\""));
+    assert!(
+        !compact(&record).contains("\"path\""),
+        "record projection must drop attachment paths: {}",
+        compact(&record)
+    );
     // The store keeps the real path for lease/verify consumers.
     assert!(
         h.project
@@ -340,7 +369,8 @@ fn upload_gateway_validation_order_matches_ts() {
     // uploadId wins over clientFileId and contentBase64.
     assert_eq!(
         error(r#"{"uploadId":"../evil","clientFileId":null,"contentBase64":null}"#),
-        ("UPLOAD_NOT_FOUND".into(), "Invalid uploadId.".into())
+        ("UPLOAD_NOT_FOUND".into(), "Invalid uploadId.".into()),
+        "uploadId safety must be checked before clientFileId"
     );
     // clientFileId wins over contentBase64.
     assert_eq!(
@@ -348,7 +378,8 @@ fn upload_gateway_validation_order_matches_ts() {
         (
             "UPLOAD_MANIFEST_MISMATCH".into(),
             "clientFileId is required.".into()
-        )
+        ),
+        "whitespace-only clientFileId must be rejected before base64"
     );
     // contentBase64 must be valid before the provider is required.
     assert_eq!(
@@ -356,7 +387,8 @@ fn upload_gateway_validation_order_matches_ts() {
         (
             "UPLOAD_PART_INVALID".into(),
             "contentBase64 must be a valid base64 string.".into()
-        )
+        ),
+        "base64 shape must be checked before the provider"
     );
     // create: projectKey, then files, then the store's idempotency hash.
     assert_eq!(
@@ -366,30 +398,70 @@ fn upload_gateway_validation_order_matches_ts() {
             ))
             .unwrap_err()
             .code,
-        "PROJECT_NOT_FOUND"
+        "PROJECT_NOT_FOUND",
+        "projectKey must be checked before files and the idempotency key"
     );
+    let whitespace = h
+        .gateway
+        .create(&js(r#"{"projectKey":"   ","files":[],"idempotencyKey":5}"#))
+        .expect_err("projectKey whitespace must be rejected before the provider");
     assert_eq!(
-        h.gateway
-            .create(&js(
-                r#"{"projectKey":"p","files":"not-an-array","idempotencyKey":5}"#
-            ))
-            .unwrap_err()
-            .code,
-        "UPLOAD_MANIFEST_INVALID"
+        (whitespace.code.as_str(), whitespace.message.as_str()),
+        ("PROJECT_NOT_FOUND", "projectKey is required for uploads."),
+        "projectKey whitespace must be rejected before the provider"
+    );
+    let non_string = h
+        .gateway
+        .create(&js(r#"{"projectKey":5,"files":[],"idempotencyKey":5}"#))
+        .expect_err("non-string projectKey must be rejected before the provider");
+    assert_eq!(
+        (non_string.code.as_str(), non_string.message.as_str()),
+        (
+            "gateway_request_failed",
+            "input.projectKey?.trim is not a function"
+        ),
+        "non-string projectKey must be rejected before the provider"
+    );
+    let files = h
+        .gateway
+        .create(&js(
+            r#"{"projectKey":"p","files":"not-an-array","idempotencyKey":5}"#,
+        ))
+        .unwrap_err();
+    assert_eq!(
+        (files.code.as_str(), files.message.as_str()),
+        ("UPLOAD_MANIFEST_INVALID", "files must be an array."),
+        "files must be an array before the store's manifest validation"
+    );
+    // Trailing non-zero bits decode like Node (`AB==` -> 00).
+    let trailing = decode_upload_part(&text("AB==")).unwrap_or_else(|error| {
+        panic!("non-zero trailing bits must stay accepted like Node's decoder: {error:?}")
+    });
+    assert_eq!(
+        trailing,
+        vec![0],
+        "non-zero trailing bits must stay accepted like Node's decoder"
     );
     // Unavailable: provider comes first for create/get/complete/cancel.
     let missing = harness(&scratch.project("no-provider"), true);
     let bad = || js(r#"{"uploadId":"../evil"}"#);
     assert_eq!(
         missing.gateway.create(&JsValue::Null).unwrap_err().code,
-        "CAPABILITY_UNAVAILABLE"
+        "CAPABILITY_UNAVAILABLE",
+        "create must require the provider before reading params"
     );
-    for code in [
-        missing.gateway.get(&bad()).unwrap_err().code,
-        missing.gateway.complete(&bad()).unwrap_err().code,
-        missing.gateway.cancel(&bad()).unwrap_err().code,
+    for (method, code) in [
+        ("get", missing.gateway.get(&bad()).unwrap_err().code),
+        (
+            "complete",
+            missing.gateway.complete(&bad()).unwrap_err().code,
+        ),
+        ("cancel", missing.gateway.cancel(&bad()).unwrap_err().code),
     ] {
-        assert_eq!(code, "CAPABILITY_UNAVAILABLE");
+        assert_eq!(
+            code, "CAPABILITY_UNAVAILABLE",
+            "{method} must require the provider before validating uploadId"
+        );
     }
     // part validates before require, so the uploadId error survives.
     assert_eq!(
@@ -400,7 +472,8 @@ fn upload_gateway_validation_order_matches_ts() {
             ))
             .unwrap_err()
             .code,
-        "UPLOAD_NOT_FOUND"
+        "UPLOAD_NOT_FOUND",
+        "part must validate params before requiring the provider"
     );
 }
 
@@ -441,11 +514,229 @@ fn upload_gateway_projection_drops_unknown_and_empty_optional_fields() {
         .gateway
         .get(&object([("uploadId", text(&upload_id))]))
         .unwrap();
-    assert_eq!(string(&record, "errorCode").as_deref(), Some("E_RECORDED"));
+    assert_eq!(
+        string(&record, "errorCode").as_deref(),
+        Some("E_RECORDED"),
+        "truthy recorded errorCode must stay projected"
+    );
     assert_eq!(
         string(&record, "errorMessage").as_deref(),
-        Some("recorded failure")
+        Some("recorded failure"),
+        "truthy recorded errorMessage must stay projected"
     );
+}
+
+#[test]
+fn upload_gateway_null_attachment_keeps_ts_property_error() {
+    let scratch = Scratch::new();
+    let h = harness(&scratch.project("null-attachment"), false);
+    let upload_id = created(&h);
+    tamper(&h.project, "attachments-null");
+    let error = h
+        .gateway
+        .get(&object([("uploadId", text(&upload_id))]))
+        .expect_err("null attachment must keep the TS property-access error");
+    assert_eq!(
+        (error.code.as_str(), error.message.as_str()),
+        (
+            "gateway_request_failed",
+            "Cannot read properties of null (reading 'attachmentId')"
+        ),
+        "null attachment must keep the TS property-access error"
+    );
+}
+
+#[test]
+fn upload_gateway_idempotency_key_type_is_checked_after_project_and_manifest() {
+    let scratch = Scratch::new();
+    let h = harness(&scratch.project("key-order"), false);
+    let files = r#"[{"clientFileId":"f","name":"f","relativePath":"f","size":1}]"#;
+    let error = |params: String| h.gateway.create(&parse_json(&params).unwrap()).unwrap_err();
+    let missing = error(format!(
+        r#"{{"projectKey":"missing","files":{files},"idempotencyKey":5}}"#
+    ));
+    assert_eq!(
+        missing.code, "PROJECT_NOT_FOUND",
+        "project validation must precede the idempotencyKey type"
+    );
+    let empty = error(r#"{"projectKey":"p","files":[],"idempotencyKey":5}"#.to_string());
+    assert_eq!(
+        empty.code, "UPLOAD_MANIFEST_INVALID",
+        "manifest validation must precede the idempotencyKey type"
+    );
+    let typed = error(format!(
+        r#"{{"projectKey":"p","files":{files},"idempotencyKey":5}}"#
+    ));
+    assert_eq!(
+        typed.code, "ERR_INVALID_ARG_TYPE",
+        "a valid project/manifest must then raise the hash TypeError"
+    );
+}
+
+#[test]
+fn upload_gateway_idempotency_number_messages_match_node() {
+    let scratch = Scratch::new();
+    let h = harness(&scratch.project("key-numbers"), false);
+    let files = r#"[{"clientFileId":"f","name":"f","relativePath":"f","size":1}]"#;
+    for (literal, received) in [("1e21", "1e+21"), ("1e-7", "1e-7"), ("1e-6", "0.000001")] {
+        let error = h
+            .gateway
+            .create(
+                &parse_json(&format!(
+                    r#"{{"projectKey":"p","files":{files},"idempotencyKey":{literal}}}"#
+                ))
+                .unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "ERR_INVALID_ARG_TYPE");
+        assert!(
+            error
+                .message
+                .ends_with(&format!("type number ({received})")),
+            "Node spells {literal} as {received}, got: {}",
+            error.message
+        );
+    }
+}
+
+#[test]
+fn upload_gateway_idempotency_hash_still_dedupes_after_moving_into_store() {
+    let scratch = Scratch::new();
+    let h = harness(&scratch.project("key-dedupe"), false);
+    let files =
+        parse_json(r#"[{"clientFileId":"f","name":"f","relativePath":"f","size":1}]"#).unwrap();
+    let create = || {
+        h.gateway
+            .create(&object([
+                ("projectKey", text("p")),
+                ("files", files.clone()),
+                ("idempotencyKey", text("once")),
+            ]))
+            .unwrap()
+    };
+    let first = string(&create(), "uploadId").unwrap();
+    let second = string(&create(), "uploadId").unwrap();
+    assert_eq!(
+        first, second,
+        "idempotencyKey must hash into the store's dedup path"
+    );
+}
+
+#[test]
+fn upload_gateway_preserves_raw_utf16_parameters() {
+    let scratch = Scratch::new();
+    let h = harness(&scratch.project("fidelity"), false);
+    let files = parse_json(r#"[{"clientFileId":"file-1","name":"f","relativePath":"f","size":5}]"#)
+        .unwrap();
+    let lone = JsString::from_utf16(vec![u16::from(b'p'), 0xd800]);
+    let fffd = JsString::from_utf16(vec![u16::from(b'p'), 0xfffd]);
+    let create = |key: &JsString| {
+        h.gateway
+            .create(&object([
+                ("projectKey", JsValue::String(key.clone())),
+                ("files", files.clone()),
+            ]))
+            .unwrap()
+    };
+    let plain = create(&lone);
+    let replacement = create(&fffd);
+    let calls = h.calls.lock().unwrap();
+    assert_eq!(
+        value(&calls[0], "projectKey"),
+        JsValue::String(lone.clone()),
+        "lone surrogate must not be replaced before the provider"
+    );
+    assert_eq!(
+        value(&calls[1], "projectKey"),
+        JsValue::String(fffd),
+        "real U+FFFD must stay distinct from the lone surrogate"
+    );
+    drop(calls);
+    let plain_project = h.project.to_string_lossy().into_owned();
+    let fffd_project = h.project.join("replacement").to_string_lossy().into_owned();
+    assert_eq!(
+        string(&plain, "projectKey").as_deref(),
+        Some(plain_project.as_str()),
+        "lone surrogate keys must resolve as themselves"
+    );
+    assert_eq!(
+        string(&replacement, "projectKey").as_deref(),
+        Some(fffd_project.as_str()),
+        "U+FFFD keys must select the replacement resolver branch"
+    );
+    // write_part logs the raw clientFileId before the store rejects it.
+    let upload_id = string(&plain, "uploadId").unwrap();
+    let _ = h.gateway.part(&object([
+        ("uploadId", text(&upload_id)),
+        (
+            "clientFileId",
+            JsValue::String(JsString::from_utf16(vec![u16::from(b'f'), 0xd800])),
+        ),
+        ("contentBase64", text("aGVsbG8=")),
+    ]));
+    let calls = h.calls.lock().unwrap();
+    assert_eq!(
+        value(calls.last().unwrap(), "clientFileId"),
+        JsValue::String(JsString::from_utf16(vec![u16::from(b'f'), 0xd800])),
+        "lone surrogate clientFileId must not be replaced before the provider"
+    );
+}
+
+#[test]
+fn upload_gateway_lone_surrogate_idempotency_key_hashes_like_node() {
+    let scratch = Scratch::new();
+    let h = harness(&scratch.project("key-surrogate-hash"), false);
+    let files =
+        parse_json(r#"[{"clientFileId":"f","name":"f","relativePath":"f","size":1}]"#).unwrap();
+    let create = |key: JsString| {
+        h.gateway
+            .create(&object([
+                ("projectKey", text("p")),
+                ("files", files.clone()),
+                ("idempotencyKey", JsValue::String(key)),
+            ]))
+            .unwrap()
+    };
+    let lone = create(JsString::from_utf16(vec![u16::from(b'k'), 0xd800]));
+    let fffd = create(JsString::from_utf16(vec![u16::from(b'k'), 0xfffd]));
+    assert_eq!(
+        string(&lone, "uploadId"),
+        string(&fffd, "uploadId"),
+        "Node hashes a lone surrogate and U+FFFD to the same UTF-8 bytes"
+    );
+}
+
+#[test]
+fn upload_gateway_part_size_cap_is_checked_before_decoding() {
+    let zeros = |bytes: usize| {
+        let (full, rem) = (bytes / 3, bytes % 3);
+        let mut units = vec![u16::from(b'A'); full * 4 + if rem == 0 { 0 } else { rem + 1 }];
+        units.extend(vec![
+            u16::from(b'=');
+            match rem {
+                0 => 0,
+                1 => 2,
+                _ => 1,
+            }
+        ]);
+        JsValue::String(JsString::from_utf16(units))
+    };
+    let exact = decode_upload_part(&zeros(MAX_REMOTE_UPLOAD_PART_BYTES)).unwrap();
+    assert_eq!(
+        exact.len(),
+        MAX_REMOTE_UPLOAD_PART_BYTES,
+        "exactly 8 MiB must decode"
+    );
+    match decode_upload_part(&zeros(MAX_REMOTE_UPLOAD_PART_BYTES + 1)) {
+        Err(error) => assert_eq!(
+            error.code, "UPLOAD_PART_TOO_LARGE",
+            "8 MiB + 1 must hit the upload-part cap"
+        ),
+        Ok(bytes) => panic!(
+            "oversized part decoded to {} bytes instead of being rejected by the pre-allocation cap",
+            bytes.len()
+        ),
+    }
 }
 
 #[test]

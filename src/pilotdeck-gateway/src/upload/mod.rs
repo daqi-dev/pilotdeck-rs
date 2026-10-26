@@ -16,7 +16,7 @@ mod gateway_tests;
 mod tests;
 
 pub use error::UploadError;
-use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use pilotdeck_transport::system_clock::{format_epoch_iso, parse_node22_date};
 use sha2::{Digest, Sha256};
 use std::{
@@ -33,7 +33,7 @@ type Result<T> = std::result::Result<T, UploadError>;
 /// Original UploadRecord / UploadedAttachment objects, including extra fields.
 pub type UploadRecord = JsValue;
 pub type UploadedAttachment = JsValue;
-type ResolveProject = dyn Fn(&str) -> Result<PathBuf> + Send + Sync;
+type ResolveProject = dyn Fn(&JsString) -> Result<PathBuf> + Send + Sync;
 type ListProjects = dyn Fn() -> Result<Vec<PathBuf>> + Send + Sync;
 
 pub struct UploadStoreOptions {
@@ -50,7 +50,7 @@ pub struct UploadStoreOptions {
 }
 impl UploadStoreOptions {
     pub fn new(
-        resolve_project: impl Fn(&str) -> Result<PathBuf> + Send + Sync + 'static,
+        resolve_project: impl Fn(&JsString) -> Result<PathBuf> + Send + Sync + 'static,
         list_projects: impl Fn() -> Result<Vec<PathBuf>> + Send + Sync + 'static,
     ) -> Self {
         Self {
@@ -105,17 +105,36 @@ impl UploadStore {
     }
 
     /// UploadStore.ts:61–110: validate before idempotency; serialize by canonical project.
+    ///
+    /// Typed convenience entry point for callers that already hold UTF-8 keys;
+    /// the gateway adapter uses [`Self::create_js`] to keep raw UTF-16 units.
     pub fn create(
         &self,
         project_key: &str,
         files: &JsValue,
         idempotency_key: Option<&str>,
     ) -> Result<UploadRecord> {
+        let key = idempotency_key.map(JsValue::from);
+        self.create_js(&JsString::from(project_key), files, key.as_ref())
+    }
+
+    /// Raw bridge for `upload_create`. `resolveProject` and the idempotency
+    /// value keep their UTF-16 units until TS's own boundary: only the
+    /// filesystem path (and `createHash.update`'s UTF-8 encoding) is lossy.
+    pub fn create_js(
+        &self,
+        project_key: &JsString,
+        files: &JsValue,
+        idempotency_key: Option<&JsValue>,
+    ) -> Result<UploadRecord> {
         let root = (self.options.resolve_project)(project_key)?;
         let root = fs::canonicalize(root).map_err(|_| {
             UploadError::dialog(
                 "PROJECT_NOT_FOUND",
-                format!("Unknown projectKey: {project_key}"),
+                format!(
+                    "Unknown projectKey: {}",
+                    String::from_utf16_lossy(project_key.units())
+                ),
             )
         })?;
         let gate = {
@@ -127,9 +146,21 @@ impl UploadStore {
         };
         let _guard = gate.lock().unwrap();
         let manifest = self.validate_manifest(files)?;
-        let key_hash = idempotency_key
-            .filter(|k| !k.is_empty())
-            .map(|k| hash(k.as_bytes()));
+        // UploadStore.ts:75-76: `validateManifest`, then
+        // `createHash("sha256").update(idempotencyKey)`. A truthy non-string
+        // therefore loses to project/manifest errors and only then throws.
+        let key_hash = match idempotency_key.filter(|key| truthy(key)) {
+            Some(JsValue::String(key)) => {
+                Some(hash(String::from_utf16_lossy(key.units()).as_bytes()))
+            }
+            Some(other) => {
+                return Err(UploadError::dialog(
+                    "ERR_INVALID_ARG_TYPE",
+                    gateway::crypto_received(other),
+                ));
+            }
+            None => None,
+        };
         let existing = self.list_in_project(&root)?;
         if let Some(key) = &key_hash
             && let Some(record) = existing.iter().find(|r| {
@@ -199,17 +230,30 @@ impl UploadStore {
         &self,
         upload_id: &str,
         client_file_id: &str,
+        stream: impl Read,
+    ) -> Result<UploadedAttachment> {
+        self.write_part_js(upload_id, &JsString::from(client_file_id), stream)
+    }
+
+    /// Raw bridge for `upload_part`: the manifest comparison is over the exact
+    /// UTF-16 units TS compares (`item.clientFileId === clientFileId`), so a
+    /// lone surrogate never matches a real U+FFFD id. Conversion to UTF-8 is
+    /// limited to paths and messages, where Node also replaces lone surrogates.
+    pub fn write_part_js(
+        &self,
+        upload_id: &str,
+        client_file_id: &JsString,
         mut stream: impl Read,
     ) -> Result<UploadedAttachment> {
+        let client_value = JsValue::String(client_file_id.clone());
+        let client_file_id = String::from_utf16_lossy(client_file_id.units());
         let mut record = self.get(upload_id)?;
         require_active(&record)?;
         let expected = array(&record, "manifest")
             .iter()
-            .find(|m| string(m, "clientFileId").as_deref() == Some(client_file_id))
+            .find(|m| value(m, "clientFileId") == client_value)
             .cloned();
-        if expected.is_none()
-            || array(&record, "receivedClientFileIds").contains(&text(client_file_id))
-        {
+        if expected.is_none() || array(&record, "receivedClientFileIds").contains(&client_value) {
             return Err(UploadError::dialog(
                 "UPLOAD_MANIFEST_MISMATCH",
                 format!("Unexpected or duplicate file part: {client_file_id}"),
@@ -217,7 +261,7 @@ impl UploadStore {
         }
         let expected = expected.unwrap();
         record = self.mutate(&record, |r| set(r, "status", text("uploading")))?;
-        let destination = task_dir(&record).join("files").join(client_file_id);
+        let destination = task_dir(&record).join("files").join(&client_file_id);
         let result = (|| {
             let mut file = open_new(&destination)?;
             let mut digest = Sha256::new();
@@ -271,7 +315,7 @@ impl UploadStore {
                 ));
             }
             let mut attachment = object([
-                ("attachmentId", text(client_file_id)),
+                ("attachmentId", text(&client_file_id)),
                 ("name", value(&expected, "name")),
                 ("relativePath", value(&expected, "relativePath")),
             ]);
@@ -283,7 +327,7 @@ impl UploadStore {
             set(&mut attachment, "path", path_value(&destination));
             self.mutate(&record, |r| {
                 let mut received = array(r, "receivedClientFileIds").to_vec();
-                received.push(text(client_file_id));
+                received.push(text(&client_file_id));
                 set(r, "receivedClientFileIds", JsValue::Array(received));
                 let mut attachments = array(r, "attachments").to_vec();
                 attachments.push(attachment.clone());
@@ -453,7 +497,7 @@ impl UploadStore {
         attachment_ids: Option<&[String]>,
     ) -> Result<(UploadRecord, Vec<UploadedAttachment>)> {
         let record = self.get(upload_id)?;
-        let project = (self.options.resolve_project)(project_key)?;
+        let project = (self.options.resolve_project)(&JsString::from(project_key))?;
         let project = fs::canonicalize(&project)
             .map_err(|e| UploadError::io(e, "realpath", Some(&project)))?;
         if value(&record, "projectKey") != path_value(&project) {
