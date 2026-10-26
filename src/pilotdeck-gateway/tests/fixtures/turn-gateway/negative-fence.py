@@ -112,7 +112,11 @@ with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as 
         'PDRS_SUBMIT_CAPABILITY': ('submit capability filter must match at least one scenario', submit_tests),
     }
     for key, (message, path) in filter_assertions.items():
-        assert f'assert!(selected > 0, "{message}");' in original[path].decode(), \
+        # Match the assertion whitespace-insensitively: rustfmt splits it
+        # across lines, so a single-line literal would report false drift.
+        flat = ' '.join(original[path].decode().split())
+        assert f'assert!( selected > 0, "{message}" );' in flat \
+            or f'assert!(selected > 0, "{message}");' in flat, \
             (key, 'filter assertion message drifted')
 
     selected = [dict(name='baseline', test=fence_test, marker=None)] + mutants

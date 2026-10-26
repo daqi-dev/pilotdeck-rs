@@ -616,7 +616,10 @@ async fn real_ts_gateway_frames_registry_replay_and_concurrency() {
             .await
             .expect("gateway case deadlock");
     }
-    assert!(selected > 0, "gateway case filter must match at least one scenario");
+    assert!(
+        selected > 0,
+        "gateway case filter must match at least one scenario"
+    );
 }
 #[test]
 #[ignore = "requires the fixed TS baseline and tsx"]
