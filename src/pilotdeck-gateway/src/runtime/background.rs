@@ -981,9 +981,17 @@ impl BackgroundTaskRuntime {
             // Persist the final, flushed state without relying on spawned-task timing.
             if let Some(store) = &self.inner.snapshot_store {
                 for entry in &entries {
-                    let _ = Self::persist_entry_static(store, entry).await;
+                    let (store, entry) = (Arc::clone(store), Arc::clone(entry));
+                    // Isolate both future construction and polling. A panic is
+                    // best-effort failure, just like io::Err: continue draining.
+                    let _ =
+                        tokio::spawn(
+                            async move { Self::persist_entry_static(&store, &entry).await },
+                        )
+                        .await;
                 }
-                let _ = store.flush().await;
+                let store = Arc::clone(store);
+                let _ = tokio::spawn(async move { store.flush().await }).await;
             }
 
             self.inner.state.lock().unwrap().phase = Phase::Disposed;
@@ -1303,16 +1311,21 @@ impl BackgroundSubagentRuntime {
                     None
                 } else {
                     task.status = TaskStatus::Running;
-                    Some(run(entry.controller.clone()))
+                    // Catch inside the guard so a synchronous panic cannot
+                    // poison the task mutex or bypass the shared done signal.
+                    Some(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                        || run(entry.controller.clone()),
+                    )))
                 }
             };
             if let Some(body) = body {
                 // A panicking body settles as a failure instead of leaving
                 // `stopAndWait` waiting forever.
-                let result = match tokio::spawn(body).await {
-                    Ok(result) => result,
-                    Err(_) => Err(JsString::from("Background subagent task panicked.")),
-                };
+                let result = match body {
+                    Ok(body) => tokio::spawn(body).await.ok(),
+                    Err(_) => None,
+                }
+                .unwrap_or_else(|| Err(JsString::from("Background subagent task panicked.")));
                 let mut task = entry.task.lock().unwrap();
                 match result {
                     Ok(()) => {
@@ -1663,6 +1676,10 @@ pub fn background_tasks_in_registry(
 }
 
 #[cfg(test)]
+#[path = "background/panic_tests.rs"]
+mod panic_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tokio::sync::oneshot;
@@ -1835,7 +1852,7 @@ mod tests {
         })
     }
 
-    fn subagent_input(run: SubagentRun) -> StartBackgroundSubagentInput {
+    pub(super) fn subagent_input(run: SubagentRun) -> StartBackgroundSubagentInput {
         StartBackgroundSubagentInput {
             kind: None,
             session_id: "session".into(),
