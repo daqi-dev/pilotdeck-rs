@@ -647,6 +647,39 @@ impl fmt::Debug for McpClient {
     }
 }
 
+/// Owns publication even when Tokio drops the task before its first poll.
+struct ConnectCompletion {
+    client: McpClient,
+    mine: watch::Receiver<ConnectResult>,
+    sender: Option<watch::Sender<ConnectResult>>,
+}
+impl ConnectCompletion {
+    fn finish(&mut self, result: Result<(), McpClientError>) {
+        if result.is_err() {
+            let mut state = self.client.state();
+            if state
+                .connect
+                .as_ref()
+                .is_some_and(|current| current.same_channel(&self.mine))
+            {
+                state.connect = None;
+            }
+        }
+        self.sender.take().unwrap().send_replace(Some(result));
+    }
+}
+impl Drop for ConnectCompletion {
+    fn drop(&mut self) {
+        if self.sender.is_some() {
+            self.finish(Err(McpClientError::client(
+                McpClientErrorCode::HandshakeFailed,
+                "MCP handshake failed: connect task ended".into(),
+                self.client.id(),
+            )));
+        }
+    }
+}
+
 /// `/session.*expired/i` (`.` stops at line terminators).
 fn is_session_expired_message(message: &str) -> bool {
     message
@@ -797,39 +830,42 @@ impl McpClient {
     /// M1 — memoized connect: concurrent callers share one attempt; a failed
     /// attempt is forgotten so the next `start` retries.
     pub async fn start(&self) -> Result<(), McpClientError> {
-        let mut receiver = {
+        self.start_with(|client, epoch| async move { client.run_connect(epoch).await })
+            .await
+    }
+
+    async fn start_with<F: Future<Output = Result<(), McpClientError>> + Send + 'static>(
+        &self,
+        connect: impl FnOnce(Self, u64) -> F + Send + 'static,
+    ) -> Result<(), McpClientError> {
+        let (mut receiver, attempt) = {
             let mut state = self.state();
             match &state.connect {
-                Some(receiver) => receiver.clone(),
+                Some(receiver) => (receiver.clone(), None),
                 None => {
                     let (sender, receiver) = watch::channel(None);
                     state.connect = Some(receiver.clone());
-                    // The attempt's generation is fixed here, under the lock
-                    // that publishes it, not when the task is first polled.
+                    // Fix the generation and guard at publication, before spawn.
                     state.epoch += 1;
-                    let epoch = state.epoch;
                     state.status = McpStatus::Connecting;
-                    let client = self.clone();
-                    let mine = receiver.clone();
-                    tokio::spawn(async move {
-                        let result = client.run_connect(epoch).await;
-                        if result.is_err() {
-                            // Forget only this attempt, never a newer one.
-                            let mut state = client.state();
-                            if state
-                                .connect
-                                .as_ref()
-                                .is_some_and(|current| current.same_channel(&mine))
-                            {
-                                state.connect = None;
-                            }
-                        }
-                        sender.send_replace(Some(result));
-                    });
-                    receiver
+                    let completion = ConnectCompletion {
+                        client: self.clone(),
+                        mine: receiver.clone(),
+                        sender: Some(sender),
+                    };
+                    (receiver, Some((completion, state.epoch)))
                 }
             }
         };
+        // A stopped runtime may drop the future inline: never spawn while
+        // holding the state lock needed by completion's failure path.
+        if let Some((mut completion, epoch)) = attempt {
+            let client = self.clone();
+            tokio::spawn(async move {
+                let result = connect(client, epoch).await;
+                completion.finish(result);
+            });
+        }
         let outcome = receiver
             .wait_for(Option::is_some)
             .await
@@ -1317,8 +1353,115 @@ fn null_property(method: &str) -> McpClientError {
 }
 
 #[cfg(test)]
+use crate::runtime::async_hooks::spawn_test;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spawn_test_client() -> McpClient {
+        McpClient::new(
+            McpServerSpec {
+                id: "spawn-test".into(),
+                transport: McpTransportSpec::Stdio {
+                    command: "unused".into(),
+                    args: None,
+                    env: None,
+                    cwd: None,
+                    per_session: false,
+                },
+                call_timeout_ms: None,
+            },
+            McpClientOptions::default(),
+        )
+    }
+
+    use super::spawn_test::{Port, Wait, Work, bounded, pending};
+    struct StartPort(McpClient, Option<watch::Receiver<ConnectResult>>);
+    impl Port for StartPort {
+        const SCOPE: &'static str = "start";
+        const PANIC: &'static str = "MCP handshake failed: connect task ended";
+        fn new() -> Self {
+            Self(spawn_test_client(), None)
+        }
+        fn begin(&self, work: Work) -> Wait {
+            let client = self.0.clone();
+            Box::pin(async move {
+                client
+                    .start_with(|_, _| async move {
+                        work.await
+                            .map_err(|_| McpClientError::plain("Error", "ordinary failure"))
+                    })
+                    .await
+                    .map(|_| "ok".into())
+                    .map_err(|e| e.message().into())
+            })
+        }
+        fn snapshot(&mut self) {
+            self.1 = self.0.state().connect.clone();
+        }
+        fn subscribe(&self, _: bool) -> Wait {
+            let client = self.0.clone();
+            Box::pin(async move {
+                client
+                    .start()
+                    .await
+                    .map(|_| "ok".into())
+                    .map_err(|e| e.message().into())
+            })
+        }
+        fn cached(&self) -> bool {
+            self.0.state().connect.is_some()
+        }
+        fn published(&self) -> bool {
+            self.1.as_ref().unwrap().borrow().is_some()
+        }
+    }
+    #[test]
+    fn start_spawn_failure_matrix() {
+        spawn_test::matrix::<StartPort>(false);
+    }
+    #[test]
+    fn start_spawn_drop_matrix() {
+        spawn_test::matrix::<StartPort>(true);
+    }
+
+    #[test]
+    #[ignore = "requires fixed TypeScript checkout and node"]
+    fn mcp_hooks_spawn_fixture_regenerates_identically() {
+        crate::test_baseline::regenerates_identically("mcp-hooks-spawn");
+    }
+
+    #[tokio::test]
+    async fn start_failure_keeps_replacement() {
+        let client = spawn_test_client();
+        let (release, gate) = oneshot::channel();
+        let mut old = Box::pin(client.start_with(|_, _| async move {
+            gate.await.unwrap();
+            panic!("old start panic");
+        }));
+        pending(old.as_mut());
+        client.close().await;
+        let (release_new, gate_new) = oneshot::channel();
+        let mut new = Box::pin(client.start_with(|_, _| async move {
+            gate_new.await.unwrap();
+            Ok(())
+        }));
+        pending(new.as_mut());
+        let replacement = client.state().connect.clone().unwrap();
+        release.send(()).unwrap();
+        assert!(bounded(old).await.is_err());
+        assert!(
+            client
+                .state()
+                .connect
+                .as_ref()
+                .is_some_and(|current| current.same_channel(&replacement)),
+            "old failure preserves replacement"
+        );
+        release_new.send(()).unwrap();
+        assert!(bounded(new).await.is_ok());
+    }
 
     #[tokio::test(start_paused = true)]
     async fn close_leaves_pending_handshake_cleanup_for_dispose() {
