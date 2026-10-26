@@ -8,7 +8,9 @@ const baseline = resolve(process.env.PDRS_BASELINE!);
 const sourceCommit = assertBaseline(baseline);
 const sources = ['src/mcp/runtime/SessionMcpRuntimeRegistry.ts', 'src/gateway/client/InProcessGateway.ts',
   'src/gateway/client/GatewayTurnReplayStore.ts', 'src/gateway/client/GatewayTurnEventCoordinator.ts',
-  'src/gateway/util/AsyncQueue.ts', 'src/gateway/client/GatewayAgentEventProjector.ts'];
+  'src/gateway/util/AsyncQueue.ts', 'src/gateway/client/GatewayAgentEventProjector.ts',
+  'src/task/runtime/BackgroundTaskRuntime.ts', 'src/task/storage/TaskOutputStore.ts',
+  'src/task/runtime/BackgroundTaskCompletionEvents.ts'];
 const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const require = createRequire(join(baseline, 'package.json'));
 const { transformSync } = createRequire(require.resolve('tsx'))('esbuild');
@@ -36,6 +38,11 @@ const { InProcessGateway } = await load(sources[1], {
   '../../permission/index.js': { readPermissionSettings: () => ({}), permissionSettingsToRuleSet: () => ({ allow: [], deny: [], ask: [] }) },
   '../../agent/protocol/input.js': { parseAgentRunMode: () => undefined },
 });
+const output = await load(sources[7]);
+const completion = await load(sources[8]);
+const { BackgroundTaskRuntime } = await load(sources[6], {
+  '../storage/TaskOutputStore.js': output, './BackgroundTaskCompletionEvents.js': completion,
+});
 const defer = () => { let resolve!: () => void, reject!: (e: Error) => void; const promise = new Promise<void>((r, j) => { resolve = r; reject = j; }); return { promise, resolve, reject }; };
 const tick = () => new Promise<void>(r => setImmediate(r));
 const deadline = setTimeout(() => { throw Error('spawn panic probe exceeded 10 seconds'); }, 10000);
@@ -46,13 +53,19 @@ function observe(work: Promise<any>, signal: AbortSignal) {
 const cases: any[] = [];
 const matrix = ['shared', 'durable'].flatMap(scope => [1, 3].flatMap(n => ['P0', 'P1'].flatMap(phase => ['W', 'C'].map(state => ({ scope, n, phase, state, id: `${scope}-${n}-${phase}-${state}` })))));
 for (const scope of ['shared', 'durable']) matrix.push({ scope, n: 1, phase: 'cancelled', state: 'W', id: `predecessor-${scope}` });
+for (const phase of ['construct-ready', 'construct-pending']) matrix.push({ scope: 'durable', n: 3, phase, state: 'W', id: phase });
 for (const { scope, n, phase, state, id } of matrix) {
-  const gate = defer(), started = defer(), begin = defer();
+  const gate = defer(), started = defer(), begin = defer(), submitted = defer();
   const visible: any[] = []; let calls = 0, cleaned = false;
   let previous = Promise.resolve(), successorPolled = false;
   const fail = () => {
     const index = calls++;
+    if (phase.startsWith('construct') && index === (phase === 'construct-pending' ? 1 : 0)) throw Error('injected construction panic');
     const operation = async () => {
+      if (phase.startsWith('construct')) {
+        if (phase === 'construct-pending' && index === 0) { started.resolve(); await gate.promise; }
+        return;
+      }
       if (phase === 'cancelled' && index > 0) { successorPolled = true; return; }
       started.resolve(); if (phase !== 'P0') await gate.promise; throw Error('injected panic');
     };
@@ -66,7 +79,7 @@ for (const { scope, n, phase, state, id } of matrix) {
     for (let i = 1; i < n; i++) assert.equal(owner.dispose(), owner.dispose());
   } else {
     owner = new coordinator.GatewayTurnEventCoordinator();
-    const session = { async *submit() { await begin.promise;
+    const session = { async *submit() { submitted.resolve(); await begin.promise;
       yield { type: 'model_event', event: { type: 'text_delta', text: 'hi' } };
       yield { type: 'model_event', event: { type: 'text_delta', text: 'again' } };
     } };
@@ -85,6 +98,24 @@ for (const { scope, n, phase, state, id } of matrix) {
     });
     work = (async () => { for await (const event of gateway.submitTurn({ sessionKey: 's', runId: 'r', projectKey: 'p', message: 'hello' })) visible.push(event); return 'drained'; })();
   }
+  if (phase.startsWith('construct')) {
+    await submitted.promise;
+    if (phase === 'construct-pending') {
+      owner.emit('s', { type: 'assistant_text_delta', text: 'predecessor' });
+      await started.promise;
+    }
+    let thrown = '';
+    try { owner.emit('s', { type: 'assistant_text_delta', text: 'construction' }); }
+    catch (error) { thrown = (error as Error).message; }
+    assert.equal(thrown, 'injected construction panic');
+    if (phase === 'construct-pending') gate.reject(Error('cancelled gate'));
+    begin.resolve();
+    const outcomes = await Promise.all(Array.from({ length: n }, () => work));
+    assert.equal(cleaned, true);
+    cases.push({ id, thrown, outcomes, calls, visible });
+    owner.dispose();
+    continue;
+  }
   const abort = new AbortController();
   let waiting = Array.from({ length: n }, () => observe(work, abort.signal));
   if (state === 'C') {
@@ -102,6 +133,35 @@ for (const { scope, n, phase, state, id } of matrix) {
   if (scope === 'shared') { assert.equal(owner.state, 'disposed'); assert.equal(owner.size, 0); }
   else { assert.equal(cleaned, true); assert.equal(visible.length, phase === 'cancelled' ? 2 : 1); owner.dispose(); }
   cases.push({ id, outcomes, calls, visible });
+}
+for (const retry of [false, true]) {
+  let writes = 0, shellCalls = 0;
+  const runtime = new BackgroundTaskRuntime({
+    maxTasks: 1, now: () => new Date(0),
+    snapshotStore: { load: () => [], write() {
+      if (++writes === 1) throw Error('injected construction panic');
+      return Promise.resolve();
+    }, flush: async () => {} },
+    diskSpillDir: resolve(process.argv[2], 'unused-spill'),
+    shell: { async start() { shellCalls++; throw Error('test spawn failure'); } },
+  });
+  const spec = { command: 'unused', cwd: '/', sessionId: 's', agentId: 'a' };
+  const start = runtime.start(spec).then(() => 'unexpected success', (e: Error) => e.message);
+  let waiters: Promise<any>[] = [];
+  if (!retry) waiters = Array.from({ length: 3 }, () => runtime.dispose());
+  const error = await start;
+  const released = runtime.activeStarts === 0, empty = runtime.entries.size === 0;
+  const notSpawned = shellCalls === 0;
+  assert.equal(error, 'injected construction panic');
+  assert.ok(released && empty && notSpawned);
+  let retryAccepted = false;
+  if (retry) {
+    retryAccepted = (await runtime.start(spec)).status === 'failed';
+    waiters = Array.from({ length: 3 }, () => runtime.dispose());
+  }
+  await Promise.all(waiters);
+  cases.push({ id: retry ? 'construct-background-retry' : 'construct-background',
+    error, released, empty, notSpawned, retryAccepted, disposed: runtime.state === 'disposed' });
 }
 clearTimeout(deadline);
 assertBaseline(baseline); assert.deepEqual(await baselineSourceHashes(baseline, sources), sourceSha256);

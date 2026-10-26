@@ -14,8 +14,9 @@
 //! second business completion or the final WS response (owned by connection).
 use std::collections::{HashSet, VecDeque};
 use std::future::Future;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 
 use pilotdeck_protocol::{JsString, JsValue};
 use tokio::sync::{Notify, oneshot};
@@ -27,6 +28,10 @@ use super::projector::{
 use crate::metadata::object;
 
 use crate::storage::{FileRunRegistry, RunAcceptInput, RunRef, RunRegistryError};
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
+}
 
 type RegistryResult<T> = Result<T, RunRegistryError>;
 pub type RegistryFuture<T> = Pin<Box<dyn Future<Output = RegistryResult<T>> + Send + 'static>>;
@@ -185,11 +190,13 @@ impl Publication {
         };
         // Serialize request invocation, not the awaited I/O, so a second emit
         // can arrive during an append without holding any publication lock.
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         let write = state.next_write;
         state.next_write += 1;
         state.pending.insert(write);
-        let future = registry.append(&self.run, &event);
+        // Catch construction inside the lock: unwinding out of enqueue would
+        // poison state and strand this reservation before a task owns it.
+        let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));
         let previous = state.previous.take();
         let (done, receiver) = oneshot::channel();
         state.previous = Some(receiver);
@@ -201,16 +208,26 @@ impl Publication {
             }
             // Supervise only after the predecessor settles, preserving FIFO.
             // Panic follows the same failure publication and cleanup as Err.
-            let result = publication
-                .executor
-                .spawn(future)
-                .await
-                .unwrap_or_else(|_| {
+            // Keep panic payloads alive through cleanup: even their Drop can
+            // panic. This covers both synchronous construction and task poll.
+            let outcome = match future {
+                Ok(future) => publication
+                    .executor
+                    .spawn(future)
+                    .await
+                    .map_err(|error| Box::new(error) as Box<dyn std::any::Any + Send>),
+                Err(payload) => Err(payload),
+            };
+            let (result, panic_payload) = match outcome {
+                Ok(result) => (result, None),
+                Err(payload) => (
                     Err(RunRegistryError::Invalid(
                         "Run registry append task failed.".into(),
-                    ))
-                });
-            let mut state = publication.state.lock().unwrap();
+                    )),
+                    Some(payload),
+                ),
+            };
+            let mut state = lock(&publication.state);
             match result {
                 Ok(()) => {
                     if !state.closed {
@@ -231,10 +248,11 @@ impl Publication {
             drop(state);
             publication.changed.notify_waiters();
             let _ = done.send(());
+            drop(panic_payload);
         });
     }
     fn publish(&self, event: JsValue) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         if !state.closed {
             state.queue.push_back(event);
         }
@@ -246,7 +264,7 @@ impl Publication {
             let notified = self.changed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            if self.state.lock().unwrap().pending.is_disjoint(writes) {
+            if lock(&self.state).pending.is_disjoint(writes) {
                 return;
             }
             notified.await;
@@ -306,7 +324,7 @@ impl TurnPublisher {
         self.enqueue_gateway_event(event)
     }
     fn enqueue_gateway_event(&self, event: JsValue) -> bool {
-        let mut state = self.publication.state.lock().unwrap();
+        let mut state = lock(&self.publication.state);
         if state.finishing {
             return false;
         }
@@ -342,14 +360,14 @@ impl TurnPublisher {
     /// close cannot re-open live delivery. The owned pump drains separately.
     pub fn close_live(&self) {
         let _pump = self.pump.lock().unwrap();
-        self.publication.state.lock().unwrap().closed = true;
+        lock(&self.publication.state).closed = true;
         self.publication.changed.notify_waiters();
     }
     pub async fn finish(&self) {
         let writes = {
             let _pump = self.pump.lock().unwrap();
             let deferred = {
-                let mut state = self.publication.state.lock().unwrap();
+                let mut state = lock(&self.publication.state);
                 if state.finishing {
                     return;
                 }
@@ -361,12 +379,12 @@ impl TurnPublisher {
                     .record(&self.publication.run.session_key, &event);
                 self.publication.enqueue(event);
             }
-            self.publication.state.lock().unwrap().pending.clone()
+            lock(&self.publication.state).pending.clone()
         };
         self.publication.wait_for(&writes).await;
         {
             let _pump = self.pump.lock().unwrap();
-            self.publication.state.lock().unwrap().closed = true;
+            lock(&self.publication.state).closed = true;
         }
         self.publication.changed.notify_waiters();
     }
@@ -377,7 +395,7 @@ impl TurnPublisher {
             notified.as_mut().enable();
             let trailing = {
                 let _pump = self.pump.lock().unwrap();
-                let mut state = self.publication.state.lock().unwrap();
+                let mut state = lock(&self.publication.state);
                 if let Some(event) = state.queue.pop_front() {
                     return Some(event);
                 }

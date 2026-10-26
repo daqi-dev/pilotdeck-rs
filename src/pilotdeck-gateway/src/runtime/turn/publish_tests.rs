@@ -701,3 +701,278 @@ async fn durable_spawn_cancelled_predecessor_releases_successor() {
     .await
     .expect("successor delivery deadline");
 }
+
+fn poison_publication(publication: &Publication) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _state = publication.state.lock().unwrap();
+        panic!("injected state poison");
+    }));
+    assert!(result.is_err());
+    assert!(publication.state.is_poisoned());
+}
+
+#[tokio::test]
+async fn durable_poisoned_state_cleans_pending_and_wakes_all() {
+    for poison_before_enqueue in [false, true] {
+        let (release, gate) = oneshot::channel();
+        let (started, entered) = oneshot::channel();
+        let future: RegistryFuture<()> = Box::pin(async move {
+            started.send(()).unwrap();
+            gate.await.unwrap();
+            Ok(())
+        });
+        let publisher = TurnPublisher::start(
+            run_ref(),
+            Some(Arc::new(PanicRegistry(Mutex::new(VecDeque::from([
+                future,
+            ]))))),
+            Arc::default(),
+        );
+        if poison_before_enqueue {
+            poison_publication(&publisher.publication);
+        }
+        publisher.gateway_event(js(&json!({"type":"delta"})));
+        panic_deadline(entered).await.unwrap();
+        let writes = lock(&publisher.publication.state).pending.clone();
+        let flags: Vec<_> = (0..3)
+            .map(|_| Arc::new(WakeFlag(AtomicBool::new(false))))
+            .collect();
+        let mut waiters: Vec<_> = flags
+            .iter()
+            .map(|_| Box::pin(publisher.publication.wait_for(&writes)))
+            .collect();
+        for (waiter, flag) in waiters.iter_mut().zip(&flags) {
+            assert!(
+                waiter
+                    .as_mut()
+                    .poll(&mut std::task::Context::from_waker(
+                        &std::task::Waker::from(flag.clone())
+                    ))
+                    .is_pending()
+            );
+        }
+        if !poison_before_enqueue {
+            poison_publication(&publisher.publication);
+        }
+        release.send(()).unwrap();
+        panic_deadline(publisher.publication.wait_for(&writes)).await;
+        assert!(
+            flags.iter().all(|f| f.0.load(Ordering::SeqCst)),
+            "every poisoned drain waiter notified"
+        );
+        for waiter in waiters {
+            panic_deadline(waiter).await;
+        }
+        assert!(
+            lock(&publisher.publication.state).pending.is_empty(),
+            "poisoned pending cleanup"
+        );
+        panic_deadline(publisher.finish()).await;
+        assert_eq!(
+            json(&panic_deadline(publisher.next()).await.unwrap()),
+            json!({"type":"delta"})
+        );
+        assert_eq!(panic_deadline(publisher.next()).await, None);
+    }
+}
+
+struct ConstructPanicRegistry {
+    first: Mutex<Option<RegistryFuture<()>>>,
+    calls: std::sync::atomic::AtomicUsize,
+    panic_at: usize,
+    drop_panics: bool,
+}
+impl TurnRunRegistry for ConstructPanicRegistry {
+    fn accept(&self, _: &RunAcceptInput) -> RegistryFuture<bool> {
+        Box::pin(async { Ok(false) })
+    }
+    fn events(&self, _: &RunRef) -> RegistryFuture<Vec<JsValue>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+    fn append(&self, _: &RunRef, _: &JsValue) -> RegistryFuture<()> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == self.panic_at {
+            if self.drop_panics {
+                std::panic::panic_any(PanicPayloadDrop);
+            }
+            panic!("injected construction panic");
+        }
+        self.first
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or_else(|| Box::pin(async { Ok(()) }))
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn durable_construction_panic_releases_fifo_and_all_waiters() {
+    let oracle: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/runtime-spawn-panic/oracle.json"
+    ))
+    .unwrap();
+    for pending_predecessor in [true, false] {
+        let id = if pending_predecessor {
+            "construct-pending"
+        } else {
+            "construct-ready"
+        };
+        let case = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == id)
+            .unwrap();
+        let (cancel, gate) = oneshot::channel::<()>();
+        let (started, entered) = oneshot::channel();
+        let first: RegistryFuture<()> = Box::pin(async move {
+            started.send(()).unwrap();
+            gate.await
+                .map_err(|_| RunRegistryError::Invalid("cancelled gate".into()))
+        });
+        let registry = Arc::new(ConstructPanicRegistry {
+            first: Mutex::new(pending_predecessor.then_some(first)),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            panic_at: usize::from(pending_predecessor),
+            drop_panics: false,
+        });
+        let publisher = TurnPublisher::start(run_ref(), Some(registry.clone()), Arc::default());
+        if pending_predecessor {
+            publisher.emit(&js(
+                &json!({"type":"assistant_text_delta", "text":"predecessor"}),
+            ));
+            panic_deadline(entered).await.unwrap();
+        }
+        assert!(publisher.emit(&js(
+            &json!({"type":"assistant_text_delta", "text":"construction"})
+        )));
+        assert!(
+            !publisher.publication.state.is_poisoned(),
+            "construction caught inside state lock"
+        );
+        assert!(
+            !publisher.pump.is_poisoned(),
+            "construction caught inside pump lock"
+        );
+        for text in ["hi", "again"] {
+            publisher.gateway_event(js(
+                &json!({"type":"assistant_text_delta", "text":text, "runId":"r"}),
+            ));
+        }
+        let writes = lock(&publisher.publication.state).pending.clone();
+        let mut cancelled = Box::pin(publisher.publication.wait_for(&writes));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(cancelled.as_mut().poll(&mut cx).is_pending());
+        drop(cancelled);
+        let flags: Vec<_> = (0..3)
+            .map(|_| Arc::new(WakeFlag(AtomicBool::new(false))))
+            .collect();
+        let mut waiters: Vec<_> = flags
+            .iter()
+            .map(|_| Box::pin(publisher.publication.wait_for(&writes)))
+            .collect();
+        for (waiter, flag) in waiters.iter_mut().zip(&flags) {
+            assert!(
+                waiter
+                    .as_mut()
+                    .poll(&mut std::task::Context::from_waker(
+                        &std::task::Waker::from(flag.clone())
+                    ))
+                    .is_pending()
+            );
+        }
+        let mut next = Box::pin(publisher.next());
+        assert!(
+            next.as_mut().poll(&mut cx).is_pending(),
+            "unreleased FIFO remains pending"
+        );
+        if pending_predecessor {
+            // Paused time advances only once runnable tasks have yielded:
+            // the supervisors really run while the predecessor stays gated.
+            assert!(
+                tokio::time::timeout(Duration::from_millis(1), next.as_mut())
+                    .await
+                    .is_err(),
+                "construction successor cannot overtake pending predecessor"
+            );
+        }
+        drop(cancel);
+        panic_deadline(publisher.publication.wait_for(&writes)).await;
+        assert!(
+            flags.iter().all(|f| f.0.load(Ordering::SeqCst)),
+            "every construction drain waiter notified"
+        );
+        for waiter in waiters {
+            panic_deadline(waiter).await;
+        }
+        assert!(
+            lock(&publisher.publication.state).pending.is_empty(),
+            "construction pending cleanup"
+        );
+        assert_eq!(
+            registry.calls.load(Ordering::SeqCst),
+            case["calls"].as_u64().unwrap() as usize,
+            "construction append calls"
+        );
+        let failure = panic_deadline(next).await.unwrap();
+        assert_eq!(failure, persistence_failure(&run_ref().run_id, false));
+        panic_deadline(publisher.finish()).await;
+        let mut visible = vec![];
+        while let Some(event) = panic_deadline(publisher.next()).await {
+            visible.push(json(&event));
+        }
+        // Sync throw escapes TS emit; Rust catches panic as result_unknown.
+        // The successful successors and call counts still match the TS probe.
+        let expected: Vec<_> = case["visible"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["type"] != "error")
+            .cloned()
+            .collect();
+        assert_eq!(visible, expected, "construction successors");
+    }
+}
+
+struct PanicPayloadDrop;
+impl Drop for PanicPayloadDrop {
+    fn drop(&mut self) {
+        panic!("injected panic payload destructor");
+    }
+}
+
+#[tokio::test]
+async fn durable_panic_payload_drop_runs_after_cleanup() {
+    for construction in [false, true] {
+        let registry: Arc<dyn TurnRunRegistry> = if construction {
+            Arc::new(ConstructPanicRegistry {
+                first: Mutex::new(None),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                panic_at: 0,
+                drop_panics: true,
+            })
+        } else {
+            let panic: RegistryFuture<()> =
+                Box::pin(async { std::panic::panic_any(PanicPayloadDrop) });
+            let success: RegistryFuture<()> = Box::pin(async { Ok(()) });
+            Arc::new(PanicRegistry(Mutex::new(VecDeque::from([panic, success]))))
+        };
+        let publisher = TurnPublisher::start(run_ref(), Some(registry), Arc::default());
+        publisher.gateway_event(js(&json!({"type":"first"})));
+        publisher.gateway_event(js(&json!({"type":"successor"})));
+        panic_deadline(publisher.finish()).await;
+        assert!(
+            lock(&publisher.publication.state).pending.is_empty(),
+            "payload destructor pending cleanup"
+        );
+        assert_eq!(
+            panic_deadline(publisher.next()).await.unwrap(),
+            persistence_failure(&run_ref().run_id, false)
+        );
+        assert_eq!(
+            json(&panic_deadline(publisher.next()).await.unwrap()),
+            json!({"type":"successor"})
+        );
+        assert_eq!(panic_deadline(publisher.next()).await, None);
+    }
+}
