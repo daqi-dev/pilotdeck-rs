@@ -77,6 +77,14 @@ E1_SOURCES = ('src/gateway/client/InProcessGateway.ts', 'src/gateway/SessionRout
               'src/agent/modules/transport/operationLedger.ts')
 CELLS = ('no-registry-fast', 'no-registry-slow', 'no-registry-failure',
          'registry-fast', 'registry-slow', 'registry-failure')
+# Cleanup verification is now the launcher-owned process group probe, not the
+# ps census: the child is started with start_new_session, so its pid is the pgid.
+CLEANUP_VERIFIED = 'VERIFIED'
+CLEANUP_GROUP_NOT_EMPTY = 'GROUP_NOT_EMPTY'
+CLEANUP_BLOCKED = 'BLOCKED'
+CLEANUP_NOT_VERIFIED = 'NOT_VERIFIED'
+CLEANUP_UNVERIFIED_STATUS = 'PASS_WITH_CLEANUP_UNVERIFIED'
+CLEANUP_UNVERIFIED_FREEZE = 'BLOCKED_CLEANUP_UNVERIFIED'
 MATRIX = tuple((host, sidecar) for host in ('ts', 'rust') for sidecar in ('ts', 'rust'))
 REPEATS = 5
 FIXTURE_NAMES = ('run.py', 'six_cells.mts', 'observation_rules.mjs',
@@ -137,12 +145,64 @@ def process_tree(root_pid):
             'limitation': 'sampling cannot prove absence of short-lived helpers; native requires exec witness'}
 
 
-def run_fixture(output, baseline):
-    command = [sys.executable, '-I', str(ROOT / 'scripts/a5-19/run.py'),
-               '--baseline', str(baseline), '--output', str(output / 'six-cells')]
+def probe_process_group(pgid):
+    """Probe our launcher-owned group after the leader was reaped, without ps.
+
+    ``run_fixture`` starts the launcher with ``start_new_session``, so its pid is
+    also the pgid.  ``killpg(pgid, 0)`` returns after ``wait()`` exactly when the
+    group is empty; ``ProcessLookupError`` is the positive proof of absence.  A
+    live group is a finding (``GROUP_NOT_EMPTY``), not something to hide after
+    remediation: record it, SIGTERM only that group, and never rewrite the
+    status to VERIFIED just because our own SIGTERM eventually emptied it.
+    """
+    result = {'pgid': pgid, 'probe': 'killpg0', 'signal': None}
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return {**result, 'status': CLEANUP_VERIFIED}
+    except OSError as error:
+        return {**result, 'status': CLEANUP_BLOCKED, 'reason': str(error)}
+    result['status'] = CLEANUP_GROUP_NOT_EMPTY
+    # macOS can report EPERM for a signal raced by the last member exiting, so
+    # record the attempt and wait/re-probe rather than treating EPERM as "still
+    # alive forever".  The finding stays GROUP_NOT_EMPTY either way.
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        result['signal'] = sig.name
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            result['emptyAfterSignal'] = True
+            return result
+        except OSError as error:
+            result['signalError'] = str(error)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(pgid, 0)
+            except ProcessLookupError:
+                result['emptyAfterSignal'] = True
+                return result
+            except OSError as error:
+                result['probeError'] = str(error)
+            time.sleep(.05)
+    result['emptyAfterSignal'] = False
+    return result
+
+
+def cleanup_status(audit):
+    """A top-level result may never be rosier than the cleanup sub-check."""
+    return ('PASS' if audit.get('processTreeCleanup') == CLEANUP_VERIFIED
+            else CLEANUP_UNVERIFIED_STATUS)
+
+
+def run_fixture(output, baseline, command=None):
+    # ``command`` is a test seam for the cleanup controls; production always
+    # launches the frozen A5.2a fixture.
+    command = command or [sys.executable, '-I', str(ROOT / 'scripts/a5-19/run.py'),
+                          '--baseline', str(baseline), '--output', str(output / 'six-cells')]
     audit = {'command': command, 'cwd': str(ROOT), 'launcherPid': os.getpid(),
              'processSnapshots': [], 'status': 'RUNNING', 'launcherAndFixtureReaped': False,
-             'processTreeCleanup': 'NOT_VERIFIED'}
+             'processTreeCleanup': CLEANUP_NOT_VERIFIED}
     save(output / 'launch.json', audit)
     child = None
     try:
@@ -166,12 +226,30 @@ def run_fixture(output, baseline):
                 # Only the launcher-owned group; denial remains an audit failure.
                 try:
                     os.killpg(child.pid, signal.SIGTERM)
-                    child.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(child.pid, signal.SIGKILL)
-                    child.wait(timeout=5)
+                except ProcessLookupError:
+                    pass
                 except PermissionError as error:
                     audit['cleanupBlocked'] = str(error)
+                try:
+                    child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except PermissionError as error:
+                        audit['cleanupBlocked'] = str(error)
+                    try:
+                        child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        audit['cleanupBlocked'] = 'launcher did not exit after SIGKILL'
+            else:
+                # Reap explicitly before the group probe: an unreaped leader
+                # itself makes killpg(pgid, 0) succeed.
+                try:
+                    child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    audit['cleanupBlocked'] = 'launcher did not reap'
             launch = output / 'six-cells/launch.json'
             audit['launcherAndFixtureReaped'] = (child.poll() is not None and launch.is_file()
                                                 and read(launch).get('childReaped') is True)
@@ -181,7 +259,15 @@ def run_fixture(output, baseline):
                                           'argv': fixture['command'],
                                           'executableSha256': digest(Path(fixture['command'][0]))}
             if any(s['status'] == 'BLOCKED' for s in audit['processSnapshots']):
-                audit['processTreeCleanup'] = 'BLOCKED'
+                audit['psCensus'] = 'BLOCKED'
+            elif audit['processSnapshots']:
+                audit['psCensus'] = 'SAMPLED'
+            else:
+                audit['psCensus'] = 'NOT_SAMPLED'
+            # ps is only a census now: the group probe is the independent cleanup
+            # proof and the only input to processTreeCleanup.
+            audit['processGroupProbe'] = probe_process_group(child.pid)
+            audit['processTreeCleanup'] = audit['processGroupProbe']['status']
         save(output / 'launch.json', audit)
     return audit
 
@@ -453,12 +539,18 @@ def main():
                 spec.loader.exec_module(controls)
                 report['e1Controls'] = controls.run_all(output / 'controls', output / 'six-cells')
                 require(report['e1Controls']['status'] == 'PASS', 'CONTROLS', 'E1 mutation control failed')
-                report['status'] = 'PASS'
-                report['executionStatus'] = 'PASS'
+                overall = cleanup_status(audit)
+                report['status'] = overall
+                report['executionStatus'] = overall
+                report['cleanupStatus'] = audit['processTreeCleanup']
                 report['topology'] = 'ts-in-process-controlled'
                 report['acceptanceStatus'] = 'NOT_RUN'
                 report['calibrationStatus'] = 'OBSERVED'
-                report['freezeStatus'] = 'DRAFT_AWAITING_A5_4'
+                # Cleanup unverified is not a freeze candidate even though the
+                # measurements completed; downstream only-PASS consumers must
+                # see a non-PASS string, not a fresh DRAFT_AWAITING_A5_4.
+                report['freezeStatus'] = ('DRAFT_AWAITING_A5_4' if overall == 'PASS'
+                                          else CLEANUP_UNVERIFIED_FREEZE)
         require(report['apparatusSha256'] == hashes(), 'APPARATUS_CHANGED', 'apparatus changed while collecting evidence')
         if dependencies is not None:
             require(baseline_dependency_hashes(args.baseline.resolve()) == dependencies,

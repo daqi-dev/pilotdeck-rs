@@ -3,10 +3,13 @@
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from unittest.mock import patch
 
 # >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
@@ -58,6 +61,12 @@ observation_check = session_domain_module.observation_check
 read = session_domain_module.read
 require = session_domain_module.require
 validate_calibration = session_domain_module.validate_calibration
+probe_process_group = session_domain_module.probe_process_group
+cleanup_status = session_domain_module.cleanup_status
+CLEANUP_VERIFIED = session_domain_module.CLEANUP_VERIFIED
+CLEANUP_GROUP_NOT_EMPTY = session_domain_module.CLEANUP_GROUP_NOT_EMPTY
+CLEANUP_BLOCKED = session_domain_module.CLEANUP_BLOCKED
+CLEANUP_UNVERIFIED_STATUS = session_domain_module.CLEANUP_UNVERIFIED_STATUS
 
 CALIBRATION_CASES = {
     'calibration-repetition': 'COVERAGE',
@@ -325,6 +334,108 @@ def check_case(name, output, source=None):
     observation_check(payload, output, 'mutated-observation')
 
 
+def cleanup_controls(output):
+    """Exercise the ps-free group probe and its top-level status mapping.
+
+    These are positive behavior controls (the apparatus must report the right
+    finding), not product mutations.  The post-commit source negative controls
+    are under tests/fixtures/session-domain-cleanup/.
+    """
+    results = []
+
+    def check(name, ok, detail, **extra):
+        results.append({'name': name, 'passed': bool(ok), 'detail': detail, **extra})
+
+    def group_empty(pgid):
+        try:
+            os.killpg(pgid, 0)
+            return False
+        except ProcessLookupError:
+            return True
+        except OSError:
+            return False
+
+    def force_empty(pgid):
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(pgid, sig)
+            except ProcessLookupError:
+                return True
+            except OSError:
+                return False
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if group_empty(pgid):
+                    return True
+                time.sleep(.05)
+        return group_empty(pgid)
+
+    # 1. A reaped leader with no descendants: killpg(pgid, 0) must raise ESRCH.
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
+    child.wait(timeout=10)
+    probe = probe_process_group(child.pid)
+    check('cleanup-empty-group', probe['status'] == CLEANUP_VERIFIED
+          and cleanup_status({'processTreeCleanup': probe['status']}) == 'PASS',
+          f"status={probe['status']} top={cleanup_status({'processTreeCleanup': probe['status']})}",
+          probe=probe)
+
+    # 2. The launcher exits while a sleep grandchild stays in its group.  The
+    # probe must report GROUP_NOT_EMPTY, SIGTERM that group, and the top level
+    # must not claim PASS.  The grandchild's stdio is /dev/null so a parent
+    # capture pipe cannot stay open if cleanup fails.
+    marker = output / 'leaky-grandchild.pid'
+    code = ("import subprocess,sys;"
+            "p=subprocess.Popen(['sleep','60'],stdout=subprocess.DEVNULL,"
+            "stderr=subprocess.DEVNULL);"
+            "open(sys.argv[1],'w').write(str(p.pid))")
+    child = subprocess.Popen([sys.executable, '-I', '-c', code, str(marker)],
+                             start_new_session=True)
+    child.wait(timeout=10)
+    probe = probe_process_group(child.pid)
+    top = cleanup_status({'processTreeCleanup': probe['status']})
+    grandchild = int(marker.read_text()) if marker.is_file() else None
+    grandchild_gone = grandchild is not None and not _pid_alive(grandchild)
+    empty = group_empty(child.pid)
+    if not empty:
+        force_empty(child.pid)
+    if not group_empty(child.pid) and grandchild is not None:
+        # Last resort for the control's own known PID; the production probe has
+        # no pid list and reports GROUP_NOT_EMPTY instead of guessing.
+        try:
+            os.kill(grandchild, signal.SIGKILL)
+        except OSError:
+            pass
+        force_empty(child.pid)
+    check('cleanup-leftover-grandchild',
+          probe['status'] == CLEANUP_GROUP_NOT_EMPTY and top == CLEANUP_UNVERIFIED_STATUS
+          and grandchild_gone and group_empty(child.pid),
+          f"status={probe['status']} top={top} grandchildGone={grandchild_gone} "
+          f"groupEmpty={group_empty(child.pid)}", probe=probe)
+
+    # 3. An inaccessible probe is BLOCKED and never a PASS.
+    with patch('session_domain.os.killpg', side_effect=PermissionError('denied')):
+        blocked = probe_process_group(999999)
+    blocked_top = cleanup_status({'processTreeCleanup': blocked['status']})
+    check('cleanup-probe-blocked',
+          blocked['status'] == CLEANUP_BLOCKED and blocked_top == CLEANUP_UNVERIFIED_STATUS,
+          f"status={blocked['status']} top={blocked_top}", probe=blocked)
+
+    report = {'status': 'PASS' if all(row['passed'] for row in results) else 'FAIL',
+              'scope': 'cleanup probe behavior controls; not native evidence', 'cases': results}
+    save(output / 'cleanup-controls.json', report)
+    return report
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+
+
 def run_all(output, source=None):
     output.mkdir(parents=True, exist_ok=False)
     results = []
@@ -351,6 +462,10 @@ def run_all(output, source=None):
     report = {'status': 'PASS' if all(r['passed'] for r in results) else 'FAIL',
               'scope': 'apparatus mutation tests only', 'cases': results,
               'notRun': [{'case': case, 'reason': 'requires real calibration --source'} for case in not_run]}
+    cleanup = cleanup_controls(output)
+    report['cleanup'] = cleanup
+    if cleanup['status'] != 'PASS':
+        report['status'] = 'FAIL'
     save(output / 'results.json', report)
     return report
 
