@@ -18,6 +18,10 @@ const FINAL_SYNC_TIMEOUT: Duration = Duration::from_secs(3);
 struct Handler {
     events: Mutex<Vec<JsValue>>,
     calls: AtomicUsize,
+    /// Every payload-less forward() entry drains once, so this counts pump
+    /// ticks and module callbacks alike: the "the pump ran" observable for
+    /// the #855 gate-order test.
+    drain_calls: AtomicUsize,
     block_module: AtomicBool,
     disposed: AtomicUsize,
     fail_event: bool,
@@ -85,6 +89,7 @@ impl HostHandler for Handler {
     }
 
     fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        self.drain_calls.fetch_add(1, Ordering::SeqCst);
         self.drains
             .lock()
             .unwrap()

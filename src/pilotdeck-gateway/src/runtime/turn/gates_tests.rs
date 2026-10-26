@@ -334,6 +334,170 @@ fn gates_regenerates_identically() {
     crate::test_baseline::regenerates_identically("turn-gates");
 }
 
+/// #855: the host-event pump starts strictly after both durable gates commit.
+/// A gate that rejects or is cancelled must never observe a pump tick, and the
+/// open case pins the start order itself: exactly one poll past the open gate
+/// must not tick, because correct code only enters with_pump in that poll. A
+/// pump wrapped before the gate arms its timer at admission (the factory poll
+/// the gate entry already proves happened), so by gate-open that timer is long
+/// due and the same single poll ticks it.
+#[tokio::test]
+async fn gates_pump_starts_only_after_the_gate_commits() {
+    for case in ["reject", "cancel", "open"] {
+        let root = std::env::temp_dir().join(format!("pdrs-pump-gates-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let registry = Arc::new(ProjectRuntimeRegistry::new(
+            &root,
+            Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+        ));
+        let runtime = registry.resolve(None).unwrap();
+        let key = TranscriptKey {
+            project_root: root.clone(),
+            pilot_home: root.join("home"),
+            session_id: "session".into(),
+            transcript_path: root.join("session.jsonl"),
+        };
+        let (entered, mut entry) = oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let store = Arc::new(RecordingStore {
+            disk: JsonlTranscriptStore::new(),
+            kind: "turn_started",
+            fail: usize::from(case == "reject"),
+            completes: AtomicUsize::new(0),
+            attempts: AtomicUsize::new(0),
+            gate: Mutex::new((case != "reject").then_some((entered, wait))),
+        });
+        let recorder = Arc::new(Recorder::new(store.clone(), key.clone()));
+        let handler = Arc::new(Handler::default());
+        // Pre-spawned so the factory poll that arms a pre-gate pump happens
+        // promptly; the peer only sends its first frame after execute starts.
+        let client = spawn_client("live-payload").await.unwrap();
+        let pid = client.child_id().unwrap();
+        let initial = Mutex::new(Some(client));
+        let session = LiveSessionAdapter::new(recorder, Vec::new, {
+            let owner = registry.clone();
+            let handler = handler.clone();
+            move |_| {
+                let lease = Arc::new(owner.acquire(None).unwrap());
+                let client = initial.lock().unwrap().take().unwrap();
+                let handler = handler.clone();
+                Box::pin(async move {
+                    Ok((
+                        Box::pin(async move { Ok(client) }) as HostFuture<HostClient>,
+                        handler as Arc<dyn HostHandler>,
+                        lease,
+                    ))
+                })
+            }
+        });
+        let mut turn = session.submit(input(), options()).unwrap();
+        if case == "reject" {
+            let error = next(turn.as_mut()).await.unwrap_err();
+            assert!(
+                error.message.contains("recording write failed"),
+                "{error:?}"
+            );
+        } else {
+            {
+                let mut waiting = turn.next();
+                timeout(Duration::from_secs(15), async {
+                    tokio::select! {
+                        biased;
+                        _ = &mut entry => {},
+                        result = &mut waiting => panic!("recording gate must precede delivery: {result:?}"),
+                    }
+                })
+                .await
+                .expect("append must enter the gate");
+                // The gate holds: with the preflight write parked, next() never
+                // reaches the select that polls the execution future, so no
+                // pump can have ticked, started or drained anything.
+                assert_eq!(
+                    handler.drain_calls.load(Ordering::SeqCst),
+                    0,
+                    "no pump tick while the gate holds"
+                );
+                assert_eq!(
+                    handler.calls.load(Ordering::SeqCst),
+                    0,
+                    "no module call before the gate commits"
+                );
+                assert!(
+                    handler.events.lock().unwrap().is_empty(),
+                    "no host event before the gate commits"
+                );
+                if case == "open" {
+                    // A pump armed at admission is already due by gate-open.
+                    tokio::time::sleep(Duration::from_millis(700)).await;
+                    assert_eq!(
+                        handler.drain_calls.load(Ordering::SeqCst),
+                        0,
+                        "still no pump tick inside the closed window"
+                    );
+                }
+                if case == "cancel" {
+                    session.abort(&"user-stop".into()).unwrap();
+                }
+            } // Cancel only next's borrow; the same driver stays owned.
+            release.send(()).unwrap();
+            assert_eq!(
+                next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+                Some(&"turn_started".into())
+            );
+            assert_eq!(
+                next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+                Some(&"input_accepted".into())
+            );
+            if case == "open" {
+                // Exactly one poll past the open gate: this poll sends
+                // execute_ready and polls the execution future once. Correct
+                // code enters with_pump now, so its freshly armed timer cannot
+                // be due within this poll; a pump wrapped before the gate
+                // drained on its long-expired timer right here.
+                let mut pending = turn.next();
+                assert_recording_pending(
+                    pending.as_mut(),
+                    "execution must not finish at gate open",
+                );
+                assert_eq!(
+                    handler.drain_calls.load(Ordering::SeqCst),
+                    0,
+                    "the pump must not tick at gate open"
+                );
+                drop(pending);
+            }
+            if case == "cancel" {
+                assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
+            } else {
+                let completed = next(turn.as_mut()).await.unwrap().unwrap();
+                assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
+                assert_eq!(
+                    completed.get("result").unwrap().get("type"),
+                    Some(&"success".into())
+                );
+            }
+        }
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap(),
+            None,
+            "stream closes once"
+        );
+        drop(turn);
+        timeout(Duration::from_secs(15), async {
+            while session.state.lock().unwrap().active.is_some()
+                || runtime.lease_count() != 0
+                || handler.disposed.load(Ordering::SeqCst) == 0
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("owned cleanup must release slot, lease and handler");
+        assert_reaped(pid).await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
 #[tokio::test]
 async fn gates_factory_ready_cancel() {
     struct Owner(Arc<AtomicUsize>, Arc<RuntimeLease>);

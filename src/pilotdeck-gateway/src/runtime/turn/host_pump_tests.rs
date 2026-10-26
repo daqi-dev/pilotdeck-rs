@@ -294,3 +294,71 @@ async fn host_pump_stops_before_dispose_closes_port() {
     assert!(rx.try_recv().is_err());
     assert_eq!(inner.drains.lock().unwrap().len(), 1);
 }
+
+/// #855: a final arriving while the pump holds a reserved send slot and waits
+/// in delivery.wait() (live.rs:884) publishes strictly behind that slot, and
+/// the pump's post-wake re-check keeps the turn closed without refreshing the
+/// activity deadline. The module-deadline probe at the end is what turns the
+/// "remove the :885 stopped re-check" mutant red: the probe captures its
+/// deadline at forward() entry before the non-module final send refreshes
+/// activity, so correct code keeps the pre-final deadline and publishes the
+/// captured batch as soon as the final's slot completes.
+#[tokio::test(start_paused = true)]
+async fn host_pump_final_orders_behind_the_reserved_slot() {
+    let (inner, handler, mut rx) = opened(1).await;
+    let mut task = pump(handler.clone(), Box::pin(std::future::pending()));
+    assert_pending(&mut task).await; // activity = 0, deadline = 500
+    // A module callback captures [a, b] and reserves M2; the capacity-1
+    // channel parks its send mid-batch after publishing a.
+    queue_host_events(&inner, &[host_event("batch_a"), host_event("batch_b")]);
+    let mut module_call = handler.module_call(JsValue::Null);
+    assert_pending(&mut module_call).await;
+    // At the tick deadline the pump reserves K behind M2 and parks in
+    // delivery.wait() — the exact live.rs:884 state the final must meet.
+    advance(&mut task, 499).await;
+    advance(&mut task, 1).await;
+    // The final arrives while the pump is waiting on its reserved slot: it
+    // marks the turn stopped and drains [e] at forward entry, then reserves F
+    // behind K on the same send chain instead of overtaking it.
+    queue_host_events(&inner, &[host_event("final_batch")]);
+    let mut final_call = handler.event(wire(&host_event("turn_completed"), true));
+    assert_pending(&mut final_call).await;
+    assert_eq!(rx.try_recv().unwrap(), host_event("batch_a"));
+    assert!(rx.try_recv().is_err(), "the final's batch waits behind K");
+    // Completing M2 wakes the pump; the :885 re-check keeps it closed. Its
+    // reserved slot K hands the chain to F, so e publishes only now.
+    timeout(Duration::from_secs(5), module_call)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rx.try_recv().unwrap(), host_event("batch_b"));
+    assert!(rx.try_recv().is_err(), "e still waits for the pump's slot");
+    assert_pending(&mut task).await; // woke, re-checked stopped, published nothing
+    // Activity probe, armed before the final publishes (the non-module send
+    // refreshes activity): a blocked module callback captures one more host
+    // event and reserves behind F; its deadline is read at entry, so correct
+    // code (no :886 refresh) keeps the pre-final deadline 500, already due.
+    queue_host_events(&inner, &[host_event("probe_batch")]);
+    inner.block_module.store(true, Ordering::SeqCst);
+    let mut probe = handler.module_call(JsValue::Null);
+    assert_pending(&mut probe).await;
+    timeout(Duration::from_secs(5), final_call)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rx.try_recv().unwrap(), host_event("final_batch"));
+    assert_pending(&mut probe).await;
+    assert_eq!(
+        rx.try_recv().unwrap(),
+        host_event("probe_batch"),
+        "the probe's batch publishes at the pre-final deadline, not 500 ms later"
+    );
+    // The stopped pump never drains again.
+    drop(probe);
+    queue_host_events(&inner, &[host_event("never_drained")]);
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(10)).await;
+    tokio::task::yield_now().await;
+    assert!(rx.try_recv().is_err());
+    assert_eq!(inner.drains.lock().unwrap().len(), 1);
+}
