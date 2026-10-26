@@ -28,8 +28,10 @@ TABLES = {'mutants', 'mutations', 'controls', 'cases', 'runner_mutations'}
 UNSUPPORTED = {
     '_shared/negative_control.py': 'shared mutation runner, no mutation definitions',
     'negative_process.py': 'shared process/source guard, no mutation definitions',
+    'negative_suite.py': 'shared mutation suite runner, no mutation definitions',
     'negative_oracle_guard.py': 'JSON provenance corruption, no source before fragments',
     'test_negative_process.py': 'unit tests of the shared process/source guard',
+    'test_negative_suite.py': 'unit tests of the shared mutation suite runner',
     'background-output/test_negative.py': 'unit tests of the mutation runner',
     'background-panic/test_negative_controls.py': 'mutation helper unit tests on in-memory strings/JSON, no product source replacement table',
     'session-admission/test_negative.py': 'mutation boundary unit tests on in-memory product text, no product source replacement table',
