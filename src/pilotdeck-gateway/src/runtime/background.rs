@@ -290,6 +290,13 @@ struct StartReservation<'a> {
     pending: bool,
     released: bool,
 }
+// Catch inside the existing linearization lock without unwinding its guard.
+// Terminal callers retain the payload until done/cancel is published, even if
+// its destructor panics. A failed terminal Clock uses started_at as its timestamp.
+fn catch_port<T>(callback: impl FnOnce() -> T) -> std::thread::Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback))
+}
+
 impl StartReservation<'_> {
     fn release(&mut self) {
         if self.released {
@@ -307,7 +314,7 @@ impl StartReservation<'_> {
         callback: impl FnOnce() -> T,
         fallback: &str,
     ) -> Result<T, BackgroundTaskError> {
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback)) {
+        match catch_port(callback) {
             Ok(value) => Ok(value),
             Err(payload) => {
                 // Even a payload whose destructor panics cannot strand starts.
@@ -1085,15 +1092,18 @@ async fn escalate(entry: Arc<Entry>, grace: f64) {
 /// asynchronously: there is no process to signal and no `exit` will ever
 /// arrive, so settle it as cancelled instead of hanging (module docs).
 async fn settle_never_exits(inner: Arc<Inner>, entry: Arc<Entry>) {
-    {
-        let mut state = entry.state.lock().unwrap();
+    let clock = {
+        let mut state = lock(&entry.state);
         if state.task.status != TaskStatus::Running {
             return;
         }
         state.task.status = TaskStatus::Cancelled;
-        state.task.ended_at = Some((inner.now)());
-    }
+        let clock = catch_port(|| (inner.now)());
+        state.task.ended_at = Some(*clock.as_ref().unwrap_or(&state.task.started_at));
+        clock
+    };
     inner.settle(&entry);
+    drop(clock);
 }
 
 impl Inner {
@@ -1239,10 +1249,11 @@ async fn supervise(
                         )
                     }
                 };
-                {
-                    let mut state = entry.state.lock().unwrap();
+                let clock = {
+                    let mut state = lock(&entry.state);
                     let task = &mut state.task;
-                    task.ended_at = Some((inner.now)());
+                    let clock = catch_port(|| (inner.now)());
+                    task.ended_at = Some(*clock.as_ref().unwrap_or(&task.started_at));
                     task.exit_code = Some(code);
                     let killed = matches!(signal, Some(libc::SIGTERM | libc::SIGKILL));
                     task.status = if task.interrupted || killed {
@@ -1252,8 +1263,10 @@ async fn supervise(
                     } else {
                         TaskStatus::Failed
                     };
-                }
+                    clock
+                };
                 inner.settle(&entry);
+                drop(clock);
             }
         }
     }
@@ -1415,13 +1428,16 @@ impl BackgroundSubagentRuntime {
                     }
                 }
             }
-            {
-                let mut task = entry.task.lock().unwrap();
-                if task.ended_at.is_none() {
-                    task.ended_at = Some(now());
-                }
-            }
+            let clock = {
+                let mut task = lock(&entry.task);
+                task.ended_at.is_none().then(|| {
+                    let clock = catch_port(|| now());
+                    task.ended_at = Some(*clock.as_ref().unwrap_or(&task.started_at));
+                    clock
+                })
+            };
             entry.done.send_replace(true);
+            drop(clock);
         });
         task
     }
@@ -1469,13 +1485,15 @@ impl BackgroundSubagentRuntime {
             return false;
         }
         task.status = TaskStatus::Cancelled;
-        task.ended_at = Some((self.now)());
+        let clock = catch_port(|| (self.now)());
+        task.ended_at = Some(*clock.as_ref().unwrap_or(&task.started_at));
         drop(task);
         #[cfg(test)]
         if let Some(before_cancel) = &self.before_cancel {
             before_cancel();
         }
         entry.controller.cancel_synchronously();
+        drop(clock);
         true
     }
 
@@ -1782,6 +1800,415 @@ mod tests {
             agent_id: "a".into(),
             kind: JsValue::Undefined,
         }
+    }
+
+    type TailDrop = Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>;
+    fn tail_clock(
+        on_drop: TailDrop,
+    ) -> (
+        Clock,
+        tokio::sync::oneshot::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Payload(Option<Box<dyn FnOnce() + Send>>);
+        impl Drop for Payload {
+            fn drop(&mut self) {
+                self.0.take().unwrap()();
+                panic!("tail payload drop");
+            }
+        }
+        let calls = AtomicUsize::new(0);
+        let (entered, reached) = tokio::sync::oneshot::channel();
+        let entered = Mutex::new(Some(entered));
+        let (resume, paused) = std::sync::mpsc::channel();
+        let paused = Mutex::new(paused);
+        (
+            Arc::new(move || {
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    entered.lock().unwrap().take().unwrap().send(()).unwrap();
+                    paused
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                    let callback = lock(&on_drop).take();
+                    if let Some(callback) = callback {
+                        std::panic::panic_any(Payload(Some(callback)));
+                    }
+                    panic!("terminal clock panic");
+                }
+                if calls.load(Ordering::SeqCst) == 1 {
+                    42.0
+                } else {
+                    84.0
+                }
+            }),
+            reached,
+            resume,
+        )
+    }
+
+    async fn tail_deadline<T>(future: impl Future<Output = T>) -> T {
+        tokio::time::timeout(Duration::from_secs(5), future)
+            .await
+            .expect("tail observer deadline")
+    }
+
+    async fn tail_observers<F: Future<Output = ()> + Send + 'static>(
+        mut observe: impl FnMut() -> F,
+    ) -> Vec<tokio::task::JoinHandle<()>> {
+        let mut observers = vec![];
+        for _ in 0..3 {
+            let future = observe();
+            let (registered, ready) = tokio::sync::oneshot::channel();
+            observers.push(tokio::spawn(async move {
+                let mut future = Box::pin(future);
+                let mut registered = Some(registered);
+                std::future::poll_fn(|cx| {
+                    let poll = future.as_mut().poll(cx);
+                    if let Some(registered) = registered.take() {
+                        assert!(poll.is_pending(), "tail predecessor pending");
+                        registered.send(()).unwrap();
+                    }
+                    poll
+                })
+                .await;
+            }));
+            tail_deadline(ready).await.unwrap();
+        }
+        let cancelled = observers.pop().unwrap();
+        cancelled.abort();
+        assert!(tail_deadline(cancelled).await.unwrap_err().is_cancelled());
+        observers
+    }
+
+    async fn shell_tail(mode: &str, payload: bool) {
+        let scratch = crate::test_scratch::Scratch::new("804-tail");
+        let fifo = scratch.path().join("exit-gate");
+        let no_pid = mode.starts_with("B4");
+        if !no_pid {
+            assert!(
+                std::process::Command::new("mkfifo")
+                    .arg(&fifo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let on_drop: TailDrop = Arc::default();
+        let (now, reached, resume) = tail_clock(on_drop.clone());
+        let events = Arc::new(Mutex::new(vec![]));
+        let captured = events.clone();
+        let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+            now: Some(now),
+            max_tasks: Some(1),
+            on_completion: Some(Arc::new(move |event| lock(&captured).push(event))),
+            ..Default::default()
+        });
+        let code = if mode == "B3-7" { 7 } else { 0 };
+        let mut spec = construction_spec();
+        spec.command = format!("read line < '{}'; exit {code}", fifo.display())
+            .as_str()
+            .into();
+        if no_pid {
+            spec.cwd = scratch.path().join("missing").to_str().unwrap().into();
+        }
+        let task = tail_deadline(runtime.start(spec)).await.unwrap();
+        let entry = runtime.find(&task.task_id, None).unwrap();
+        assert_eq!(task.status, TaskStatus::Running);
+        assert_eq!(task.pid.is_none(), no_pid, "tail real process path");
+        let (dropped, drop_seen) = tokio::sync::oneshot::channel();
+        if payload {
+            let entry = entry.clone();
+            *lock(&on_drop) = Some(Box::new(move || {
+                assert!(*entry.done.borrow(), "tail payload sees done");
+                assert!(
+                    !entry.state.is_poisoned(),
+                    "tail payload sees unpoisoned entry"
+                );
+                dropped.send(()).unwrap();
+            }));
+        }
+        let observers = tail_observers(|| {
+            let entry = entry.clone();
+            async move { entry.wait_done().await }
+        })
+        .await;
+        let owner = runtime.clone();
+        let id = task.task_id.clone();
+        let disposing = mode == "B4-dispose";
+        let operation = tokio::spawn(async move {
+            if disposing {
+                owner.dispose().await;
+            } else if no_pid {
+                owner.stop(&id, &JsValue::Number(0.0), None).await.unwrap();
+            } else {
+                tokio::task::spawn_blocking(move || std::fs::write(fifo, b"go\n"))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        });
+        tail_deadline(reached).await.unwrap();
+        assert!(!*entry.done.borrow(), "tail Clock predecessor pending");
+        let disposers = if disposing {
+            tail_observers(|| {
+                let owner = runtime.clone();
+                async move { owner.dispose().await }
+            })
+            .await
+        } else {
+            vec![]
+        };
+        if no_pid {
+            operation.abort();
+        }
+        resume.send(()).unwrap();
+        for observer in observers.into_iter().chain(disposers) {
+            tail_deadline(observer).await.unwrap();
+        }
+        let result = tail_deadline(operation).await;
+        if no_pid {
+            assert!(result.unwrap_err().is_cancelled());
+        } else {
+            result.unwrap();
+        }
+        if payload {
+            tail_deadline(drop_seen).await.unwrap();
+        }
+        assert!(!entry.state.is_poisoned(), "tail entry unpoisoned");
+        let task = runtime.get(&task.task_id, None).unwrap();
+        let expected = if no_pid {
+            TaskStatus::Cancelled
+        } else if code == 0 {
+            TaskStatus::Completed
+        } else {
+            TaskStatus::Failed
+        };
+        assert_eq!(task.status, expected, "tail terminal status");
+        assert_eq!(task.ended_at, Some(42.0), "tail fallback timestamp");
+        assert_eq!(task.exit_code, if no_pid { None } else { Some(Some(code)) });
+        {
+            let event = lock(&events);
+            assert_eq!(event.len(), 1, "tail completion exactly once");
+            assert_eq!(
+                event[0].get("status"),
+                Some(&JsValue::from(expected.as_str()))
+            );
+        }
+        let id = &task.task_id;
+        let undefined = &JsValue::Undefined;
+        assert_eq!(runtime.list(&TaskListFilter::default(), None).len(), 1);
+        assert!(runtime.get_output(id, undefined, undefined, None).is_ok());
+        tail_deadline(runtime.wait(id, undefined, None, None))
+            .await
+            .unwrap();
+        tail_deadline(runtime.stop(id, undefined, None))
+            .await
+            .unwrap();
+        if !disposing {
+            assert_eq!(
+                tail_deadline(runtime.start(construction_spec()))
+                    .await
+                    .unwrap()
+                    .status,
+                TaskStatus::Failed,
+                "tail capacity released"
+            );
+        }
+        let mut disposers = vec![];
+        for _ in 0..3 {
+            let owner = runtime.clone();
+            disposers.push(tokio::spawn(async move { owner.dispose().await }));
+        }
+        for observer in disposers {
+            tail_deadline(observer).await.unwrap();
+        }
+        assert!(runtime.start(construction_spec()).await.is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn clock_tail_shell_exit() {
+        shell_tail("B3-0", false).await;
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn clock_tail_shell_failure() {
+        shell_tail("B3-7", false).await;
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn clock_tail_no_pid() {
+        shell_tail("B4-stop", false).await;
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn clock_tail_dispose() {
+        shell_tail("B4-dispose", false).await;
+    }
+
+    async fn subagent_tail(mode: &str, payload: bool) {
+        let on_drop: TailDrop = Arc::default();
+        let (now, reached, resume) = tail_clock(on_drop.clone());
+        let runtime = BackgroundSubagentRuntime::new(Some(now));
+        let (entered, ready) = tokio::sync::oneshot::channel();
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let stopping = mode == "running";
+        let failing = mode == "err";
+        let task = runtime.start(subagent_input(Box::new(move |signal| {
+            Box::pin(async move {
+                entered.send(()).unwrap();
+                if stopping {
+                    signal.cancelled().await;
+                } else {
+                    gate.await.unwrap();
+                }
+                if failing {
+                    Err("body failure".into())
+                } else {
+                    Ok(())
+                }
+            })
+        })));
+        tail_deadline(ready).await.unwrap();
+        let entry = runtime.find(&task.task_id).unwrap();
+        let (dropped, drop_seen) = tokio::sync::oneshot::channel();
+        if payload {
+            let entry = entry.clone();
+            *lock(&on_drop) = Some(Box::new(move || {
+                assert!(
+                    if stopping {
+                        entry.controller.is_cancelled()
+                    } else {
+                        *entry.done.borrow()
+                    },
+                    "tail payload sees completion or cancellation"
+                );
+                assert!(
+                    !entry.task.is_poisoned(),
+                    "tail payload sees unpoisoned entry"
+                );
+                dropped.send(()).unwrap();
+            }));
+        }
+        let observers = tail_observers(|| {
+            let mut done = entry.done.subscribe();
+            async move {
+                done.wait_for(|done| *done).await.unwrap();
+            }
+        })
+        .await;
+        let owner = runtime.clone();
+        let id = task.task_id.clone();
+        let operation = tokio::spawn(async move {
+            if stopping {
+                assert!(owner.stop(&id));
+            } else {
+                release.send(()).unwrap();
+            }
+        });
+        tail_deadline(reached).await.unwrap();
+        assert!(!*entry.done.borrow(), "tail Clock predecessor pending");
+        resume.send(()).unwrap();
+        for observer in observers {
+            tail_deadline(observer).await.unwrap();
+        }
+        let result = tail_deadline(operation).await;
+        if payload && stopping {
+            assert_eq!(
+                result.unwrap_err().into_panic().downcast_ref::<&str>(),
+                Some(&"tail payload drop")
+            );
+        } else {
+            result.unwrap();
+        }
+        if payload {
+            tail_deadline(drop_seen).await.unwrap();
+        }
+        assert!(!entry.task.is_poisoned(), "tail entry unpoisoned");
+        assert_eq!(
+            entry.controller.is_cancelled(),
+            stopping,
+            "tail cancellation delivered"
+        );
+        let task = runtime.get(&task.task_id).unwrap();
+        let text = include_str!("../../tests/fixtures/background-clock/oracle.json");
+        crate::test_baseline::oracle(text);
+        let oracle: serde_json::Value = serde_json::from_str(text).unwrap();
+        let expected = oracle["tailCases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == format!("S-{mode}"))
+            .unwrap();
+        assert_eq!(
+            task.status.as_str(),
+            expected["status"],
+            "tail subagent TS status"
+        );
+        assert_eq!(
+            task.error.map(|s| s.to_utf8().unwrap()),
+            if failing {
+                Some("body failure".into())
+            } else {
+                None
+            }
+        );
+        assert_eq!(task.ended_at, Some(42.0), "tail fallback timestamp");
+        assert_eq!(runtime.list(&SubagentListFilter::default()).len(), 1);
+        assert!(!tail_deadline(runtime.stop_and_wait(&task.task_id)).await);
+        let next = runtime.start(subagent_input(Box::new(|_| Box::pin(async { Ok(()) }))));
+        tail_deadline(runtime.stop_and_wait(&next.task_id)).await;
+        runtime.shutdown();
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn clock_tail_subagent_finish() {
+        subagent_tail("ok", false).await;
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn clock_tail_subagent_failure() {
+        subagent_tail("err", false).await;
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn clock_tail_subagent_stop() {
+        subagent_tail("running", false).await;
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn clock_tail_payload_drop() {
+        for mode in ["B3-0", "B3-7", "B4-stop", "B4-dispose"] {
+            shell_tail(mode, true).await;
+        }
+        for mode in ["ok", "err", "running"] {
+            subagent_tail(mode, true).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn clock_tail_subagent_pending_stop() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = AtomicUsize::new(0);
+        let runtime = BackgroundSubagentRuntime::new(Some(Arc::new(move || {
+            assert_ne!(
+                calls.fetch_add(1, Ordering::SeqCst),
+                1,
+                "terminal clock panic"
+            );
+            42.0
+        })));
+        let task = runtime.start(subagent_input(Box::new(|_| {
+            panic!("pending body must not run")
+        })));
+        let entry = runtime.find(&task.task_id).unwrap();
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.stop(&task.task_id)));
+        assert!(
+            entry.controller.is_cancelled(),
+            "tail pending cancellation delivered"
+        );
+        assert!(result.unwrap());
+        assert!(!tail_deadline(runtime.stop_and_wait(&task.task_id)).await);
+        assert_eq!(
+            runtime.get(&task.task_id).unwrap().status,
+            TaskStatus::Cancelled
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

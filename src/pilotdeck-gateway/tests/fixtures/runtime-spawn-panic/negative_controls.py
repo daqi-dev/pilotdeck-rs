@@ -55,19 +55,32 @@ mutants = [
     ('durable-construction-catch', pub, re.escape('let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));'), 'let future: Result<_, Box<dyn std::any::Any + Send>> = Ok(registry.append(&self.run, &event));', construction, 'injected construction panic'),
     ('durable-construction-fifo', pub, re.escape('let _ = previous.await;'), 'drop(previous);', construction, 'construction successor cannot overtake pending predecessor'),
     ('durable-payload-cleanup', pub, re.escape('completion.finish(result, event);'), 'std::mem::forget(completion); let _ = (result, event);', 'durable_panic_payload_drop_runs_after_cleanup', 'spawn completion deadline'),
-    ('background-construction', background, re.escape('match std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback)) {'), 'match Ok::<_, Box<dyn std::any::Any + Send>>(callback()) {', reservation, 'injected construction panic'),
+    ('background-construction', background, re.escape('match catch_port(callback) {'), 'match Ok::<_, Box<dyn std::any::Any + Send>>(callback()) {', reservation, 'injected construction panic'),
     ('background-capacity', background, re.escape('lock(&self.inner.state).pending_starts -= 1;'), 'let _ = &self.inner;', reservation, 'construction reservation matrix'),
     ('background-start-drain', background, r'(?m)^        self\.inner\.starts\.send_modify\(\|starts\| \*starts -= 1\);', '        let _ = &self.inner.starts;', reservation, 'construction dispose deadline'),
     ('background-str-payload', background, r'let message = payload\s*\.downcast_ref::<&str>\(\)\s*\.copied\(\)', 'let message = None::<&str>', reservation, 'construction panic error'),
     ('background-owned-payload', background, re.escape('.or_else(|| payload.downcast_ref::<String>().map(String::as_str))'), '', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
     ('background-fallback', background, re.escape('            "Background initial snapshot construction failed.",'), '            "wrong fallback",', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
-    ('clock-catch', background, re.escape('match std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback)) {'), 'match Ok::<_, Box<dyn std::any::Any + Send>>(callback()) {', 'clock_start_panic_releases_reservations_and_observers', 'injected clock panic'),
+    ('clock-catch', background, re.escape('match catch_port(callback) {'), 'match Ok::<_, Box<dyn std::any::Any + Send>>(callback()) {', 'clock_start_panic_releases_reservations_and_observers', 'injected clock panic'),
     ('clock-locked', background, re.escape('started_at: reservation.call(|| (self.inner.now)(), "Background clock failed.")?,'), 'started_at: reservation.call(|| { let _state = lock(&self.inner.state); (self.inner.now)() }, "Background clock failed.")?,', 'clock_start_panic_releases_reservations_and_observers', 'WouldBlock'),
     ('clock-payload-order', background, re.escape('                self.release();'), '                let _ = self;', 'clock_start_payload_drop_happens_after_release', 'payload sees released starts'),
     ('clock-pending-snapshot', background, re.escape('        let task = result?;'), '', 'clock_start_failure_does_not_wait_for_snapshot', 'clock pending snapshot deadline'),
     ('clock-transfer', background, re.escape('        reservation.pending = false;'), '        reservation.pending = true;', 'clock_start_panic_releases_reservations_and_observers', 'attempt to subtract with overflow'),
     ('clock-idempotent', background, re.escape('        if self.released {\n            return;\n        }'), '', 'clock_start_panic_releases_reservations_and_observers', 'attempt to subtract with overflow'),
     ('clock-drop', background, re.escape("impl Drop for StartReservation<'_> {\n    fn drop(&mut self) {\n        self.release();"), "impl Drop for StartReservation<'_> {\n    fn drop(&mut self) {\n        let _ = self;", 'clock_start_panic_releases_reservations_and_observers', 'clock dispose deadline'),
+    ('tail-shell-clock', background, re.escape('let clock = catch_port(|| (inner.now)());\n                    task.ended_at'), 'let clock: std::thread::Result<f64> = Ok((inner.now)());\n                    task.ended_at', 'clock_tail_shell_exit', 'tail observer deadline'),
+    ('tail-no-pid-clock', background, re.escape('let clock = catch_port(|| (inner.now)());\n        state.task.ended_at'), 'let clock: std::thread::Result<f64> = Ok((inner.now)());\n        state.task.ended_at', 'clock_tail_no_pid', 'tail observer deadline'),
+    ('tail-subagent-clock', background, re.escape('let clock = catch_port(|| now());'), 'let clock: std::thread::Result<f64> = Ok(now());', 'clock_tail_subagent_finish', 'tail observer deadline'),
+    ('tail-stop-clock', background, re.escape('let clock = catch_port(|| (self.now)());'), 'let clock: std::thread::Result<f64> = Ok((self.now)());', 'clock_tail_subagent_stop', 'tail observer deadline'),
+    ('tail-fallback', background, re.escape('task.ended_at = Some(*clock.as_ref().unwrap_or(&task.started_at));'), 'task.ended_at = Some(*clock.as_ref().unwrap_or(&0.0));', 'clock_tail_shell_exit', 'tail fallback timestamp'),
+    ('tail-payload', background, re.escape('    inner.settle(&entry);\n    drop(clock);'), '    drop(clock);\n    inner.settle(&entry);', 'clock_tail_payload_drop', 'tail payload sees done'),
+    ('tail-shell-done', background, re.escape('        entry.done.send_replace(true);\n    }\n}'), '        entry.done.send_replace(false);\n    }\n}', 'clock_tail_shell_exit', 'tail observer deadline'),
+    ('tail-subagent-done', background, re.escape('            entry.done.send_replace(true);\n            drop(clock);'), '            entry.done.send_replace(false);\n            drop(clock);', 'clock_tail_subagent_finish', 'tail observer deadline'),
+    ('tail-stop-signal', background, re.escape('        entry.controller.cancel_synchronously();\n        drop(clock);'), '        drop(clock);', 'clock_tail_subagent_stop', 'tail observer deadline'),
+    ('tail-shell-event', background, re.escape('        if let (Some(event), Some(handler)) = (event, &self.on_completion) {'), '        if let (Some(event), Some(handler)) = (event.filter(|_| false), &self.on_completion) {', 'clock_tail_shell_exit', 'tail completion exactly once'),
+    ('tail-subagent-payload', background, re.escape('            entry.done.send_replace(true);\n            drop(clock);'), '            drop(clock);\n            entry.done.send_replace(true);', 'clock_tail_payload_drop', 'tail payload sees completion or cancellation'),
+    ('tail-stop-payload', background, re.escape('        entry.controller.cancel_synchronously();\n        drop(clock);'), '        drop(clock);\n        entry.controller.cancel_synchronously();', 'clock_tail_payload_drop', 'tail payload sees completion or cancellation'),
+    ('tail-payload-leak', background, re.escape('    inner.settle(&entry);\n    drop(clock);'), '    inner.settle(&entry);\n    std::mem::forget(clock);', 'clock_tail_payload_drop', 'tail observer deadline'),
     ('construction-matrix', fixture, None, 'construct-', 'construction_oracle_has_exact_matrix', 'complete construction matrix'),
     ('construction-duplicate', fixture, None, 'construct-', 'construction_oracle_has_exact_matrix', 'complete construction matrix'),
     ('shared-matrix', fixture, None, 'shared-', shared, 'complete shared matrix'),
@@ -106,7 +119,7 @@ for name, relative, pattern, replacement, test, anchor in mutants:
             changed = json.dumps(oracle) + '\n'
         else:
             changed, count = re.subn(pattern, replacement, content, flags=re.S)
-            assert count == 1, (name, count)
+            assert count == (3 if name == 'tail-fallback' else 1), (name, count)
         if name == 'clock-pending-snapshot':
             changed, count = re.subn(re.escape('        Ok(task)\n    }\n\n    fn insert('), '        result\n    }\n\n    fn insert(', changed)
             assert count == 1, (name, 'return anchor', count)
