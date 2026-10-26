@@ -3361,3 +3361,52 @@ async fn live_prepared_cleanup_uses_close_timeout() {
         );
     }
 }
+
+#[tokio::test]
+async fn sidecar_payload_embedded_reader_matches_ts() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/sidecar-payload/oracle.json"
+    ));
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("cases")
+    };
+    let mut replayed = 0;
+    for case in cases {
+        if case.get("route") != Some(&"embedded-reader".into()) {
+            continue;
+        }
+        replayed += 1;
+        let mut event = JsObject::new();
+        if let Some(payload) = case.get("payload") {
+            event.insert(
+                "payload".into(),
+                if payload.get("__pdrsUndefined") == Some(&JsValue::Bool(true)) {
+                    JsValue::Undefined
+                } else {
+                    payload.clone()
+                },
+            );
+        }
+        let (inner, handler, mut rx) = buffered_handler(4);
+        let result = handler.event(JsValue::Object(event)).await;
+        assert_eq!(
+            result.is_ok(),
+            case.get("ok").unwrap().as_bool().unwrap(),
+            "{case:?}"
+        );
+        if let Err(error) = result {
+            assert_eq!(error.kind, HostErrorKind::Protocol);
+            assert_eq!(
+                JsValue::from(error.message.as_str()),
+                *case.get("error").unwrap()
+            );
+            assert!(inner.events.lock().unwrap().is_empty());
+            assert!(rx.try_recv().is_err());
+        } else {
+            assert_eq!(inner.events.lock().unwrap().len(), 1);
+            assert_eq!(rx.try_recv().unwrap(), *case.get("value").unwrap());
+        }
+        assert!(handler.forwarding.lock().unwrap().wire.is_empty());
+    }
+    assert_eq!(replayed, 12);
+}

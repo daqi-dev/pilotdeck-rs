@@ -1030,11 +1030,10 @@ impl HostHandler for StreamHandler {
             self.forwarding.lock().unwrap().stopped = true;
         }
         let payload = event.get("payload").cloned();
-        // TS agentLoopSidecarClient.ts:1310-1317,1739-1743 rejects missing or
-        // non-object AgentEvent payloads with this message. Wire shape/type
-        // checks live in protocol/host; this also guards embedded callbacks.
-        // Unlike hostAgentEventBridge.ts:35-49, this boundary rejects instead
-        // of forwarding unchecked: A7.2-INTERACTION-CONSUME-001 (unapproved).
+        // TS readAgentEvent rejects this shape; wire inputs fail earlier in
+        // validateModuleMessage. Embedded applications retain the reader guard.
+        // hostAgentEventBridge is a separate event.emit producer: it swallows
+        // known module failures, not wire/reader failures (ledger R4, #822).
         if !final_event && payload.as_ref().and_then(JsValue::as_object).is_none() {
             return Box::pin(async {
                 Err(HostError::new(

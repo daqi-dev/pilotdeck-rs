@@ -325,3 +325,144 @@ fn notification_ownership_error(error: &PortError) -> bool {
             }
     )
 }
+
+#[cfg(test)]
+mod payload_tests {
+    use super::*;
+    use crate::stdio::{ConnectionOwner, ResponseDisposition};
+    use pilotdeck_agent::ports::ExecutionIdentity;
+    use pilotdeck_protocol::{admission::SidecarBinding, parse_json};
+    use std::{
+        io::{self, Write},
+        time::{Duration, Instant},
+    };
+
+    struct Writer(Vec<u8>, mpsc::Sender<JsValue>);
+    impl Write for Writer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            let bytes = std::mem::take(&mut self.0);
+            let value = parse_json(std::str::from_utf8(&bytes).map_err(io::Error::other)?)
+                .map_err(io::Error::other)?;
+            self.1.send(value).map_err(io::Error::other)
+        }
+    }
+    struct RunningWriter(ConnectionOwner, Option<JoinHandle<io::Result<()>>>);
+    impl Drop for RunningWriter {
+        fn drop(&mut self) {
+            self.0.close();
+            if let Some(worker) = self.1.take() {
+                worker.join().unwrap().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn sidecar_payload_bridge_continues_after_known_failure() {
+        let oracle = parse_json(include_str!(
+            "../../pilotdeck-gateway/tests/fixtures/sidecar-payload/oracle.json"
+        ))
+        .unwrap();
+        let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+            panic!("cases")
+        };
+        let case = cases
+            .iter()
+            .find(|row| {
+                row.get("route") == Some(&"host-bridge".into())
+                    && row.get("name") == Some(&"null".into())
+            })
+            .unwrap();
+        let JsValue::Array(replies) = case.get("replies").unwrap() else {
+            panic!("replies")
+        };
+        let events = [
+            case.get("payload").unwrap().clone(),
+            parse_json(
+                r#"{"type":"text_delta","sessionId":"session","turnId":"turn","text":"after"}"#,
+            )
+            .unwrap(),
+        ];
+        let owner = ConnectionOwner::new(
+            SidecarBinding {
+                module_id: "pilotdeck-agent-loop".into(),
+                module_instance_id: "instance".into(),
+                connection_generation: "generation".into(),
+                capabilities_version: "1".into(),
+            },
+            8,
+        );
+        let identity = ExecutionIdentity {
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+            run_id: "run".into(),
+            operation_id: "operation".into(),
+            request_id: "request".into(),
+            idempotency_key: None,
+            module_instance_id: "instance".into(),
+            connection_generation: "generation".into(),
+        };
+        let control = CallControl {
+            cancellation: Cancellation::default(),
+            deadline: Some(Instant::now() + Duration::from_secs(10)),
+        };
+        let (sent, received) = mpsc::channel();
+        let writer_owner = owner.clone();
+        let _writer = RunningWriter(
+            owner.clone(),
+            Some(thread::spawn(move || {
+                writer_owner.drive_writer(Writer(Vec::new(), sent))
+            })),
+        );
+        let mut bridge = InstructionBridge::new(
+            owner.bound_exchange(identity.clone()).unwrap(),
+            owner.bound_exchange(identity).unwrap(),
+            AdvertisedMethods {
+                modules: vec![("event".into(), vec!["emit".into()])],
+            },
+            control.clone(),
+        )
+        .unwrap();
+        let queue = bridge.events.as_ref().unwrap();
+        for event in &events {
+            let mut payload = JsObject::new();
+            payload.insert("operation".into(), "emit".into());
+            payload.insert("event".into(), event.clone());
+            queue.outstanding.fetch_add(1, Ordering::SeqCst);
+            queue
+                .sender
+                .send(EventNotice {
+                    payload,
+                    admitted: None,
+                    control: control.clone(),
+                })
+                .unwrap();
+        }
+        for (event, golden) in events.iter().zip(replies) {
+            let call = received
+                .recv_timeout(Duration::from_secs(3))
+                .expect("known failure must not suppress the next event");
+            assert_eq!(call.get("module"), Some(&"event".into()));
+            assert_eq!(call.get("payload").unwrap().get("event"), Some(event));
+            let mut response = JsObject::new();
+            response.insert("kind".into(), "response".into());
+            response.insert("messageId".into(), "reply".into());
+            response.insert("inReplyTo".into(), call.get("messageId").unwrap().clone());
+            response.insert("ok".into(), golden.get("ok").unwrap().clone());
+            if let Some(message) = golden.get("error") {
+                let mut error = JsObject::new();
+                error.insert("message".into(), message.clone());
+                response.insert("error".into(), JsValue::Object(error));
+            }
+            assert_eq!(
+                owner.receive_response(&JsValue::Object(response)),
+                ResponseDisposition::Completed
+            );
+        }
+        bridge.finish().unwrap();
+        assert!(received.try_recv().is_err());
+    }
+}
