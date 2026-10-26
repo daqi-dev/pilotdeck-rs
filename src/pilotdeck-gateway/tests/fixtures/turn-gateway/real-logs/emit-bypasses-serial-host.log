@@ -1,0 +1,44 @@
+COMMAND cargo test --offline --manifest-path <repo>/src/Cargo.toml -p pilotdeck-gateway --lib runtime::turn::gateway::tests::concurrent_external_emits_are_serialized_on_the_serial_host -- --exact --nocapture --test-threads=1
+cargo-slots: 在跑 3 / 上限 4
+
+running 1 test
+test runtime::turn::gateway::tests::concurrent_external_emits_are_serialized_on_the_serial_host ... FAILED
+
+failures:
+
+failures:
+    runtime::turn::gateway::tests::concurrent_external_emits_are_serialized_on_the_serial_host
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2090 filtered out; finished in 0.01s
+
+   Compiling pilotdeck-gateway v0.1.0 (<repo>/src/pilotdeck-gateway)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.68s
+     Running unittests src/lib.rs (_build/cargo-target/debug/deps/pilotdeck_gateway-5ce1c4618989be9c)
+
+thread '<unnamed>' (294332673) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
+A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-4)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (294332676) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
+A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-7)
+
+thread '<unnamed>' (294332672) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
+A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-3)
+
+thread '<unnamed>' (294332671) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
+A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-2)
+
+thread '<unnamed>' (294332670) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
+A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-1)
+
+thread '<unnamed>' (294332675) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
+A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-6)
+
+thread '<unnamed>' (294332669) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:954:17:
+A7.2-COORDINATOR-DELIVERY-001-R1: emit returned before its own event reached the sink (concurrent-0)
+
+thread 'runtime::turn::gateway::tests::concurrent_external_emits_are_serialized_on_the_serial_host' (294332667) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:964:37:
+caller thread: Any { .. }
+error: test failed, to rerun pass `-p pilotdeck-gateway --lib`
+
+exit=101

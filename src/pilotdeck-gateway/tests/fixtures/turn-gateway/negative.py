@@ -73,8 +73,11 @@ mutants = [
     mutation('close-binding-corrupted', gateway, '.disconnect(session, &binding)', '.disconnect(session, &InteractionBinding { generation: binding.generation + 1, ..binding })', 'close-preserves-pending'),
     mutation('submit-error-code-lost', gateway, 'code: error.code,', 'code: "lost_code".into(),', 'finally-error-response'),
     mutation('abort-consumer-fence-skipped', gateway, 'let _ = done.wait_for(|done| *done).await;', 'let _ = &mut done;', 'abort-generated-run-id'),
-    mutation('expiry-runs-on-clock-thread', gateway, 'let _ = due.send((key.clone(), serial, callback.clone()));', 'let _ = (&due, &key, serial); callback();', None, 'serial timer:', test=TIMER),
-    mutation('expiry-callback-dropped', gateway, 'if current {\n                    callback();\n                }', 'if current { let _ = callback; }', None, 'serial timer:', test=TIMER),
+    # These run the timer test, whose assertions are not the replay test's
+    # "serial timer: <case>" message. Anchor each on the assertion that its
+    # selected test actually trips (#813 fix-r1).
+    mutation('expiry-runs-on-clock-thread', gateway, 'let _ = due.send((key.clone(), serial, callback.clone()));', 'let _ = (&due, &key, serial); callback();', None, 'cancel queued serial timer', test=TIMER),
+    mutation('expiry-callback-dropped', gateway, 'if current {\n                    callback();\n                }', 'if current { let _ = callback; }', None, 'replacement timer fires once', test=TIMER),
     mutation('queued-cancel-ignored', gateway, 'self.entries.lock().unwrap().remove(key);', 'let _ = self.entries.lock().unwrap().get(key);', None, 'cancel queued serial timer', test=TIMER),
     mutation('replacement-generation-ignored', gateway, 'entries.get(&key).is_some_and(|id| *id == serial)', 'entries.contains_key(&key)', None, 'replacement invalidates detached serial timer', test=TIMER),
     mutation('queued-dispose-ignored', gateway, 'self.entries.lock().unwrap().clear();', 'let _ = self.entries.lock().unwrap().len();', None, 'dispose cancels queued serial timers', test=TIMER),
