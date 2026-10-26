@@ -23,7 +23,7 @@ mutants = [
     ('wake-disposed', source, re.escape('self.inner.disposed.send_replace(true);'), 'self.inner.disposed.send_if_modified(|value| { *value = true; false });', 'snapshot_write_a::three_before_poll', 'every observer notified'),
     ('subagent-prefix', source, r'Some\(std::panic::catch_unwind\(std::panic::AssertUnwindSafe\(\s*\|\| run\(entry.controller.clone\(\)\),\s*\)\)\)', 'Some(Ok::<_, Box<dyn std::any::Any + Send>>(run(entry.controller.clone())))', subagent, 'background panic completion deadline'),
     ('subagent-poll', source, re.escape('Err(subagent_panic_message(error.try_into_panic().ok()))'), 'panic!("uncaught subagent poll")', 'subagent_poll', 'background panic completion deadline'),
-    ('subagent-notify', source, re.escape('entry.done.send_replace(true);\n        });'), 'drop(entry.done.subscribe());\n        });', subagent, 'background panic completion deadline'),
+    ('subagent-notify', source, re.escape('entry.done.send_replace(true);\n            drop(clock);\n        });'), 'drop(entry.done.subscribe());\n            drop(clock);\n        });', subagent, 'background panic completion deadline'),
     ('cancel-before', source, re.escape('if task.status == TaskStatus::Cancelled {\n                    None'), 'if false {\n                    None', 'subagent_cancel_before', 'assertion `left == right` failed'),
     ('cancel-error', source, re.escape('Err(message) => {\n                        if task.status != TaskStatus::Cancelled {'), 'Err(message) => {\n                        if true {', 'subagent_cancel_running', 'assertion `left == right` failed'),
 ]
