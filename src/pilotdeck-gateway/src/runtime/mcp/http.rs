@@ -3316,3 +3316,7 @@ async fn final_network_error_rechecks_parent_like_real_ts() {
     assert_eq!(error.name(), "TypeError");
     assert_eq!(error.message(), "socket hang up");
 }
+
+#[cfg(test)]
+#[path = "../../../tests/common/network_timing_mcp.rs"]
+mod network_timing_tests;
