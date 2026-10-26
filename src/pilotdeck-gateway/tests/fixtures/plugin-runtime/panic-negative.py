@@ -81,11 +81,16 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
         'sync panic stranded a waiter: dispose deadline',
         'sync panic stranded a waiter: completion count',
     )
+    # Catching only the first poll does not strand the batch: the later-poll
+    # panic unwinds the spawned disposal task, which reports the task-drop
+    # message instead of the callback's own panic message (host run 0558b389,
+    # plugins_tests.rs `released.message` assertion).
+    FIRST_POLL_MARKER = 'left: "Plugin disposal task was dropped or panicked before completion."'
     CASES = [
         ('restore-old-logic', old_logic, 'disposal_sync_panic_does_not_strand_other_waiters',
          STRANDED_MARKERS),
         ('catch-first-poll-only', first_only, 'disposal_sync_panic_does_not_strand_other_waiters',
-         STRANDED_MARKERS),
+         FIRST_POLL_MARKER),
         ('invoke-under-state-lock', hold_lock, 'disposal_prologue_can_access_runtime_state',
          'DisposeFn invoked under state lock'),
     ]
