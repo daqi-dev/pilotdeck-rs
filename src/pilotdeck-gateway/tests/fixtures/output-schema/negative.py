@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""#829/#834 negative controls: break the JS flag emulation, require red.
+"""#829/#834/#848 negative controls: break the JS emulation, require red.
 
 Every mutant changes one production behavior in output_schema.rs (the ASCII
 fold mask, the `(?i)` the port now adds where ajv-formats compiles with
-`/i`, the #834 `url` `/iu` fold, or the `byte` `/gm` line split). While a
-mutant is live, `formats_follow_ajv_formats` and — for the oracle mutants —
+`/i`, the #834 `url` `/iu` fold, the `byte` `/gm` line split, or the #848
+JS `\\s` replacement for Rust's `char::is_whitespace`). While a mutant is
+live, `formats_follow_ajv_formats` and — for the oracle mutants —
 `replays_the_ajv_oracle` must FAIL on the pinned rows; after
 `mutating_sources` restores the bytes, the same command must pass (the caller
 runs the unmutated suite separately). Compile failures and timeouts are
@@ -12,6 +13,7 @@ INVALID evidence. Run exclusively; cargo uses the caller's CARGO_TARGET_DIR.
 
 Usage:
   python3 negative.py <output-dir> [mutant ...]   # default: all mutants
+  python3 negative.py --check-anchors             # static only, no mutation
 """
 import os
 from pathlib import Path
@@ -23,14 +25,18 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
 repo = rust.parent
-output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else fixture / '.negative'
-output.mkdir(parents=True, exist_ok=True)
 source = rust / 'pilotdeck-gateway/src/runtime/mcp/output_schema.rs'
 slots = repo / 'scripts/cargo-slots.sh'
+check_anchors = '--check-anchors' in sys.argv
+if check_anchors:
+    output = None
+else:
+    output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else fixture / '.negative'
+    output.mkdir(parents=True, exist_ok=True)
 
-if not os.environ.get('CARGO_TARGET_DIR'):
+if not check_anchors and not os.environ.get('CARGO_TARGET_DIR'):
     sys.exit('set CARGO_TARGET_DIR (the caller owns the build directory)')
-if not os.environ.get('PDRS_BASELINE'):
+if not check_anchors and not os.environ.get('PDRS_BASELINE'):
     sys.exit('set PDRS_BASELINE (the Ajv oracle replay needs it)')
 
 # (name, old, new, oracle replay too?) — old/new are exact byte strings of
@@ -122,7 +128,49 @@ MUTANTS = [
      b'        .split([\'\\n\', \'\\r\', \'\\u{2028}\', \'\\u{2029}\'])\n'
      b'        .any(|line| formats().byte.is_match(line))',
      True),
+    # #848: the helper calls must use the repo's canonical JS `\s` predicate
+    # (`metadata::js_space`), not Rust's `char::is_whitespace`. Each call site
+    # gets its own mutant so a single reverted line cannot hide behind the
+    # others. `url` path is `[^\s]*`.
+    ('url-path-space-reverted',
+     b'    if let Some(path) = path\n        && path.chars().any(js_space)',
+     b'    if let Some(path) = path\n        && path.chars().any(char::is_whitespace)',
+     True),
+    # #848: userinfo is `\S+`; reverting only this line lets BOM through while
+    # the path and date-time helpers stay correct.
+    ('url-userinfo-space-reverted',
+     b'            if user.is_empty() || user.chars().any(js_space) {',
+     b'            if user.is_empty() || user.chars().any(char::is_whitespace) {',
+     False),
+    # #848: a blanket authority check is not what the regex says — the host
+    # classes include U+00A1..U+FFFF, so BOM and U+2000 hosts are valid.
+    ('url-authority-blanket',
+     b'    if let Some(path) = path\n        && path.chars().any(js_space)',
+     b'    if authority.chars().any(js_space) {\n'
+     b'        return false;\n'
+     b'    }\n'
+     b'    if let Some(path) = path\n        && path.chars().any(js_space)',
+     False),
+    # #848: date-time has its own `/t|\s/i` split. Reverting only it keeps the
+    # url helpers fixed, so the date-time rows are proven to be its own
+    # control rather than riding on the url rows.
+    ('date-time-space-reverted',
+     b'        .split(|c: char| c == \'t\' || c == \'T\' || js_space(c))',
+     b'        .split(|c: char| c == \'t\' || c == \'T\' || c.is_whitespace())',
+     True),
 ]
+if check_anchors:
+    original = source.read_bytes()
+    bad = [
+        f'{name}: anchor occurs {original.count(old)} times (expected 1)'
+        for name, old, _new, _oracle in MUTANTS
+        if original.count(old) != 1
+    ]
+    if bad:
+        print('\n'.join(bad), file=sys.stderr)
+        sys.exit(1)
+    print(f'all {len(MUTANTS)} anchors occur exactly once')
+    sys.exit(0)
 selected = sys.argv[2:] or [name for name, _old, _new, _oracle in MUTANTS]
 
 env = dict(os.environ, CARGO_NET_OFFLINE='true')

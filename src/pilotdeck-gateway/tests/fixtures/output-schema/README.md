@@ -13,8 +13,9 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **936** cases (the #829 rounds added 26 of them and #834 another 23;
-the unit test `formats_follow_ajv_formats` rows are counted separately). Each
+count of **948** cases (the #829 rounds added 26 of them, #834 another 23
+and #848 another 12; the unit test `formats_follow_ajv_formats` rows are
+counted separately). Each
 case is
 either:
 
@@ -105,6 +106,20 @@ them is a full line of its own — the zero-length base64 matches it, so
 arbitration on Node v22.22.0: collapsing `\r\n` into one terminator would
 diverge from V8). Rust's `(?m)` only recognizes `\n`, so the port
 splits the haystack on all four terminators instead of using `(?m)`.
+
+The `date-time/*`, `iso-date-time/*` and the #848 `url/*` rows pin the JS
+`\s` set in the hand-written format helpers. `url`'s path is `[^\s]*` and its
+userinfo is `\S+`; `date-time`/`iso-date-time` split on `/t|\s/i`. JS `\s`
+includes U+FEFF (BOM) and excludes U+0085 (NEL), while Rust's
+`char::is_whitespace` is the other way round; both helpers use the repo's
+canonical `metadata::js_space` predicate (the char twin of
+`memory::js_is_space_unit`). `url`'s host classes are
+`[a-z0-9\u{00a1}-\u{ffff}]` / `[a-z\u{00a1}-\u{ffff}]`, so BOM and
+U+2000 are valid host characters even though JS `\s` matches them (the regex
+never applies `\s` to the host); NEL and NBSP are below U+00A1 and stay
+invalid. The former blanket authority check wrongly rejected every such host,
+so the port now checks only userinfo (where the regex uses `\S`). Measured on
+Node v22.22.0.
 
 `deep-pattern/*`, `deep-pattern-properties/*`, and `deep-format-regex/*`
 cover 10000 / 100000 nested capturing, noncapturing, and lookahead groups,
@@ -204,12 +219,18 @@ identity `\k`: without named groups only `k` is escaped, and subsequent
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck LANG=en_US.UTF-8
-node src/pilotdeck-gateway/tests/fixtures/output-schema/generate.mjs \
-  "$PWD/src/pilotdeck-gateway/tests/fixtures/output-schema"
+scratch=$(mktemp -d)
+node src/pilotdeck-gateway/tests/fixtures/output-schema/generate.mjs "$scratch"
+cmp "$scratch/ajv-oracle.json" \
+  src/pilotdeck-gateway/tests/fixtures/output-schema/ajv-oracle.json
+# To accept a deliberate change, move the reviewed file into place:
+# mv "$scratch/ajv-oracle.json" src/pilotdeck-gateway/tests/fixtures/output-schema/
 ```
 
-The generator is deterministic (run twice, `cmp` byte-identical; the ignored
-test `mcp_runtime::output_schema_generator_reproduces_the_committed_oracle_twice`
+The generator writes into a fresh caller-owned directory and creates
+`ajv-oracle.json` with `flag: 'wx'`, so a rerun cannot silently clobber a
+previous oracle. It is deterministic (run twice, `cmp` byte-identical; the
+ignored test `mcp_runtime::output_schema_generator_reproduces_the_committed_oracle_twice`
 does the same under `PDRS_BASELINE`). The Rust replay is
 `runtime::mcp::output_schema::tests::replays_the_ajv_oracle`.
 

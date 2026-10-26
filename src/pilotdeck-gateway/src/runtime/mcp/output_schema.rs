@@ -40,6 +40,9 @@
 //! as [`ValidationError::Threw`]. User patterns use the SDK's JavaScript `/u` character
 //! classes: `\d`/`\w` and word boundaries are ASCII, whitespace includes BOM
 //! but excludes NEL, and dot excludes all four JavaScript line terminators.
+//! `url`'s `\s`/`\S` and `date-time`'s `/t|\s/i` separator use that same
+//! whitespace set, *not* Rust's `char::is_whitespace` (which excludes BOM and
+//! includes NEL), so both go through `metadata::js_space`.
 //! The JS escapes Rust spells differently (`\0`, `\cX`, `\xHH`, `\uXXXX`,
 //! `\u{...}`, `\f`/`\n`/`\r`/`\t`/`\v`, class-local `\-`) are translated
 //! instead of being refused; named groups without backreferences are
@@ -51,6 +54,7 @@ mod unicode;
 use crate::test_baseline as baseline;
 
 use crate::js_value;
+use crate::metadata::js_space;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -2329,8 +2333,10 @@ fn time_valid(text: &str, strict_time_zone: bool) -> bool {
 }
 
 fn date_time_valid(text: &str, strict_time_zone: bool) -> bool {
+    // ajv-formats splits on `/t|\s/i`; `js_space` is the JS set, not Rust's
+    // `char::is_whitespace` (BOM in, NEL out).
     let parts: Vec<&str> = text
-        .split(|c: char| c == 't' || c == 'T' || c.is_whitespace())
+        .split(|c: char| c == 't' || c == 'T' || js_space(c))
         .collect();
     parts.len() == 2 && date_valid(parts[0]) && time_valid(parts[1], strict_time_zone)
 }
@@ -2455,17 +2461,19 @@ fn url_valid(text: &str) -> bool {
         Some((authority, path)) => (authority, Some(path)),
         None => (rest, None),
     };
-    if authority.chars().any(char::is_whitespace) {
-        return false;
-    }
+    // The regex applies `\S` only to the optional userinfo and `[^\s]` to the
+    // path. Host characters come from explicit classes that include
+    // U+00A1..U+FFFF, so a high JS whitespace such as U+2000 — and BOM, which
+    // those classes also contain — is a valid host character in
+    // ajv-formats' regex; a blanket authority check would falsely reject it.
     if let Some(path) = path
-        && path.chars().any(char::is_whitespace)
+        && path.chars().any(js_space)
     {
         return false;
     }
     let host_port = match authority.rsplit_once('@') {
         Some((user, host)) => {
-            if user.is_empty() {
+            if user.is_empty() || user.chars().any(js_space) {
                 return false;
             }
             host
@@ -3937,6 +3945,13 @@ mod tests {
             ("date-time", "2024-02-29T12:00:00Z", Some(true)),
             ("date-time", "2024-02-29 12:00:00Z", Some(true)),
             ("date-time", "nope", Some(false)),
+            // #848: the `/t|\s/i` split uses JS `\s`, which includes BOM and
+            // excludes NEL. Rust's `char::is_whitespace` is the other way
+            // round, so both directions must stay pinned.
+            ("date-time", "2024-02-29\u{feff}12:00:00Z", Some(true)),
+            ("date-time", "2024-02-29\u{85}12:00:00Z", Some(false)),
+            ("iso-date-time", "2024-02-29\u{feff}12:00:00", Some(true)),
+            ("iso-date-time", "2024-02-29\u{85}12:00:00", Some(false)),
             ("time", "12:00:00", Some(false)),
             ("time", "23:59:60Z", Some(true)),
             ("iso-time", "12:00:00", Some(true)),
@@ -3983,6 +3998,20 @@ mod tests {
             ("url", "HTTP\u{17f}://192.168.1.1/x", Some(false)),
             ("url", "\u{17f}http://example.com/", Some(false)),
             ("url", "http\u{fb06}://example.com/a", Some(false)),
+            // #848: the path is `[^\s]*` and userinfo is `\S+`, using JS
+            // `\s` (BOM in, NEL out). The host class is
+            // `[a-z0-9\u{00a1}-\u{ffff}]`, so BOM and U+2000 are valid host
+            // characters even though they are JS whitespace; NEL and NBSP
+            // are below U+00A1 and stay invalid. The authority blanket check
+            // that used to sit here rejected the whole class of host rows.
+            ("url", "http://example.com/\u{feff}", Some(false)),
+            ("url", "http://example.com/\u{85}", Some(true)),
+            ("url", "http://u\u{feff}@example.com/", Some(false)),
+            ("url", "http://u\u{85}@example.com/", Some(true)),
+            ("url", "http://exa\u{feff}mple.com/", Some(true)),
+            ("url", "http://exa\u{85}mple.com/", Some(false)),
+            ("url", "http://exa\u{2000}mple.com/", Some(true)),
+            ("url", "http://exa\u{a0}mple.com/", Some(false)),
             ("email", "a.b@example.com", Some(true)),
             ("email", "User@Example.com", Some(true)),
             ("email", "a..b@example.com", Some(false)),
@@ -4226,7 +4255,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 936);
+        assert_eq!(cases.len(), 948);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),
