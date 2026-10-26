@@ -484,6 +484,35 @@ fn open_claw_cache_does_not_reprobe_home_after_first_read() {
 }
 
 #[test]
+fn open_claw_cache_bad_first_read_stays_null_without_reprobe() {
+    let scratch = scratch::Scratch::new("edgeclaw-llm-config-cache-bad");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(home.join(".openclaw")).unwrap();
+    fs::write(home.join(".openclaw/openclaw.json"), r#"{"models":"#).unwrap();
+    let store = OpenClawStore::new();
+    // The bad first read caches the permanent `null` (TS catches the
+    // `JSON.parse` failure; oracle case 0 pins bad-then-valid -> [null, null]).
+    assert!(
+        store.resolve(|| Some(home.clone())).is_none(),
+        "#836: a bad openclaw.json must resolve to null on the first read"
+    );
+    // The cached `Some(None)` must satisfy later callers even after the file
+    // becomes valid: neither `home()` nor the file may be read again.
+    fs::write(
+        home.join(".openclaw/openclaw.json"),
+        r#"{"models":{"providers":{"alpha":{"models":[{"id":"m1"}]}}}}"#,
+    )
+    .unwrap();
+    let second = store.resolve(|| -> Option<PathBuf> {
+        panic!("#836: cached bad-file null must not re-probe home")
+    });
+    assert!(
+        second.is_none(),
+        "#836: bad-then-valid must stay the cached null"
+    );
+}
+
+#[test]
 fn open_claw_resolve_does_not_hold_lock_across_io() {
     use std::{
         sync::{Arc, mpsc},
