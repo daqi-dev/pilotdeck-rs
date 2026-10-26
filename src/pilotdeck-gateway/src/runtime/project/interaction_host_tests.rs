@@ -248,6 +248,10 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     assert_eq!(current.lease_count(), 1);
     for running in [&mut stream, &mut newer] {
         bounded(running.next()).await.unwrap().unwrap(); // host accepted
+        assert_eq!(
+            bounded(running.next()).await.unwrap().unwrap().get("type"),
+            Some(&"model_request_started".into())
+        );
         let observed = bounded(running.next()).await.unwrap().unwrap();
         assert_eq!(observed.get("type"), Some(&"agent_status".into()));
         let actual = observed
@@ -565,6 +569,10 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
         .unwrap();
     bounded(first.next()).await.unwrap().unwrap(); // host started
     bounded(first.next()).await.unwrap().unwrap(); // host accepted
+    assert_eq!(
+        bounded(first.next()).await.unwrap().unwrap().get("type"),
+        Some(&"model_request_started".into())
+    );
     {
         let mut pending = first.next();
         bounded(async {
@@ -605,6 +613,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
         vec![
             "turn_started".into(),
             "input_accepted".into(),
+            "model_request_started".into(),
             "turn_completed".into()
         ]
     );

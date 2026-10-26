@@ -205,18 +205,6 @@ impl Fixture {
             Box::pin(async move {
                 execute.await.expect("#741h forward fixture invariant");
                 let outcome = async {
-                    for kind in ["turn_started", "input_accepted"] {
-                        deliver(
-                            &handler,
-                            &crate::metadata::object([
-                                ("type", kind.into()),
-                                ("sessionId", "s".into()),
-                                ("turnId", "t".into()),
-                            ]),
-                            false,
-                        )
-                        .await?;
-                    }
                     if open_step {
                         record
                             .record_model_request(
@@ -489,7 +477,7 @@ async fn forward_completed() {
         "#741h TS delays loop completed"
     );
     let (_, handler, mut rx) = buffered_handler(4);
-    deliver(&handler, &host_event("turn_started"), false)
+    deliver(&handler, &host_event("model_request_started"), false)
         .await
         .expect("#741h forward fixture invariant");
     rx.try_recv().expect("#741h forward fixture invariant");
@@ -699,7 +687,7 @@ case!(forward_malformed_missing_visible,);
 case!(forward_malformed_host,);
 case!(forward_malformed_pump,);
 
-// The existing peer supplies status at sequence 3 and a queued successor/final.
+// The existing peer supplies status at sequence 1 and a queued successor/final.
 // Run the real HostClient so a rejected receipt also proves its applied cursor.
 async fn status_receipt(success: bool) {
     let name = if success {
@@ -757,7 +745,7 @@ async fn status_receipt(success: bool) {
             .lock()
             .expect("#741h forward fixture invariant")
             .len(),
-        4,
+        2,
         "#741h status callback cannot release successor"
     );
     let receipt = receipt
@@ -788,7 +776,7 @@ async fn status_receipt(success: bool) {
         );
         assert_eq!(
             error.last_applied_sequence,
-            Some(2.0),
+            Some(0.0),
             "#741h failed status leaves application cursor unchanged"
         );
     }

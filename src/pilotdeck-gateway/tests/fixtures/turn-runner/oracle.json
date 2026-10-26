@@ -8790,12 +8790,69 @@
         "final": false,
         "type": "model_request_started"
       },
+      "wireEvents": [
+        {
+          "sequence": 0,
+          "final": false,
+          "type": "model_request_started"
+        },
+        {
+          "sequence": 1,
+          "final": false,
+          "type": "model_event"
+        },
+        {
+          "sequence": 2,
+          "final": false,
+          "type": "model_event"
+        },
+        {
+          "sequence": 3,
+          "final": false,
+          "type": "model_event"
+        },
+        {
+          "sequence": 4,
+          "final": false,
+          "type": "model_event"
+        },
+        {
+          "sequence": 5,
+          "final": false,
+          "type": "assistant_message"
+        },
+        {
+          "sequence": 6,
+          "final": false,
+          "type": "stop_requested"
+        },
+        {
+          "sequence": 7,
+          "final": false,
+          "type": "turn_completed"
+        },
+        {
+          "sequence": 8,
+          "final": true
+        }
+      ],
+      "hostEvents": [
+        "turn_started",
+        "input_accepted",
+        "model_request_started",
+        "model_event",
+        "model_event",
+        "model_event",
+        "model_event",
+        "assistant_message",
+        "stop_requested",
+        "turn_completed"
+      ],
       "terminal": "success",
       "error": null,
       "consumption": {
-        "status": "仅记录，由 pr3 消费",
-        "plannedTest": "live_sidecar_success",
-        "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
+        "test": "real_ts_sidecar_stream_starts_with_loop_events",
+        "scope": "full host lifecycle + all loop events; session setup/hooks reserved for pr5e"
       }
     },
     {
@@ -8825,9 +8882,8 @@
         "message": "Sidecar event sequence mismatch: expected 0, got 1."
       },
       "consumption": {
-        "status": "仅记录，由 pr3 消费",
-        "plannedTest": "live_sidecar_gap",
-        "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
+        "test": "real_ts_sidecar_gap",
+        "scope": "terminal/error suffix only; received prefix is not compared"
       }
     },
     {
@@ -8841,7 +8897,6 @@
         "turn_started",
         "input_accepted",
         "user_prompt_submitted",
-        "instructions_loaded",
         "model_request_started",
         "agent_status",
         "turn_failed",
@@ -8859,9 +8914,8 @@
         "message": "Sidecar event sequence mismatch: expected 1, got 0."
       },
       "consumption": {
-        "status": "仅记录，由 pr3 消费",
-        "plannedTest": "live_sidecar_duplicate",
-        "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
+        "test": "real_ts_sidecar_duplicate",
+        "scope": "terminal/error suffix only; received prefix is not compared"
       }
     },
     {
@@ -8887,9 +8941,8 @@
       "terminal": "success",
       "error": null,
       "consumption": {
-        "status": "仅记录，由 pr3 消费",
-        "plannedTest": "live_sidecar_early_final",
-        "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
+        "test": "real_ts_sidecar_early_final",
+        "scope": "TS accepts final alone; Rust rejects per A7.2-TURN-EARLYFINAL-001"
       }
     },
     {
@@ -8915,9 +8968,9 @@
       "terminal": null,
       "error": null,
       "consumption": {
-        "status": "仅记录，由 pr3 消费",
+        "status": "existing cancellation/drop coverage",
         "plannedTest": "live_sidecar_drop",
-        "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
+        "scope": "real TS sidecar observation; no lifecycle ownership change"
       }
     },
     {
@@ -8937,9 +8990,9 @@
       "terminal": null,
       "error": null,
       "consumption": {
-        "status": "仅记录，由 pr3 消费",
+        "status": "existing cancellation/drop coverage",
         "plannedTest": "live_sidecar_abort_before",
-        "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
+        "scope": "real TS sidecar observation; no lifecycle ownership change"
       }
     },
     {
@@ -8959,9 +9012,9 @@
       "terminal": null,
       "error": null,
       "consumption": {
-        "status": "仅记录，由 pr3 消费",
+        "status": "existing cancellation/drop coverage",
         "plannedTest": "live_sidecar_abort_after",
-        "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
+        "scope": "real TS sidecar observation; no lifecycle ownership change"
       }
     },
     {
@@ -8981,9 +9034,103 @@
       "terminal": null,
       "error": null,
       "consumption": {
-        "status": "仅记录，由 pr3 消费",
+        "status": "existing cancellation/drop coverage",
         "plannedTest": "live_sidecar_dispose_before",
-        "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
+        "scope": "real TS sidecar observation; no lifecycle ownership change"
+      }
+    },
+    {
+      "name": "completed-warning",
+      "connections": 1,
+      "closed": 1,
+      "modelCalls": 1,
+      "events": [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "instructions_loaded",
+        "model_request_started",
+        "model_event",
+        "model_event",
+        "model_event",
+        "model_event",
+        "assistant_message",
+        "stop_requested",
+        "warning",
+        "turn_completed",
+        "session_ended"
+      ],
+      "firstSidecarEvent": {
+        "sequence": 0,
+        "final": false,
+        "type": "model_request_started"
+      },
+      "wireEvents": [
+        {
+          "sequence": 0,
+          "final": false,
+          "type": "model_request_started"
+        },
+        {
+          "sequence": 1,
+          "final": false,
+          "type": "model_event"
+        },
+        {
+          "sequence": 2,
+          "final": false,
+          "type": "model_event"
+        },
+        {
+          "sequence": 3,
+          "final": false,
+          "type": "model_event"
+        },
+        {
+          "sequence": 4,
+          "final": false,
+          "type": "model_event"
+        },
+        {
+          "sequence": 5,
+          "final": false,
+          "type": "assistant_message"
+        },
+        {
+          "sequence": 6,
+          "final": false,
+          "type": "stop_requested"
+        },
+        {
+          "sequence": 7,
+          "final": false,
+          "type": "turn_completed"
+        },
+        {
+          "sequence": 8,
+          "final": true
+        }
+      ],
+      "hostEvents": [
+        "turn_started",
+        "input_accepted",
+        "model_request_started",
+        "model_event",
+        "model_event",
+        "model_event",
+        "model_event",
+        "assistant_message",
+        "stop_requested",
+        "warning",
+        "turn_completed"
+      ],
+      "terminal": "success",
+      "error": null,
+      "consumption": {
+        "test": "real_ts_sidecar_completed_warning",
+        "scope": "full host lifecycle + all loop events; session setup/hooks reserved for pr5e"
       }
     }
   ],
@@ -22597,7 +22744,7 @@
       "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
       "consumption": {
         "test": "forward_completed",
-        "scope": "strict guard retained; end-to-end pending pr5d"
+        "scope": "leaked completed rejected; real wire suppression covered by real_ts_sidecar_completed_warning"
       }
     },
     {

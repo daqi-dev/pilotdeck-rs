@@ -42,7 +42,7 @@ mutants = [
     ('omit-prepared-cleanup', source, 'let _ = recording_sender.send(Recording::new(runner, owner));', 'pending_host.handoff();\n                let _ = recording_sender.send(Recording::new(runner, owner));', 'gates_start_failure'),
     ('factory-ready-priority', source, 'biased;', 'biased; ' + lazy, 'gates_factory_ready_cancel'),
     ('duplicate-normal-terminal', source, 'return self.deliver_recorded(event);\n        }\n        if terminal {\n            self.release();', 'return self.deliver_recorded(event);\n        }\n        if terminal {\n            self.release(); self.recorded.push_back(event.clone());', 'gates_cancel_ok'),
-    ('duplicate-sidecar-lifecycle', source, 'if self.preflight == 2', 'if self.preflight == 3', 'gates_cancel_ok'),
+    ('sidecar-lifecycle-leak', source, 'if event_type.equals_str("turn_started") || event_type.equals_str("input_accepted") {', 'if false && (event_type.equals_str("turn_started") || event_type.equals_str("input_accepted")) {', 'host_lifecycle_cannot_justify_a_sidecar_final'),
     ('duplicate-host-terminal', source, 'if event.get("type") == Some(&"turn_completed".into()) {', 'if event.get("type") == Some(&"turn_completed".into()) { self.recorded.push_back(event.clone());', 'gates_cancel_once'),
     ('multi-turn-peer-marker', factory_peer, 'f"{pid_file}.{os.getpid()}.execute"', 'pid_file + ".execute"', 'live_session_shares_recorder_and_reads_current_history'),
 ]

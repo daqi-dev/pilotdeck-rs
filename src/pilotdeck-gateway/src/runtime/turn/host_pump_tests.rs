@@ -44,7 +44,7 @@ async fn opened(
     mpsc::Receiver<ForwardedEvent>,
 ) {
     let (inner, handler, mut rx) = buffered_handler(capacity);
-    deliver(&handler, &host_event("turn_started"), false)
+    deliver(&handler, &host_event("model_request_started"), false)
         .await
         .unwrap();
     rx.try_recv().unwrap();
@@ -68,7 +68,7 @@ async fn host_pump_idle_reset_and_heartbeat_oracle() {
                 advance(&mut task, 499).await;
                 // The fixture's opening wire is equivalent to another legal
                 // wire event here; the test helper already opened integrity.
-                deliver(&handler, &host_event("input_accepted"), false)
+                deliver(&handler, &host_event("model_event"), false)
                     .await
                     .unwrap();
                 rx.try_recv().unwrap();
@@ -149,19 +149,17 @@ async fn host_pump_wire_predecessor_cancel_and_drop_are_bounded() {
             }),
         );
         assert_pending(&mut task).await;
-        let guard = handler
-            .validate_event(&host_event("input_accepted"))
-            .unwrap();
+        let guard = handler.validate_event(&host_event("model_event")).unwrap();
         queue_host_events(&inner, &[host_event("background")]);
         advance(&mut task, 500).await;
         advance(&mut task, 500).await;
         assert!(rx.try_recv().is_err()); // a never-completing predecessor blocks publication
         if stop == "apply" {
             handler
-                .event(wire(&host_event("input_accepted"), false))
+                .event(wire(&host_event("model_event"), false))
                 .await
                 .unwrap();
-            assert_eq!(rx.try_recv().unwrap().0, host_event("input_accepted"));
+            assert_eq!(rx.try_recv().unwrap().0, host_event("model_event"));
             assert_pending(&mut task).await;
             advance(&mut task, 499).await;
             assert!(rx.try_recv().is_err());

@@ -1,7 +1,9 @@
 // Real stdio sidecar. Only wire sequence/final position are perturbed.
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import {pathToFileURL, fileURLToPath} from 'node:url';
+import {spawn} from 'node:child_process';
+import {createInterface} from 'node:readline';
 import {mkdirSync, writeFileSync} from 'node:fs';
 export async function probeSidecar(root: string, output: string) {
   const load=(p:string)=>import(pathToFileURL(join(root,'src',p)).href);
@@ -12,7 +14,7 @@ export async function probeSidecar(root: string, output: string) {
   const {createDefaultPermissionContext}=await load('permission/index.ts');
   const rows:any[]=[];
   mkdirSync(join(output,'home'),{recursive:true});
-  for(const name of ['success','gap','duplicate','early-final','drop','abort-before','abort-after','dispose-before']) {
+  for(const name of ['success','gap','duplicate','early-final','drop','abort-before','abort-after','dispose-before','completed-warning']) {
     const connect=createStdioAgentLoopSidecarConnectionFactory({command:process.execPath,
       args:['--import',join(root,'node_modules/tsx/dist/loader.mjs'),join(root,'src/cli/pilotdeck-agent-loop-sidecar.ts')],
       cwd:output,env:{PATH:process.env.PATH,HOME:join(output,'home')},killTimeoutMs:1000});
@@ -31,7 +33,7 @@ export async function probeSidecar(root: string, output: string) {
       transcript:new InMemoryTranscriptWriter(),dependencies:{router:{},ports:{model,tools:{list:()=>[],executeAll:async()=>[]}},
         tools:{registry:{list:()=>[]},scheduler:{executeAll:async()=>[]}}},
       agentLoopFactory:createAgentLoopSidecarRuntimeFactory({connect:async(input:any)=>{
-        connections++;const connection=await connect(input);let finalPrefix=true, countedClose=false;
+        connections++;const connection=await connect(input);let finalPrefix=true, countedClose=false, offset=0;
         return {send:(m:any)=>connection.send(m),close:async(r:any)=>{await connection.close(r);if(!countedClose){closed++;countedClose=true;}},async *receive(){
           for await(const m of connection.receive()) {
             wire.push(m);
@@ -41,9 +43,13 @@ export async function probeSidecar(root: string, output: string) {
               if(m.final)finalPrefix=false;
             }
             // Re-sequence a valid final to zero: isolate premature final from gap detection.
-            const delivered=name==='early-final' && m.kind==='event' && m.final ? {...m,sequence:0}:m;
+            const delivered=name==='early-final' && m.kind==='event' && m.final ? {...m,sequence:0}:m.kind==='event'?{...m,sequence:m.sequence+offset}:m;
             deliveredWire.push(delivered);
             yield delivered;
+            if(name==='completed-warning' && m.kind==='event' && !m.final && m.payload?.type==='turn_completed') {
+              const warning={...m,sequence:m.sequence+1,payload:{type:'warning',sessionId:'s',turnId:'t',message:'after loop completed'}};
+              offset++;deliveredWire.push(warning);yield warning;
+            }
             if(name==='duplicate' && m.kind==='event' && m.sequence===0){deliveredWire.push(m);yield m;}
           }
         }};
@@ -61,12 +67,43 @@ export async function probeSidecar(root: string, output: string) {
     writeFileSync(join(output,`sidecar-${name}-raw.json`),JSON.stringify({wire,deliveredWire,events},null,2)+'\n',{flag:'wx'});
     const sequence=wire.filter(m=>m.kind==='event').map(m=>({sequence:m.sequence,final:m.final,type:m.payload?.type}));
     const completed=events.find(e=>e.type==='turn_completed');
-    rows.push({name,connections,closed,modelCalls,events:events.map(e=>e.type),
+    // A rejected stream can race the pr5e instructions hook; raw evidence keeps it.
+    rows.push({name,connections,closed,modelCalls,events:events.map(e=>e.type).filter(t=>
+      !(['gap','duplicate'].includes(name) && t==='instructions_loaded')),
       // Receive-side tail length varies after rejection; retain full raw record above.
-      firstSidecarEvent:sequence[0]??null,terminal:completed?.result?.type??null,
+      firstSidecarEvent:sequence[0]??null,
+      ...(['success','completed-warning'].includes(name)?{wireEvents:sequence,
+        // AgentSession wrapper/setup/hooks are pr5e; retain every loop event.
+        hostEvents:events.map(e=>e.type).filter(t=>!['session_started','setup_completed','user_prompt_submitted','instructions_loaded','session_ended'].includes(t))}:{}),terminal:completed?.result?.type??null,
       error:events.find(e=>e.type==='turn_failed')?.error??null});
     if(name==='success'){assert.equal(modelCalls,1);assert.equal(sequence[0].type,'model_request_started');assert.equal(completed.result.type,'success');}
     assert.equal(closed,connections,'all real sidecar connections closed before row completes');
   }
   return rows;
+}
+
+// Rust integration uses this transparent stdio proxy around the same real CLI.
+// Mutations affect only transport frames; model execution stays in the Rust host.
+if(process.argv[1]===fileURLToPath(import.meta.url)) {
+  const [root,mode,output]=process.argv.slice(2);
+  mkdirSync(output,{recursive:true});
+  const child=spawn(process.execPath,['--import',join(root,'node_modules/tsx/dist/loader.mjs'),join(root,'src/cli/pilotdeck-agent-loop-sidecar.ts')],{stdio:['pipe','pipe','inherit']});
+  process.stdin.pipe(child.stdin);child.stdin.on('error',()=>{});
+  let index=0,offset=0;
+  for await(const line of createInterface({input:child.stdout})) {
+    const m=JSON.parse(line);
+    writeFileSync(join(output,`wire-${index++}.json`),line+'\n',{flag:'wx'});
+    if(m.kind==='event') {
+      if(mode==='gap' && m.sequence===0)continue;
+      if(mode==='early-final' && !m.final)continue;
+      if(mode==='early-final')m.sequence=0;
+      else m.sequence+=offset;
+    }
+    console.log(JSON.stringify(m));
+    if(mode==='duplicate' && m.kind==='event' && m.sequence===0)console.log(JSON.stringify(m));
+    if(mode==='completed-warning' && m.kind==='event' && !m.final && m.payload?.type==='turn_completed') {
+      offset++;console.log(JSON.stringify({...m,sequence:m.sequence+1,payload:{type:'warning',sessionId:m.payload.sessionId,turnId:m.payload.turnId,message:'after loop completed'}}));
+    }
+  }
+  process.exitCode=child.exitCode??0;
 }

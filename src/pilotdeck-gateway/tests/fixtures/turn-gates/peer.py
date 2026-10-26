@@ -25,8 +25,6 @@ send(reply(request, requestId=request['requestId'], streamId='stream'))
 identity = {k: request[k] for k in ('runId', 'operationId', 'requestId')}
 def event(seq, payload, final=False, outcome=None):
     send(dict(kind='event', eventType='agent_event', streamId='stream', sequence=seq, final=final, payload=payload, **identity, **({'outcome':outcome} if final else {})))
-for seq, kind in enumerate(['turn_started','input_accepted']):
-    event(seq, dict(type=kind, sessionId=request['sessionId'], turnId=request['turnId']))
 if mode.startswith('error'):
     sys.exit(0)
 if mode.startswith('protocol'):
@@ -35,12 +33,12 @@ else:
     send(dict(kind='request', messageId='model', method='module_call', module='model', **identity, payload={}))
     while read().get('inReplyTo') != 'model':
         pass
-    event(2, dict(type='model_event', sessionId=request['sessionId'], turnId=request['turnId'], event=dict(type='request_started')))
+    event(0, dict(type='model_event', sessionId=request['sessionId'], turnId=request['turnId'], event=dict(type='request_started')))
     cancelled = mode.startswith('cancel')
     if cancelled:
         while read().get('method') != 'cancel':
             pass
     result = dict(type='aborted' if cancelled else 'success', sessionId=request['sessionId'], turnId=request['turnId'], stopReason='aborted_streaming' if cancelled else 'completed', turns=1)
-    event(3, dict(result=result, messages=request['payload']['messages']), True, 'cancelled' if cancelled else 'completed')
+    event(1, dict(result=result, messages=request['payload']['messages']), True, 'cancelled' if cancelled else 'completed')
 while True:
     read()
