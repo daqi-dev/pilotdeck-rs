@@ -13,7 +13,7 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **845** cases. Each case is either:
+count of **904** cases. Each case is either:
 
 - `compileError`: `getValidator` threw (the SDK does this in `tools/list`);
 - `compileErrorPrefix`: same, but only the V8 portion is stable (invalid
@@ -52,6 +52,15 @@ checks both `check_schema` and the exact Ajv validation result.
 including repeated quantifiers, Annex B identity/octal escapes, `\Z`, named
 groups and class ranges. `validate` returns `ValidationError::Unsupported` if
 the port cannot decide a value, never a silent pass.
+
+`uri/upper`, `uri-reference/upper`, `uri-template/upper` and the
+`long-s`/`kelvin`/`i-with-dot` cases pin #829: ajv-formats' full-format
+regexes compile with `/i` and no `/u` (measured via a `RegExp` construction
+proxy), so their case folding is ASCII-only. The port folds the haystack the
+same way (`(?i)` plus masking U+017F/U+212A, the only non-ASCII code points
+whose simple case fold is an ASCII letter); uppercase schemes and `{VAR}`
+stay valid while `ſ`/`K`/`İ` stay invalid. `ipv6` needs no mask because its
+`[0-9a-f]` class contains neither `s` nor `k`.
 
 `deep-pattern/*`, `deep-pattern-properties/*`, and `deep-format-regex/*`
 cover 10000 / 100000 nested capturing, noncapturing, and lookahead groups,

@@ -2157,15 +2157,15 @@ fn formats() -> &'static Formats {
         )
         .expect("time format"),
         uri: Regex::new(
-            r#"^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::[0-9]*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$"#,
+            r#"(?i)^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::[0-9]*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$"#,
         )
         .expect("uri format"),
         uri_reference: Regex::new(
-            r#"^(?:[a-z][a-z0-9+\-.]*:)?(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|(?:[a-z0-9\-._~!$&'"()*+,;=]|%[0-9a-f]{2})*)(?::[0-9]*)?(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?$"#,
+            r#"(?i)^(?:[a-z][a-z0-9+\-.]*:)?(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|(?:[a-z0-9\-._~!$&'"()*+,;=]|%[0-9a-f]{2})*)(?::[0-9]*)?(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'"()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'"()*+,;=:@/?]|%[0-9a-f]{2})*)?$"#,
         )
         .expect("uri-reference format"),
         uri_template: Regex::new(
-            r#"^(?:(?:[^\x00-\x20"'<>%\\^`{|}]|%[0-9a-f]{2})|\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?(?:,(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?)*\})*$"#,
+            r#"(?i)^(?:(?:[^\x00-\x20"'<>%\\^`{|}]|%[0-9a-f]{2})|\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?(?:,(?:[a-z0-9_]|%[0-9a-f]{2})+(?::[1-9][0-9]{0,3}|\*)?)*\})*$"#,
         )
         .expect("uri-template format"),
         email: Regex::new(
@@ -2192,6 +2192,23 @@ fn formats() -> &'static Formats {
     })
 }
 
+/// ajv-formats compiles its full-mode format regexes with `/i` and no `/u`
+/// (measured on the baseline's SDK provider; see the output-schema fixture
+/// README's #829 note), so their case folding is ASCII-only. Unicode `(?i)`
+/// additionally folds U+017F (ſ) and U+212A (KELVIN SIGN) — the only
+/// non-ASCII code points whose simple case fold is an ASCII letter — onto
+/// `s`/`k`; mask them so a Rust `(?i)` match behaves like the JavaScript one.
+/// Same trick as `tools/builtin/bash/permissions.rs` (#772); whether this
+/// moves to a shared `js_value.rs` helper is #829's coordinator decision, so
+/// the body is deliberately local.
+fn ascii_fold_haystack(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains(['\u{017F}', '\u{212A}']) {
+        std::borrow::Cow::Owned(text.replace(['\u{017F}', '\u{212A}'], "\u{FFFD}"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
 fn string_format_valid(format: &str, text: &str) -> Option<bool> {
     if format == "regex" {
         return regex_format_valid(text);
@@ -2204,17 +2221,24 @@ fn string_format_valid(format: &str, text: &str) -> Option<bool> {
         "iso-time" => time_valid(text, false),
         "iso-date-time" => date_time_valid(text, false),
         "duration" => duration_valid(text),
-        "uri" => (text.contains('/') || text.contains(':')) && regexes.uri.is_match(text),
-        "uri-reference" => regexes.uri_reference.is_match(text),
-        "uri-template" => regexes.uri_template.is_match(text),
+        "uri" => {
+            (text.contains('/') || text.contains(':'))
+                && regexes.uri.is_match(&ascii_fold_haystack(text))
+        }
+        "uri-reference" => regexes.uri_reference.is_match(&ascii_fold_haystack(text)),
+        "uri-template" => regexes.uri_template.is_match(&ascii_fold_haystack(text)),
         "url" => url_valid(text),
-        "email" => regexes.email.is_match(text),
+        "email" => regexes.email.is_match(&ascii_fold_haystack(text)),
         "hostname" => hostname_valid(text),
         "ipv4" => ipv4_valid(text),
+        // `(?i)` stays unmasked here: `[0-9a-f]` contains no `s`/`k`, so ſ/K
+        // cannot fold onto the class and the two engines agree.
         "ipv6" => regexes.ipv6.is_match(text),
         "uuid" => uuid_valid(text),
         "json-pointer" => regexes.json_pointer.is_match(text),
-        "json-pointer-uri-fragment" => regexes.json_pointer_uri_fragment.is_match(text),
+        "json-pointer-uri-fragment" => regexes
+            .json_pointer_uri_fragment
+            .is_match(&ascii_fold_haystack(text)),
         "relative-json-pointer" => regexes.relative_json_pointer.is_match(text),
         "byte" => regexes.byte.is_match(text),
         "password" | "binary" => true,
@@ -3884,14 +3908,29 @@ mod tests {
             ("duration", "P", Some(false)),
             ("uri", "https://example.com/a", Some(true)),
             ("uri", "not a uri", Some(false)),
+            // #829: ajv-formats' `/i` (no `/u`) folds ASCII only, so an
+            // uppercase scheme is valid while U+017F/U+212A must not fold
+            // onto `s`/`k` even though Rust's Unicode `(?i)` would.
+            ("uri", "HTTP://EXAMPLE.COM/", Some(true)),
+            ("uri", "\u{17f}cheme://x/", Some(false)),
             ("uri-reference", "/a/b", Some(true)),
+            ("uri-reference", "HTTP://example.com/", Some(true)),
+            ("uri-reference", "\u{17f}://x/", Some(false)),
             ("uri-template", "{var}", Some(true)),
+            ("uri-template", "{VAR}", Some(true)),
+            ("uri-template", "{\u{17f}}", Some(false)),
             ("url", "https://example.com/a?b=1", Some(true)),
             ("url", "http://192.168.1.1/x", Some(false)),
             ("email", "a.b@example.com", Some(true)),
             ("email", "User@Example.com", Some(true)),
             ("email", "a..b@example.com", Some(false)),
             ("email", "a@localhost", Some(false)),
+            ("email", "\u{17f}@example.com", Some(false)),
+            ("email", "a@\u{17f}.com", Some(false)),
+            ("email", "a@example.\u{17f}om", Some(false)),
+            ("email", "a@\u{212a}.com", Some(false)),
+            ("email", "\u{130}@example.com", Some(false)),
+            ("email", "a@\u{131}.com", Some(false)),
             ("hostname", "a-b.example.", Some(true)),
             ("hostname", "-a.example", Some(false)),
             ("ipv4", "192.168.0.1", Some(true)),
@@ -3906,6 +3945,12 @@ mod tests {
             ),
             ("uuid", "123e4567e89b12d3a456426614174000", Some(false)),
             ("json-pointer", "/a~1b", Some(true)),
+            ("json-pointer-uri-fragment", "#/a", Some(true)),
+            ("json-pointer-uri-fragment", "#/A", Some(true)),
+            ("json-pointer-uri-fragment", "#/\u{17f}", Some(false)),
+            ("json-pointer-uri-fragment", "#/\u{212a}", Some(false)),
+            ("json-pointer-uri-fragment", "#/\u{130}", Some(false)),
+            ("json-pointer-uri-fragment", "#/\u{131}", Some(false)),
             ("relative-json-pointer", "0/a", Some(true)),
             ("byte", "aGVsbG8=", Some(true)),
             ("byte", "aGVsbG8", Some(false)),
@@ -4091,7 +4136,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 887);
+        assert_eq!(cases.len(), 904);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),

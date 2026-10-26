@@ -381,6 +381,26 @@ for (const [id, schema, data] of [
   ['int64/fraction', {type: 'number', format: 'int64'}, 1.5],
   ['float/large', {type: 'number', format: 'float'}, 1.5e300],
   ['format/object-data', {type: 'object', format: 'email'}, 'x'],
+  // #829: ajv-formats compiles these full-format regexes with /i and no /u, so
+  // uppercase ASCII folds onto the a-z classes while U+017F/U+212A (and
+  // İ/ı) must not — Rust's Unicode (?i) needs the haystack masked instead.
+  ['uri/upper', {type: 'string', format: 'uri'}, 'HTTP://EXAMPLE.COM/'],
+  ['uri/long-s-scheme', {type: 'string', format: 'uri'}, 'ſcheme://x/'],
+  ['uri-reference/upper', {type: 'string', format: 'uri-reference'}, 'HTTP://example.com/'],
+  ['uri-reference/long-s-scheme', {type: 'string', format: 'uri-reference'}, '\u017F://x/'],
+  ['uri-template/upper', {type: 'string', format: 'uri-template'}, '{VAR}'],
+  ['uri-template/long-s', {type: 'string', format: 'uri-template'}, '{ſ}'],
+  ['email/long-s-local', {type: 'string', format: 'email'}, 'ſ@example.com'],
+  ['email/long-s-domain', {type: 'string', format: 'email'}, 'a@ſ.com'],
+  ['email/long-s-tld', {type: 'string', format: 'email'}, 'a@example.ſom'],
+  ['email/kelvin-domain', {type: 'string', format: 'email'}, 'a@K.com'],
+  ['email/i-with-dot', {type: 'string', format: 'email'}, 'İ@example.com'],
+  ['ipv6/upper-hex', {type: 'string', format: 'ipv6'}, '::ABCD'],
+  ['ipv6/long-s', {type: 'string', format: 'ipv6'}, '::ſ'],
+  ['json-pointer-uri-fragment/upper', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/A'],
+  ['json-pointer-uri-fragment/long-s', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/ſ'],
+  ['json-pointer-uri-fragment/kelvin', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/K'],
+  ['json-pointer-uri-fragment/i-with-dot', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/İ'],
 ]) {
   add(id, schema, data);
 }
