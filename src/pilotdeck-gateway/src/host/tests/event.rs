@@ -508,19 +508,34 @@ fn sidecar_payload_terminal_cancelled_matches_ts() {
             case.get("ok").unwrap().as_bool().unwrap(),
             "{case:?}"
         );
-        // The oracle records the terminal's result.type: either the synthesized
-        // abort (TS client:1434-1450) or the accepted terminal's own type.
-        let projected = match result {
+        // The reader's bool is the branch TS took: Ok(false) keeps the terminal's
+        // own result, Ok(true) synthesizes the abort (TS client:1434-1450). The
+        // valid case is the one complete terminal TS preserves, so assert the
+        // branch itself before projecting: both branches yield the "aborted"
+        // string, so the projection alone cannot tell a misclassified valid
+        // terminal from a preserved one.
+        let aborted = match result {
             Err(error) => panic!("terminal-cancelled case must be accepted: {error:?} — {case:?}"),
-            Ok(true) => "aborted".to_owned(),
-            Ok(false) => text(
+            Ok(aborted) => aborted,
+        };
+        assert_eq!(
+            aborted,
+            text(case.get("name").unwrap()) != "valid",
+            "valid terminal must be preserved (Ok(false)); other payloads synthesize the abort: {case:?}"
+        );
+        // The oracle records the terminal's result.type: either the synthesized
+        // abort or the accepted terminal's own type.
+        let projected = if aborted {
+            "aborted".to_owned()
+        } else {
+            text(
                 case.get("payload")
                     .unwrap()
                     .get("result")
                     .unwrap()
                     .get("type")
                     .unwrap(),
-            ),
+            )
         };
         assert_eq!(projected, text(case.get("value").unwrap()), "{case:?}");
     }

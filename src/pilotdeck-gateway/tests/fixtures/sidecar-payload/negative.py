@@ -33,6 +33,12 @@ mutants = {
         'pending.and_then(|pending| pending.wait(&event_control))',
         'pending.and_then(|pending| pending.wait(&event_control)).and_then(|response| { if response.boundary.value().get("ok") == Some(&JsValue::Bool(false)) { Err(PortError::TransportBeforeDispatch { message: "known rejection".into() }) } else { Ok(response) } })'),
 }
+# Dropping "aborted" from the complete-result type list misclassifies the valid
+# cancelled terminal into the synthesized branch; only the cancelled replay's
+# branch assertion (not the shared "aborted" projection) catches it.
+mutants['cancelled-valid-synthesized'] = (gateway + 'host/execution.rs', 'pilotdeck-gateway',
+    'sidecar_payload_terminal_cancelled_matches_ts',
+    '["success", "error", "aborted", "max_turns"]', '["success", "error", "max_turns"]')
 # Every oracle route has a paired omit control: renaming that route's "missing"
 # case drops it from the replay test's route filter, so the replayed count
 # (24 for wire's two routes, 12 elsewhere) fails. #856 added wire-final and the
