@@ -17,6 +17,11 @@ import time
 
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
+# `--only NAME` (repeatable) restricts the cargo runs to the named mutants;
+# every anchor is still asserted against the current sources, and the
+# baseline always runs first.
+requested = {sys.argv[index + 1] for index, arg in enumerate(sys.argv[2:-1], start=2)
+             if arg == "--only"}
 fixture = Path(__file__).resolve().parent
 rust = Path(__file__).resolve().parents[4]
 turn = rust / "pilotdeck-gateway/src/runtime/turn"
@@ -28,6 +33,168 @@ originals = {
     "oracle.json": oracle_path.read_text(),
 }
 env = dict(os.environ, CARGO_NET_OFFLINE="true", PDRS_BASELINE=os.environ["PDRS_BASELINE"])
+
+# Shared verbatim blocks of the current sources for the #805 panic-recovery
+# pins: the guarded timer/replay calls (fix round 9) and the two
+# poison-tolerant lock helpers.
+START_CANCEL_GUARDED = """        // panic still surfaces at the call site like a throwing host
+        // `clearTimeout`, but the guard is dropped first so the unwind
+        // cannot poison the store's lock for every session.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.timer.cancel(session_key);
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }"""
+START_CANCEL_PLAIN = START_CANCEL_GUARDED.replace(
+    "        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n"
+    "            self.timer.cancel(session_key);\n"
+    "        })) {\n"
+    "            drop(state);\n"
+    "            resume_unwind(panic);\n"
+    "        }",
+    "        self.timer.cancel(session_key);",
+)
+CLEAR_CANCEL_GUARDED = """        // The panic surfaces at the call site like a throwing host
+        // `clearTimeout`, before either removal below (#805); the guard is
+        // dropped first so it cannot poison the lock.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.timer.cancel(session_key);
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }"""
+CLEAR_CANCEL_PLAIN = CLEAR_CANCEL_GUARDED.replace(
+    "        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n"
+    "            self.timer.cancel(session_key);\n"
+    "        })) {\n"
+    "            drop(state);\n"
+    "            resume_unwind(panic);\n"
+    "        }",
+    "        self.timer.cancel(session_key);",
+)
+RETAIN_SET_GUARDED = """        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.timer.set(
+                session_key,
+                Duration::from_millis(self.options.terminal_retention_ms),
+                callback,
+            );
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }"""
+RETAIN_SET_PLAIN = RETAIN_SET_GUARDED.replace(
+    "        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n"
+    "            self.timer.set(\n"
+    "                session_key,\n"
+    "                Duration::from_millis(self.options.terminal_retention_ms),\n"
+    "                callback,\n"
+    "            );\n"
+    "        })) {\n"
+    "            drop(state);\n"
+    "            resume_unwind(panic);\n"
+    "        }",
+    "        self.timer.set(\n"
+    "            session_key,\n"
+    "            Duration::from_millis(self.options.terminal_retention_ms),\n"
+    "            callback,\n"
+    "        );",
+)
+RETAIN_SET_SWALLOWED = RETAIN_SET_GUARDED.replace(
+    "            resume_unwind(panic);", "            let _ = panic;")
+DISPOSE_CANCEL_ALL_GUARDED = """        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.timer.cancel_all();
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }"""
+DISPOSE_CANCEL_ALL_PLAIN = DISPOSE_CANCEL_ALL_GUARDED.replace(
+    "        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n"
+    "            self.timer.cancel_all();\n"
+    "        })) {\n"
+    "            drop(state);\n"
+    "            resume_unwind(panic);\n"
+    "        }",
+    "        self.timer.cancel_all();",
+)
+COORDINATOR_START_GUARDED = """        let mut state = lock(&self.state);
+        // The replay store may panic through its injected timer (#805): the
+        // panic surfaces at the call site like a throwing TS call, but the
+        // guard is dropped first so it cannot poison the composite-state
+        // lock for every session.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.replay.start(session_key, run_id);
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }"""
+COORDINATOR_START_PLAIN = COORDINATOR_START_GUARDED.replace(
+    "        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n"
+    "            self.replay.start(session_key, run_id);\n"
+    "        })) {\n"
+    "            drop(state);\n"
+    "            resume_unwind(panic);\n"
+    "        }",
+    "        self.replay.start(session_key, run_id);",
+)
+COORDINATOR_RETAIN_GUARDED = """        // The replay store may panic through its injected timer (#805),
+        // after the sink removal — the same partial state a throwing TS
+        // retainTerminal leaves. The guard is dropped first so the unwind
+        // cannot poison the composite-state lock for every session.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.replay.retain_terminal(session_key, run_id);
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }"""
+COORDINATOR_RETAIN_PLAIN = COORDINATOR_RETAIN_GUARDED.replace(
+    "        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n"
+    "            self.replay.retain_terminal(session_key, run_id);\n"
+    "        })) {\n"
+    "            drop(state);\n"
+    "            resume_unwind(panic);\n"
+    "        }",
+    "        self.replay.retain_terminal(session_key, run_id);",
+)
+COORDINATOR_DISPOSE_GUARDED = """        // The replay store may panic through its injected timer (#805), with
+        // the sinks and drain tokens already cleared — the same partial state
+        // a throwing TS dispose leaves. The guard is dropped first so the
+        // unwind cannot poison the composite-state lock for every session.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.replay.dispose();
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }"""
+COORDINATOR_DISPOSE_PLAIN = COORDINATOR_DISPOSE_GUARDED.replace(
+    "        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n"
+    "            self.replay.dispose();\n"
+    "        })) {\n"
+    "            drop(state);\n"
+    "            resume_unwind(panic);\n"
+    "        }",
+    "        self.replay.dispose();",
+)
+LOCK_HELPER = """fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}"""
+LOCK_HELPER_UNWRAP = LOCK_HELPER.replace(
+    "    mutex.lock().unwrap_or_else(PoisonError::into_inner)\n", "    mutex.lock().unwrap()\n")
+DRAIN_GUARD_TOLERANT = """                // The same tolerant lock as the drain loop: a poisoned
+                // composite state must not strand the queue on a stale
+                // `draining` entry (#805), which would wedge every later
+                // emit for the session behind a drainer that never returns.
+                let mut state = lock(&self.coordinator.state);
+                if owns_drain(&state, self.session_key, self.token) {
+                    state.draining.remove(self.session_key);
+                    state.deliveries.remove(self.session_key);
+                }"""
+DRAIN_GUARD_SKIPS_POISON = DRAIN_GUARD_TOLERANT.replace(
+    """                let mut state = lock(&self.coordinator.state);
+                if owns_drain(&state, self.session_key, self.token) {""",
+    """                if let Ok(mut state) = self.coordinator.state.lock()
+                    && owns_drain(&state, self.session_key, self.token)
+                {""",)
 
 # Shared verbatim blocks of the current coordinator.rs, so the mutants that
 # rearrange or recreate parts of `emit`/`start` keep their anchors exact.
@@ -196,16 +363,22 @@ mutants = [
     # codex-r1 P1 #1 / glm-r1 P1 #1: replay and sink must change in one
     # critical section.
     ("coordinator-start-not-atomic", "coordinator.rs",
-     "        let mut state = self.state.lock().unwrap();\n        self.replay.start(session_key, run_id);\n        #[cfg(test)]\n        self.fire_start();\n"
+     COORDINATOR_START_GUARDED + "\n        #[cfg(test)]\n        self.fire_start();\n"
      + START_INSERT_AND_RETURN,
-     "        self.replay.start(session_key, run_id);\n        #[cfg(test)]\n        self.fire_start();\n        let mut state = self.state.lock().unwrap();\n"
+     "        self.replay.start(session_key, run_id);\n        #[cfg(test)]\n        self.fire_start();\n        let mut state = lock(&self.state);\n"
      + START_INSERT_AND_RETURN,
      "coordinator::tests::concurrent_starts_keep_replay_and_sink_in_the_same_epoch"),
     # codex-r1 P1 #2 and #4: expiry must be timer driven and must not read a
     # wall clock; the pre-fix clock sweep expired inside public calls only.
     ("terminal-timer-not-scheduled", "replay.rs",
-     "        self.timer.set(\n            session_key,\n            Duration::from_millis(self.options.terminal_retention_ms),\n            callback,\n        );",
-     "        let _ = (&session_key, &callback);",
+     RETAIN_SET_GUARDED,
+     RETAIN_SET_GUARDED.replace(
+         "            self.timer.set(\n"
+         "                session_key,\n"
+         "                Duration::from_millis(self.options.terminal_retention_ms),\n"
+         "                callback,\n"
+         "            );\n",
+         "            let _ = (&session_key, &callback);\n"),
      "replay::tests::idle_terminal_expiry_reclaims_without_store_access"),
     # codex-r1 P1 #3: retention 0 is still setTimeout(0), not a synchronous
     # delete inside retainTerminal.
@@ -213,19 +386,22 @@ mutants = [
     # mutation also falsifies the widened retention-5/30000 legs of the
     # boundary test (the `if retention == 0` guard only reached the zero leg).
     ("retention-deleted-synchronously", "replay.rs",
-     "        self.timer.set(\n            session_key,\n            Duration::from_millis(self.options.terminal_retention_ms),\n            callback,\n        );",
-     "        self.timer.set(\n            session_key,\n            Duration::from_millis(self.options.terminal_retention_ms),\n            callback,\n        );\n        state.replays.remove(session_key);",
+     RETAIN_SET_GUARDED,
+     RETAIN_SET_GUARDED + "\n        state.replays.remove(session_key);",
      "replay::tests::terminal_stays_visible_until_the_injected_timer_runs"),
     # codex-r1 P2 #5: restart must cancel the old deadline.
     ("start-does-not-cancel-terminal-timer", "replay.rs",
-     "        // TS `start` calls `clearTerminal` first: the previous terminal timer\n        // must not fire against the new run. Cancelling only reaches\n        // callbacks still queued in the timer; a callback the worker already\n        // detached compares the replay identity below and does nothing.\n        self.timer.cancel(session_key);",
-     "        // TS `start` calls `clearTerminal` first: the previous terminal timer\n        // must not fire against the new run. Cancelling only reaches\n        // callbacks still queued in the timer; a callback the worker already\n        // detached compares the replay identity below and does nothing.",
+     "        // TS `start` calls `clearTerminal` first: the previous terminal timer\n        // must not fire against the new run. Cancelling only reaches\n        // callbacks still queued in the timer; a callback the worker already\n        // detached compares the replay identity below and does nothing.\n        // The timer is injected code without a no-panic guarantee (#805): a\n"
+     + START_CANCEL_GUARDED,
+     "        // TS `start` calls `clearTerminal` first: the previous terminal timer\n        // must not fire against the new run. Cancelling only reaches\n        // callbacks still queued in the timer; a callback the worker already\n        // detached compares the replay identity below and does nothing.\n        // The timer is injected code without a no-panic guarantee (#805): a\n"
+     + START_CANCEL_GUARDED.replace(
+         "            self.timer.cancel(session_key);\n", "            let _ = session_key;\n"),
      "replay::tests::terminal_timer_metadata_does_not_accumulate"),
     # gate1 concurrency P2 #3: serialization happens outside the state lock, so
     # a non-serializable event cannot poison every session.
     ("record-holds-lock-across-serialization", "replay.rs",
-     "        let (event, bytes) = clone_event_with_bytes(event);\n        #[cfg(test)]\n        self.fire_record_gap();\n        let mut state = self.state.lock().unwrap();",
-     "        let mut state = self.state.lock().unwrap();\n        let (event, bytes) = clone_event_with_bytes(event);\n        #[cfg(test)]\n        self.fire_record_gap();",
+     "        let (event, bytes) = clone_event_with_bytes(event);\n        #[cfg(test)]\n        self.fire_record_gap();\n        let mut state = lock(&self.state);",
+     "        let mut state = lock(&self.state);\n        let (event, bytes) = clone_event_with_bytes(event);\n        #[cfg(test)]\n        self.fire_record_gap();",
      "replay::tests::non_serializable_record_does_not_poison_the_store"),
     # codex-r1 P1 #4: the production timer must honour the elapsed delay it was
     # given; stretching it 1000x keeps the terminal replay past the 5 s bound.
@@ -275,8 +451,8 @@ mutants = [
     # codex-r2 P2 #6 / gate2 boundary P2a: serializing under the coordinator
     # lock poisons it for every session.
     ("coordinator-record-poisons", "coordinator.rs",
-     "        let state = self.state.lock().unwrap();\n        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n            self.replay.record(session_key, event);\n        })) {\n            drop(state);\n            resume_unwind(panic);\n        }",
-     "        let _state = self.state.lock().unwrap();\n        self.replay.record(session_key, event);",
+     "        let state = lock(&self.state);\n        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n            self.replay.record(session_key, event);\n        })) {\n            drop(state);\n            resume_unwind(panic);\n        }",
+     "        let _state = lock(&self.state);\n        self.replay.record(session_key, event);",
      "coordinator::tests::non_serializable_events_through_the_coordinator_do_not_poison_other_sessions"),
     # Fix round 7: the old `coordinator-emit-poisons` mutant (unguarded
     # record inside emit) became unfalsifiable — withRunId now panics on the
@@ -297,7 +473,7 @@ mutants = [
     # gate2 sibling P2 #1: emit/retain/dispose must each stay one composite
     # critical section; splitting them reopens the codex-r1 P1 #1 class.
     ("coordinator-emit-not-atomic", "coordinator.rs",
-     "            let mut state = self.state.lock().unwrap();\n"
+     "            let mut state = lock(&self.state);\n"
      "            // Registration liveness, not sink liveness (codex-r8 P1 #1): the\n"
      "            // queue and any in-flight drainer hold the sink strongly, so\n"
      "            // asking the sink would accept new events after the last\n"
@@ -309,16 +485,18 @@ mutants = [
      "            // asking the sink would accept new events after the last\n"
      "            // registration dropped.\n"
      + EMIT_RUN_ID_AND_RECORD_UNGUARDED + "\n"
-     "            let mut state = self.state.lock().unwrap();\n"
+     "            let mut state = lock(&self.state);\n"
      + EMIT_LOOKUP,
      "coordinator::tests::concurrent_start_cannot_split_emit_run_id_from_its_record"),
     ("coordinator-retain-not-atomic", "coordinator.rs",
-     "        let mut state = self.state.lock().unwrap();\n        state.sinks.remove(session_key);\n        #[cfg(test)]\n        self.fire_retain_remove();\n        self.replay.retain_terminal(session_key, run_id);",
-     "        {\n            let mut state = self.state.lock().unwrap();\n            state.sinks.remove(session_key);\n        }\n        #[cfg(test)]\n        self.fire_retain_remove();\n        self.replay.retain_terminal(session_key, run_id);",
+     "        let mut state = lock(&self.state);\n        state.sinks.remove(session_key);\n        #[cfg(test)]\n        self.fire_retain_remove();\n"
+     + COORDINATOR_RETAIN_GUARDED,
+     "        {\n            let mut state = lock(&self.state);\n            state.sinks.remove(session_key);\n        }\n        #[cfg(test)]\n        self.fire_retain_remove();\n        self.replay.retain_terminal(session_key, run_id);",
      "coordinator::tests::concurrent_retain_waits_for_the_composite_state_update"),
     ("coordinator-dispose-not-atomic", "coordinator.rs",
-     "        let mut state = self.state.lock().unwrap();\n        state.sinks.clear();\n        #[cfg(test)]\n        self.fire_dispose_clear();\n        // Dropping the drain tokens makes an in-flight drainer exit before it\n        // touches a restarted session's queue; its cleanup guard is a no-op.\n        state.deliveries.clear();\n        state.draining.clear();\n        self.replay.dispose();",
-     "        {\n            let mut state = self.state.lock().unwrap();\n            state.sinks.clear();\n        }\n        #[cfg(test)]\n        self.fire_dispose_clear();\n        let mut state = self.state.lock().unwrap();\n        state.deliveries.clear();\n        state.draining.clear();\n        self.replay.dispose();",
+     "        let mut state = lock(&self.state);\n        state.sinks.clear();\n        #[cfg(test)]\n        self.fire_dispose_clear();\n        // Dropping the drain tokens makes an in-flight drainer exit before it\n        // touches a restarted session's queue; its cleanup guard is a no-op.\n        state.deliveries.clear();\n        state.draining.clear();\n"
+     + COORDINATOR_DISPOSE_GUARDED,
+     "        {\n            let mut state = lock(&self.state);\n            state.sinks.clear();\n        }\n        #[cfg(test)]\n        self.fire_dispose_clear();\n        let mut state = lock(&self.state);\n        state.deliveries.clear();\n        state.draining.clear();\n        self.replay.dispose();",
      "coordinator::tests::concurrent_dispose_waits_and_leaves_a_consistent_start"),
     # --- fix round 3: one control per P1/P2 plus the sibling constant gaps ---
     # codex-r3 P1 #1: a reentrant emit must queue behind the events concurrent
@@ -398,8 +576,8 @@ mutants = [
     # (a) retain_terminal must leave the in-flight drainer alone: the
     # already-accepted event still reaches the removed sink.
     ("retain-terminal-invalidates-drain", "coordinator.rs",
-     "        let mut state = self.state.lock().unwrap();\n        state.sinks.remove(session_key);",
-     "        let mut state = self.state.lock().unwrap();\n        state.sinks.remove(session_key);\n        state.draining.clear();",
+     "        let mut state = lock(&self.state);\n        state.sinks.remove(session_key);",
+     "        let mut state = lock(&self.state);\n        state.sinks.remove(session_key);\n        state.draining.clear();",
      "coordinator::tests::accepted_events_reach_the_old_sink_after_retain_terminal_returns"),
     # (a) same for a replacing start: invalidating the drain drops e2 instead
     # of delivering it through the replaced sink.
@@ -414,8 +592,8 @@ mutants = [
     # (b) dispose must drop the accepted-but-undelivered queue; keeping it lets
     # the in-flight drainer deliver e2 past the dispose.
     ("dispose-keeps-delivery-queue", "coordinator.rs",
-     "        state.deliveries.clear();\n        state.draining.clear();\n        self.replay.dispose();",
-     "        self.replay.dispose();",
+     "        state.deliveries.clear();\n        state.draining.clear();\n" + COORDINATOR_DISPOSE_GUARDED,
+     COORDINATOR_DISPOSE_GUARDED,
      "coordinator::tests::dispose_drops_events_accepted_but_not_yet_delivered"),
     # (b) a panicking drainer's cleanup must drop the events queued behind it;
     # keeping them resurrects e2 through the next emit.
@@ -478,7 +656,7 @@ mutants = [
     # P1 #2: unregister must actually remove the map entry, or a live
     # registration keeps delivering after the explicit detach.
     ("unregister-keeps-sink", "coordinator.rs",
-     "    pub fn unregister(&self, session_key: &JsString) {\n        self.state.lock().unwrap().sinks.remove(session_key);\n    }",
+     "    pub fn unregister(&self, session_key: &JsString) {\n        lock(&self.state).sinks.remove(session_key);\n    }",
      "    pub fn unregister(&self, session_key: &JsString) {\n        let _ = session_key;\n    }",
      "coordinator::tests::unregister_detaches_the_sink_without_touching_the_replay"),
     # P1 #2 conforming host: any strong coordinator->sink edge that outlives
@@ -513,6 +691,51 @@ mutants = [
      "            .push_back((Arc::clone(&registration.sink), JsValue::Null, 0));\n"
      "        TurnSinkRegistration { registration }",
      "coordinator::tests::strongly_capturing_host_leaks_on_drop_and_releases_through_explicit_unregister"),
+    # --- fix round 9 (#805): a panicking injected ReplayTimer must unwind
+    # outside every state guard, and a state lock poisoned elsewhere must not
+    # wedge the store or the drain cleanup. Each carried-guard mutant puts the
+    # panic back inside the guard (poisoning the shared lock); the two
+    # lock-removal mutants put the `.unwrap()` panic back; the swallowed and
+    # skip-poison mutants break the panic surfacing / poisoned cleanup. ---
+    ("timer-panic-carried-by-start-guard", "replay.rs",
+     START_CANCEL_GUARDED, START_CANCEL_PLAIN,
+     "replay::tests::timer_panic_in_start_keeps_the_store_usable"),
+    ("timer-panic-carried-by-retain-guard", "replay.rs",
+     RETAIN_SET_GUARDED, RETAIN_SET_PLAIN,
+     "replay::tests::timer_panic_in_retain_leaves_a_terminal_replay_without_a_timer"),
+    # The same retain guard, swallowing instead of carrying: the caller no
+    # longer sees the host timer panic at the call site like TS would.
+    ("timer-panic-swallowed-by-retain", "replay.rs",
+     RETAIN_SET_GUARDED, RETAIN_SET_SWALLOWED,
+     "replay::tests::timer_panic_in_retain_leaves_a_terminal_replay_without_a_timer"),
+    ("timer-panic-carried-by-clear-guard", "replay.rs",
+     CLEAR_CANCEL_GUARDED, CLEAR_CANCEL_PLAIN,
+     "replay::tests::timer_panic_in_clear_terminal_keeps_the_store_usable"),
+    ("timer-panic-carried-by-dispose-guard", "replay.rs",
+     DISPOSE_CANCEL_ALL_GUARDED, DISPOSE_CANCEL_ALL_PLAIN,
+     "replay::tests::timer_panic_in_dispose_keeps_the_store_usable"),
+    # P1: every state entry must recover the guard from a poisoned lock.
+    ("poison-tolerant-state-lock-removed", "replay.rs",
+     LOCK_HELPER, LOCK_HELPER_UNWRAP,
+     "replay::tests::poisoned_replay_state_lock_still_serves_every_session"),
+    ("coordinator-timer-panic-carried-by-start-guard", "coordinator.rs",
+     COORDINATOR_START_GUARDED, COORDINATOR_START_PLAIN,
+     "coordinator::tests::timer_panic_in_coordinator_start_keeps_state_usable"),
+    ("coordinator-timer-panic-carried-by-retain-guard", "coordinator.rs",
+     COORDINATOR_RETAIN_GUARDED, COORDINATOR_RETAIN_PLAIN,
+     "coordinator::tests::timer_panic_in_coordinator_retain_keeps_state_usable"),
+    ("coordinator-timer-panic-carried-by-dispose-guard", "coordinator.rs",
+     COORDINATOR_DISPOSE_GUARDED, COORDINATOR_DISPOSE_PLAIN,
+     "coordinator::tests::timer_panic_in_coordinator_dispose_keeps_state_usable"),
+    ("coordinator-poison-tolerant-lock-removed", "coordinator.rs",
+     LOCK_HELPER, LOCK_HELPER_UNWRAP,
+     "coordinator::tests::poisoned_coordinator_state_lock_still_serves_every_session"),
+    # The drain cleanup guard must use the same tolerant lock: skipping the
+    # cleanup on a poisoned state strands the `draining` entry and the second
+    # emit never delivers.
+    ("drain-guard-skips-poisoned-cleanup", "coordinator.rs",
+     DRAIN_GUARD_TOLERANT, DRAIN_GUARD_SKIPS_POISON,
+     "coordinator::tests::poisoned_coordinator_state_lock_still_serves_every_session"),
 ]
 for name, filename, before, after, _test in mutants:
     assert originals[filename].count(before) == 1, (name, originals[filename].count(before))
@@ -559,6 +782,8 @@ with tempfile.TemporaryDirectory(prefix="pdrs-turn-negative-", dir="/tmp") as di
     (scratch / "Cargo.toml").write_text(manifest)
     (scratch / "src/lib.rs").write_text(lib_source)
     for name, filename, before, after, test in [("baseline", None, None, None, "tests::")] + mutants:
+        if name != "baseline" and requested and name not in requested:
+            continue
         for file, content in originals.items():
             if file == filename:
                 assert content.count(before) == 1, (name, content.count(before))

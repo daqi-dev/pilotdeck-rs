@@ -31,16 +31,34 @@
 //! standalone users of this default timer still need to inject their own host
 //! boundary through [`TurnReplayOptions::with_timer`]. The historical ledger
 //! entry is kept in `specs/gateway-parity/accepted-diffs.md`.
+//!
+//! The injected timer is host code without a no-panic guarantee (#805): a
+//! panicking `cancel`/`set`/`cancel_all` must surface at the call site like a
+//! throwing host `setTimeout`/`clearTimeout` in TS — with the same partial
+//! state, since the TS methods apply their mutations in the same order — but
+//! it must never poison the store's state lock for every session. Every state
+//! entry therefore recovers a poisoned lock instead of panicking, and each
+//! timer call releases the guard before resuming the unwind.
 
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json, timer_delay_ms};
 use std::collections::{HashMap, VecDeque};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_EVENT_LIMIT: usize = 500;
 pub const DEFAULT_BYTE_LIMIT: usize = 256 * 1024;
 pub const DEFAULT_TERMINAL_RETENTION_MS: u64 = 30_000;
+
+/// Recovers the state guard from a poisoned lock instead of panicking. TS
+/// keeps no lock, so a throwing host timer only fails its own call; a store
+/// whose lock a panic elsewhere poisoned must keep serving every session
+/// (#805, the same tolerant-lock shape as `mcp/wire.rs` and
+/// `runtime/refresh.rs`). Every state entry uses it.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// A per-session deadline timer, the Rust counterpart of the TS store's
 /// `Map<string, setTimeout>`: `set` replaces the session's timer and `cancel`
@@ -369,12 +387,21 @@ impl TurnReplayStore {
         }
     }
     pub fn start(&self, session_key: &JsString, run_id: &JsString) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         // TS `start` calls `clearTerminal` first: the previous terminal timer
         // must not fire against the new run. Cancelling only reaches
         // callbacks still queued in the timer; a callback the worker already
         // detached compares the replay identity below and does nothing.
-        self.timer.cancel(session_key);
+        // The timer is injected code without a no-panic guarantee (#805): a
+        // panic still surfaces at the call site like a throwing host
+        // `clearTimeout`, but the guard is dropped first so the unwind
+        // cannot poison the store's lock for every session.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.timer.cancel(session_key);
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }
         state.next_identity = state.next_identity.wrapping_add(1);
         let identity = state.next_identity;
         state.replays.insert(
@@ -394,7 +421,7 @@ impl TurnReplayStore {
         // TS looks the replay up before cloning, so an event for a session
         // with no replay never panics on serialization.
         let identity = {
-            let state = self.state.lock().unwrap();
+            let state = lock(&self.state);
             match state.replays.get(session_key) {
                 None => return,
                 Some(replay) => replay.identity,
@@ -408,7 +435,7 @@ impl TurnReplayStore {
         let (event, bytes) = clone_event_with_bytes(event);
         #[cfg(test)]
         self.fire_record_gap();
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         let Some(replay) = state.replays.get_mut(session_key) else {
             return;
         };
@@ -431,7 +458,7 @@ impl TurnReplayStore {
         }
     }
     pub fn retain_terminal(&self, session_key: &JsString, run_id: &JsString) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         if !state
             .replays
             .get(session_key)
@@ -453,7 +480,9 @@ impl TurnReplayStore {
             let Some(state) = Weak::upgrade(&deadline_state) else {
                 return;
             };
-            let mut state = state.lock().unwrap();
+            // The tolerant lock keeps a poisoned state from failing the
+            // expiry on the timer thread (#805).
+            let mut state = lock(&state);
             let expired = state.replays.get(&deadline_key).is_some_and(|replay| {
                 !replay.active && replay.identity == identity && replay.retain_serial == serial
             });
@@ -461,15 +490,32 @@ impl TurnReplayStore {
                 state.replays.remove(&deadline_key);
             }
         });
-        self.timer.set(
-            session_key,
-            Duration::from_millis(self.options.terminal_retention_ms),
-            callback,
-        );
+        // A panicking `set` surfaces at the call site like a throwing host
+        // `setTimeout` — with the replay already terminal and no timer
+        // registered, the same partial state TS leaves (#805) — but the
+        // guard is dropped first so it cannot poison the lock.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.timer.set(
+                session_key,
+                Duration::from_millis(self.options.terminal_retention_ms),
+                callback,
+            );
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }
     }
     pub fn clear_terminal(&self, session_key: &JsString) {
-        let mut state = self.state.lock().unwrap();
-        self.timer.cancel(session_key);
+        let mut state = lock(&self.state);
+        // The panic surfaces at the call site like a throwing host
+        // `clearTimeout`, before either removal below (#805); the guard is
+        // dropped first so it cannot poison the lock.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.timer.cancel(session_key);
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }
         if state
             .replays
             .get(session_key)
@@ -496,7 +542,7 @@ impl TurnReplayStore {
             return event.clone();
         }
         let run_id = {
-            let state = self.state.lock().unwrap();
+            let state = lock(&self.state);
             state
                 .replays
                 .get(session_key)
@@ -530,7 +576,7 @@ impl TurnReplayStore {
         JsValue::Object(object)
     }
     pub fn snapshot(&self, input: &ActiveTurnSnapshotInput) -> ActiveTurnSnapshot {
-        let state = self.state.lock().unwrap();
+        let state = lock(&self.state);
         let Some(replay) = state.replays.get(&input.session_key) else {
             return ActiveTurnSnapshot {
                 active: false,
@@ -564,13 +610,31 @@ impl TurnReplayStore {
         }
     }
     pub fn dispose(&self) {
-        let mut state = self.state.lock().unwrap();
-        self.timer.cancel_all();
+        let mut state = lock(&self.state);
+        // The panic surfaces at the call site like a throwing host
+        // `clearTimeout` inside the TS `forEach`, before the maps clear
+        // (#805); the guard is dropped first so it cannot poison the lock.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.timer.cancel_all();
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }
         state.replays.clear();
     }
     #[cfg(test)]
     pub(crate) fn set_after_record_gap_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
         *self.record_gap_hook.lock().unwrap() = Some(hook);
+    }
+    /// Poisons the state lock so a test can prove every entry recovers the
+    /// guard and keeps serving sessions (#805); the same test-only hook shape
+    /// as `runtime/steer.rs` and `runtime/hooks/exec.rs`.
+    #[cfg(test)]
+    pub(crate) fn poison_state_for_test(&self) {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _state = self.state.lock().unwrap();
+            panic!("injected replay state poison");
+        }));
     }
     #[cfg(test)]
     fn fire_record_gap(&self) {
@@ -644,6 +708,7 @@ fn js_whitespace(unit: u16) -> bool {
 pub(crate) mod test_support {
     use super::{JsString, ReplayTimer, ThreadTimer};
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -722,6 +787,63 @@ pub(crate) mod test_support {
         (timer, exited)
     }
 
+    /// A timer that panics exactly on the next call while armed and otherwise
+    /// delegates to the wrapped manual timer: the deterministic stand-in for
+    /// a real panicking injected `ReplayTimer` (#805). The TS store has no
+    /// timer injection port; the throwing-host-timer expectations were
+    /// measured with a real probe on the fixed baseline
+    /// (`_tmp/20261026-issue-805/ts-timer-throw-probe.log`).
+    pub(crate) struct PanicTimer {
+        inner: Arc<ManualTimer>,
+        armed: AtomicBool,
+    }
+
+    impl PanicTimer {
+        pub(crate) fn wrap(inner: Arc<ManualTimer>) -> Arc<Self> {
+            Arc::new(Self {
+                inner,
+                armed: AtomicBool::new(false),
+            })
+        }
+
+        /// The next timer call panics once, then the timer is healthy again.
+        pub(crate) fn arm(&self) {
+            self.armed.store(true, Ordering::SeqCst);
+        }
+
+        fn trip(&self) {
+            if self.armed.swap(false, Ordering::SeqCst) {
+                panic!("injected ReplayTimer panic");
+            }
+        }
+
+        pub(crate) fn advance(&self, ms: u64) {
+            self.inner.advance(ms);
+        }
+
+        /// Live timer count for one session, through to the wrapped timer.
+        pub(crate) fn pending(&self, session_key: &JsString) -> usize {
+            self.inner.pending(session_key)
+        }
+    }
+
+    impl ReplayTimer for PanicTimer {
+        fn set(&self, session_key: &JsString, delay: Duration, callback: Callback) {
+            self.trip();
+            self.inner.set(session_key, delay, callback);
+        }
+
+        fn cancel(&self, session_key: &JsString) {
+            self.trip();
+            self.inner.cancel(session_key);
+        }
+
+        fn cancel_all(&self) {
+            self.trip();
+            self.inner.cancel_all();
+        }
+    }
+
     impl ReplayTimer for ManualTimer {
         fn set(&self, session_key: &JsString, delay: Duration, callback: Callback) {
             let mut state = self.state.lock().unwrap();
@@ -746,7 +868,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::ManualTimer;
+    use super::test_support::{ManualTimer, PanicTimer};
     use super::*;
     use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -1199,6 +1321,216 @@ mod tests {
         let snapshot = store.snapshot(&ActiveTurnSnapshotInput::new(other.clone()));
         assert!(snapshot.active);
         assert_eq!(snapshot.events.len(), 1);
+    }
+
+    fn snapshot_of(store: &TurnReplayStore, key: &JsString) -> ActiveTurnSnapshot {
+        store.snapshot(&ActiveTurnSnapshotInput::new(key.clone()))
+    }
+
+    /// Regression for #805 (probe cell T1): a panicking injected timer in
+    /// `start` must surface the panic at the call site like a throwing host
+    /// `clearTimeout`, leaving the old terminal replay and every other
+    /// session's state untouched — no lock poisoning.
+    #[test]
+    fn timer_panic_in_start_keeps_the_store_usable() {
+        let timer = PanicTimer::wrap(ManualTimer::new());
+        let store =
+            TurnReplayStore::with_options(TurnReplayOptions::new().with_timer(timer.clone()));
+        let key = JsString::from("s");
+        let run = JsString::from("r1");
+        store.start(&key, &run);
+        store.record(&key, &tick(0));
+        store.retain_terminal(&key, &run);
+
+        timer.arm();
+        let panicked = catch_unwind(AssertUnwindSafe(|| {
+            store.start(&key, &JsString::from("r2"))
+        }));
+        assert!(
+            panicked.is_err(),
+            "the timer panic must surface at the call site"
+        );
+        assert!(
+            !store.state.is_poisoned(),
+            "the panic must unwind outside the state guard"
+        );
+
+        // TS T1: start threw inside clearTerminal, so the replay is still
+        // the old terminal one.
+        let same = snapshot_of(&store, &key);
+        assert!(same.terminal);
+        assert_eq!(same.run_id.as_ref(), Some(&run));
+        // No other session was touched by the panic.
+        let other = JsString::from("other");
+        store.start(&other, &JsString::from("r3"));
+        store.record(&other, &tick(0));
+        let other_snapshot = snapshot_of(&store, &other);
+        assert!(other_snapshot.active);
+        assert_eq!(other_snapshot.events.len(), 1);
+
+        // The store recovers once the timer is healthy again.
+        store.start(&key, &JsString::from("r4"));
+        let recovered = snapshot_of(&store, &key);
+        assert!(recovered.active);
+        assert_eq!(recovered.run_id.as_ref(), Some(&JsString::from("r4")));
+    }
+
+    /// Regression for #805 (probe cell T3): `retain_terminal` has already
+    /// marked the replay terminal when `set` panics, but no timer was
+    /// registered, so the terminal replay never expires on its own — exactly
+    /// like a throwing host `setTimeout`.
+    #[test]
+    fn timer_panic_in_retain_leaves_a_terminal_replay_without_a_timer() {
+        let timer = PanicTimer::wrap(ManualTimer::new());
+        let store =
+            TurnReplayStore::with_options(TurnReplayOptions::new().with_timer(timer.clone()));
+        let key = JsString::from("s");
+        let run = JsString::from("r1");
+        store.start(&key, &run);
+        store.record(&key, &tick(0));
+
+        timer.arm();
+        let panicked = catch_unwind(AssertUnwindSafe(|| store.retain_terminal(&key, &run)));
+        assert!(
+            panicked.is_err(),
+            "the timer panic must surface at the call site"
+        );
+        assert!(
+            !store.state.is_poisoned(),
+            "the panic must unwind outside the state guard"
+        );
+
+        let terminal = snapshot_of(&store, &key);
+        assert!(terminal.terminal);
+        assert_eq!(terminal.run_id.as_ref(), Some(&run));
+        // No timer was scheduled, so advancing past the retention changes
+        // nothing: the reclamation boundary stays the timer's own turn.
+        timer.advance(DEFAULT_TERMINAL_RETENTION_MS);
+        assert!(
+            snapshot_of(&store, &key).terminal,
+            "a terminal replay without a timer never expires on its own"
+        );
+        // Another session is unaffected and the store recovers.
+        let other = JsString::from("other");
+        store.start(&other, &JsString::from("r2"));
+        assert!(snapshot_of(&store, &other).active);
+        // TS T3: clearTerminal recovers the stranded terminal replay.
+        store.clear_terminal(&key);
+        let cleared = snapshot_of(&store, &key);
+        assert!(!cleared.terminal);
+        assert!(cleared.run_id.is_none());
+    }
+
+    /// Regression for #805 (probe cell T4): the panic in `clear_terminal`
+    /// precedes both removals, so the terminal replay survives and a retry
+    /// with a healthy timer clears it.
+    #[test]
+    fn timer_panic_in_clear_terminal_keeps_the_store_usable() {
+        let timer = PanicTimer::wrap(ManualTimer::new());
+        let store =
+            TurnReplayStore::with_options(TurnReplayOptions::new().with_timer(timer.clone()));
+        let key = JsString::from("s");
+        let run = JsString::from("r1");
+        store.start(&key, &run);
+        store.record(&key, &tick(0));
+        store.retain_terminal(&key, &run);
+        assert_eq!(timer.pending(&key), 1);
+
+        timer.arm();
+        let panicked = catch_unwind(AssertUnwindSafe(|| store.clear_terminal(&key)));
+        assert!(
+            panicked.is_err(),
+            "the timer panic must surface at the call site"
+        );
+        assert!(
+            !store.state.is_poisoned(),
+            "the panic must unwind outside the state guard"
+        );
+
+        // TS T4: the throw precedes the timer-map and replay removals.
+        let same = snapshot_of(&store, &key);
+        assert!(same.terminal);
+        assert_eq!(same.run_id.as_ref(), Some(&run));
+        assert_eq!(timer.pending(&key), 1, "the cancel never reached the timer");
+        // A healthy retry clears both.
+        store.clear_terminal(&key);
+        let cleared = snapshot_of(&store, &key);
+        assert!(!cleared.terminal);
+        assert!(cleared.run_id.is_none());
+        assert_eq!(timer.pending(&key), 0);
+    }
+
+    /// Regression for #805 (probe cell T5): a `dispose` whose `cancel_all`
+    /// panics throws before either map is cleared, so both sessions keep
+    /// their replays and a retry with a healthy timer clears everything.
+    #[test]
+    fn timer_panic_in_dispose_keeps_the_store_usable() {
+        let timer = PanicTimer::wrap(ManualTimer::new());
+        let store =
+            TurnReplayStore::with_options(TurnReplayOptions::new().with_timer(timer.clone()));
+        let key = JsString::from("s");
+        let run = JsString::from("r1");
+        let other = JsString::from("other");
+        store.start(&key, &run);
+        store.record(&key, &tick(0));
+        store.retain_terminal(&key, &run);
+        store.start(&other, &JsString::from("r2"));
+        store.record(&other, &tick(1));
+
+        timer.arm();
+        let panicked = catch_unwind(AssertUnwindSafe(|| store.dispose()));
+        assert!(
+            panicked.is_err(),
+            "the timer panic must surface at the call site"
+        );
+        assert!(
+            !store.state.is_poisoned(),
+            "the panic must unwind outside the state guard"
+        );
+
+        // TS T5: neither map was cleared.
+        let terminal = snapshot_of(&store, &key);
+        assert!(terminal.terminal);
+        assert_eq!(terminal.run_id.as_ref(), Some(&run));
+        let active = snapshot_of(&store, &other);
+        assert!(active.active);
+        assert_eq!(active.run_id.as_ref(), Some(&JsString::from("r2")));
+        // A healthy retry disposes both sessions.
+        store.dispose();
+        assert!(snapshot_of(&store, &key).run_id.is_none());
+        assert!(snapshot_of(&store, &other).run_id.is_none());
+    }
+
+    /// Regression for #805 (matrix cell P1): a state lock poisoned by a panic
+    /// elsewhere must not take the store down for any session — every entry
+    /// recovers the guard, including the deadline callback on the timer.
+    #[test]
+    fn poisoned_replay_state_lock_still_serves_every_session() {
+        let timer = ManualTimer::new();
+        let store =
+            TurnReplayStore::with_options(TurnReplayOptions::new().with_timer(timer.clone()));
+        let key = JsString::from("s");
+        let run = JsString::from("r1");
+        store.start(&key, &run);
+        store.record(&key, &tick(0));
+        store.poison_state_for_test();
+        assert!(store.state.is_poisoned(), "the hook must poison the lock");
+
+        // The same session and another session both keep working.
+        store.record(&key, &tick(1));
+        let same = snapshot_of(&store, &key);
+        assert!(same.active);
+        assert_eq!(same.events.len(), 2);
+        let other = JsString::from("other");
+        store.start(&other, &JsString::from("r2"));
+        assert!(snapshot_of(&store, &other).active);
+
+        // The deadline callback also runs through the poisoned lock.
+        store.retain_terminal(&key, &run);
+        timer.advance(DEFAULT_TERMINAL_RETENTION_MS);
+        let expired = snapshot_of(&store, &key);
+        assert!(!expired.terminal);
+        assert!(expired.run_id.is_none());
     }
 
     /// Regression for gate2 concurrency P2 #2: `record` serializes outside
