@@ -18,6 +18,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
+from negative_selection import select
 
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
@@ -659,9 +660,11 @@ def run_tests(command):
         return -9, stdout + stderr + "\nTIMEOUT after 900s\n"
 
 
-selected = set(sys.argv[2:])
-known = {mutant[0] for mutant in mutants}
-assert not selected - known, f"unknown controls: {selected - known}"
+# #813 fix-r3: a subset run still proves the unmutated copy passes. `select`
+# keeps `baseline` even when mutant ids are named, validates every id before the
+# scratch crate is built, and lets the baseline-first loop below abort the whole
+# run as INVALID if that proof fails.
+controls = select([("baseline", None, None, None, None)] + mutants, sys.argv[2:])
 summary = []
 with tempfile.TemporaryDirectory(prefix="pdrs-aep-negative-", dir="/tmp") as temp:
     scratch = Path(temp)
@@ -813,9 +816,7 @@ fn directory_flags() -> rustix::fs::OFlags {
 """
     )
 
-    for name, filename, before, after, marker in [("baseline", None, None, None, None)] + mutants:
-        if selected and name not in selected:
-            continue
+    for name, filename, before, after, marker in controls:
         for file, content in originals.items():
             if file == filename:
                 assert content.count(before) == 1, (name, file, content.count(before))

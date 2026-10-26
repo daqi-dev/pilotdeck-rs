@@ -17,6 +17,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned
+from negative_selection import select
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
@@ -114,10 +115,11 @@ with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
     if sys.argv[2:] == ['--list']:
         print('\n'.join(m['name'] for m in mutants))
         raise SystemExit(0)
-    selected = [dict(name='baseline', changes=[], case=None, marker='test result: ok.')] + mutants
-    if len(sys.argv) > 2:
-        selected = [m for m in selected if m['name'] in sys.argv[2:]]
-        assert selected, 'unknown controls'
+    # #813 fix-r3: a subset run still proves the unmutated copy passes; the
+    # baseline row is never filtered out.
+    selected = select(
+        [dict(name='baseline', changes=[], case=None, marker='test result: ok.')] + mutants,
+        sys.argv[2:], name=lambda row: row['name'])
     summary = []
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
     assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
@@ -195,7 +197,11 @@ with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
                                 exit=returncode, marker=mutant['marker'], valid=valid))
             (out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
             print(f'{mutant["name"]}: {"KILLED" if valid and mutant["changes"] else "PASS" if valid else "INVALID"} exit={returncode}', flush=True)
-            # Retain every control even after an INVALID result.
+            if mutant['name'] == 'baseline' and not valid:
+                # The unmutated copy must pass before any mutant verdict counts;
+                # a subset run still carries this row (negative_selection.select).
+                raise SystemExit(1)
+            # Retain every mutant exactly once even after an INVALID result.
     finally:
         assert all(path.read_bytes() == data for path, data in original.items()), 'original bytes not restored'
     print(f'{len(summary)} controls checked; original bytes restored', flush=True)

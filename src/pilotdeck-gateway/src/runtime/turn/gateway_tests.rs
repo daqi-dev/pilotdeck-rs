@@ -351,14 +351,26 @@ fn transport_observation_waits_for_delivery_and_receive_completion() {
     let ended = AtomicBool::new(false);
     let mut observation = Box::pin(text.observation_ready(2, true, &ended));
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-    assert!(observation.as_mut().poll(&mut context).is_pending());
+    assert!(
+        observation.as_mut().poll(&mut context).is_pending(),
+        "observation must wait for delivery before the receive completes"
+    );
     text.send_text(r#"{"type":"event"}"#.into());
-    assert!(observation.as_mut().poll(&mut context).is_pending());
+    assert!(
+        observation.as_mut().poll(&mut context).is_pending(),
+        "observation must not complete after only the event frame"
+    );
     text.send_text(r#"{"type":"response"}"#.into());
-    assert!(observation.as_mut().poll(&mut context).is_pending());
+    assert!(
+        observation.as_mut().poll(&mut context).is_pending(),
+        "observation must not complete before the receive completes"
+    );
     ended.store(true, Ordering::SeqCst);
     text.changed();
-    assert!(observation.as_mut().poll(&mut context).is_ready());
+    assert!(
+        observation.as_mut().poll(&mut context).is_ready(),
+        "observation must complete after delivery and receive completion"
+    );
 }
 
 async fn settle(host: &TurnGateway, registry: &Registry) {
@@ -604,7 +616,7 @@ async fn real_ts_gateway_frames_registry_replay_and_concurrency() {
             .await
             .expect("gateway case deadlock");
     }
-    assert!(selected > 0, "PDRS_GATEWAY_CASE matched no scenario");
+    assert!(selected > 0, "gateway case filter must match at least one scenario");
 }
 #[test]
 #[ignore = "requires the fixed TS baseline and tsx"]
