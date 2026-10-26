@@ -298,8 +298,13 @@ fn sha256_content(value: &JsString) -> String {
 /// with the same function the baseline uses there.
 pub(super) fn redact(value: &JsValue) -> JsValue {
     fn secret(key: &JsString) -> bool {
-        let lower = String::from_utf16_lossy(key.units()).to_lowercase();
-        [
+        // `SECRET_KEY_PATTERN` is a non-Unicode case-insensitive regex: like
+        // the other ES `Canonicalize` mirrors, a non-ASCII code unit never
+        // folds onto an ASCII one, so the U+212A KELVIN SIGN in `to\u{212a}en`
+        // does not match `token`. Only ASCII letters fold, and the needles
+        // are ASCII lowercase, so folding the key units is equivalent to
+        // canonicalizing both sides per code unit.
+        const NEEDLES: [&str; 7] = [
             "apikey",
             "authorization",
             "cookie",
@@ -307,9 +312,24 @@ pub(super) fn redact(value: &JsValue) -> JsValue {
             "secret",
             "password",
             "credential",
-        ]
-        .iter()
-        .any(|needle| lower.contains(needle))
+        ];
+        let folded: Vec<u16> = key
+            .units()
+            .iter()
+            .map(|&unit| {
+                if (65..=90).contains(&unit) {
+                    unit + 32
+                } else {
+                    unit
+                }
+            })
+            .collect();
+        NEEDLES.iter().any(|needle| {
+            let needle: Vec<u16> = needle.encode_utf16().collect();
+            folded
+                .windows(needle.len())
+                .any(|window| window == needle.as_slice())
+        })
     }
     match value {
         JsValue::Array(items) => JsValue::Array(items.iter().map(redact).collect()),

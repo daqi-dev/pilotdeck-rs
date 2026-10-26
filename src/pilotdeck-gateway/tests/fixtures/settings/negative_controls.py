@@ -21,6 +21,7 @@ root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/config/settings.rs'
+shared = root / 'src/pilotdeck-gateway/src/config/snapshot.rs'
 
 # Every mutant is applied to the original independently and names the test in
 # `--test settings` whose assertion it must turn red. Rows are
@@ -83,6 +84,31 @@ mutations = [
         out.insert(key.into(), field(snapshot, key));
     }
     out.insert("version".into(), JsValue::Number(1.0));'''),
+    # The shared redact helper must fold case exactly like the baseline's
+    # non-Unicode `/.../i` pattern: regressing to full Unicode folding (the
+    # pre-#864-fix-r1 code) redacts lookalike keys such as the U+212A KELVIN
+    # SIGN spelling of `token`.
+    ('unicode-folding-regression',
+     shared,
+     '''        let folded: Vec<u16> = key
+            .units()
+            .iter()
+            .map(|&unit| {
+                if (65..=90).contains(&unit) {
+                    unit + 32
+                } else {
+                    unit
+                }
+            })
+            .collect();
+        NEEDLES.iter().any(|needle| {
+            let needle: Vec<u16> = needle.encode_utf16().collect();
+            folded
+                .windows(needle.len())
+                .any(|window| window == needle.as_slice())
+        })''',
+     '''        let lower = String::from_utf16_lossy(key.units()).to_lowercase();
+        NEEDLES.iter().any(|needle| lower.contains(needle))'''),
 ]
 tests = {
     'redaction-disabled': 'config_is_projected_through_the_shared_redaction',
@@ -91,6 +117,7 @@ tests = {
     'source-path-always-included': 'resolve_settings_replays_real_typescript_oracle',
     'top-level-key-order-swapped': 'response_and_element_key_orders_match_the_baseline',
     'version-mistranscribed': 'scalar_fields_pass_through_verbatim',
+    'unicode-folding-regression': 'unicode_lookalike_keys_survive_the_secret_match',
 }
 # A killed mutant must fail through its bound assertion, not by failing to
 # compile; the message fragment proves the intended assertion fired.
@@ -101,6 +128,7 @@ failure_fragments = {
     'source-path-always-included': 'response differences',
     'top-level-key-order-swapped': 'assertion `left == right` failed',
     'version-mistranscribed': 'assertion `left == right` failed',
+    'unicode-folding-regression': '(#864 fix-r1)',
 }
 selected = sys.argv[2:]
 if selected:
@@ -110,7 +138,7 @@ if 'CARGO_TARGET_DIR' not in os.environ:
     sys.exit('set CARGO_TARGET_DIR to the caller-owned build tree before running')
 env = os.environ.copy()
 summary = []
-with mutating_sources(root, [source]) as snapshots:
+with mutating_sources(root, [source, shared]) as snapshots:
     for name, path, old, new in mutations:
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
