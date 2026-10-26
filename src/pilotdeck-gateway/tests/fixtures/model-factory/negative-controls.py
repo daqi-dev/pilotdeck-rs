@@ -13,9 +13,9 @@ from negative_process import mutating_sources, run_owned
 root = Path(__file__).resolve().parents[5]
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
-expected_target = root / 'src/target'
-if Path(os.environ['CARGO_TARGET_DIR']).resolve() != expected_target:
-    raise SystemExit(f'use the launcher target {expected_target}')
+expected_targets = {(root / '_build/cargo-target').resolve(), (root / 'src/target').resolve()}
+if Path(os.environ['CARGO_TARGET_DIR']).resolve() not in expected_targets:
+    raise SystemExit(f'use a launcher target in {sorted(expected_targets)}')
 registry = root / 'src/pilotdeck-gateway/src/runtime/model/provider_registry.rs'
 family = root / 'src/pilotdeck-gateway/src/runtime/project/model.rs'
 with mutating_sources(root, [registry, family]) as snapshots:
@@ -29,23 +29,22 @@ with mutating_sources(root, [registry, family]) as snapshots:
         ('dispose-before-drain', registry, '            entry.drained().await;', '// NEGATIVE: do not wait for accepted invocations.',
          'provider_replacement_captures_accepted_generation_and_drains'),
         ('http-cancellation-not-forwarded', registry,
-         '''        Box::pin(http::stream_model(
-                self.transport.as_ref(),
-                request,
-                &self.config,
-                options,
-                sink,
-            ))''',
-         '''        Box::pin(async move {
-                let options = StreamOptions { abort: None, ..options.clone() };
-                http::stream_model(self.transport.as_ref(), request, &self.config, &options, sink).await
-            })''', 'factory_reload_inflight_cancel_and_drain_match_ts'),
+         '''http::stream_model(
+            self.transport.as_ref(),
+            request,
+            &self.config,
+            options,
+            sink,
+        )''',
+         '''async move {
+            let options = StreamOptions { abort: None, ..options.clone() };
+            http::stream_model(self.transport.as_ref(), request, &self.config, &options, sink).await
+        }''',
+         'factory_reload_inflight_cancel_and_drain_match_ts'),
         ('registration-removes-replacement', registry,
-         '''if registry
-                .entries
-                .get(id)
-                .is_some_and(|current| Arc::ptr_eq(current, &self.entry))''',
-         'if true', 'provider_replacement_captures_accepted_generation_and_drains'),
+         '.is_some_and(|current| Arc::ptr_eq(current, &self.entry))',
+         '.is_some_and(|_| true)',
+         'provider_replacement_captures_accepted_generation_and_drains'),
         ('replacement-changes-map-dispose-order', registry,
          'entries.sort_by_key(|entry| entry.order);', 'entries.sort_by_key(|entry| entry.generation);',
          'registry_errors_ordered_disposal_and_complete_lease_match_ts'),
@@ -54,12 +53,9 @@ with mutating_sources(root, [registry, family]) as snapshots:
          'let provider = lease.provider().clone(); drop(lease); provider.complete(request, abort).await',
          'registry_errors_ordered_disposal_and_complete_lease_match_ts'),
         ('factory-skips-durable-recorder', family,
-         '''            self.model_config.clone(),
-                recorder,
-                options,''',
-         '''            self.model_config.clone(),
-                { let _ = recorder; None },
-                options,''', 'factory_reload_inflight_cancel_and_drain_match_ts'),
+         'recorder,',
+         '{ let _ = recorder; None },',
+         'factory_reload_inflight_cancel_and_drain_match_ts'),
 
         ('provider-validation-forgets-js-bom', registry, '| 0xFEFF', '',
          'registry_errors_ordered_disposal_and_complete_lease_match_ts'),
@@ -95,10 +91,8 @@ with mutating_sources(root, [registry, family]) as snapshots:
             };''',
          'mixed_registry_router_staging_and_judge_dispatch_match_ts'),
         ('model-family-panics-outside-tokio', family,
-         '''tokio::runtime::Handle::try_current().map_err(|_| {
-                        RuntimeError::new("Model family staging requires a Tokio runtime.")
-                    })?''',
-         'tokio::runtime::Handle::current()',
+         'tokio::runtime::Handle::try_current()',
+         'Ok::<_, RuntimeError>(tokio::runtime::Handle::current())',
          'model_family_resolve_without_tokio_returns_error_without_panic'),
         ('native-provider-falsely-advertises-complete', registry,
          'fn supports_complete(&self) -> bool {\n        true\n    }',
