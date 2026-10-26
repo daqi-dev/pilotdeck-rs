@@ -80,7 +80,10 @@ stage、preview 分节/3000 截断、`previewText` 边界、UserNotes 目录、
 `exposeStoredRelativePath` 的 `global/` 前缀、kv null 值、text/note/list/json
 `detail` 的转义解码、step 序号/truthy 选项、空时间戳过滤、批次码元排序。
 29–36 号来自 #831，其中 `trace-id-separator` / `expose-global-prefix` 的锚点
-按 #852 的共享 `text::join_text_refs` 重写，语义不变。每条要求编译成功且
+按 #852 的共享 `text::join_text_refs` 重写，语义不变。10–12 号（`kv-depth-bound` /
+`shared-truthy` / `shared-join-text`）改的是共享文件 `js_value.rs` / `storage.rs` /
+`text.rs`，其表在 `negative_shared.py`；`negative.py` 导入后在同一
+`mutating_sources` 锁内执行，命令不变。每条要求编译成功且
 命中对应 oracle 分组或测试断言，逐格汇总 KILLED/SURVIVED，有存活退出 1；
 每个变异体运行前校验其锚点在基线源码中恰好出现一次，锚点过期时打印
 `ANCHOR EXPIRED` 并退出 2（不记成 SURVIVED）。全部变异恢复后再跑一遍未
