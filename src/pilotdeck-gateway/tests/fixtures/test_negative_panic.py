@@ -128,6 +128,38 @@ def plugin_stranded_markers():
     raise AssertionError('STRANDED_MARKERS not found')
 
 
+def turn_gateway_markers():
+    """Read every turn-gateway mutant marker without executing the runner.
+
+    Constants are returned as strings; the generated abort-argument rows build
+    their marker with an f-string, so those come back unparsed and the caller
+    checks the ``{case}`` field.
+    """
+    tree = ast.parse((HERE / 'turn-gateway' / 'negative.py').read_text())
+    markers = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == 'mutation':
+                marker = node.args[5] if len(node.args) >= 6 else None
+                for keyword in node.keywords:
+                    if keyword.arg == 'marker':
+                        marker = keyword.value
+                if marker is None:
+                    continue
+                if isinstance(marker, ast.Constant):
+                    markers.append(marker.value)
+                else:
+                    markers.append(ast.unparse(marker))
+            elif isinstance(node.func, ast.Name) and node.func.id == 'dict':
+                # notification-after-event is registered through a dict(...)
+                # call, not the mutation() helper.
+                values = {keyword.arg: keyword.value for keyword in node.keywords}
+                name = values.get('name')
+                if isinstance(name, ast.Constant) and name.value == 'notification-after-event':
+                    markers.append(ast.literal_eval(values['marker']))
+    return markers
+
+
 class PanicBlockCriterion(unittest.TestCase):
     def test_named_test_passed_while_other_test_panicked_is_rejected(self):
         raw = log('ok', 'FAILED', other_panic=MARKER)
@@ -256,6 +288,45 @@ class PanicBlockCriterion(unittest.TestCase):
         # The old generic marker accepted this very panic; the new one does not.
         self.assertTrue(named_test_killed(raw, used_test,
                                           'assertion `left == right` failed'))
+
+    def test_turn_gateway_markers_are_scenario_assertions(self):
+        # #813 fix-r7: the replay runner used to default every mutant to the
+        # generic `assertion` marker, so any assert_eq! in the named test could
+        # kill a surviving mutant. Every mutant must now register the assertion
+        # message its selected oracle scenario prints.
+        markers = turn_gateway_markers()
+        self.assertGreaterEqual(len(markers), 30)
+        for marker in markers:
+            with self.subTest(marker=marker):
+                self.assertNotEqual(marker, 'assertion')
+                self.assertFalse(marker.startswith('assertion `left == right`'))
+                if marker.startswith("f'"):
+                    # Generated abort-argument rows: f'"{case}": '.
+                    self.assertIn('{case}', marker)
+                    self.assertIn('": ', marker)
+                elif marker.startswith('"'):
+                    self.assertRegex(marker, r'^"[^"]+": ')
+        self.assertIn('"permission-before-event-and-final": step "permission"', markers)
+
+        # Behaviour: the permission scenario's prefix is evidence only for a
+        # permission-scenario assertion, not for another scenario's failure.
+        replay = GATEWAY + 'real_ts_gateway_frames_registry_replay_and_concurrency'
+
+        def replay_log(message):
+            return (
+                f"running 1 test\ntest {replay} ... FAILED\n\n"
+                f"thread '{replay}' (1) panicked at src/tests.rs:1:1:\n"
+                f"assertion `left == right` failed: {message}\n"
+                "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+            )
+
+        permission_marker = '"permission-before-event-and-final": '
+        self.assertTrue(named_test_killed(
+            replay_log('"permission-before-event-and-final": step "permission"'),
+            replay, permission_marker))
+        self.assertFalse(named_test_killed(
+            replay_log('"error-before-success": step "end"'),
+            replay, permission_marker))
 
     def test_recorded_host_logs_are_killed(self):
         for name, used_test in RECORDED_CASES:
