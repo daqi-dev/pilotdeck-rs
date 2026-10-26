@@ -11,6 +11,7 @@ mod router;
 mod sections;
 pub mod session_overrides;
 pub mod session_value;
+pub mod settings;
 pub mod snapshot;
 pub mod store;
 mod value;
