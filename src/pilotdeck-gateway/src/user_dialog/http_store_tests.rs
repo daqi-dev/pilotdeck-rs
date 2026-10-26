@@ -342,25 +342,51 @@ fn status(response: &[u8]) -> u16 {
         .unwrap_or_else(|| panic!("not an HTTP response: {head:?}"))
 }
 
+/// One response phase may legitimately take seconds on a loaded host: the list
+/// handler serializes ~18 MiB before hyper can write the response head. Four
+/// concurrent runs measured 3.5 s head waits, and a saturated host exceeded the
+/// old 5 s per-read bound (4/4 negative-control runs failed at iteration 11).
+/// This is a bounded **failure** budget, not a protocol semantic: Node has no
+/// response-generation deadline (`headersTimeout` only covers the request
+/// head), so a slow handler must not be mistaken for a product hang. A genuine
+/// stall still terminates the test with the stage and bytes read.
+const RESPONSE_PHASE_BUDGET: Duration = Duration::from_secs(60);
+
+/// Start the failure budget for one response phase (a head or a body). The
+/// deadline is absolute so repeated reads cannot reset it; callers that own a
+/// tighter assertion (an expected close, a product timeout) keep their own
+/// shorter bound on the outside.
+fn response_phase_deadline() -> tokio::time::Instant {
+    tokio::time::Instant::now() + RESPONSE_PHASE_BUDGET
+}
+
 async fn exchange(port: u16, request: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).await?;
     stream.write_all(request).await?;
     let mut response = Vec::new();
-    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+    tokio::time::timeout_at(response_phase_deadline(), stream.read_to_end(&mut response))
         .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "response"))??;
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("no complete response within {RESPONSE_PHASE_BUDGET:?}"),
+            )
+        })??;
     Ok(response)
 }
 
 /// The server may legitimately close while a client is still writing an
-/// oversized body; only the response matters.
+/// oversized body; only the response matters, so a write error is ignored. The
+/// response read is still bounded by the same phase budget as [`exchange`];
+/// tolerating a failed write is orthogonal to bounding the read.
 async fn exchange_lenient(port: u16, request: &[u8]) -> Vec<u8> {
     let mut stream = TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("connect");
     let _ = stream.write_all(request).await;
     let mut response = Vec::new();
-    let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response)).await;
+    let _ =
+        tokio::time::timeout_at(response_phase_deadline(), stream.read_to_end(&mut response)).await;
     response
 }
 
@@ -421,12 +447,23 @@ fn assert_close_without_keep_alive(response: &[u8], expected: u16, note: &str) {
 }
 
 /// Reads exactly one HTTP message (head plus Content-Length body) so a
-/// keep-alive stream is left idle, not with unread response bytes.
+/// keep-alive stream is left idle, not with unread response bytes. The whole
+/// message shares one phase deadline; an outer, tighter assertion bound still
+/// wins because it is applied by the caller.
 async fn read_response(stream: &mut TcpStream) -> Vec<u8> {
+    let deadline = response_phase_deadline();
     let mut response = Vec::new();
     let mut byte = [0u8; 1];
     loop {
-        let read = stream.read(&mut byte).await.expect("response head");
+        let read = match tokio::time::timeout_at(deadline, stream.read(&mut byte)).await {
+            Ok(Ok(read)) => read,
+            Ok(Err(error)) => panic!("response head read failed: {error}"),
+            Err(_) => panic!(
+                "response head never arrived within {RESPONSE_PHASE_BUDGET:?} \
+                 (read {} bytes so far)",
+                response.len()
+            ),
+        };
         if read == 0 {
             panic!(
                 "EOF before the response head completed: {:?}",
@@ -445,18 +482,37 @@ async fn read_response(stream: &mut TcpStream) -> Vec<u8> {
         .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(0);
     let mut body = vec![0u8; length];
-    stream.read_exact(&mut body).await.expect("response body");
+    match tokio::time::timeout_at(deadline, stream.read_exact(&mut body)).await {
+        Ok(Ok(read)) => assert_eq!(read, length, "response body short read"),
+        Ok(Err(error)) => panic!("response body read failed: {error}"),
+        Err(_) => panic!(
+            "response body stalled within {RESPONSE_PHASE_BUDGET:?} \
+             (expected {length} bytes)"
+        ),
+    }
     response.extend_from_slice(&body);
     response
 }
 
 /// Reads only the response head, leaving any body bytes unread. HEAD
-/// responses declare `Content-Length` but never send the body.
+/// responses declare `Content-Length` but never send the body. The read is
+/// bounded by the same phase budget as every other response reader, so a
+/// stalled head fails the test instead of hanging the test binary.
 async fn read_head<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> String {
+    let deadline = response_phase_deadline();
     let mut response = Vec::new();
     let mut byte = [0u8; 1];
     loop {
-        let read = stream.read(&mut byte).await.expect("response head");
+        let read = match tokio::time::timeout_at(deadline, stream.read(&mut byte)).await {
+            Ok(Ok(read)) => read,
+            Ok(Err(error)) => panic!("response head read failed: {error}"),
+            Err(_) => panic!(
+                "response head never arrived within {RESPONSE_PHASE_BUDGET:?} \
+                 (read {} bytes so far: {:?})",
+                response.len(),
+                String::from_utf8_lossy(&response)
+            ),
+        };
         if read == 0 {
             panic!(
                 "EOF before the response head completed: {:?}",
@@ -1360,7 +1416,7 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
     store.released.store(true, Ordering::SeqCst);
     store.condvar.notify_all();
 
-    let response = tokio::time::timeout(Duration::from_secs(5), read_response(&mut stream))
+    let response = tokio::time::timeout_at(response_phase_deadline(), read_response(&mut stream))
         .await
         .expect("the in-flight response never arrived");
     assert_eq!(status(&response), 200, "{response:?}");
@@ -1386,7 +1442,7 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
         &list_body(),
     );
     stream.write_all(&second_request).await.unwrap();
-    let second = tokio::time::timeout(Duration::from_secs(5), read_response(&mut stream))
+    let second = tokio::time::timeout_at(response_phase_deadline(), read_response(&mut stream))
         .await
         .expect("the follow-up request was not served after close()");
     assert_eq!(status(&second), 200, "{second:?}");
@@ -2926,20 +2982,10 @@ async fn close_waits_for_in_flight_requests() {
 // #702: shutdown vs keep-alive advertisement, and early-close RST
 // ---------------------------------------------------------------------------
 
-/// One response phase may legitimately take seconds on a loaded host: the list
-/// handler serializes ~18 MiB before hyper can write the response head. Four
-/// concurrent runs measured 3.5 s head waits, and a saturated host exceeded the
-/// old 5 s per-read bound (4/4 negative-control runs failed at iteration 11).
-/// This is a bounded **failure** budget, not a protocol semantic: Node has no
-/// response-generation deadline (`headersTimeout` only covers the request
-/// head), so a slow handler must not be mistaken for a product hang. A genuine
-/// stall still terminates the test with the stage and bytes read.
-const RESPONSE_PHASE_BUDGET: Duration = Duration::from_secs(60);
-
 /// Read the response head (through the blank line) plus any body bytes that
 /// arrived with it.
 async fn read_response_head(stream: &mut TcpStream, note: &str) -> (Vec<u8>, Vec<u8>) {
-    let deadline = tokio::time::Instant::now() + RESPONSE_PHASE_BUDGET;
+    let deadline = response_phase_deadline();
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
@@ -2986,7 +3032,7 @@ async fn read_exact_body(
     length: usize,
     note: &str,
 ) -> Vec<u8> {
-    let deadline = tokio::time::Instant::now() + RESPONSE_PHASE_BUDGET;
+    let deadline = response_phase_deadline();
     let mut chunk = [0u8; 8192];
     while body.len() < length {
         let read = match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
