@@ -47,6 +47,18 @@ impl Error {
         }
     }
 }
+
+/// A failed `process.cwd()` keeps Node's code/message shape (`ENOENT`,
+/// `ENOENT: no such file or directory, uv_cwd`) instead of `PilotConfigError`.
+pub(crate) fn cwd_error(error: &std::io::Error) -> Error {
+    Error {
+        code: crate::metadata::process_cwd_code(error).into(),
+        message: crate::metadata::process_cwd_message(error).into(),
+        diagnostics: vec![],
+        name: "Error",
+        requires_host: false,
+    }
+}
 pub(super) struct Diagnostics(pub Vec<JsValue>);
 impl Diagnostics {
     fn add(&mut self, code: &str, severity: &str, message: impl Into<DiagnosticText>, path: &str) {
@@ -127,7 +139,7 @@ pub fn load_snapshot(
 ) -> Result<JsValue, Error> {
     let metadata = Metadata {
         home: pilot_home.to_path_buf(),
-        cwd: absolute_cwd(cwd),
+        cwd: absolute_cwd(cwd).map_err(|error| cwd_error(&error))?,
         files: crate::metadata::NativeFiles,
     };
     Ok(load_project_with_files_inner(
@@ -142,7 +154,7 @@ pub fn load_snapshot(
 /// `cwd` stands in for the baseline's `process.cwd()`, which is always
 /// absolute; `path.resolve` anchors a relative argument the same way,
 /// normalizing dot segments.
-pub(crate) fn absolute_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn absolute_cwd(cwd: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     crate::metadata::resolve_process_path(std::path::Path::new(""), cwd)
 }
 
@@ -182,7 +194,7 @@ pub fn load_project(
 ) -> Result<Config, Error> {
     let metadata = Metadata {
         home: pilot_home.to_path_buf(),
-        cwd: absolute_cwd(cwd),
+        cwd: absolute_cwd(cwd).map_err(|error| cwd_error(&error))?,
         files: crate::metadata::NativeFiles,
     };
     load_project_with_files(&metadata, env, project)

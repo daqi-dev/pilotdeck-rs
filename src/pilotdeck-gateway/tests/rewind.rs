@@ -199,12 +199,14 @@ fn run_scenario(scenario: &JsValue) {
     fs::create_dir_all(&pilot_home).unwrap();
 
     let adapter = adapter(&pilot_home);
-    let storage = adapter.create_session_storage(SessionStorageInput {
-        project_root: project_root.clone(),
-        pilot_home: pilot_home.clone(),
-        session_id: JsString::from(SESSION),
-        now: None,
-    });
+    let storage = adapter
+        .create_session_storage(SessionStorageInput {
+            project_root: project_root.clone(),
+            pilot_home: pilot_home.clone(),
+            session_id: JsString::from(SESSION),
+            now: None,
+        })
+        .unwrap();
 
     let transcript: String = array(field(scenario, "transcript"))
         .iter()
@@ -383,12 +385,14 @@ fn transcript_directory_reports_node_eisdir() {
     fs::create_dir_all(&project_root).unwrap();
     fs::create_dir_all(&pilot_home).unwrap();
     let adapter = adapter(&pilot_home);
-    let storage = adapter.create_session_storage(SessionStorageInput {
-        project_root: project_root.clone(),
-        pilot_home: pilot_home.clone(),
-        session_id: JsString::from(SESSION),
-        now: None,
-    });
+    let storage = adapter
+        .create_session_storage(SessionStorageInput {
+            project_root: project_root.clone(),
+            pilot_home: pilot_home.clone(),
+            session_id: JsString::from(SESSION),
+            now: None,
+        })
+        .unwrap();
     fs::create_dir_all(&storage.transcript_path).unwrap();
     let session = JsString::from(SESSION);
     let result = rewind_files(RewindFilesInput {

@@ -183,7 +183,13 @@ pub struct ConfigStore {
 
 impl ConfigStore {
     /// `createPilotConfigStoreSync`: loads the initial snapshot or fails.
-    pub fn new(options: StoreOptions) -> Result<Self, Error> {
+    pub fn new(mut options: StoreOptions) -> Result<Self, Error> {
+        // Anchor `cwd` once, at the same boundary as the initial load. The
+        // watcher and every reload then reuse an absolute path; a relative
+        // `cwd` with a cold missing process cwd fails here instead of falling
+        // back to `/` later (#755).
+        options.cwd =
+            super::absolute_cwd(&options.cwd).map_err(|error| super::cwd_error(&error))?;
         let version = options.version.unwrap_or(1.0);
         let initial = load(&options, version)?;
         let next_version = snapshot_version(&initial) + 1.0;
@@ -285,7 +291,8 @@ impl ConfigStore {
     /// project config path, deduplicated in that order.
     fn watched_paths(&self) -> Vec<PathBuf> {
         let options = &self.inner.options;
-        let cwd = super::absolute_cwd(&options.cwd);
+        // `ConfigStore::new` anchored this once; do not re-read process.cwd().
+        let cwd = options.cwd.clone();
         // The loader reads the global path through `metadata::resolve(cwd, ..)`;
         // watch the same file (a relative `PILOTDECK_CONFIG_PATH` is relative
         // to `cwd`, and an empty one is `cwd` itself).

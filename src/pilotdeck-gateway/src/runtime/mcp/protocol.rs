@@ -20,6 +20,7 @@ use super::naming::CallStackExceeded;
 use crate::js_value;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, json_syntax, parse_json};
 use std::{
+    fmt, io,
     path::{Path, PathBuf},
     sync::LazyLock,
 };
@@ -1217,38 +1218,74 @@ impl LoadMcpServerConfigResult {
     }
 }
 
+/// Failure while loading MCP config: the uncaught TS `RangeError` from
+/// `expandMcpConfig`, or a host `path.resolve` failure such as a cold missing
+/// process cwd for a relative path (#755).
+#[derive(Debug)]
+pub enum McpConfigError {
+    StackOverflow(CallStackExceeded),
+    Io(io::Error),
+}
+impl fmt::Display for McpConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StackOverflow(error) => error.fmt(f),
+            Self::Io(error) => error.fmt(f),
+        }
+    }
+}
+impl std::error::Error for McpConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::StackOverflow(error) => Some(error),
+            Self::Io(error) => Some(error),
+        }
+    }
+}
+impl From<CallStackExceeded> for McpConfigError {
+    fn from(error: CallStackExceeded) -> Self {
+        Self::StackOverflow(error)
+    }
+}
+impl From<io::Error> for McpConfigError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
 /// `getGlobalMcpConfigFilePath`.
-pub fn global_mcp_config_file_path(pilot_home: &Path) -> PathBuf {
-    absolute(pilot_home).join(MCP_CONFIG_FILE_NAME)
+pub fn global_mcp_config_file_path(pilot_home: &Path) -> io::Result<PathBuf> {
+    Ok(absolute(pilot_home)?.join(MCP_CONFIG_FILE_NAME))
 }
 
 /// `getProjectMcpConfigFilePath`.
-pub fn project_mcp_config_file_path(project_root: &Path) -> PathBuf {
-    absolute(project_root)
+pub fn project_mcp_config_file_path(project_root: &Path) -> io::Result<PathBuf> {
+    Ok(absolute(project_root)?
         .join(".pilotdeck")
-        .join(MCP_CONFIG_FILE_NAME)
+        .join(MCP_CONFIG_FILE_NAME))
 }
 
 /// `path.resolve`: normalize dot segments relative to the process cwd.
-fn absolute(path: &Path) -> PathBuf {
+fn absolute(path: &Path) -> io::Result<PathBuf> {
     crate::metadata::resolve_process_path(Path::new(""), path)
 }
 
 /// `loadMcpServerConfig(projectRoot, pilotHome)`. `Err` is the uncaught
-/// `RangeError` of a too-deep `expandMcpConfig`.
+/// `RangeError` of a too-deep `expandMcpConfig`, or the host `path.resolve`
+/// failure when a relative path needs a deleted process cwd.
 pub fn load_mcp_server_config(
     project_root: &Path,
     pilot_home: &Path,
     environment: &dyn McpEnvironment,
-) -> Result<LoadMcpServerConfigResult, CallStackExceeded> {
+) -> Result<LoadMcpServerConfigResult, McpConfigError> {
     let mut diagnostics = Vec::new();
     let global = read_mcp_config(
-        &global_mcp_config_file_path(pilot_home),
+        &global_mcp_config_file_path(pilot_home)?,
         &mut diagnostics,
         environment,
     )?;
     let project = read_mcp_config(
-        &project_mcp_config_file_path(project_root),
+        &project_mcp_config_file_path(project_root)?,
         &mut diagnostics,
         environment,
     )?;
@@ -1357,15 +1394,15 @@ mod tests {
     fn config_paths_use_shared_lexical_resolution() {
         let cwd = std::env::current_dir().unwrap();
         assert_eq!(
-            global_mcp_config_file_path(Path::new("a/../b/./")),
+            global_mcp_config_file_path(Path::new("a/../b/./")).unwrap(),
             cwd.join("b").join(MCP_CONFIG_FILE_NAME)
         );
         assert_eq!(
-            project_mcp_config_file_path(Path::new("/a/../../中/./x/..")),
+            project_mcp_config_file_path(Path::new("/a/../../中/./x/..")).unwrap(),
             Path::new("/中/.pilotdeck").join(MCP_CONFIG_FILE_NAME)
         );
-        assert_eq!(absolute(Path::new("")), cwd);
-        assert_eq!(absolute(Path::new("/../")), Path::new("/"));
+        assert_eq!(absolute(Path::new("")).unwrap(), cwd);
+        assert_eq!(absolute(Path::new("/../")).unwrap(), Path::new("/"));
     }
 
     /// The shared libuv table must reproduce every row the old hand-written

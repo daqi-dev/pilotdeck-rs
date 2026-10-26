@@ -98,9 +98,13 @@ pub(crate) fn route_with_metadata<F: Files>(
                 return crate::session_model::response(request, metadata, &env)
                     .map_or(Route::Forward, Route::LocalResponse);
             }
-            return crate::model_catalog::native_metadata(&env)
-                .and_then(|m| crate::session_model::response(request, &m, &env))
-                .map_or(Route::Forward, Route::LocalResponse);
+            return match crate::model_catalog::native_metadata(&env) {
+                Ok(Some(metadata)) => crate::session_model::response(request, &metadata, &env)
+                    .map_or(Route::Forward, Route::LocalResponse),
+                Ok(None) => Route::Forward,
+                Err(error) => crate::model_catalog::error_response(request, &error)
+                    .map_or(Route::Forward, Route::LocalResponse),
+            };
         }
         return route_catalog(request, metadata, &env);
     }
@@ -301,8 +305,10 @@ pub(crate) fn route_catalog<F: Files>(
             .map_or(Route::Forward, Route::LocalResponse);
     }
     match crate::model_catalog::native_metadata(env) {
-        Some(metadata) => crate::model_catalog::response(request, &metadata, env)
+        Ok(Some(metadata)) => crate::model_catalog::response(request, &metadata, env)
             .map_or(Route::Forward, Route::LocalResponse),
-        None => Route::Forward,
+        Ok(None) => Route::Forward,
+        Err(error) => crate::model_catalog::error_response(request, &error)
+            .map_or(Route::Forward, Route::LocalResponse),
     }
 }

@@ -1248,3 +1248,103 @@ fn metadata_io_native_retained_files_match_full_node_rpc() {
     }
     assert_eq!(rows.len(), 10);
 }
+
+/// #755: `from_env` is the gateway boot path. A cold Node process whose cwd
+/// was deleted throws `ENOENT: no such file or directory, uv_cwd` from
+/// `process.cwd()`; Rust must return that error, not `None` (which forwards
+/// the request and hides the failure).
+#[test]
+fn deleted_process_cwd_fails_from_env() {
+    if std::env::var_os("PDRS_DELETED_CWD_METADATA").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "metadata::tests::deleted_process_cwd_fails_from_env",
+                "--nocapture",
+            ])
+            .env("PDRS_DELETED_CWD_METADATA", "1")
+            .env("PILOT_HOME", "/pdrs-755/home")
+            .output()
+            .expect("run deleted-cwd child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
+        assert!(
+            stdout.contains("PD_FROM_ENV_CWD_ERROR=ENOENT: no such file or directory, uv_cwd"),
+            "missing Node-shaped error in: {stdout}\n{stderr}"
+        );
+        return;
+    }
+
+    let before = Metadata::from_env()
+        .expect("a valid cwd must succeed")
+        .expect("PILOT_HOME is explicit");
+    assert!(before.cwd.is_absolute());
+    assert_eq!(before.home, PathBuf::from("/pdrs-755/home"));
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("pdrs-755-from-env-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("create cwd");
+    std::env::set_current_dir(&directory).expect("enter cwd");
+    std::fs::remove_dir_all(&directory).expect("delete cwd");
+    let error = Metadata::from_env().err().expect("a deleted cwd must fail");
+    println!("PD_FROM_ENV_CWD_ERROR={error}");
+}
+
+/// #755: `path.resolve(cwd, path)` only reads `process.cwd()` when both
+/// arguments are relative (Node walks right to left). An absolute `path` or
+/// absolute `cwd` must keep working after the cwd is deleted.
+#[test]
+fn deleted_process_cwd_only_affects_relative_resolve_inputs() {
+    if std::env::var_os("PDRS_DELETED_CWD_RESOLVE_PATH").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "metadata::tests::deleted_process_cwd_only_affects_relative_resolve_inputs",
+                "--nocapture",
+            ])
+            .env("PDRS_DELETED_CWD_RESOLVE_PATH", "1")
+            .output()
+            .expect("run deleted-cwd child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
+        assert!(
+            stdout.contains("PD_RESOLVE_PATH_CWD_ERROR=ENOENT: no such file or directory, uv_cwd"),
+            "missing Node-shaped error in: {stdout}\n{stderr}"
+        );
+        return;
+    }
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "pdrs-755-resolve-path-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("create cwd");
+    std::env::set_current_dir(&directory).expect("enter cwd");
+    std::fs::remove_dir_all(&directory).expect("delete cwd");
+
+    assert_eq!(
+        resolve_process_path(Path::new("/abs/cwd"), Path::new("rel/path")).unwrap(),
+        PathBuf::from("/abs/cwd/rel/path")
+    );
+    assert_eq!(
+        resolve_process_path(Path::new("rel/cwd"), Path::new("/abs/path")).unwrap(),
+        PathBuf::from("/abs/path")
+    );
+    assert_eq!(
+        resolve_process_path(Path::new(""), Path::new("/abs/path")).unwrap(),
+        PathBuf::from("/abs/path")
+    );
+    let error =
+        resolve_process_path(Path::new("rel/cwd"), Path::new("rel/path")).expect_err("cold cwd");
+    println!("PD_RESOLVE_PATH_CWD_ERROR={error}");
+}

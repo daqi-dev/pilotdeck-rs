@@ -102,7 +102,7 @@ fn rebuild_keeps_non_canonical_rows_without_panicking() {
     let config = retaining(&journal);
     let now = 1_772_366_400_500.0;
     let mut stats =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now)).unwrap();
     let snapshot = stats.snapshot();
     assert_eq!(
         snapshot.get("totalRequests").and_then(JsValue::as_number),
@@ -123,7 +123,7 @@ fn append_falls_back_to_sidecar_without_losing_visibility() {
     let config = retaining(&journal);
     let now = 1_772_366_400_500.0;
     let mut stats =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now)).unwrap();
     let lock = home.join("stats.jsonl.retention.lock");
     fs::write(&lock, b"").unwrap();
     let mut record = parse_json(
@@ -134,7 +134,7 @@ fn append_falls_back_to_sidecar_without_losing_visibility() {
     assert_eq!(fs::read_to_string(&journal).unwrap(), "");
     assert_eq!(read_stats_records(&journal), vec![record]);
     let mut reader =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now)).unwrap();
     assert_eq!(
         reader
             .snapshot()
@@ -157,7 +157,7 @@ fn clear_truncates_on_lock_timeout_like_ts() {
     let config = retaining(&journal);
     let now = 1_772_366_400_500.0;
     let mut stats =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now)).unwrap();
     let lock = home.join("stats.jsonl.retention.lock");
     fs::write(&lock, b"").unwrap();
     stats.clear();
@@ -293,4 +293,87 @@ fn resolve_pilot_home_matches_paths_ts() {
         resolve_pilot_home(Some("/abs"), Some(home), cwd),
         Path::new("/abs")
     );
+}
+
+/// #755: `resolvePilotHome()` only reads `process.cwd()` for a relative
+/// expansion. Absolute/`~`-under-absolute-HOME values keep working after the
+/// cwd is deleted; a relative value must return Node's `uv_cwd` error instead
+/// of falling back to `/`.
+#[test]
+fn deleted_process_cwd_only_affects_relative_pilot_home() {
+    if std::env::var_os("PDRS_DELETED_CWD_STATS").is_none() {
+        for (case, pilot_home, home, expected) in [
+            (
+                "absolute",
+                Some("/pdrs-755/home"),
+                "/pdrs-755/user",
+                "/pdrs-755/home",
+            ),
+            ("tilde", Some("~"), "/pdrs-755/user", "/pdrs-755/user"),
+            (
+                "default",
+                None,
+                "/pdrs-755/user",
+                "/pdrs-755/user/.pilotdeck",
+            ),
+            ("relative", Some("relative/home"), "/pdrs-755/user", ""),
+        ] {
+            let mut command =
+                std::process::Command::new(std::env::current_exe().expect("test binary"));
+            command
+                .args([
+                    "--exact",
+                    "runtime::model::stats::tests::deleted_process_cwd_only_affects_relative_pilot_home",
+                    "--nocapture",
+                ])
+                .env("PDRS_DELETED_CWD_STATS", "1")
+                .env("PDRS_STATS_CASE", case)
+                .env("HOME", home);
+            if let Some(value) = pilot_home {
+                command.env("PILOT_HOME", value);
+            } else {
+                command.env_remove("PILOT_HOME");
+            }
+            let output = command.output().expect("run deleted-cwd child");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success(),
+                "case {case} failed: {stdout}\n{stderr}"
+            );
+            if case == "relative" {
+                assert!(
+                    stdout.contains("PD_STATS_CWD_ERROR=ENOENT: no such file or directory, uv_cwd"),
+                    "case {case}: missing Node-shaped error in: {stdout}\n{stderr}"
+                );
+            } else {
+                assert!(
+                    stdout.contains(&format!("PD_STATS_HOME={expected}")),
+                    "case {case}: missing home in: {stdout}\n{stderr}"
+                );
+            }
+        }
+        return;
+    }
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("pdrs-755-stats-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("create cwd");
+    std::env::set_current_dir(&directory).expect("enter cwd");
+    std::fs::remove_dir_all(&directory).expect("delete cwd");
+
+    match std::env::var("PDRS_STATS_CASE").expect("case").as_str() {
+        "relative" => {
+            let error = default_pilot_home().expect_err("a relative PILOT_HOME needs the cwd");
+            println!("PD_STATS_CWD_ERROR={error}");
+        }
+        _ => {
+            let home = default_pilot_home().expect("an absolute home must not read the cwd");
+            println!("PD_STATS_HOME={}", home.display());
+        }
+    }
 }

@@ -49,6 +49,9 @@ pub enum AdapterError {
     ProjectionUnavailable(String),
     /// Error from the host store, propagated unchanged (TS rethrows it).
     Store(LedgerError),
+    /// Host filesystem failure outside the store. The message is Node-shaped
+    /// (`ENOENT: no such file or directory, uv_cwd` for a missing process cwd).
+    Io(std::io::Error),
 }
 impl fmt::Display for AdapterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -60,6 +63,7 @@ impl fmt::Display for AdapterError {
                 f.write_str(message)
             }
             Self::Store(error) => error.fmt(f),
+            Self::Io(error) => error.fmt(f),
         }
     }
 }
@@ -67,8 +71,14 @@ impl std::error::Error for AdapterError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Store(error) => Some(error),
+            Self::Io(error) => Some(error),
             _ => None,
         }
+    }
+}
+impl From<std::io::Error> for AdapterError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
     }
 }
 fn validation(code: &'static str, message: String) -> AdapterError {
@@ -309,12 +319,20 @@ impl AsyncTranscriptAdapter {
         (self.project_chat_dir)(key)
     }
     /// ProjectSessionStorage.ts:401-417 paths; transcript goes to the store.
-    pub fn create_session_storage(&self, input: SessionStorageInput) -> SessionStorage {
+    ///
+    /// Relative `projectRoot`/host chat-dir values are anchored by Node
+    /// `path.resolve` at `process.cwd()`; a cold missing cwd returns the
+    /// Node-shaped `uv_cwd` error instead of joining an empty base (#755).
+    pub fn create_session_storage(
+        &self,
+        input: SessionStorageInput,
+    ) -> AdapterResult<SessionStorage> {
+        let project_root = anchor(&input.project_root)?;
         let project = ProjectKey {
-            project_root: input.project_root,
+            project_root: project_root.clone(),
             pilot_home: input.pilot_home,
         };
-        let chat_dir = resolve(&self.project_chat_dir(&project), &[]);
+        let chat_dir = resolve(&anchor(&self.project_chat_dir(&project))?, &[]);
         let safe_id = sanitize_session_id(&input.session_id);
         let safe_id = safe_id.as_str();
         let transcript_path = resolve(&chat_dir, &[format!("{safe_id}.jsonl").as_str()]);
@@ -329,11 +347,8 @@ impl AsyncTranscriptAdapter {
                 .now
                 .unwrap_or_else(|| Arc::new(|| super::transcript::timestamp().unwrap_or_default())),
         });
-        SessionStorage {
-            tool_results_dir: resolve(
-                &base.project.project_root,
-                &[".pilotdeck", "tool-results", safe_id],
-            ),
+        Ok(SessionStorage {
+            tool_results_dir: resolve(&project_root, &[".pilotdeck", "tool-results", safe_id]),
             file_history_dir: resolve(&chat_dir, &[safe_id, "file-history"]),
             projection_checkpoint_path: checkpoint.into(),
             transcript: TranscriptWriter::new(
@@ -345,7 +360,7 @@ impl AsyncTranscriptAdapter {
             transcript_path,
             subagents_dir,
             base,
-        }
+        })
     }
     /// TS listSessions (AsyncTranscriptStorageAdapter.ts:392-411); `None` when
     /// the store has no `list`. Reads every record before projecting, like the
@@ -363,13 +378,13 @@ impl AsyncTranscriptAdapter {
         let reads: Vec<_> = records
             .iter()
             .map(|record| {
-                self.create_session_storage(SessionStorageInput {
+                let storage = self.create_session_storage(SessionStorageInput {
                     project_root: input.project_root.clone(),
                     pilot_home: input.pilot_home.clone(),
                     session_id: record.session_id.clone(),
                     now: None,
-                })
-                .read_transcript(None)
+                })?;
+                storage.read_transcript(None)
             })
             .collect();
         Some((|| -> AdapterResult<Vec<JsValue>> {
@@ -1298,13 +1313,28 @@ pub fn sanitize_session_id(session_id: &JsString) -> String {
         String::from_utf16_lossy(&units[start..end])
     }
 }
-/// Node path.resolve/join for absolute bases: lexical, no symlink resolution.
+/// Node `path.resolve(base)`: a relative base is anchored at `process.cwd()`.
+/// A cold missing cwd fails with Node's `uv_cwd` error; it never becomes an
+/// empty base (#755).
+fn anchor(base: &Path) -> AdapterResult<PathBuf> {
+    if base.is_absolute() {
+        return Ok(base.to_path_buf());
+    }
+    crate::metadata::process_cwd()
+        .map(|cwd| cwd.join(base))
+        .map_err(|error| AdapterError::Io(crate::metadata::process_cwd_error(&error)))
+}
+
+/// Node path.resolve/join for an already anchored absolute base: lexical, no
+/// symlink resolution. `create_session_storage` is the only entry that can see
+/// a relative base; it anchors both `projectRoot` and the host chat dir before
+/// any derived path is built, so every later call is absolute.
 fn resolve(base: &Path, parts: &[&str]) -> PathBuf {
-    let mut path = if base.is_absolute() {
-        base.to_path_buf()
-    } else {
-        std::env::current_dir().unwrap_or_default().join(base)
-    };
+    debug_assert!(
+        base.is_absolute(),
+        "path.resolve base must be anchored before joining"
+    );
+    let mut path = base.to_path_buf();
     for part in parts.iter().filter(|p| !p.is_empty()) {
         path.push(part);
     }
@@ -1421,12 +1451,16 @@ mod restore_tests {
         });
         let adapter =
             AsyncTranscriptAdapter::new(store.clone(), Arc::new(|_| "/pdrs-fixture/chats".into()));
-        let storage = Arc::new(adapter.create_session_storage(SessionStorageInput {
-            project_root: "/pdrs-fixture/project".into(),
-            pilot_home: "/pdrs-fixture/home".into(),
-            session_id: "s1".into(),
-            now: Some(Arc::new(|| "2026-10-18T00:00:00.000Z".into())),
-        }));
+        let storage = Arc::new(
+            adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root: "/pdrs-fixture/project".into(),
+                    pilot_home: "/pdrs-fixture/home".into(),
+                    session_id: "s1".into(),
+                    now: Some(Arc::new(|| "2026-10-18T00:00:00.000Z".into())),
+                })
+                .unwrap(),
+        );
         *store.owner.lock().unwrap() = Arc::downgrade(&storage);
         storage
             .transcript

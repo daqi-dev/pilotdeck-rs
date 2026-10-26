@@ -2124,16 +2124,19 @@ async fn cancelled_pull_replays_the_held_event() {
 /// An enabled `TokenStatsCollector` over a per-test file (never the default
 /// `~/.pilotdeck` location), so `observeRequest` is observable.
 fn stats_collector(path: &Path) -> Arc<Mutex<TokenStatsCollector>> {
-    Arc::new(Mutex::new(TokenStatsCollector::new(
-        Some(&StatsConfig {
-            enabled: true,
-            model_pricing: None,
-            file_path: Some(path.to_path_buf()),
-            retention_ms: None,
-            baseline_model: None,
-        }),
-        None,
-    )))
+    Arc::new(Mutex::new(
+        TokenStatsCollector::new(
+            Some(&StatsConfig {
+                enabled: true,
+                model_pricing: None,
+                file_path: Some(path.to_path_buf()),
+                retention_ms: None,
+                baseline_model: None,
+            }),
+            None,
+        )
+        .unwrap(),
+    ))
 }
 
 /// The scope of the session usage snapshot: "session" once `observeRequest`

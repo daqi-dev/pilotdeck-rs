@@ -477,3 +477,27 @@ fn catalog_unknown_errno_keeps_both_global_fs_boundaries_on_host() {
         }
     }
 }
+
+/// #755: `native_metadata` leaves `cwd` empty when an absolute PILOT_HOME does
+/// not need it. A relative projectKey still needs `process.cwd()` and must
+/// surface Node's `uv_cwd` error, not resolve against an empty base.
+#[test]
+fn empty_native_cwd_rejects_a_relative_project_key() {
+    let metadata = Metadata {
+        home: PathBuf::from("/pdrs-755/home"),
+        cwd: PathBuf::new(),
+        files: NativeFiles,
+    };
+    let mut params = pilotdeck_protocol::JsObject::new();
+    params.insert(
+        "projectKey".into(),
+        JsValue::String("relative/project".into()),
+    );
+    let error = execute(&metadata, &JsValue::Object(params), &Env::new())
+        .expect_err("a relative key needs the missing cwd");
+    assert_eq!(error.code, "ENOENT");
+    assert_eq!(
+        error.message.to_utf8().unwrap(),
+        "ENOENT: no such file or directory, uv_cwd"
+    );
+}

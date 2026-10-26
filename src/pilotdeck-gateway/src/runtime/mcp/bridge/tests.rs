@@ -32,7 +32,7 @@ fn raw(link: &str) -> JsValue {
 fn assert_skipped(cwd: &Path, link: &str, roots: &[PathBuf]) {
     let raw = raw(link);
     assert_eq!(
-        JsValue::Array(marshal_mcp_content_with_roots(&raw, cwd.to_str(), roots)),
+        JsValue::Array(marshal_mcp_content_with_roots(&raw, cwd.to_str(), roots).unwrap()),
         raw,
         "text must survive: {link}",
     );
@@ -70,24 +70,33 @@ fn assert_no_open(policy: &ImageReadPolicy, path: &Path) {
 
 #[test]
 fn image_paths_use_shared_lexical_resolution() {
-    assert_eq!(resolve_path("/a/./b", "../图.png"), Path::new("/a/图.png"));
-    assert_eq!(resolve_path("/a", "/x/../img.png"), Path::new("/img.png"));
     assert_eq!(
-        resolve_path("/a", "../../../img.png"),
+        resolve_path("/a/./b", "../图.png").unwrap(),
+        Path::new("/a/图.png")
+    );
+    assert_eq!(
+        resolve_path("/a", "/x/../img.png").unwrap(),
+        Path::new("/img.png")
+    );
+    assert_eq!(
+        resolve_path("/a", "../../../img.png").unwrap(),
         Path::new("/img.png")
     );
     let cwd = std::env::current_dir().unwrap();
-    assert_eq!(resolve_path("a/../b", "./../img.png"), cwd.join("img.png"));
+    assert_eq!(
+        resolve_path("a/../b", "./../img.png").unwrap(),
+        cwd.join("img.png")
+    );
 }
 
 #[test]
 fn non_array_content_and_fallbacks() {
     assert_eq!(
-        marshal_mcp_content(&JsValue::Null, None),
+        marshal_mcp_content(&JsValue::Null, None).unwrap(),
         [parse_json(r#"{"type":"json","value":null}"#).unwrap()]
     );
     assert_eq!(
-        marshal_mcp_content(&parse_json("[]").unwrap(), None),
+        marshal_mcp_content(&parse_json("[]").unwrap(), None).unwrap(),
         [parse_json(r#"{"type":"json","value":[]}"#).unwrap()]
     );
     assert_eq!(
@@ -124,7 +133,7 @@ fn realpath_rejects_parent_absolute_and_symlink_escapes_without_open() {
         "./chain.png",
         "./parent/outside.png",
     ] {
-        assert_no_open(&policy, &resolve_path(cwd.to_str().unwrap(), link));
+        assert_no_open(&policy, &resolve_path(cwd.to_str().unwrap(), link).unwrap());
         assert_skipped(&cwd, link, &[]);
     }
     let absolute = dir.path("outside.png");
@@ -170,7 +179,9 @@ fn whitelist_is_explicit_canonical_directory_and_component_bounded() {
         Some(b"allowed".to_vec())
     );
     assert_eq!(
-        marshal_mcp_content_with_roots(&raw("./link.png"), cwd.to_str(), &roots).len(),
+        marshal_mcp_content_with_roots(&raw("./link.png"), cwd.to_str(), &roots)
+            .unwrap()
+            .len(),
         2
     );
     assert_no_open(&policy, &dir.path("allowed-extra/image.png"));

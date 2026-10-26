@@ -856,7 +856,8 @@ fn replays_ts_parse_and_patch() {
             &string(field(case, "projectRoot"), "projectRoot"),
             &string(field(case, "pilotHome"), "pilotHome"),
             &builtin_paths(),
-        );
+        )
+        .unwrap();
         // Key order of the TS object comes from `{ ...spec, command, cwd, args }`
         // and carries no meaning; the values are compared exactly.
         assert_eq!(
@@ -1147,7 +1148,7 @@ fn provider_op<'a>(run: &'a ProviderRun, op: JsValue) -> LocalFuture<'a, Fields>
                 );
                 vec![(
                     "ok",
-                    specs.map_or(JsValue::Null, |specs| {
+                    specs.ok().flatten().map_or(JsValue::Null, |specs| {
                         JsValue::Array(specs.iter().map(server_spec_value).collect())
                     }),
                 )]

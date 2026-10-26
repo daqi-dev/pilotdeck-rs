@@ -246,6 +246,10 @@ fn error_outcome(error: &AdapterError) -> JsValue {
             e.insert("name".into(), "Error".into());
             e.insert("message".into(), error.to_string().as_str().into());
         }
+        AdapterError::Io(error) => {
+            e.insert("name".into(), "Error".into());
+            e.insert("message".into(), error.to_string().as_str().into());
+        }
     }
     object([("error", JsValue::Object(e))])
 }
@@ -323,12 +327,16 @@ impl Ctx {
     }
     fn open(&mut self, session_id: JsString) -> &SessionStorage {
         self.session_id = session_id.clone();
-        self.storage = Some(self.adapter.create_session_storage(SessionStorageInput {
-            project_root: PROJECT_ROOT.into(),
-            pilot_home: self.pilot_home.clone(),
-            session_id,
-            now: Some(clock()),
-        }));
+        self.storage = Some(
+            self.adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root: PROJECT_ROOT.into(),
+                    pilot_home: self.pilot_home.clone(),
+                    session_id,
+                    now: Some(clock()),
+                })
+                .unwrap(),
+        );
         self.storage()
     }
 }
@@ -621,12 +629,14 @@ fn real_ts_scenarios_match_outcomes_calls_and_bytes() {
 fn fresh(dir: &Path, store: Arc<dyn TranscriptStore>) -> (AsyncTranscriptAdapter, SessionStorage) {
     let chat = dir.join("chats");
     let adapter = AsyncTranscriptAdapter::new(store, Arc::new(move |_: &ProjectKey| chat.clone()));
-    let storage = adapter.create_session_storage(SessionStorageInput {
-        project_root: PROJECT_ROOT.into(),
-        pilot_home: dir.join("home"),
-        session_id: "s1".into(),
-        now: Some(clock()),
-    });
+    let storage = adapter
+        .create_session_storage(SessionStorageInput {
+            project_root: PROJECT_ROOT.into(),
+            pilot_home: dir.join("home"),
+            session_id: "s1".into(),
+            now: Some(clock()),
+        })
+        .unwrap();
     (adapter, storage)
 }
 fn metadata_value(n: usize) -> JsValue {
@@ -898,6 +908,7 @@ fn real_ts_and_rust_continue_each_others_transcripts() {
             session_id: "cross".into(),
             now: None,
         })
+        .unwrap()
     };
     let storage = open();
     let restored = storage.restore().unwrap();
@@ -980,4 +991,76 @@ fn jsonl_store_control_boundary_without_boundary_throws_like_ts_and_appends_noth
         fs::read_to_string(&key.transcript_path).unwrap(),
         "{\"type\":\"session_metadata\",\"n\":1}\n{\"type\":\"control_boundary\",\"boundary\":\"x\"}\n"
     );
+}
+
+/// #755: TS `getPilotProjectChatDir` resolves an absolute `projectRoot`
+/// without `process.cwd()`, but a relative one goes through `path.resolve`
+/// and throws `ENOENT ... uv_cwd` after the cwd is deleted. The adapter's
+/// host chat-dir callback gets the same treatment.
+#[test]
+fn deleted_process_cwd_fails_relative_transcript_bases() {
+    if std::env::var_os("PDRS_DELETED_CWD_TRANSCRIPT").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "storage::transcript_adapter_tests::deleted_process_cwd_fails_relative_transcript_bases",
+                "--nocapture",
+            ])
+            .env("PDRS_DELETED_CWD_TRANSCRIPT", "1")
+            .output()
+            .expect("run deleted-cwd child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
+        assert!(
+            stdout.contains("PD_TRANSCRIPT_CWD_ERROR=ENOENT: no such file or directory, uv_cwd"),
+            "missing Node-shaped error in: {stdout}\n{stderr}"
+        );
+        return;
+    }
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "pdrs-755-transcript-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).expect("create cwd");
+    std::env::set_current_dir(&directory).expect("enter cwd");
+    fs::remove_dir_all(&directory).expect("delete cwd");
+
+    let absolute = AsyncTranscriptAdapter::new(
+        Arc::new(JsonlTranscriptStore::new()),
+        Arc::new(|_| PathBuf::from("/pdrs-755/chats")),
+    );
+    let storage = absolute
+        .create_session_storage(SessionStorageInput {
+            project_root: PathBuf::from("/pdrs-755/project"),
+            pilot_home: PathBuf::from("/pdrs-755/home"),
+            session_id: "s".into(),
+            now: None,
+        })
+        .expect("absolute bases must not read the cwd");
+    assert_eq!(storage.chat_dir, PathBuf::from("/pdrs-755/chats"));
+    assert_eq!(
+        storage.tool_results_dir,
+        PathBuf::from("/pdrs-755/project/.pilotdeck/tool-results/s")
+    );
+
+    let relative = AsyncTranscriptAdapter::new(
+        Arc::new(JsonlTranscriptStore::new()),
+        Arc::new(|_| PathBuf::from("relative/chats")),
+    );
+    let error = relative
+        .create_session_storage(SessionStorageInput {
+            project_root: PathBuf::from("relative/project"),
+            pilot_home: PathBuf::from("/pdrs-755/home"),
+            session_id: "s".into(),
+            now: None,
+        })
+        .err()
+        .expect("relative bases need the deleted cwd");
+    println!("PD_TRANSCRIPT_CWD_ERROR={error}");
 }

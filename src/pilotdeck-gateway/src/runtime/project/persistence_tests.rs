@@ -477,12 +477,14 @@ async fn assert_oversized_log_rejected(scratch: &Scratch, chat_dir: PathBuf) {
         Arc::new(crate::storage::JsonlTranscriptStore::new()),
         Arc::new(move |_| adapter_dir.clone()),
     );
-    let storage = adapter.create_session_storage(crate::storage::SessionStorageInput {
-        project_root: scratch.0.join("project"),
-        pilot_home: scratch.0.join("home"),
-        session_id: "large".into(),
-        now: None,
-    });
+    let storage = adapter
+        .create_session_storage(crate::storage::SessionStorageInput {
+            project_root: scratch.0.join("project"),
+            pilot_home: scratch.0.join("home"),
+            session_id: "large".into(),
+            now: None,
+        })
+        .unwrap();
     assert_eq!(storage.transcript_path, path);
     let error = storage.restore().unwrap_err();
     assert!(

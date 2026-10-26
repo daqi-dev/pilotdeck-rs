@@ -316,20 +316,23 @@ impl RouterRuntime {
         }
         let enabled = config.enabled;
         let clock = deps.clock.clone();
-        let stats = deps.stats.unwrap_or_else(|| {
-            // `RouterRuntime.ts:204-212`: the default observer receives
-            // `{...config.stats, enabled: enabled && stats.enabled,
-            // baselineModel: stats.baselineModel ?? scenarios.default}`.
-            let mut stats_config = config.stats.clone();
-            stats_config.enabled = enabled && stats_config.enabled;
-            if stats_config.baseline_model.is_none() {
-                stats_config.baseline_model = config.scenarios_default.clone();
+        let stats = match deps.stats {
+            Some(stats) => stats,
+            None => {
+                // `RouterRuntime.ts:204-212`: the default observer receives
+                // `{...config.stats, enabled: enabled && stats.enabled,
+                // baselineModel: stats.baselineModel ?? scenarios.default}`.
+                let mut stats_config = config.stats.clone();
+                stats_config.enabled = enabled && stats_config.enabled;
+                if stats_config.baseline_model.is_none() {
+                    stats_config.baseline_model = config.scenarios_default.clone();
+                }
+                Arc::new(Mutex::new(
+                    TokenStatsCollector::new(Some(&stats_config), None)
+                        .map_err(|error| RouterRuntimeError::new("stats_cwd", error.to_string()))?,
+                ))
             }
-            Arc::new(Mutex::new(TokenStatsCollector::new(
-                Some(&stats_config),
-                None,
-            )))
-        });
+        };
         Ok(Self {
             config,
             enabled,

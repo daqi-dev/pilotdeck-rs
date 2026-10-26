@@ -1347,19 +1347,14 @@ fn is_path_within_root(candidate: &JsString, root: &JsString, process_cwd: &JsSt
 /// TS `buildTurnEnvironment` resolves a relative `cwd` through the same
 /// `path.resolve`/`process.cwd()` cold path.
 pub(crate) fn process_cwd_units() -> Result<JsString, HostError> {
-    std::env::current_dir()
+    crate::metadata::process_cwd()
         .map(|path| JsString::from(path.to_string_lossy().as_ref()))
-        .map_err(|error| HostError::new(HostErrorKind::Io, process_cwd_error(&error)))
-}
-
-fn process_cwd_error(error: &std::io::Error) -> String {
-    let detail = match error.raw_os_error() {
-        Some(2) => "ENOENT: no such file or directory",
-        Some(13) => "EACCES: permission denied",
-        Some(1) => "EPERM: operation not permitted",
-        _ => return error.to_string(),
-    };
-    format!("{detail}, uv_cwd")
+        .map_err(|error| {
+            HostError::new(
+                HostErrorKind::Io,
+                crate::metadata::process_cwd_message(&error),
+            )
+        })
 }
 
 #[cfg(test)]

@@ -46,12 +46,15 @@ pub fn rewind_files(input: RewindFilesInput<'_>) -> JsValue {
 }
 
 fn run(input: RewindFilesInput<'_>) -> Result<JsObject, String> {
-    let storage = input.adapter.create_session_storage(SessionStorageInput {
-        project_root: input.project_root.to_path_buf(),
-        pilot_home: input.pilot_home.to_path_buf(),
-        session_id: input.session_key.clone(),
-        now: None,
-    });
+    let storage = input
+        .adapter
+        .create_session_storage(SessionStorageInput {
+            project_root: input.project_root.to_path_buf(),
+            pilot_home: input.pilot_home.to_path_buf(),
+            session_id: input.session_key.clone(),
+            now: None,
+        })
+        .map_err(|error| error.to_string())?;
     let read = storage
         .read_transcript(None)
         .map_err(|error| storage_error(error, &storage.transcript_path))?;

@@ -278,15 +278,55 @@ pub(crate) struct Metadata<F = NativeFiles> {
     pub files: F,
 }
 
+/// Node's `process.cwd()` cold path (`uv_cwd` real syscall). A missing cwd
+/// throws `ENOENT: no such file or directory, uv_cwd`; Node never substitutes
+/// an empty path or `/` (#335 ②, #755). The warm-path cache is intentionally
+/// not modelled: re-reading is stricter than returning a stale directory.
+pub(crate) fn process_cwd() -> io::Result<PathBuf> {
+    std::env::current_dir()
+}
+
+/// Node's message shape for a failed `process.cwd()`.
+pub(crate) fn process_cwd_message(error: &io::Error) -> String {
+    let detail = match error.raw_os_error() {
+        Some(2) => "ENOENT: no such file or directory",
+        Some(13) => "EACCES: permission denied",
+        Some(1) => "EPERM: operation not permitted",
+        _ => return error.to_string(),
+    };
+    format!("{detail}, uv_cwd")
+}
+
+/// Node's error code for a failed `process.cwd()`.
+pub(crate) fn process_cwd_code(error: &io::Error) -> &'static str {
+    match error.raw_os_error() {
+        Some(2) => "ENOENT",
+        Some(13) => "EACCES",
+        Some(1) => "EPERM",
+        _ => "UNKNOWN",
+    }
+}
+
+/// Preserve the OS error kind while giving it Node's `uv_cwd` message.
+pub(crate) fn process_cwd_error(error: &io::Error) -> io::Error {
+    io::Error::new(error.kind(), process_cwd_message(error))
+}
+
 impl Metadata {
-    pub fn from_env() -> Option<Self> {
-        let home = std::env::var("PILOT_HOME").ok()?;
+    pub fn from_env() -> io::Result<Option<Self>> {
+        let Ok(home) = std::env::var("PILOT_HOME") else {
+            return Ok(None);
+        };
         // Explicit PILOT_HOME only: never open the user's real default home.
         // Deployment must use the same cwd as TS process.cwd(): relative
         // project keys, .cwd markers and PILOT_HOME all resolve against it.
-        let cwd = std::env::current_dir().ok()?;
+        // `from_env` is the gateway boot path (TS calls `process.cwd()` at
+        // startup), so a cold missing cwd fails closed instead of forwarding.
+        let cwd = process_cwd().map_err(|error| process_cwd_error(&error))?;
         let home = if home == "~" || home.starts_with("~/") {
-            let user_home = std::env::var("HOME").ok()?;
+            let Ok(user_home) = std::env::var("HOME") else {
+                return Ok(None);
+            };
             resolve(
                 &cwd,
                 &PathBuf::from(user_home)
@@ -296,11 +336,11 @@ impl Metadata {
         } else {
             resolve(&cwd, &home)
         };
-        Some(Self {
+        Ok(Some(Self {
             home,
             cwd,
             files: NativeFiles,
-        })
+        }))
     }
 }
 
@@ -331,9 +371,24 @@ pub(crate) fn resolve_path(cwd: &Path, path: &Path) -> PathBuf {
 }
 
 /// Node `path.resolve(cwd, path)` when `cwd` may itself be relative.
-pub(crate) fn resolve_process_path(cwd: &Path, path: &Path) -> PathBuf {
-    let process_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    resolve_path(&resolve_path(&process_cwd, cwd), path)
+///
+/// Node walks its arguments right to left and only calls `process.cwd()` when
+/// no absolute argument was seen. An absolute `path` therefore never reads the
+/// process cwd, and an absolute `cwd` anchors a relative `path` without it.
+/// Only when both are relative is `process.cwd()` consulted; a cold missing
+/// cwd then fails with Node's `uv_cwd` error instead of falling back to `/`.
+pub(crate) fn resolve_process_path(cwd: &Path, path: &Path) -> io::Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(resolve_path(Path::new(""), path));
+    }
+    let cwd = if cwd.is_absolute() {
+        cwd.to_path_buf()
+    } else {
+        process_cwd()
+            .map_err(|error| process_cwd_error(&error))?
+            .join(cwd)
+    };
+    Ok(resolve_path(&cwd, path))
 }
 
 const UTF16_SLASH: u16 = b'/' as u16;

@@ -115,6 +115,7 @@ impl From<AdapterError> for RecorderError {
             AdapterError::ProjectionUnavailable(message) => Self::ProjectionUnavailable(message),
             AdapterError::Domain { code, message } => Self::Domain { code, message },
             AdapterError::Store(error) => Self::Store(error),
+            AdapterError::Io(error) => Self::Store(super::LedgerError::Io(error)),
         }
     }
 }

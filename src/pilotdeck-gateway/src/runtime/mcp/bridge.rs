@@ -197,14 +197,22 @@ impl McpBridgeTool {
         let (content, raw) = if let Some(cwd) = cwd {
             // Filesystem resolution/reads stay off the async executor.
             let roots = self.options.image_read_allowed_roots.clone();
-            tokio::task::spawn_blocking(move || {
+            let (content, raw) = tokio::task::spawn_blocking(move || {
                 let content = marshal_mcp_content_with_roots(&raw, Some(&cwd), &roots);
                 (content, raw)
             })
             .await
-            .map_err(|error| ToolError::failed(format!("MCP content task failed: {error}")))?
+            .map_err(|error| ToolError::failed(format!("MCP content task failed: {error}")))?;
+            (
+                content.map_err(|error| ToolError::failed(error.to_string()))?,
+                raw,
+            )
         } else {
-            (marshal_mcp_content(&raw, None), raw)
+            (
+                marshal_mcp_content(&raw, None)
+                    .map_err(|error| ToolError::failed(error.to_string()))?,
+                raw,
+            )
         };
         Ok(ToolOutput {
             content,
@@ -268,8 +276,9 @@ fn content_block(entries: Vec<(&str, JsValue)>) -> JsValue {
     JsValue::Object(object)
 }
 
-/// `marshalMcpContent(raw, cwd)`.
-pub fn marshal_mcp_content(raw: &JsValue, cwd: Option<&str>) -> Vec<JsValue> {
+/// `marshalMcpContent(raw, cwd)`. Fails only when a relative image link needs
+/// a cold missing process cwd (`path.resolve`), matching TS's throw.
+pub fn marshal_mcp_content(raw: &JsValue, cwd: Option<&str>) -> std::io::Result<Vec<JsValue>> {
     marshal_mcp_content_with_roots(raw, cwd, &[])
 }
 
@@ -277,12 +286,12 @@ fn marshal_mcp_content_with_roots(
     raw: &JsValue,
     cwd: Option<&str>,
     allowed_roots: &[PathBuf],
-) -> Vec<JsValue> {
+) -> std::io::Result<Vec<JsValue>> {
     let JsValue::Array(blocks) = raw else {
-        return vec![content_block(vec![
+        return Ok(vec![content_block(vec![
             ("type", "json".into()),
             ("value", raw.clone()),
-        ])];
+        ])]);
     };
     let mut result = Vec::new();
     let mut remainder = Vec::new();
@@ -321,7 +330,7 @@ fn marshal_mcp_content_with_roots(
             if block_type(block).is_some_and(|k| k.equals_str("text"))
                 && let Some(text) = block.get("text").and_then(JsValue::as_string)
             {
-                result.extend(extract_file_images(text, cwd, &policy));
+                result.extend(extract_file_images(text, cwd, &policy)?);
             }
         }
     }
@@ -337,7 +346,7 @@ fn marshal_mcp_content_with_roots(
             ("value", raw.clone()),
         ]));
     }
-    result
+    Ok(result)
 }
 
 /// `/\[.*?\]\((\.[^)]*\.(?:png|jpe?g|gif|webp))\)/gi` (JS `.` stops at line
@@ -348,16 +357,20 @@ static IMAGE_LINK: LazyLock<regex::Regex> = LazyLock::new(|| {
 });
 
 /// `path.resolve(cwd, rel)` (POSIX, lexical).
-fn resolve_path(cwd: &str, relative: &str) -> PathBuf {
+fn resolve_path(cwd: &str, relative: &str) -> std::io::Result<PathBuf> {
     crate::metadata::resolve_process_path(Path::new(cwd), Path::new(relative))
 }
 
-fn extract_file_images(text: &JsString, cwd: &str, policy: &ImageReadPolicy) -> Vec<JsValue> {
+fn extract_file_images(
+    text: &JsString,
+    cwd: &str,
+    policy: &ImageReadPolicy,
+) -> std::io::Result<Vec<JsValue>> {
     let text = String::from_utf16_lossy(text.units());
     let mut images = Vec::new();
     for capture in IMAGE_LINK.captures_iter(&text) {
         let relative = &capture[1];
-        let Some(bytes) = policy.read(&resolve_path(cwd, relative)) else {
+        let Some(bytes) = policy.read(&resolve_path(cwd, relative)?) else {
             continue;
         };
         let ext = relative.rsplit('.').next().unwrap_or("png").to_lowercase();
@@ -380,7 +393,7 @@ fn extract_file_images(text: &JsString, cwd: &str, policy: &ImageReadPolicy) -> 
             ),
         ]));
     }
-    images
+    Ok(images)
 }
 
 /// Canonical roots are directories; failed/relative whitelist entries grant

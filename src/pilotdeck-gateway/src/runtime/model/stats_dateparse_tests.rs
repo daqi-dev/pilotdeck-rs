@@ -191,7 +191,7 @@ fn assert_compaction_and_reopen(expected: &JsValue, now: f64, retention: f64) {
         baseline_model: None,
     };
     let mut stats =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now)).unwrap();
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         string(field(expected, "compacted")).to_utf8().unwrap(),
@@ -200,7 +200,7 @@ fn assert_compaction_and_reopen(expected: &JsValue, now: f64, retention: f64) {
     assert_eq!(stats.snapshot(), *field(expected, "snapshot"));
     drop(stats);
     let mut reopened =
-        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now));
+        TokenStatsCollector::with_clock(Some(&config), Some(&home), Arc::new(move || now)).unwrap();
     assert_eq!(reopened.snapshot(), *field(expected, "reopened"));
     drop(reopened);
     fs::remove_dir_all(home).unwrap();

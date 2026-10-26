@@ -257,8 +257,75 @@ pub(crate) fn response<F: Files>(
 /// PILOT_HOME. Resolve the ordinary ~/.pilotdeck fallback against the host HOME.
 /// If the OS home cannot be represented from the captured environment, TS keeps
 /// ownership instead of guessing a directory.
-pub(crate) fn native_metadata(env: &Env) -> Option<Metadata<crate::metadata::NativeFiles>> {
-    metadata_at(env, std::env::current_dir().ok()?)
+///
+/// Node's `path.resolve` only reads `process.cwd()` when a relative input
+/// remains: an absolute `PILOT_HOME` (or `~` expanded through an absolute
+/// HOME) resolves without it (Node probe: `listModelCatalog` with an absolute
+/// PILOT_HOME does not throw after the cwd is deleted). A relative value still
+/// needs the cold cwd and fails with Node's `uv_cwd` error when it is gone.
+pub(crate) fn native_metadata(
+    env: &Env,
+) -> Result<Option<Metadata<crate::metadata::NativeFiles>>, config::Error> {
+    let value = env
+        .get("PILOT_HOME")
+        .map(String::as_str)
+        .unwrap_or("~/.pilotdeck");
+    let anchored = match value {
+        "~" => env
+            .get("HOME")
+            .is_some_and(|home| std::path::Path::new(home).is_absolute()),
+        _ if value.starts_with("~/") => env
+            .get("HOME")
+            .is_some_and(|home| std::path::Path::new(home).join(&value[2..]).is_absolute()),
+        _ => std::path::Path::new(value).is_absolute(),
+    };
+    // A relative `PILOTDECK_CONFIG_PATH` is resolved against the cwd by the
+    // config loader even when PILOT_HOME itself is absolute.
+    let relative_config = env.get("PILOTDECK_CONFIG_PATH").is_some_and(|path| {
+        let path = crate::metadata::js_trim(path);
+        !path.is_empty() && !std::path::Path::new(path).is_absolute()
+    });
+    let cwd = if anchored && !relative_config {
+        // The catalog/session-model entry only uses `cwd` for relative paths;
+        // leave the sentinel empty until one actually needs it. Session-model
+        // rejects a relative projectKey when this is empty.
+        std::path::PathBuf::new()
+    } else {
+        crate::metadata::process_cwd().map_err(|error| cwd_error(&error))?
+    };
+    Ok(metadata_at(env, cwd))
+}
+
+fn cwd_error(error: &std::io::Error) -> config::Error {
+    config::Error {
+        code: crate::metadata::process_cwd_code(error).into(),
+        message: crate::metadata::process_cwd_message(error).into(),
+        diagnostics: vec![],
+        name: "Error",
+        requires_host: false,
+    }
+}
+
+/// Build the local error frame that `response` would emit for a failed
+/// `execute`; used when metadata itself cannot be built.
+pub(crate) fn error_response(request: &JsValue, error: &config::Error) -> Option<Vec<u8>> {
+    let id = field(request, "id").clone();
+    let frame = object([
+        ("type", "response".into()),
+        ("id", id),
+        ("ok", JsValue::Bool(false)),
+        (
+            "error",
+            object([
+                ("code", JsValue::String(error.code.as_str().into())),
+                ("message", JsValue::String(error.message.clone())),
+            ]),
+        ),
+    ]);
+    stringify_json(&frame)
+        .ok()
+        .flatten()
+        .map(String::into_bytes)
 }
 fn metadata_at(
     env: &Env,
@@ -309,5 +376,85 @@ mod tests {
                 std::path::PathBuf::from(expected)
             );
         }
+    }
+
+    /// #755: an absolute `PILOT_HOME` resolves without `process.cwd()` (Node
+    /// probe: `listModelCatalog` does not throw after the cwd is deleted).
+    /// A relative value must return Node's `uv_cwd` error instead of `None`.
+    #[test]
+    fn deleted_process_cwd_only_affects_relative_pilot_home() {
+        if std::env::var_os("PDRS_DELETED_CWD_CATALOG").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+                .args([
+                    "--exact",
+                    "model_catalog::tests::deleted_process_cwd_only_affects_relative_pilot_home",
+                    "--nocapture",
+                ])
+                .env("PDRS_DELETED_CWD_CATALOG", "1")
+                .output()
+                .expect("run deleted-cwd child");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
+            assert!(
+                stdout.contains("PD_CATALOG_CWD_ERROR=ENOENT: no such file or directory, uv_cwd"),
+                "missing Node-shaped error in: {stdout}\n{stderr}"
+            );
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("pdrs-755-catalog-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create cwd");
+        std::env::set_current_dir(&directory).expect("enter cwd");
+        std::fs::remove_dir_all(&directory).expect("delete cwd");
+
+        let absolute = Env::from([
+            ("PILOT_HOME".into(), "/pdrs-755/home".into()),
+            ("HOME".into(), "/pdrs-755/user".into()),
+        ]);
+        let metadata = native_metadata(&absolute)
+            .expect("an absolute PILOT_HOME must not read the cwd")
+            .expect("HOME is present");
+        assert_eq!(metadata.home, std::path::PathBuf::from("/pdrs-755/home"));
+
+        let default = Env::from([("HOME".into(), "/pdrs-755/user".into())]);
+        let metadata = native_metadata(&default)
+            .expect("the default ~ home must not read the cwd")
+            .expect("HOME is present");
+        assert_eq!(
+            metadata.home,
+            std::path::PathBuf::from("/pdrs-755/user/.pilotdeck")
+        );
+
+        let relative = Env::from([
+            ("PILOT_HOME".into(), "relative/home".into()),
+            ("HOME".into(), "/pdrs-755/user".into()),
+        ]);
+        let error = native_metadata(&relative)
+            .err()
+            .expect("a relative PILOT_HOME needs the cwd");
+        println!("PD_CATALOG_CWD_ERROR={}", error.message.to_utf8().unwrap());
+
+        let relative_config = Env::from([
+            ("PILOT_HOME".into(), "/pdrs-755/home".into()),
+            (
+                "PILOTDECK_CONFIG_PATH".into(),
+                "relative/pilotdeck.yaml".into(),
+            ),
+            ("HOME".into(), "/pdrs-755/user".into()),
+        ]);
+        let error = native_metadata(&relative_config)
+            .err()
+            .expect("a relative config path needs the cwd");
+        assert_eq!(error.code, "ENOENT");
+        println!(
+            "PD_CATALOG_CONFIG_CWD_ERROR={}",
+            error.message.to_utf8().unwrap()
+        );
     }
 }

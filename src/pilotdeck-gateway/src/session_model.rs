@@ -100,6 +100,12 @@ fn execute<F: Files>(
         return Err(path_argument(project));
     };
     let project_units = project_string.units();
+    // `native_metadata` leaves `cwd` empty when an absolute PILOT_HOME made a
+    // cold `process.cwd()` unnecessary. A relative projectKey still needs it;
+    // TS `path.resolve` then throws `ENOENT ... uv_cwd` (#755).
+    if metadata.cwd.as_os_str().is_empty() && project_units.first() != Some(&(b'/' as u16)) {
+        return Err(error("ENOENT", "ENOENT: no such file or directory, uv_cwd"));
+    }
     // `projectRegistry.ts:41-59` resolves the key *before* comparing the
     // resulting JS strings by code unit. A lone surrogate therefore must not be
     // replacement-decoded before the lookup, but it also must not reject the
