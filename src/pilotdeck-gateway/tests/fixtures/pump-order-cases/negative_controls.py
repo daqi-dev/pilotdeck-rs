@@ -3,10 +3,13 @@
 
 `gate-order` attaches the pump before the #832 durable gates (each of the three
 gate scenarios must catch it on its own); `wake-recheck` removes the post-wake
-`stopped` re-check at live.rs:885; `final-overtakes` lets the final skip the
+`stopped` re-check at live.rs:909; `final-overtakes` lets the final skip the
 reserved-slot predecessor it must publish behind. A mutant only counts as
 killed when the named test itself panicked with its own #855 marker: a compile
 failure, a gate/cleanup timeout or any other test's panic does not.
+
+Table rows follow the anchor_selfcheck layout `(name, path, before, after,
+...)` so the static preflight can resolve every anchor to its source file.
 """
 import os
 from pathlib import Path
@@ -22,6 +25,7 @@ out.mkdir(parents=True, exist_ok=False)
 path = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 mutations = {
     'gate-order': (
+        path,
         '''                // No connection or execute can start until both durable gates commit.
                 if execute_wait.await.is_err() {
                     return Ok(ExecuteResult::Aborted { terminal: None });
@@ -70,6 +74,7 @@ mutations = {
          ('gates_pump_open_pins_the_start_order', '#855 [open]')],
     ),
     'wake-recheck': (
+        path,
         '                    if self.forwarding.lock().unwrap().stopped || Instant::now() < self.forwarding.lock().unwrap().deadline() { continue; }',
         '                    if Instant::now() < self.forwarding.lock().unwrap().deadline() { continue; }',
         'host_pump_final_orders_behind_the_reserved_slot',
@@ -77,6 +82,7 @@ mutations = {
           '#855: the probe batch must publish')],
     ),
     'final-overtakes': (
+        path,
         '''        let delivery = {
             let mut forwarding = self.forwarding.lock().unwrap();
             if final_event {
@@ -95,7 +101,7 @@ mutations = {
     ),
 }
 name = sys.argv[2]
-old, new, test_filter, checks = mutations[name]
+_path, old, new, test_filter, checks = mutations[name]
 
 # libtest captures a panic as `thread '<full test path>' (<id>) panicked at
 # <file>:<line>:<col>:` followed by the message block up to a blank line.

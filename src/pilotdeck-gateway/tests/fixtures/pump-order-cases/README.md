@@ -11,7 +11,7 @@
   的 with_pump 进入计数（`pump_starts_for_test`，进入即武装 500 ms 计时器）非零；
   `gates_pump_open_pins_the_start_order` 同样在门禁持有窗口计数非零，且
   「门禁开放后单次 poll 不得 tick」探针 `drain_calls` 1 != 0。
-- `wake-recheck`：删除 live.rs `:885` 唤醒后 `stopped` 复查。由
+- `wake-recheck`：删除 live.rs `:909` 唤醒后 `stopped` 复查。由
   `host_pump_final_orders_behind_the_reserved_slot` 的模块 deadline 探针转红
   （`probe_batch` 未按期发布，`expect("#855: the probe batch must publish …")`）。
 - `final-overtakes`：`event()` 的 final 分支 `reserve()` 后清空 `previous`，让
