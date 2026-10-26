@@ -5,10 +5,11 @@ The first sample is the defect #813 describes: the named test passed, another
 test panicked with the same marker. The old ``marker in raw`` accepted it; the
 strict criterion must reject it.
 
-``turn-gateway/real-logs`` holds four host-run logs from the #813 fix-r1
-defect: a named test FAILED and the marker is either in an ``<unnamed>``
-thread spawned by it (emit cases) or in the named test's own block (expiry
-cases). They are replayed here so the shared judge cannot regress.
+``turn-gateway/real-logs`` holds host-run logs from the #813 fix-r1 defect and
+the fix-r2 expiry re-record: a named test FAILED and the marker is either in an
+``<unnamed>`` thread spawned by it (emit cases) or in the named test's own
+block (expiry cases). They are replayed here so the shared judge cannot
+regress.
 """
 from pathlib import Path
 import re
@@ -167,17 +168,72 @@ class PanicBlockCriterion(unittest.TestCase):
         self.assertTrue(named_test_killed(raw, NAMED, ['has overflowed its stack', 'should throw']))
         self.assertFalse(named_test_killed(raw, NAMED, ['has overflowed its stack']))
 
-    def test_nested_test_name_belongs_to_the_named_module(self):
-        nested = 'pkg::tests::named::nested'
+    def test_nested_test_panic_is_not_evidence_for_the_named_parent(self):
+        named = 'pkg::tests::named'
+        nested = named + '::nested'
         raw = (
-            f"running 1 test\ntest {nested} ... FAILED\n\n"
+            f"running 2 tests\ntest {named} ... ok\ntest {nested} ... FAILED\n\n"
+            f"---- {nested} stdout ----\n"
             f"thread '{nested}' panicked at src/lib.rs:1:1:\n{MARKER}\n\n"
             "failures:\n"
             f"    {nested}\n\n"
+            "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+        )
+        # Exact equality only: the parent passed, so its child's panic cannot
+        # be promoted into the parent's evidence (#813 fix-r2 P1-1).
+        self.assertFalse(named_test_failed(raw, named))
+        self.assertFalse(marker_kills_named_test(raw, named, MARKER))
+        self.assertFalse(named_test_killed(raw, named, MARKER))
+        self.assertEqual(panic_evidence(raw, named), '')
+
+    def test_module_path_argument_is_rejected(self):
+        named = 'pkg::tests::named'
+        nested = named + '::nested'
+        raw = (
+            f"running 1 test\ntest {nested} ... FAILED\n\n"
+            f"thread '{nested}' panicked at src/lib.rs:1:1:\n{MARKER}\n"
             "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
         )
-        self.assertTrue(named_test_killed(raw, 'pkg::tests', MARKER))
-        self.assertFalse(named_test_killed(raw, 'pkg::tests::other', MARKER))
+        # The caller used to pass a module path and rely on `::` prefixing.
+        with self.assertRaisesRegex(ValueError, 'module path'):
+            named_test_failed(raw, 'pkg::tests')
+        with self.assertRaisesRegex(ValueError, 'module path'):
+            named_test_killed(raw, 'pkg::tests', MARKER)
+        # Also rejected when the output proves the argument is only a prefix.
+        with self.assertRaisesRegex(ValueError, 'module path'):
+            named_test_failed(raw.replace('pkg::tests::named', 'pkg::mod'), 'pkg::mod')
+
+    def test_module_level_caller_passes_explicit_full_names(self):
+        raw = (
+            f"running 2 tests\ntest {NAMED} ... FAILED\ntest {OTHER} ... ok\n\n"
+            f"thread '{NAMED}' panicked at src/lib.rs:1:1:\n{MARKER}\n\n"
+            "failures:\n"
+            f"    {NAMED}\n\n"
+            "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+        )
+        # A module-level caller lists the full names it owns; the helper never
+        # expands a module path itself.
+        self.assertTrue(named_test_killed(raw, [NAMED, OTHER], MARKER))
+        self.assertFalse(named_test_killed(raw, [OTHER], MARKER))
+        with self.assertRaisesRegex(ValueError, 'module path'):
+            named_test_killed(raw, [NAMED, 'pkg::tests'], MARKER)
+
+    def test_passing_list_member_cannot_lend_its_panic_block(self):
+        raw = log('FAILED', 'ok', named_panic='a different assertion', other_panic=MARKER)
+        # OTHER is listed but did not fail; its block must not satisfy the
+        # marker requirement for the module-level judgement.
+        self.assertFalse(named_test_killed(raw, [NAMED, OTHER], MARKER))
+        self.assertFalse(named_test_killed(raw, [NAMED], MARKER))
+
+    def test_libtest_reports_detached_panics_after_the_failed_line(self):
+        # P2-2 constraint cannot be implemented: libtest streams the detached
+        # thread's panic after `... FAILED` (here even after `test result:`),
+        # so position cannot separate "inside the test body" from "after the
+        # test returned". The module docstring records this limitation.
+        raw = (RECORDED / 'emit-bypasses-serial-host.log').read_text()
+        failed = raw.index(f'test {EMIT} ... FAILED')
+        detached = raw.index("thread '<unnamed>'")
+        self.assertLess(failed, detached)
 
 
 if __name__ == '__main__':

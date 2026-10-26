@@ -41,10 +41,10 @@ def mutation(name, path, before, after, case=None, marker='assertion', test=REPL
     return dict(name=name, changes=[(path, before, after)], case=case, marker=marker, test=test)
 
 mutants = [
-    mutation('transport-bypasses-serial-host', gateway, 'self.host\n            .call(async move { connection.receive(&text).await })\n            .await?', 'connection.receive(&text).await', 'permission-before-event-and-final', 'gateway host thread'),
+    mutation('transport-bypasses-serial-host', gateway, 'self.host\n            .call(async move { connection.receive(&text).await })\n            .await?', 'connection.receive(&text).await', 'permission-before-event-and-final', 'session submit must run on the gateway host thread'),
     # close-active reaches the `Session::abort` host-thread assertion after
     # disconnect; running `closed` on the caller thread trips it there.
-    mutation('closed-bypasses-serial-host', gateway, 'self.host\n            .call(async move { connection.closed().await })\n            .await?', 'connection.closed().await', 'close-active', 'gateway host thread'),
+    mutation('closed-bypasses-serial-host', gateway, 'self.host\n            .call(async move { connection.closed().await })\n            .await?', 'connection.closed().await', 'close-active', 'session abort must run on the gateway host thread'),
     # `notify` only sends a frame, so it needs its own host-thread observation:
     # the fixture transport records the thread of every outbound frame.
     mutation('notify-bypasses-serial-host', gateway, 'self.host\n            .call(async move {\n                connection.notify(&name, payload);\n            })\n            .await', '{ connection.notify(&name, payload); Ok(()) }', None, 'A7.2-COORDINATOR-DELIVERY-001-R1: HostedConnection::notify must run on the serial host thread', test=NOTIFY),
@@ -75,8 +75,11 @@ mutants = [
     mutation('abort-consumer-fence-skipped', gateway, 'let _ = done.wait_for(|done| *done).await;', 'let _ = &mut done;', 'abort-generated-run-id'),
     # These run the timer test, whose assertions are not the replay test's
     # "serial timer: <case>" message. Anchor each on the assertion that its
-    # selected test actually trips (#813 fix-r1).
-    mutation('expiry-runs-on-clock-thread', gateway, 'let _ = due.send((key.clone(), serial, callback.clone()));', 'let _ = (&due, &key, serial); callback();', None, 'cancel queued serial timer', test=TIMER),
+    # selected test actually trips (#813 fix-r1). expiry-runs-on-clock-thread
+    # must not share queued-cancel-ignored's "cancel queued serial timer": the
+    # dedicated assertion fires as soon as the callback runs inside
+    # `clock.advance` (#813 fix-r2).
+    mutation('expiry-runs-on-clock-thread', gateway, 'let _ = due.send((key.clone(), serial, callback.clone()));', 'let _ = (&due, &key, serial); callback();', None, 'clock advance only enqueues the serial expiry', test=TIMER),
     mutation('expiry-callback-dropped', gateway, 'if current {\n                    callback();\n                }', 'if current { let _ = callback; }', None, 'replacement timer fires once', test=TIMER),
     mutation('queued-cancel-ignored', gateway, 'self.entries.lock().unwrap().remove(key);', 'let _ = self.entries.lock().unwrap().get(key);', None, 'cancel queued serial timer', test=TIMER),
     mutation('replacement-generation-ignored', gateway, 'entries.get(&key).is_some_and(|id| *id == serial)', 'entries.contains_key(&key)', None, 'replacement invalidates detached serial timer', test=TIMER),
