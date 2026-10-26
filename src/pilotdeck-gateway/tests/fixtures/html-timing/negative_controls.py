@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Temporary product mutations; each must turn a timing assertion red, then restore.
+"""Temporary source mutations; each must turn a timing assertion red, then restore.
 
 The negative controls for the shared multi-sample timing budgets in
 ``tests/common/timing.rs`` (issue #802). Each mutation restores a historical
-quadratic or constant-factor implementation; the ratio or the retained absolute
-cap must catch it, then the restored tree must pass the same test. Run with no
-other writers/builds in this worktree.
+quadratic or constant-factor implementation, or breaks the halved-input
+premise; the ratio, the per-sample absolute cap, or the premise assertion must
+catch it, then the restored tree must pass the same test. Run with no other
+writers/builds in this worktree.
 
 Release mode, because the mutants must stay observable without debug-only
 checks. The red runs set ``PDRS_TIMING_SAMPLES=1``: every mutant sample costs
-minutes even in release. The green runs keep the default three samples.
+minutes even in release. That proves the criterion can catch the mutant, which
+is not the same shape as the CI's default three-sample run; for every mutant
+here more samples only redden it further (the ratio keeps the fastest run and
+every mutant sample is equally slow, and the per-sample cap is never divided
+by the sample count). The green runs keep the default three samples.
 ``CARGO_TARGET_DIR`` must come from the caller; a private build directory would
 hide slot contention from cargo-slots.sh.
 """
@@ -30,15 +35,14 @@ out.mkdir(parents=True, exist_ok=False)
 if not os.environ.get('CARGO_TARGET_DIR'):
     sys.exit('CARGO_TARGET_DIR must come from the caller; refusing a private build directory')
 
-web = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web'
-LIB_DEEP_FRAME = 'runtime::tools::builtin::web::html_compat::tests::deep_frame_stack_select_end_tags_stay_within_linear_budget'
 # Each mutation names the test whose timing assertion it must turn red.
+LIB_DEEP_FRAME = 'runtime::tools::builtin::web::html_compat::tests::deep_frame_stack_select_end_tags_stay_within_linear_budget'
 mutations = [
     # The pre-9511fb790 bottom-up frame scan: every `</select>` walked the whole
     # open frame stack from the bottom, over the 100k template frames below the
     # select, so N templates x M selects was quadratic. (A .rev() scan stays
     # O(1) here: the select frame sits on top when it closes.)
-    ('frame-stack-rescan', 'html_compat.rs',
+    ('frame-stack-rescan', 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/html_compat.rs',
      '    fn contains(&self, context: Context) -> bool {\n'
      '        match context {\n'
      '            Context::Select => self.select_frames > 0,\n'
@@ -52,7 +56,7 @@ mutations = [
     # The pre-4fbb5f78b rewalk of every moved subtree. Linear with the subtree
     # size, so only the retained absolute cap catches it; the sink keeps the
     # walk observable in release.
-    ('moved-subtree-rewalk', 'html_dom.rs',
+    ('moved-subtree-rewalk', 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/html_dom.rs',
      '    fn attach_height(&mut self, parent: Id, child: Id) {\n'
      '        self.change_child_height(parent, 0, self.nodes[child].height);\n'
      '        self.update_height(parent);\n'
@@ -81,7 +85,7 @@ mutations = [
     # The pre-rope join materialized both sides, so joining N siblings moved
     # the whole accumulated text every time. Byte-identical output; only the
     # scaling ratio and the cap turn red.
-    ('materializing-join', 'html_markdown_buffer.rs',
+    ('materializing-join', 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/html_markdown_buffer.rs',
      '        right.leading = 0;\n'
      '        self.concat(left, right)\n'
      '    }\n'
@@ -91,6 +95,15 @@ mutations = [
      '        self.text_owned(joined)\n'
      '    }\n'
      '    pub fn indent',
+     ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast']),
+    # A broken "half": quartering the dominant repeat leaves the halved input
+    # at ~0.25x the full bytes, so the doubling premise of the scaling ratio
+    # no longer holds. The premise assertion must catch this before any
+    # timing is measured (the ratio itself would also redden, but later and
+    # for the wrong reason: a quarter input reports ~4x growth).
+    ('halving-unsound', 'src/pilotdeck-gateway/tests/html_markdown.rs',
+     '            rule["repeat"] = (target / 2).into();',
+     '            rule["repeat"] = (target / 4).into();',
      ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast']),
 ]
 selected = sys.argv[2:]
@@ -112,16 +125,17 @@ def run_timing_test(target, extra_env, timeout):
 def outcome(result, test):
     log = result.stdout + result.stderr
     failed_line = f'{test} ... FAILED'
-    timing = 'did not scale from' in log or 'budget' in log
+    markers = ('did not scale from', 'budget', 'halved recipe')
+    timing = any(marker in log for marker in markers)
     failure = next((line.strip() for line in log.splitlines()
-                    if 'did not scale from' in line or 'budget ' in line), '')
+                    if any(marker in line for marker in markers)), '')
     return log, failed_line in log and timing, failure
 
 
 summary = []
-with mutating_sources(root, sorted({web / filename for _, filename, _, _, _ in mutations})) as snapshots:
+with mutating_sources(root, sorted({root / filename for _, filename, _, _, _ in mutations})) as snapshots:
     for name, filename, old, new, target in mutations:
-        path = web / filename
+        path = root / filename
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
