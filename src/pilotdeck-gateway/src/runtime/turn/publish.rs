@@ -181,6 +181,55 @@ struct Publication {
     registry: Option<Arc<dyn TurnRunRegistry>>,
     run: RunRef,
     executor: tokio::runtime::Handle,
+    #[cfg(test)]
+    predecessor_waiting: Notify,
+}
+// Own the reservation before spawn: a stopped executor can discard an
+// unpolled supervisor, including one still waiting for its predecessor.
+struct PublicationWrite {
+    publication: Arc<Publication>,
+    write: u64,
+    done: Option<oneshot::Sender<()>>,
+}
+impl PublicationWrite {
+    fn finish(&mut self, result: RegistryResult<()>, event: JsValue) {
+        if self.done.is_none() {
+            return;
+        }
+        let publication = &self.publication;
+        let write = self.write;
+        let mut state = lock(&publication.state);
+        match result {
+            Ok(()) => {
+                if !state.closed {
+                    state.queue.push_back(event);
+                }
+            }
+            Err(_) if !state.failure_published => {
+                state.failure_published = true;
+                if !state.closed {
+                    state
+                        .queue
+                        .push_back(persistence_failure(&publication.run.run_id, false));
+                }
+            }
+            Err(_) => {}
+        }
+        state.pending.remove(&write);
+        drop(state);
+        publication.changed.notify_waiters();
+        let _ = self.done.take().unwrap().send(());
+    }
+}
+impl Drop for PublicationWrite {
+    fn drop(&mut self) {
+        self.finish(
+            Err(RunRegistryError::Invalid(
+                "Run registry append task stopped.".into(),
+            )),
+            JsValue::Undefined,
+        );
+    }
 }
 impl Publication {
     fn enqueue(self: &Arc<Self>, event: JsValue) {
@@ -202,8 +251,15 @@ impl Publication {
         state.previous = Some(receiver);
         drop(state);
         let publication = Arc::clone(self);
+        let mut completion = PublicationWrite {
+            publication: Arc::clone(self),
+            write,
+            done: Some(done),
+        };
         self.executor.spawn(async move {
             if let Some(previous) = previous {
+                #[cfg(test)]
+                publication.predecessor_waiting.notify_one();
                 let _ = previous.await;
             }
             // Supervise only after the predecessor settles, preserving FIFO.
@@ -227,27 +283,7 @@ impl Publication {
                     Some(payload),
                 ),
             };
-            let mut state = lock(&publication.state);
-            match result {
-                Ok(()) => {
-                    if !state.closed {
-                        state.queue.push_back(event);
-                    }
-                }
-                Err(_) if !state.failure_published => {
-                    state.failure_published = true;
-                    if !state.closed {
-                        state
-                            .queue
-                            .push_back(persistence_failure(&publication.run.run_id, false));
-                    }
-                }
-                Err(_) => {}
-            }
-            state.pending.remove(&write);
-            drop(state);
-            publication.changed.notify_waiters();
-            let _ = done.send(());
+            completion.finish(result, event);
             drop(panic_payload);
         });
     }
@@ -296,6 +332,8 @@ impl TurnPublisher {
             registry,
             run: run.clone(),
             executor: tokio::runtime::Handle::current(),
+            #[cfg(test)]
+            predecessor_waiting: Notify::new(),
         });
         let weak = Arc::downgrade(&publication);
         let registration = coordinator.start(&run.session_key, &run.run_id, move |event| {
