@@ -11,7 +11,7 @@ use crate::runtime::memory::edgeclaw::{
     text::{hash_text, normalize_text},
 };
 use crate::{
-    js_value::{ascii_fold_haystack, number_string},
+    js_value::{ascii_fold_haystack, number_string, to_string_units},
     project_files::{node_collator, node_compare_utf16, node_locale},
     runtime::memory::js_trim_units,
 };
@@ -44,11 +44,20 @@ fn string_field(object: &JsObject, key: &str) -> Option<JsString> {
     object.get(key).and_then(JsValue::as_string).cloned()
 }
 
-fn normalize_whitespace(value: Option<&JsValue>) -> JsString {
-    match value.and_then(JsValue::as_string) {
-        Some(value) => normalize_text(value),
-        None => JsString::default(),
+/// TS `normalizeWhitespace(value)`: `(value ?? "").replace(/\s+/g, " ").trim()`.
+/// Nullish values normalize to empty; any other non-string reaches
+/// `String.prototype.replace` and throws the V8 `TypeError` instead of being
+/// silently normalized to empty (`dream-review.ts:224-226`).
+fn normalize_whitespace(value: Option<&JsValue>) -> Result<JsString, FileMemoryError> {
+    match value {
+        None | Some(JsValue::Undefined | JsValue::Null) => Ok(JsString::default()),
+        Some(JsValue::String(value)) => Ok(normalize_text(value)),
+        Some(_) => Err(type_error("(value ?? \"\").replace is not a function")),
     }
+}
+
+fn type_error(message: &'static str) -> FileMemoryError {
+    FileMemoryError::Type(message.into())
 }
 
 fn join_units(values: &[JsString], separator: &str) -> JsString {
@@ -420,45 +429,104 @@ fn regex_text(value: &JsString) -> String {
     out
 }
 
-fn is_generic_same_project_reason(reason: Option<&JsValue>) -> bool {
-    let normalized = normalize_whitespace(reason);
+fn is_generic_same_project_reason(reason: Option<&JsValue>) -> Result<bool, FileMemoryError> {
+    let normalized = normalize_whitespace(reason)?;
     if normalized.is_empty() {
-        return false;
+        return Ok(false);
     }
     let text = regex_text(&normalized);
     // dream-review.ts:342-355 uses `/i` without the `u` flag: V8 folds ASCII
     // only, while Rust `(?i)` also maps U+017F/U+212A onto `s`/`k`.
     let text = ascii_fold_haystack(&text);
-    same_project_pattern().is_match(text.as_ref()) && !semantic_pattern().is_match(text.as_ref())
+    Ok(same_project_pattern().is_match(text.as_ref())
+        && !semantic_pattern().is_match(text.as_ref()))
+}
+
+/// `${cluster.reason || members.join(", ")}` in a dropped warning: a falsy
+/// non-string falls back to the joiner, a truthy one is coerced with JS
+/// `String()` (numbers, booleans, arrays and `[object Object]`).
+fn drop_reason(
+    reason: Option<&JsValue>,
+    members: &[JsString],
+) -> Result<JsString, FileMemoryError> {
+    match reason {
+        Some(value) if js_truthy(value) => to_string_units(value)
+            .map(JsString::from_utf16)
+            .map_err(|_| FileMemoryError::Invalid("dream reason too deep for String()".into())),
+        _ => Ok(join_units(members, ", ")),
+    }
+}
+
+/// `cluster.memberRelativePaths.map(...)`: a nullish receiver reads as null /
+/// undefined, a non-array receiver has no `.map`, and null/undefined cluster
+/// entries fail while reading `.memberRelativePaths` (`dream-review.ts:403-406`).
+fn cluster_members(cluster: &JsValue) -> Result<&[JsValue], FileMemoryError> {
+    let members = match cluster {
+        JsValue::Null => {
+            return Err(type_error(
+                "Cannot read properties of null (reading 'memberRelativePaths')",
+            ));
+        }
+        JsValue::Undefined => {
+            return Err(type_error(
+                "Cannot read properties of undefined (reading 'memberRelativePaths')",
+            ));
+        }
+        JsValue::Object(object) => object.get("memberRelativePaths"),
+        JsValue::Array(_) | JsValue::Bool(_) | JsValue::Number(_) | JsValue::String(_) => None,
+    };
+    match members {
+        Some(JsValue::Array(items)) => Ok(items),
+        Some(JsValue::Null) => Err(type_error("Cannot read properties of null (reading 'map')")),
+        Some(JsValue::Undefined) | None => Err(type_error(
+            "Cannot read properties of undefined (reading 'map')",
+        )),
+        Some(_) => Err(type_error(
+            "cluster.memberRelativePaths.map is not a function",
+        )),
+    }
 }
 
 pub fn validate_exclusive_clusters(
     clusters: &JsValue,
     allowed_relative_paths: &HashSet<JsString>,
     max_files: f64,
-) -> JsObject {
+) -> Result<JsObject, FileMemoryError> {
     let mut used = HashSet::new();
     let mut accepted = Vec::new();
     let mut dropped_warnings = Vec::new();
-    for cluster in objects(clusters) {
+    // `for (const cluster of clusters)` accepts arrays and strings; every
+    // other JSON shape throws `TypeError: clusters is not iterable`.
+    let clusters = match clusters {
+        JsValue::Array(items) => items.as_slice(),
+        JsValue::String(value) if value.is_empty() => &[],
+        // A non-empty string yields characters; `'x'.memberRelativePaths` is
+        // undefined, so the first character fails on `.map`.
+        JsValue::String(_) => {
+            return Err(type_error(
+                "Cannot read properties of undefined (reading 'map')",
+            ));
+        }
+        _ => return Err(type_error("clusters is not iterable")),
+    };
+    for cluster in clusters {
+        let members = cluster_members(cluster)?;
         let mut unique_members = Vec::new();
-        if let Some(JsValue::Array(members)) = cluster.get("memberRelativePaths") {
-            for member in members {
-                let member = normalize_whitespace(Some(member));
-                if !member.is_empty()
-                    && allowed_relative_paths.contains(&member)
-                    && !unique_members.contains(&member)
-                {
-                    unique_members.push(member);
-                }
+        for member in members {
+            let member = normalize_whitespace(Some(member))?;
+            if !member.is_empty()
+                && allowed_relative_paths.contains(&member)
+                && !unique_members.contains(&member)
+            {
+                unique_members.push(member);
             }
         }
-        let reason = cluster.get("reason");
-        let reason_text = match reason.and_then(JsValue::as_string) {
-            Some(reason) if js_truthy(&JsValue::String(reason.clone())) => reason.clone(),
-            _ => join_units(&unique_members, ", "),
+        let reason = match cluster {
+            JsValue::Object(object) => object.get("reason"),
+            _ => None,
         };
         if unique_members.len() < 2 {
+            let reason_text = drop_reason(reason, &unique_members)?;
             dropped_warnings.push(warning(format!(
                 "Dropped cluster because it had fewer than 2 valid files: {}",
                 lossy(&reason_text)
@@ -480,7 +548,7 @@ pub fn validate_exclusive_clusters(
             )));
             continue;
         }
-        if is_generic_same_project_reason(reason) {
+        if is_generic_same_project_reason(reason)? {
             dropped_warnings.push(warning(format!(
                 "Dropped low-quality cluster because the reason only referenced same-project membership without concrete overlap/conflict: {}",
                 lossy(&join_units(&unique_members, ", "))
@@ -501,7 +569,7 @@ pub fn validate_exclusive_clusters(
     let mut out = JsObject::new();
     out.insert("clusters".into(), JsValue::Array(accepted));
     out.insert("droppedWarnings".into(), JsValue::Array(dropped_warnings));
-    out
+    Ok(out)
 }
 
 // -- user-note window -------------------------------------------------------
@@ -548,27 +616,110 @@ pub fn select_user_note_window(records: &JsValue) -> Result<JsObject, FileMemory
 
 // -- General project merge groups -------------------------------------------
 
-pub fn validate_general_project_merge_groups(input: &JsObject) -> JsObject {
-    let project_ids: HashSet<JsString> = objects(input.get("metas").unwrap_or(&JsValue::Undefined))
-        .iter()
-        .filter_map(|meta| string_field(meta, "projectId"))
-        .collect();
+pub fn validate_general_project_merge_groups(
+    input: &JsObject,
+) -> Result<JsObject, FileMemoryError> {
+    // `new Map(input.metas.map(...))` evaluates eagerly: a non-array throws
+    // before any group is inspected, and each nullish meta throws while
+    // reading `.projectId` (`dream-review.ts:487`).
+    let metas = match input.get("metas") {
+        Some(JsValue::Array(items)) => items.as_slice(),
+        Some(JsValue::Null) => {
+            return Err(type_error("Cannot read properties of null (reading 'map')"));
+        }
+        Some(JsValue::Undefined) | None => {
+            return Err(type_error(
+                "Cannot read properties of undefined (reading 'map')",
+            ));
+        }
+        Some(_) => return Err(type_error("input.metas.map is not a function")),
+    };
+    let mut project_ids = HashSet::new();
+    for meta in metas {
+        match meta {
+            JsValue::Null => {
+                return Err(type_error(
+                    "Cannot read properties of null (reading 'projectId')",
+                ));
+            }
+            JsValue::Undefined => {
+                return Err(type_error(
+                    "Cannot read properties of undefined (reading 'projectId')",
+                ));
+            }
+            JsValue::Object(object) => {
+                if let Some(JsValue::String(id)) = object.get("projectId") {
+                    project_ids.insert(id.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    // `input.groups.entries()`: arrays expose it; nullish and every other
+    // non-array shape throw the V8 messages below.
+    let groups = match input.get("groups") {
+        Some(JsValue::Array(items)) => items.as_slice(),
+        Some(JsValue::Null) => {
+            return Err(type_error(
+                "Cannot read properties of null (reading 'entries')",
+            ));
+        }
+        Some(JsValue::Undefined) | None => {
+            return Err(type_error(
+                "Cannot read properties of undefined (reading 'entries')",
+            ));
+        }
+        Some(_) => {
+            return Err(type_error(
+                "input.groups.entries is not a function or its return value is not iterable",
+            ));
+        }
+    };
     let mut used_project_ids = HashSet::new();
     let mut accepted_groups = Vec::new();
     let mut dropped_warnings = Vec::new();
-    for (index, group) in objects(input.get("groups").unwrap_or(&JsValue::Undefined))
-        .into_iter()
-        .enumerate()
-    {
+    for (index, group) in groups.iter().enumerate() {
         let label = format!("group {}", index + 1);
-        let keeper = normalize_whitespace(group.get("keeperProjectId"));
+        let keeper_value = match group {
+            JsValue::Null => {
+                return Err(type_error(
+                    "Cannot read properties of null (reading 'keeperProjectId')",
+                ));
+            }
+            JsValue::Undefined => {
+                return Err(type_error(
+                    "Cannot read properties of undefined (reading 'keeperProjectId')",
+                ));
+            }
+            JsValue::Object(object) => object.get("keeperProjectId"),
+            _ => None,
+        };
+        let keeper = normalize_whitespace(keeper_value)?;
+        let duplicate_values = match group {
+            JsValue::Object(object) => object.get("duplicateProjectIds"),
+            _ => None,
+        };
+        let duplicate_values = match duplicate_values {
+            Some(JsValue::Array(items)) => items.as_slice(),
+            Some(JsValue::Null) => {
+                return Err(type_error("Cannot read properties of null (reading 'map')"));
+            }
+            Some(JsValue::Undefined) | None => {
+                return Err(type_error(
+                    "Cannot read properties of undefined (reading 'map')",
+                ));
+            }
+            Some(_) => {
+                return Err(type_error(
+                    "group.duplicateProjectIds.map is not a function",
+                ));
+            }
+        };
         let mut duplicates: Vec<JsString> = Vec::new();
-        if let Some(JsValue::Array(values)) = group.get("duplicateProjectIds") {
-            for value in values {
-                let value = normalize_whitespace(Some(value));
-                if !value.is_empty() && !duplicates.contains(&value) {
-                    duplicates.push(value);
-                }
+        for value in duplicate_values {
+            let value = normalize_whitespace(Some(value))?;
+            if !value.is_empty() && !duplicates.contains(&value) {
+                duplicates.push(value);
             }
         }
         if !project_ids.contains(&keeper) {
@@ -613,8 +764,11 @@ pub fn validate_general_project_merge_groups(input: &JsObject) -> JsObject {
         for id in &all_ids {
             used_project_ids.insert(id.clone());
         }
-        let reason = match group.get("reason") {
-            Some(reason) if js_truthy(reason) => reason.clone(),
+        let reason = match group {
+            JsValue::Object(object) => match object.get("reason") {
+                Some(reason) if js_truthy(reason) => reason.clone(),
+                _ => JsValue::from(GENERAL_MERGE_REASON),
+            },
             _ => JsValue::from(GENERAL_MERGE_REASON),
         };
         let mut accepted = JsObject::new();
@@ -629,5 +783,5 @@ pub fn validate_general_project_merge_groups(input: &JsObject) -> JsObject {
     let mut out = JsObject::new();
     out.insert("acceptedGroups".into(), JsValue::Array(accepted_groups));
     out.insert("droppedWarnings".into(), JsValue::Array(dropped_warnings));
-    out
+    Ok(out)
 }

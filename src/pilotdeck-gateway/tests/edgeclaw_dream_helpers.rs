@@ -1,4 +1,5 @@
 //! Real TS oracle for A6.6-edgeclaw-15 dream pure helpers.
+use pilotdeck_gateway::runtime::memory::edgeclaw::FileMemoryError;
 use pilotdeck_gateway::runtime::memory::edgeclaw::dream::helpers::{
     create_dream_trace, mutation, push_step, select_user_note_window, sort_entries,
     sort_project_metas, to_dream_meta_input, to_dream_record_input, to_header_input,
@@ -103,7 +104,7 @@ fn optional_object(case: &JsValue, index: usize) -> Option<&JsObject> {
     optional_arg(case, index).and_then(JsValue::as_object)
 }
 
-fn call(case: &JsValue) -> JsValue {
+fn call(case: &JsValue) -> Result<JsValue, FileMemoryError> {
     let name = case
         .get("fn")
         .unwrap()
@@ -111,7 +112,7 @@ fn call(case: &JsValue) -> JsValue {
         .unwrap()
         .to_utf8()
         .unwrap();
-    match name.as_str() {
+    Ok(match name.as_str() {
         "createDreamTrace" => JsValue::Object(create_dream_trace(
             text(case, 0),
             text(case, 1),
@@ -169,14 +170,35 @@ fn call(case: &JsValue) -> JsValue {
                 arg(case, 0),
                 &allowed,
                 number(case, 2),
-            ))
+            )?)
         }
         "selectUserNoteWindow" => JsValue::Object(select_user_note_window(arg(case, 0)).unwrap()),
         "validateGeneralProjectMergeGroups" => {
-            JsValue::Object(validate_general_project_merge_groups(object(case, 0)))
+            JsValue::Object(validate_general_project_merge_groups(object(case, 0))?)
         }
         other => panic!("missing dispatch for {other}"),
-    }
+    })
+}
+
+fn expected_error(case: &JsValue) -> (String, String) {
+    let thrown = case
+        .get("throws")
+        .expect("case has neither expected nor throws");
+    let name = thrown
+        .get("name")
+        .unwrap()
+        .as_string()
+        .unwrap()
+        .to_utf8()
+        .unwrap();
+    let message = thrown
+        .get("message")
+        .unwrap()
+        .as_string()
+        .unwrap()
+        .to_utf8()
+        .unwrap();
+    (name, message)
 }
 
 fn replay(wanted: &str) {
@@ -196,9 +218,23 @@ fn replay(wanted: &str) {
         seen += 1;
         let decoded = decode(case);
         let actual = call(&decoded);
+        if decoded.get("throws").is_some() {
+            let (error_name, message) = expected_error(&decoded);
+            match actual {
+                Err(FileMemoryError::Type(actual)) => {
+                    assert_eq!(error_name, "TypeError", "{wanted}/ {name}");
+                    assert_eq!(actual, message, "{wanted}/ {name}");
+                }
+                other => panic!(
+                    "{wanted}/ {name} expected TypeError {message:?}, got {other:?} args={:?}",
+                    decoded.get("args").unwrap()
+                ),
+            }
+            continue;
+        }
         let expected = decoded.get("expected").unwrap();
         assert_eq!(
-            wire(&actual),
+            wire(&actual.unwrap()),
             wire(expected),
             "{wanted}/ {name} args={:?}",
             decoded.get("args").unwrap()
