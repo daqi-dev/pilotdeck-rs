@@ -7,14 +7,16 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 here = Path(__file__).resolve().parent
 source = here.parents[2] / 'src/runtime/memory/edgeclaw/llm/transport.rs'
+reader = here.parents[2] / 'src/fetch_redirect.rs'
 module = ast.parse((here / 'negative.py').read_text())
 parts = [node for node in module.body if
          isinstance(node, ast.FunctionDef) and node.name in {'anchors', 'run', 'classify'} or
          isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {'cases', 'messages'} for t in node.targets)]
-namespace = {'case_sources':{name: here.parents[2] / 'src/fetch_redirect.rs' for name in ('body-config-wins-always','body-config-never-wins','body-tie-idle-wins','body-idle-not-reset')}, 'sys': sys, 'os': __import__('os'), 're': __import__('re')}
+namespace = {'source': source, 'reader': reader, 'sys': sys, 'os': __import__('os'), 're': __import__('re')}
 exec(compile(ast.Module(body=parts, type_ignores=[]), str(here / 'negative.py'), 'exec'), namespace)
 
 
@@ -23,15 +25,20 @@ class Controls(unittest.TestCase):
         namespace['anchors'](source.read_text())
 
     def test_stale_and_duplicate_anchors_exit_2(self):
-        original = source.read_text()
-        before = namespace['cases'][0][1]
-        for changed in [original.replace(before, 'removed-anchor', 1), original + before]:
-            with self.subTest(changed=len(changed)), contextlib.redirect_stderr(io.StringIO()) as output:
-                with self.assertRaises(SystemExit) as error:
-                    namespace['anchors'](changed)
-                self.assertEqual(error.exception.code, 2)
-                self.assertIn('STALE ANCHOR', output.getvalue())
-                self.assertNotIn('SURVIVED', output.getvalue())
+        originals = {path: path.read_text() for path in (source, reader)}
+        for name, path, before, _, _ in namespace['cases']:
+            original = originals[path]
+            for changed in [original.replace(before, 'removed-anchor', 1), original + before]:
+                contents = dict(originals)
+                contents[path] = changed
+                with self.subTest(name=name, changed=len(changed)), \
+                     patch.object(Path, 'read_text', autospec=True, side_effect=contents.__getitem__), \
+                     contextlib.redirect_stderr(io.StringIO()) as output:
+                    with self.assertRaises(SystemExit) as error:
+                        namespace['anchors'](contents[source])
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertIn(f'STALE ANCHOR {name}:', output.getvalue())
+                    self.assertNotIn('SURVIVED', output.getvalue())
 
     def test_classification_requires_named_assertion(self):
         namespace.update(root=here, command=['cargo'], wait_for_slot=lambda _: SimpleNamespace(stdout='', stderr=''))

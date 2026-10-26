@@ -83,6 +83,18 @@ the source guard intentionally refuses to run here. Run the script after commit,
 with an exclusive evidence directory, and review KILLED/restored logs before
 acceptance. It must never be run in a shadow repository or alternate source tree.
 
+变异表采用 `(name, path, before, after, test)`，供 main 的
+`anchor_selfcheck.py` 在不导入执行器的前提下检查全部源码锚点。
+执行器也直接使用同一行的 path，不再另设路径覆盖表；全部源码变异均参与静态检查。
+
+`test_controls.py` 只测执行器框架（内存源码字符串和模拟的 cargo 返回值），
+不修改产品源码。该命名将框架单测与检查器按 `*negative*.py` 发现的源码变异脚本
+区分开，同时保留标准 `unittest` 发现能力。运行方式：
+
+```sh
+python3 -m unittest discover -s src/pilotdeck-gateway/tests/fixtures/edgeclaw-llm -p 'test_*.py' -v
+```
+
 The existing shared ModelHttpTransport returns encoded response bytes unchanged.
 This package sends Node's default accept-encoding header for wire parity but does
 not implement gzip/deflate/br decompression. A real TS loopback gzip probe succeeds;
