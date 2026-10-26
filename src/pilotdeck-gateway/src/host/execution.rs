@@ -630,7 +630,7 @@ pub(super) fn module_response(call: &JsValue, result: Result<JsObject, HostError
     }
     JsValue::Object(response)
 }
-fn validate_event(
+pub(super) fn validate_event(
     event: EventRef<'_>,
     identity: &ExecutionIdentity,
     cancellation: &Cancellation,
