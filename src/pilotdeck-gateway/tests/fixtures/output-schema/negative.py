@@ -5,7 +5,8 @@ Every mutant changes one production behavior in output_schema.rs (the ASCII
 fold mask, the `(?i)` the port now adds where ajv-formats compiles with
 `/i`, the #834 `url` `/iu` fold, the `byte` `/gm` line split, the #848
 JS `\\s` replacement for Rust's `char::is_whitespace`, or the #848 fix-r1
-`url` userinfo/`/` boundary). While a mutant is
+`url` userinfo/`/` boundary and the #848 fix-r2 `url` label hyphen
+rule). While a mutant is
 live, `formats_follow_ajv_formats` and — for the oracle mutants —
 `replays_the_ajv_oracle` must FAIL on the pinned rows; after
 `mutating_sources` restores the bytes, the same command must pass (the caller
@@ -190,6 +191,16 @@ MUTANTS = [
      b'            .match_indices(\'@\')\n'
      b'            .filter(|(index, _)| *index < first_slash)\n'
      b'            .any(|(index, _)| accept(index + 1))',
+     True),
+    # #848 fix-r2 (review P1): an ajv-formats label is
+    # `(?:[host]+-)*[host]+`, so `--` is impossible. Dropping only the new
+    # consecutive-hyphen guard restores the false accept of
+    # `http://user/x@exam--ple.com/`; the double/triple-hyphen unit rows and
+    # the url/host-*hyphen* / url/userinfo-slash-host-*hyphen* oracle cases
+    # must turn red, while the single-hyphen rows stay green.
+    ('url-host-double-hyphen-allowed',
+     b'            || label.contains("--")\n',
+     b'',
      True),
     # #848: date-time has its own `/t|\s/i` split. Reverting only it keeps the
     # url helpers fixed, so the date-time rows are proven to be its own

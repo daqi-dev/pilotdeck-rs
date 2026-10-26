@@ -3696,6 +3696,58 @@
       "errorText": "data must match format \"url\""
     },
     {
+      "id": "url/host-double-hyphen",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://exam--ple.com/",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/host-triple-hyphen",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://a---b.com/",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/host-single-hyphen",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://exam-ple.com/"
+    },
+    {
+      "id": "url/userinfo-slash-host-double-hyphen",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://user/x@exam--ple.com/",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/userinfo-slash-host-double-hyphen-nested",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://u/x@a.b--c.com/",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/userinfo-slash-host-single-hyphen",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://user/x@a-b.c-d.com/"
+    },
+    {
       "id": "byte/cr-tail",
       "schema": {
         "type": "string",
