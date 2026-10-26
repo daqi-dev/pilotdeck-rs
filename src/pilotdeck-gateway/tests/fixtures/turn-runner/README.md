@@ -120,3 +120,44 @@ runner 负控默认25项（两个 terminal 分支分别变异，每个锚点 cou
 `sidecar` 的 success/completed-warning 行由 `live_stream_tests.rs` 真实 Node 进程测试逐项比较 `hostEvents`。此投影仅覆盖宿主 lifecycle + 全部 loop，排除 pr5e 的 session 外壳/setup/hooks；原始完整事件仍在生成目录。gap/duplicate 比较错误终态与收尾尾序列，不声称已交付前缀完全一致；其摘要排除与错误终止竞态的 instructions_loaded，完整 raw 不过滤。early-final 保留 TS success 原值，Rust拒绝，见 A7.2-TURN-EARLYFINAL-001-R1。
 
 真实测试（ignored，显式执行）使用 `PDRS_BASELINE` 与 Node 22.22.0；过滤 `runtime::turn::live::stream_tests::real_ts_sidecar` 并加 `--include-ignored --test-threads=1`。`stream_integrity_regenerates_identically` 覆盖整个 turn-runner 金样。`sidecar.mts` 的直接执行模式是 Rust用的透明 stdio代理，只变异传输帧，真实 AgentLoop与确定性Rust model port不被替换。错误探针、正常流和completed后的warning都保留独占wire记录。
+
+## 宿主验收
+
+pr5d 的 `integrity_negative.py` 随 fixtures 入库，覆盖原有 12 项流完整性变异；名称、锚点、点名测试与专属失败消息保持不变。完整负控由协调者在宿主前台串行运行；会话内只传 `--sample` 跑首项 `loop-prefix`。每项依次正控、运行时断言失败、恢复后正控，编译失败、无关 panic 或超时不算 KILLED。共享 `mutating_sources` 校验 HEAD 基线、独占同树并逐字节恢复，`run_owned` 将每次 cargo 限在 600 秒内，`wait_for_slot` 最多等 900 秒。执行期间同树不得另起 cargo 或修改源码。
+
+在已提交产品源码、安装好固定基线依赖及 Node v22.22.0 的本树根目录执行；`CARGO_TARGET_DIR` 必须由调用方传入本树路径，脚本未设置时直接拒绝。证据目录独占创建，失败后重跑使用新目录。以下命令替代证据目录中的 `host-validation.sh`：
+
+```sh
+set -eu
+root=$(pwd)
+export CARGO_TARGET_DIR="$root/_build/cargo-target"
+export CARGO_PROFILE_DEV_DEBUG=line-tables-only
+export CARGO_PROFILE_TEST_DEBUG=line-tables-only
+export PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
+mkdir -p "$root/_tmp/20261026-issue-741i"
+out=$(mktemp -d "$root/_tmp/20261026-issue-741i/host-validation.XXXXXX")
+export PDRS_STREAM_EVIDENCE="$out/wire"
+node --version > "$out/node-version.log"
+run_cargo() {
+  label=$1
+  shift
+  bash "$root/scripts/cargo-slots.sh" > "$out/$label-slots.log" 2>&1
+  "$@" > "$out/$label.log" 2>&1
+}
+cd "$root/src"
+run_cargo no-run cargo test --offline -q --no-run
+run_cargo fmt cargo fmt --all --check
+run_cargo clippy cargo clippy --offline -q --all-targets -- -D warnings
+run_cargo real-ts cargo test --offline -q -p pilotdeck-gateway --lib \
+  real_ts_sidecar -- --ignored --nocapture --test-threads=1
+run_cargo regenerate cargo test --offline -q -p pilotdeck-gateway --lib \
+  runtime::turn::live::stream_tests::stream_integrity_regenerates_identically \
+  -- --exact --ignored --nocapture
+unset PDRS_BASELINE
+run_cargo lib cargo test --offline -q --lib
+export PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
+cd "$root"
+python3 src/pilotdeck-gateway/tests/fixtures/turn-runner/integrity_negative.py \
+  "$out/negatives"
+printf '%s\n' "$out"
+```
