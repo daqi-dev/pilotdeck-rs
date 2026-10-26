@@ -914,23 +914,39 @@ async fn durable_construction_panic_releases_fifo_and_all_waiters() {
             case["calls"].as_u64().unwrap() as usize,
             "construction append calls"
         );
-        let failure = panic_deadline(next).await.unwrap();
-        assert_eq!(failure, persistence_failure(&run_ref().run_id, false));
+        let mut visible = vec![json(&panic_deadline(next).await.unwrap())];
         panic_deadline(publisher.finish()).await;
-        let mut visible = vec![];
         while let Some(event) = panic_deadline(publisher.next()).await {
             visible.push(json(&event));
         }
-        // Sync throw escapes TS emit; Rust catches panic as result_unknown.
-        // The successful successors and call counts still match the TS probe.
-        let expected: Vec<_> = case["visible"]
-            .as_array()
-            .unwrap()
+        // Compare the full trace. TS throws at construction; Rust publishes
+        // the single failure recorded in A7.2-APPEND-CONSTRUCTION-PANIC-001.
+        let failure = json!({
+            "type": "error", "runId": "r", "code": "result_unknown",
+            "message": "Gateway could not durably persist the run result.",
+            "recoverable": false,
+            "userHint": "Do not resubmit this run automatically. Inspect the Gateway run state before retrying."
+        });
+        let mut expected = case["visible"].as_array().unwrap().clone();
+        let errors: Vec<_> = expected
             .iter()
-            .filter(|event| event["type"] != "error")
-            .cloned()
+            .filter(|event| event["type"] == "error")
             .collect();
-        assert_eq!(visible, expected, "construction successors");
+        if pending_predecessor {
+            assert_eq!(errors, vec![&failure], "TS construction single failure");
+            assert_eq!(
+                expected.first(),
+                Some(&failure),
+                "TS construction failure position"
+            );
+        } else {
+            assert!(
+                errors.is_empty(),
+                "TS ready construction throws without an error event"
+            );
+            expected.insert(0, failure);
+        }
+        assert_eq!(visible, expected, "construction complete visible trace");
     }
 }
 
@@ -974,5 +990,75 @@ async fn durable_panic_payload_drop_runs_after_cleanup() {
             json!({"type":"successor"})
         );
         assert_eq!(panic_deadline(publisher.next()).await, None);
+    }
+}
+
+#[tokio::test]
+async fn pump_poison_does_not_disable_publication() {
+    let oracle: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/runtime-spawn-panic/oracle.json"
+    ))
+    .unwrap();
+    for (id, bad) in [
+        ("pump-null", JsValue::Null),
+        ("pump-undefined", JsValue::Undefined),
+    ] {
+        let case = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == id)
+            .unwrap();
+        assert_eq!(case["thrown"], "TypeError");
+        assert_eq!(case["outcomes"], json!(["drained", "drained", "drained"]));
+        let publisher = TurnPublisher::start(run_ref(), None, Arc::default());
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut cancelled = Box::pin(publisher.next());
+        assert!(cancelled.as_mut().poll(&mut cx).is_pending());
+        drop(cancelled);
+        let mut waiters: Vec<_> = (0..3).map(|_| Box::pin(publisher.next())).collect();
+        for waiter in &mut waiters {
+            assert!(waiter.as_mut().poll(&mut cx).is_pending());
+        }
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| publisher.emit(&bad))).is_err(),
+            "invalid event throws once: {id}"
+        );
+        assert!(
+            publisher.pump.is_poisoned(),
+            "real coordinator unwind crosses pump: {id}"
+        );
+        assert!(
+            publisher.emit(&js(
+                &json!({"type":"assistant_text_delta", "text":"recovered"})
+            )),
+            "emit recovers poisoned pump: {id}"
+        );
+        assert!(publisher.gateway_event(js(
+            &json!({"type":"assistant_text_delta", "text":"hi", "runId":"r"})
+        )));
+        publisher
+            .agent_event(
+                &GatewayAgentEventProjector::default(),
+                &js(&json!({"type":"model_event", "event":{"type":"text_delta", "text":"again"}})),
+                false,
+            )
+            .unwrap();
+        panic_deadline(publisher.finish()).await;
+        publisher.close_live();
+        let mut visible = Vec::new();
+        for waiter in waiters {
+            visible.push(json(&panic_deadline(waiter).await.unwrap()));
+        }
+        assert_eq!(
+            json!(visible),
+            case["visible"],
+            "pump recovered complete trace: {id}"
+        );
+        assert_eq!(
+            panic_deadline(publisher.next()).await,
+            None,
+            "pump drain EOF: {id}"
+        );
     }
 }

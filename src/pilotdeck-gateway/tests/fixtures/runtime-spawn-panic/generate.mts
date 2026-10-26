@@ -54,6 +54,7 @@ const cases: any[] = [];
 const matrix = ['shared', 'durable'].flatMap(scope => [1, 3].flatMap(n => ['P0', 'P1'].flatMap(phase => ['W', 'C'].map(state => ({ scope, n, phase, state, id: `${scope}-${n}-${phase}-${state}` })))));
 for (const scope of ['shared', 'durable']) matrix.push({ scope, n: 1, phase: 'cancelled', state: 'W', id: `predecessor-${scope}` });
 for (const phase of ['construct-ready', 'construct-pending']) matrix.push({ scope: 'durable', n: 3, phase, state: 'W', id: phase });
+for (const phase of ['pump-null', 'pump-undefined']) matrix.push({ scope: 'durable', n: 3, phase, state: 'W', id: phase });
 for (const { scope, n, phase, state, id } of matrix) {
   const gate = defer(), started = defer(), begin = defer(), submitted = defer();
   const visible: any[] = []; let calls = 0, cleaned = false;
@@ -62,6 +63,7 @@ for (const { scope, n, phase, state, id } of matrix) {
     const index = calls++;
     if (phase.startsWith('construct') && index === (phase === 'construct-pending' ? 1 : 0)) throw Error('injected construction panic');
     const operation = async () => {
+      if (phase.startsWith('pump-')) return;
       if (phase.startsWith('construct')) {
         if (phase === 'construct-pending' && index === 0) { started.resolve(); await gate.promise; }
         return;
@@ -97,6 +99,26 @@ for (const { scope, n, phase, state, id } of matrix) {
       prepareAttachmentTurn: async () => ({ agentInput: { type: 'text', text: 'hello' }, allowedReadFiles: [] }),
     });
     work = (async () => { for await (const event of gateway.submitTurn({ sessionKey: 's', runId: 'r', projectKey: 'p', message: 'hello' })) visible.push(event); return 'drained'; })();
+  }
+  if (phase.startsWith('pump-')) {
+    await submitted.promise;
+    const abort = new AbortController();
+    const cancelled = observe(work, abort.signal);
+    abort.abort(); assert.equal(await cancelled, 'cancelled');
+    let done = false; void work.then(() => done = true);
+    await tick(); assert.equal(done, false, 'host gate remains pending');
+    let thrown = '';
+    try { owner.emit('s', phase === 'pump-null' ? null : undefined); }
+    catch (error) { thrown = (error as Error).name; }
+    assert.equal(thrown, 'TypeError');
+    owner.emit('s', { type: 'assistant_text_delta', text: 'recovered' });
+    begin.resolve();
+    const outcomes = await Promise.all(Array.from({ length: n }, () => work));
+    assert.equal(cleaned, true);
+    assert.equal(visible.length, 3);
+    cases.push({ id, thrown, outcomes, calls, visible });
+    owner.dispose();
+    continue;
   }
   if (phase.startsWith('construct')) {
     await submitted.promise;
