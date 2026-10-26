@@ -19,6 +19,7 @@ MUTANT_ENV.pop('PDRS_BASELINE', None)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import baseline_passed, select
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
@@ -79,14 +80,30 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
     # surviving behavioral mutation and prevent the remaining controls from running.
     for name, mutation, _, _ in CASES:
         assert mutation.encode() != BASE, f'{name}: mutation must change source bytes'
-    selected = set(sys.argv[2:])
-    assert not selected - {case[0] for case in CASES}
+    selected = select(CASES, sys.argv[2:], always=())
+    baseline_tests = list(dict.fromkeys(test for _name, _mutation, test, _marker in selected))
     summary = []
     deadline = time.monotonic() + 590
     try:
-        for name, mutation, test, marker in CASES:
-            if selected and name not in selected:
-                continue
+        # #813 fix-r4: prove every selected target test is green without a
+        # mutation. A subset run that skipped this could attribute a
+        # pre-existing failure to the mutant.
+        for test in baseline_tests:
+            assert SOURCE.read_bytes() == BASE, 'source changed outside this mutation runner'
+            wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=max(1, deadline-time.monotonic()))
+            result = run_owned(['cargo', 'test', '--offline', '--manifest-path', str(ROOT/'src/Cargo.toml'),
+                                '-p', 'pilotdeck-gateway', '--test', 'plugin_runtime', test, '--', '--exact',
+                                '--nocapture', '--test-threads=1'], cwd=ROOT, env=MUTANT_ENV,
+                               timeout=max(1, min(120, deadline-time.monotonic())))
+            log = result.stdout + result.stderr
+            (OUTPUT / f'baseline-{test}.log').write_text(log)
+            passed = result.returncode == 0 and baseline_passed(log, test)
+            summary.append({'mutation': 'baseline', 'test': test, 'exit': result.returncode,
+                            'killed': False, 'baseline': passed})
+            print(json.dumps(summary[-1]), flush=True)
+            if not passed:
+                raise SystemExit(f'baseline {test} failed: INVALID before mutation')
+        for name, mutation, test, marker in selected:
             assert SOURCE.read_bytes() == BASE, 'source changed outside this mutation runner'
             wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=max(1, deadline-time.monotonic()))
             try:
@@ -111,4 +128,5 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
     finally:
         assert SOURCE.read_bytes() == BASE, 'restoration failed'
         (OUTPUT/'summary.json').write_text(json.dumps({'sourceSha256': hashlib.sha256(BASE).hexdigest(),
+                                                     'invalid': any(row.get('baseline') is False for row in summary),
                                                      'restored': True, 'cases': summary}, indent=2)+'\n')

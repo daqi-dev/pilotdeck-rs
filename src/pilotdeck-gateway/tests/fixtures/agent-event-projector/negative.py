@@ -208,7 +208,7 @@ mutants = [
         "projector.rs",
         SYNC_WRITE_BEFORE,
         SYNC_WRITE_AFTER,
-        "advisory_persist_returns_before_the_write_completes",
+        "persist blocked for",
     ),
     (
         "keep-__proto__-own-property",
@@ -229,7 +229,7 @@ mutants = [
         "projector.rs",
         "    crate::js_value::json_stringify(value)",
         "    pilotdeck_protocol::stringify_json(value).map_err(|_| crate::js_value::StackOverflow)",
-        "deep_provider_raw_and_args_preview_fall_back_to_ts_string_conversion",
+        "deep preview falls back to the TS String conversion",
     ),
     (
         "skip-path-normalization",
@@ -238,7 +238,7 @@ mutants = [
         "            Component::ParentDir => {\n                normalized.push(component.as_os_str());\n            }",
         # The renamed case now only exercises in-root `.` normalization; the
         # `..` case that still reaches `ParentDir` is the escape test.
-        "artifact_session_parent_dir_escape_is_refused",
+        "an escaped path must never be handed out",
     ),
     # Fix round 2 (P1): the `..` root guard must stay wired. Without it the
     # escaped path is queued and handed back as `resultPath`.
@@ -250,7 +250,7 @@ mutants = [
         }
 ''',
         "",
-        "artifact_session_parent_dir_escape_keeps_projection_without_a_path",
+        "a refused write has no path",
     ),
     # Fix round 3 (#654 P2): the unix hardening branch used to have no
     # persistent control; its red evidence lived only in uncommitted logs.
@@ -260,28 +260,28 @@ mutants = [
         "projector.rs",
         "        verify_private_directory(&current, &opened.metadata()?, expected_uid)?;\n",
         "",
-        "artifact_owner_check_is_wired_through_the_real_writer",
+        "a directory owned by a foreign uid must not be written through",
     ),
     (
         "drop-artifact-anchor-nofollow",
         "projector.rs",
         "    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW;",
         "    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;",
-        "artifact_root_parent_symlink_is_refused",
+        "the refused write must not have created",
     ),
     (
         "drop-artifact-hardlink-guard",
         "projector.rs",
         " || metadata.nlink() != 1",
         "",
-        "artifact_file_hardlink_is_not_truncated",
+        "a pre-planted hard link must not let the writer truncate its target",
     ),
     (
         "loosen-artifact-directory-mode",
         "projector.rs",
         "        fchmod(&opened, Mode::from_raw_mode(0o700))?;",
         "        fchmod(&opened, Mode::from_raw_mode(0o777))?;",
-        "artifact_directories_are_0700_and_the_file_is_0600",
+        "must be 0700",
     ),
     (
         "drop-artifact-file-nofollow",
@@ -289,7 +289,7 @@ mutants = [
         """                | OFlags::NONBLOCK
                 | OFlags::NOFOLLOW,""",
         "                | OFlags::NONBLOCK,",
-        "artifact_file_symlink_is_not_followed_or_truncated",
+        "the symlink target must stay unchanged",
     ),
     (
         "drop-artifact-writer-root-boundary",
@@ -299,7 +299,7 @@ mutants = [
     }
 ''',
         "",
-        "artifact_writer_refuses_a_path_beside_the_root",
+        "a path beside the root must be refused",
     ),
     (
         "drop-artifact-parentless-root-guard",
@@ -309,7 +309,7 @@ mutants = [
         }
 ''',
         "",
-        "artifact_root_without_a_parent_is_refused",
+        "a parentless root must not hand out a path",
     ),
     # Fix round 2: one control per P1 (silent path fields, queue overflow,
     # detached advisory writer, deep-array `String()` clamp).
@@ -380,7 +380,7 @@ mutants = [
         "projector.rs",
         "            Some(tx) => tx.send(Box::new(job)).is_err(),",
         "            Some(_tx) => false,",
-        "every_advisory_write_is_eventually_persisted",
+        "every advisory write must reach the writer",
     ),
     (
         "drop-joins-writes",
@@ -399,7 +399,7 @@ mutants = [
 }
 
 impl ArtifactWrites {''',
-        "dropping_the_store_does_not_join_a_blocked_artifact_write",
+        "dropping the store must not wait for the writer",
     ),
     # Fix round 3 (gate3 P1): present-but-non-string wire fields must follow
     # the TS method/property call, not silent coercion.
@@ -443,7 +443,7 @@ impl ArtifactWrites {''',
         "projector.rs",
         '        let session_id = safe_path_part_js(&input.session_id)?;',
         '        let session_id = safe_path_part_js(&input.session_id).unwrap_or_else(|_| "value".to_string());',
-        "default_store_throws_on_non_string_path_part_like_ts",
+        "non-string path part throws above the threshold",
     ),
     # Fix round 4: join renders nullish elements as "", nullish array
     # elements throw on the first property read, `String()` throws for an own
@@ -591,7 +591,7 @@ impl ArtifactWrites {''',
         #[cfg(test)]
         DEFAULT_FACADE_PROJECTOR_ADDR.store(0, std::sync::atomic::Ordering::SeqCst);
         projector.project(&input)''',
-        "map_agent_event_default_calls_share_one_artifact_writer",
+        "the default path records the shared projector",
     ),
     (
         "tampered-source-hash",
@@ -603,28 +603,43 @@ impl ArtifactWrites {''',
 ]
 
 
-# #813: each mutant names the one test that must report the failure. Markers
-# that are test function names run that test directly; projection-case names
-# run the oracle test; the tuple marker is the native deep-stack control.
+# #813 fix-r4: each marker is an assertion message that must appear in the
+# named test's panic *payload*. A test-function name is not a marker: the panic
+# header already contains it, so any panic in that test would match. The dict
+# maps marker -> test function, and `test_negative_panic.py` checks the literal
+# still exists in `projector_tests.rs`.
 TEST_PREFIX = "projector::tests::"
 ORACLE_TEST = TEST_PREFIX + "agent_event_projections_match_ts_oracle"
 DEEP_TEST = TEST_PREFIX + "deep_tool_data_returns_ts_range_error_instead_of_overflowing_the_stack"
 NAMED_TESTS = {
-    "advisory_persist_returns_before_the_write_completes",
-    "deep_provider_raw_and_args_preview_fall_back_to_ts_string_conversion",
-    "artifact_session_parent_dir_escape_is_refused",
-    "artifact_session_parent_dir_escape_keeps_projection_without_a_path",
-    "artifact_owner_check_is_wired_through_the_real_writer",
-    "artifact_root_parent_symlink_is_refused",
-    "artifact_file_hardlink_is_not_truncated",
-    "artifact_directories_are_0700_and_the_file_is_0600",
-    "artifact_file_symlink_is_not_followed_or_truncated",
-    "artifact_writer_refuses_a_path_beside_the_root",
-    "artifact_root_without_a_parent_is_refused",
-    "every_advisory_write_is_eventually_persisted",
-    "dropping_the_store_does_not_join_a_blocked_artifact_write",
-    "default_store_throws_on_non_string_path_part_like_ts",
-    "map_agent_event_default_calls_share_one_artifact_writer",
+    "persist blocked for": "advisory_persist_returns_before_the_write_completes",
+    "deep preview falls back to the TS String conversion":
+        "deep_provider_raw_and_args_preview_fall_back_to_ts_string_conversion",
+    "an escaped path must never be handed out":
+        "artifact_session_parent_dir_escape_is_refused",
+    "a refused write has no path":
+        "artifact_session_parent_dir_escape_keeps_projection_without_a_path",
+    "a directory owned by a foreign uid must not be written through":
+        "artifact_owner_check_is_wired_through_the_real_writer",
+    "the refused write must not have created":
+        "artifact_root_parent_symlink_is_refused",
+    "a pre-planted hard link must not let the writer truncate its target":
+        "artifact_file_hardlink_is_not_truncated",
+    "must be 0700": "artifact_directories_are_0700_and_the_file_is_0600",
+    "the symlink target must stay unchanged":
+        "artifact_file_symlink_is_not_followed_or_truncated",
+    "a path beside the root must be refused":
+        "artifact_writer_refuses_a_path_beside_the_root",
+    "a parentless root must not hand out a path":
+        "artifact_root_without_a_parent_is_refused",
+    "every advisory write must reach the writer":
+        "every_advisory_write_is_eventually_persisted",
+    "dropping the store must not wait for the writer":
+        "dropping_the_store_does_not_join_a_blocked_artifact_write",
+    "non-string path part throws above the threshold":
+        "default_store_throws_on_non_string_path_part_like_ts",
+    "the default path records the shared projector":
+        "map_agent_event_default_calls_share_one_artifact_writer",
 }
 
 
@@ -637,7 +652,7 @@ def named_test(marker):
     if isinstance(marker, tuple) or marker in DEEP_MARKERS:
         return DEEP_TEST
     if marker in NAMED_TESTS:
-        return TEST_PREFIX + marker
+        return TEST_PREFIX + NAMED_TESTS[marker]
     return ORACLE_TEST
 
 
@@ -664,7 +679,8 @@ def run_tests(command):
 # keeps `baseline` even when mutant ids are named, validates every id before the
 # scratch crate is built, and lets the baseline-first loop below abort the whole
 # run as INVALID if that proof fails.
-controls = select([("baseline", None, None, None, None)] + mutants, sys.argv[2:])
+controls = [("baseline", None, None, None, None)] + mutants
+selected = select(controls, sys.argv[2:])
 summary = []
 with tempfile.TemporaryDirectory(prefix="pdrs-aep-negative-", dir="/tmp") as temp:
     scratch = Path(temp)
@@ -816,7 +832,7 @@ fn directory_flags() -> rustix::fs::OFlags {
 """
     )
 
-    for name, filename, before, after, marker in controls:
+    for name, filename, before, after, marker in selected:
         for file, content in originals.items():
             if file == filename:
                 assert content.count(before) == 1, (name, file, content.count(before))

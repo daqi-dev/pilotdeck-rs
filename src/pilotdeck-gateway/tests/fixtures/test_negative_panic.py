@@ -5,12 +5,17 @@ The first sample is the defect #813 describes: the named test passed, another
 test panicked with the same marker. The old ``marker in raw`` accepted it; the
 strict criterion must reject it.
 
+fix-r4 narrows evidence to the panic *payload*. The thread name, the
+``panicked at`` path and the backtrace are not assertions, so a marker that only
+appears there must be rejected even when the named test is the FAILED one.
+
 ``turn-gateway/real-logs`` holds host-run logs from the #813 fix-r1 defect and
 the fix-r2 expiry re-record: a named test FAILED and the marker is either in an
 ``<unnamed>`` thread spawned by it (emit cases) or in the named test's own
 block (expiry cases). They are replayed here so the shared judge cannot
 regress.
 """
+import ast
 from pathlib import Path
 import re
 import unittest
@@ -99,6 +104,30 @@ def log(named_status, other_status, named_panic='', other_panic=''):
     )
 
 
+def projector_named_markers():
+    """Read marker -> test from the projector runner without executing it."""
+    tree = ast.parse((HERE / 'agent-event-projector' / 'negative.py').read_text())
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id == 'NAMED_TESTS'
+               for target in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError('NAMED_TESTS not found')
+
+
+def plugin_stranded_markers():
+    """Read the plugin-runtime stranded markers without executing the script."""
+    tree = ast.parse((HERE / 'plugin-runtime' / 'panic-negative.py').read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id == 'STRANDED_MARKERS'
+               for target in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError('STRANDED_MARKERS not found')
+
+
 class PanicBlockCriterion(unittest.TestCase):
     def test_named_test_passed_while_other_test_panicked_is_rejected(self):
         raw = log('ok', 'FAILED', other_panic=MARKER)
@@ -123,14 +152,16 @@ class PanicBlockCriterion(unittest.TestCase):
     def test_unnamed_thread_assertion_in_single_test_run_is_accepted(self):
         raw = child_thread_log(1)
         self.assertTrue(single_failed_test_run(raw))
-        self.assertIn("<unnamed>'", panic_evidence(raw, NAMED))
+        evidence = panic_evidence(raw, NAMED)
+        self.assertIn(MARKER, evidence)
+        self.assertNotIn('<unnamed>', evidence)
         self.assertTrue(named_test_killed(raw, NAMED, MARKER))
 
     def test_unnamed_thread_assertion_in_multi_test_run_is_rejected(self):
         raw = child_thread_log(2)
         self.assertTrue(named_test_failed(raw, NAMED))
         self.assertFalse(single_failed_test_run(raw))
-        self.assertNotIn("thread '<unnamed>'", panic_evidence(raw, NAMED))
+        self.assertNotIn('<unnamed>', panic_evidence(raw, NAMED))
         self.assertFalse(named_test_killed(raw, NAMED, MARKER))
 
     def test_unnamed_thread_panic_without_named_failure_is_rejected(self):
@@ -143,6 +174,88 @@ class PanicBlockCriterion(unittest.TestCase):
         self.assertFalse(named_test_failed(raw, NAMED))
         self.assertFalse(single_failed_test_run(raw))
         self.assertFalse(named_test_killed(raw, NAMED, MARKER))
+
+    def test_marker_in_thread_name_only_is_rejected(self):
+        # The marker is the test function name. The old helper returned the
+        # whole segment, so the header alone satisfied it for any panic.
+        marker = 'advisory_persist_returns_before_the_write_completes'
+        used_test = 'projector::tests::' + marker
+        raw = (
+            f"running 1 test\ntest {used_test} ... FAILED\n\n"
+            f"thread '{used_test}' panicked at src/tests.rs:1:1:\n"
+            "advisory write started: Timeout\n"
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+        )
+        self.assertTrue(named_test_failed(raw, used_test))
+        self.assertNotIn(marker, panic_evidence(raw, used_test))
+        self.assertFalse(named_test_killed(raw, used_test, marker))
+
+    def test_marker_in_panic_location_path_is_rejected(self):
+        marker = 'advisory_persist_returns_before_the_write_completes'
+        raw = (
+            f"running 1 test\ntest {NAMED} ... FAILED\n\n"
+            f"thread '{NAMED}' panicked at src/{marker}.rs:1:1:\n"
+            "a different assertion\n"
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+        )
+        self.assertTrue(named_test_failed(raw, NAMED))
+        self.assertFalse(named_test_killed(raw, NAMED, marker))
+
+    def test_marker_in_backtrace_is_rejected(self):
+        raw = (
+            f"running 1 test\ntest {NAMED} ... FAILED\n\n"
+            f"thread '{NAMED}' panicked at src/lib.rs:1:1:\n"
+            "a different assertion\n"
+            f"stack backtrace:\n   0: {MARKER}\n"
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+        )
+        self.assertTrue(named_test_failed(raw, NAMED))
+        self.assertNotIn(MARKER, panic_evidence(raw, NAMED))
+        self.assertFalse(named_test_killed(raw, NAMED, MARKER))
+
+    def test_multiline_payload_is_kept(self):
+        raw = log('FAILED', '',
+                  named_panic='assertion `left == right` failed\n  left: 1\n right: 2')
+        evidence = panic_evidence(raw, NAMED)
+        self.assertIn('assertion `left == right` failed', evidence)
+        self.assertIn('left: 1', evidence)
+        self.assertIn('right: 2', evidence)
+
+    def test_projector_markers_are_assertion_messages_not_test_names(self):
+        markers = projector_named_markers()
+        self.assertEqual(len(markers), 15)
+        tests_source = (HERE.parents[1] / 'src/runtime/turn/projector_tests.rs').read_text()
+        test_names = set(markers.values())
+        for marker, test in markers.items():
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, test_names)
+                self.assertIn(marker, tests_source)
+                self.assertIn(f'fn {test}(', tests_source)
+
+    def test_plugin_runtime_generic_assert_eq_marker_is_rejected(self):
+        # The first plugin-runtime repair added `assertion `left == right`
+        # failed`, which accepts *any* assert_eq! in the same test. Only the
+        # dedicated completion/deadline messages may count (#813 fix-r4).
+        used_test = ('runtime::plugins::tests::'
+                     'disposal_sync_panic_does_not_strand_other_waiters')
+        raw = (
+            f"running 1 test\ntest {used_test} ... FAILED\n\n"
+            f"thread '{used_test}' panicked at src/plugins_tests.rs:1:1:\n"
+            "assertion `left == right` failed\n  left: 1\n right: 2\n"
+            "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n"
+        )
+        markers = plugin_stranded_markers()
+        self.assertEqual(markers, (
+            'sync panic stranded a waiter: dispose deadline',
+            'sync panic stranded a waiter: completion count',
+        ))
+        tests_source = (HERE.parents[1] / 'src/runtime/plugins_tests.rs').read_text()
+        for marker in markers:
+            self.assertIn(marker, tests_source)
+        self.assertFalse(named_test_killed(raw, used_test, markers))
+        # The old generic marker accepted this very panic; the new one does not.
+        self.assertTrue(named_test_killed(raw, used_test,
+                                          'assertion `left == right` failed'))
 
     def test_recorded_host_logs_are_killed(self):
         for name, used_test in RECORDED_CASES:

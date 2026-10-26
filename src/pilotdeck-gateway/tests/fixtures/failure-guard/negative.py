@@ -15,6 +15,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned
+from negative_selection import select
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
@@ -73,10 +74,13 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
     before_refresh = block[config_start:] + block[:config_start]
     mutants.append(mutation('config-snapshotted-before-refresh', submit, block, before_refresh, 'guard-refresh-enables'))
 
-    selected = [dict(name='baseline-pure', test=pure, marker=None), dict(name='baseline-submit', test=replay, marker=None)] + mutants
-    if len(sys.argv) > 2:
-        selected = [m for m in selected if m['name'] in sys.argv[2:]]
-        assert selected, 'unknown controls'
+    # #813 fix-r4: both baseline rows survive a subset; a failing baseline
+    # breaks before any mutant verdict.
+    selected = select(
+        [dict(name='baseline-pure', test=pure, marker=None),
+         dict(name='baseline-submit', test=replay, marker=None)] + mutants,
+        sys.argv[2:], name=lambda row: row['name'],
+        always=('baseline-pure', 'baseline-submit'))
     command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'), '-p', 'pilotdeck-gateway', '--lib']
     summary = []
     deadline = time.monotonic() + 1800

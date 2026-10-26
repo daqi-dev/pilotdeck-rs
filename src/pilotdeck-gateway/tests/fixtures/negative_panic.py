@@ -29,6 +29,13 @@ plus ``1 failed``). With one test in the process, any ``<unnamed>`` thread can
 only have been spawned by that test; with two or more tests the block cannot be
 attributed and stays rejected.
 
+Only the panic *payload* is evidence (#813 fix-r4). The header carries the
+thread name, the ``panicked at`` line carries a source path, and a backtrace
+carries symbol/path text. A marker that also appears in any of those places is
+not an assertion message, so ``panic_evidence`` returns the message body only.
+This matters most for a test whose function name is also the marker: without
+the split, *any* panic in that test matched.
+
 Known limitation (#813 fix-r2, P2-2): libtest streams a detached thread's panic
 *after* the named test's ``... FAILED`` line -- the recorded host logs even show
 it after ``test result:`` -- so "the block is before FAILED" cannot separate a
@@ -39,6 +46,20 @@ message unique to the named test, and treat a new detached-thread consumer as a
 new analysis, not as a free widening.
 """
 import re
+
+# Lines that end a panic payload rather than belong to it. The backtrace note
+# and block come first; the rest are libtest's own result/report lines.
+_PANIC_TAIL = re.compile(
+    r'^(?:'
+    r'stack backtrace:'
+    r'|note: Some details are omitted'
+    r'|note: run with `RUST_BACKTRACE'
+    r'|test result:'
+    r'|failures:'
+    r'|test \S+ \.\.\. (?:ok|FAILED|ignored|measured)'
+    r'|error: test failed'
+    r')'
+)
 
 
 def _full_test_names(used_test):
@@ -97,8 +118,31 @@ def single_failed_test_run(raw):
     return running == ['1'] and failed == ['1']
 
 
+def _panic_payload(segment):
+    """The message body of one ``thread '<name>' panicked at ...`` segment.
+
+    The segment starts with the thread name and ends at the next panic header
+    (the caller split on ``thread '``). Drop the header/location line and stop
+    at the first backtrace or libtest line, so a marker can only match text the
+    panic itself printed (#813 fix-r4).
+    """
+    at = segment.find(' panicked at ')
+    if at < 0:
+        return ''
+    body = segment[at + len(' panicked at '):]
+    newline = body.find('\n')
+    if newline < 0:
+        return ''
+    payload = []
+    for line in body[newline + 1:].splitlines():
+        if _PANIC_TAIL.match(line):
+            break
+        payload.append(line)
+    return '\n'.join(payload).strip('\n')
+
+
 def panic_evidence(raw, used_test):
-    """Return the panic blocks attributable to the full test name(s)."""
+    """Return the panic payloads attributable to the full test name(s)."""
     names = _full_test_names(used_test)
     _reject_observed_module_paths(raw, names)
     include_unnamed = (any(named_test_failed(raw, name) for name in names)
@@ -107,10 +151,10 @@ def panic_evidence(raw, used_test):
     for segment in raw.split("thread '")[1:]:
         name = segment.split("'", 1)[0]
         if name in names:
-            blocks.append(segment)
+            blocks.append(_panic_payload(segment))
         elif include_unnamed and name == '<unnamed>':
-            blocks.append(segment)
-    return '\n'.join(blocks)
+            blocks.append(_panic_payload(segment))
+    return '\n'.join(block for block in blocks if block)
 
 
 def marker_kills_named_test(raw, used_test, marker):

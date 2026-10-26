@@ -15,6 +15,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned
+from negative_selection import select
 
 fixture = Path(__file__).resolve().parent
 rust = fixture.parents[3]
@@ -266,7 +267,9 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
     # shift above the span). The generic "some assertion happened somewhere"
     # check is deliberately gone.
     mutant_anchor = {
-        'host-lease-release-skipped': ('message', 'assertion `left == right` failed'),
+        # fix-r3 keeps the location anchors derived by ``unwrap_site``; fix-r4
+        # only narrows the host-lease marker to the assertion's own message.
+        'host-lease-release-skipped': ('message', 'a prepared lease must be released exactly once'),
         'lease-poison-unwrap-finish': ('location', None),
         'lease-poison-unwrap-prepare': ('location', None),
         'lease-order-records-swapped': ('message', 'lease_release must precede after_turn'),
@@ -289,10 +292,10 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         (output / 'original-sha256.json').write_text(json.dumps({
             str(path.relative_to(repo)): hashlib.sha256(data).hexdigest()
             for path, data in originals.items()}, indent=2)+'\n')
-        selected = [('baseline', None, None, None, None, None)] + mutants
-        if len(sys.argv) > 2:
-            selected = [entry for entry in selected if entry[0] in sys.argv[2:]]
-            assert selected, 'unknown control'
+        # #813 fix-r4: a subset keeps the unmutated baseline row; the baseline
+        # branch below aborts the whole run if it is not green.
+        selected = select([('baseline', None, None, None, None, None)] + mutants,
+                          sys.argv[2:])
         for name, before, after, case, marker, capability in selected:
             assert all(path.read_bytes() == data for path, data in originals.items()), 'source changed outside this run'
             target = mutant_source.get(name, source)

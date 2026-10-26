@@ -158,7 +158,11 @@ async fn disposal_sync_panic_does_not_strand_other_waiters() {
             .expect("sync panic stranded a waiter: dispose deadline")
             .unwrap()
             .unwrap_err();
-        assert_eq!(completed.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            completed.load(Ordering::SeqCst),
+            1,
+            "sync panic stranded a waiter: completion count"
+        );
         let released = tokio::time::timeout(Duration::from_secs(5), release)
             .await
             .unwrap()

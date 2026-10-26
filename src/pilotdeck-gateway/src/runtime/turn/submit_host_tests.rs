@@ -295,7 +295,11 @@ async fn finish_pump_releases_a_lease_exactly_once() {
     )]);
     host.prepare(&input, &run()).await.unwrap();
     host.finish_pump(&run()).await.unwrap();
-    assert_eq!(fake.releases.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fake.releases.load(Ordering::SeqCst),
+        1,
+        "a prepared lease must be released exactly once"
+    );
     host.finish_pump(&run()).await.unwrap();
     assert_eq!(
         fake.releases.load(Ordering::SeqCst),
