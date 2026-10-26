@@ -60,6 +60,18 @@ MUTANTS = [
     ('uri-template-i-dropped',
      b'r#"(?i)^(?:(?:[^\\x00-\\x20"\'<>%\\\\^`{|}]|%[0-9a-f]{2})|\\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+',
      b'r#"^(?:(?:[^\\x00-\\x20"\'<>%\\\\^`{|}]|%[0-9a-f]{2})|\\{[+#./;?&=,!@|]?(?:[a-z0-9_]|%[0-9a-f]{2})+', False),
+    # fix-r1: ipv6's own (?i) had no mutant, and the review asked for IPvFuture
+    # coverage. Dropping (?i) must flip the ::ABCD rows (unit + oracle).
+    ('ipv6-i-dropped',
+     b'r#"(?i)^((([0-9a-f]{1,4}:){7}([0-9a-f]{1,4}|:))',
+     b'r#"^((([0-9a-f]{1,4}:){7}([0-9a-f]{1,4}|:))', True),
+    # Simulates "fixing" ipv6 by grafting the uri regex's IPvFuture branch on:
+    # the SDK has no such branch, so the v1.s / v1.ſ rows must flip red. The
+    # branch goes inside the outermost group (after the `|:))` that closes the
+    # `::` alternative's branch group) so both anchors still apply to it.
+    ('ipv6-ipvfuture-branch-added',
+     b'|:)))$"#,',
+     b'|:))|[Vv][0-9a-f]+\\.[a-z0-9\\-._~!$&\'()*+,;=:]+)$"#,', True),
     # Masking must mask, not fold: replacing U+017F with a real `s` makes the
     # port accept what the SDK rejects (and would also fold U+212A onto `s`).
     ('mask-folds-not-masks',

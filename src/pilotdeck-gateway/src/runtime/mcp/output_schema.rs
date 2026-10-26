@@ -2198,9 +2198,10 @@ fn formats() -> &'static Formats {
 /// additionally folds U+017F (ſ) and U+212A (KELVIN SIGN) — the only
 /// non-ASCII code points whose simple case fold is an ASCII letter — onto
 /// `s`/`k`; mask them so a Rust `(?i)` match behaves like the JavaScript one.
-/// Same trick as `tools/builtin/bash/permissions.rs` (#772); whether this
-/// moves to a shared `js_value.rs` helper is #829's coordinator decision, so
-/// the body is deliberately local.
+/// Same trick as `tools/builtin/bash/permissions.rs` (#772), whose helper is
+/// `pub(super)` and so cannot be reached from here: this is a local,
+/// temporary copy, not the shared function #772 promised for `js_value.rs`.
+/// TODO(#772): replace this copy with the shared helper once #772 lands.
 fn ascii_fold_haystack(text: &str) -> std::borrow::Cow<'_, str> {
     if text.contains(['\u{017F}', '\u{212A}']) {
         std::borrow::Cow::Owned(text.replace(['\u{017F}', '\u{212A}'], "\u{FFFD}"))
@@ -2231,8 +2232,11 @@ fn string_format_valid(format: &str, text: &str) -> Option<bool> {
         "email" => regexes.email.is_match(&ascii_fold_haystack(text)),
         "hostname" => hostname_valid(text),
         "ipv4" => ipv4_valid(text),
-        // `(?i)` stays unmasked here: `[0-9a-f]` contains no `s`/`k`, so ſ/K
-        // cannot fold onto the class and the two engines agree.
+        // `(?i)` stays unmasked here: unlike the `uri`/`uri-reference`
+        // regexes, ajv-formats' ipv6 pattern has no `[Vv][0-9a-f]+\.[a-z...]`
+        // IPvFuture branch, and every class it does have (`[0-9a-f]` and
+        // decimal IPv4) contains no `s`/`k`, so ſ/K cannot fold onto any of
+        // them and the two engines agree.
         "ipv6" => regexes.ipv6.is_match(text),
         "uuid" => uuid_valid(text),
         "json-pointer" => regexes.json_pointer.is_match(text),
@@ -3913,9 +3917,17 @@ mod tests {
             // onto `s`/`k` even though Rust's Unicode `(?i)` would.
             ("uri", "HTTP://EXAMPLE.COM/", Some(true)),
             ("uri", "\u{17f}cheme://x/", Some(false)),
+            // #829 fix-r1: the IPvFuture suffix class `[a-z0-9...]` in the
+            // bracket branch is as fold-sensitive as the scheme; uppercase
+            // stays valid while ſ/K must not fold onto it.
+            ("uri", "v://[V1.A]", Some(true)),
+            ("uri", "v://[v1.\u{17f}]", Some(false)),
+            ("uri", "v://[v1.\u{212a}]", Some(false)),
             ("uri-reference", "/a/b", Some(true)),
             ("uri-reference", "HTTP://example.com/", Some(true)),
             ("uri-reference", "\u{17f}://x/", Some(false)),
+            ("uri-reference", "//[V1.A]", Some(true)),
+            ("uri-reference", "//[v1.\u{17f}]", Some(false)),
             ("uri-template", "{var}", Some(true)),
             ("uri-template", "{VAR}", Some(true)),
             ("uri-template", "{\u{17f}}", Some(false)),
@@ -3937,7 +3949,15 @@ mod tests {
             ("ipv4", "01.1.1.1", Some(false)),
             ("ipv4", "256.1.1.1", Some(false)),
             ("ipv6", "::1", Some(true)),
+            ("ipv6", "::ABCD", Some(true)),
             ("ipv6", "1.2.3.4", Some(false)),
+            // #829 fix-r1: ajv-formats' ipv6 regex has no IPvFuture branch
+            // (that branch lives only in the masked uri/uri-reference
+            // patterns), so every `v1.x` spelling stays invalid.
+            ("ipv6", "v1.s", Some(false)),
+            ("ipv6", "v1.\u{17f}", Some(false)),
+            ("ipv6", "::v1.\u{17f}", Some(false)),
+            ("ipv6", "[v1.\u{17f}]", Some(false)),
             (
                 "uuid",
                 "urn:uuid:123e4567-e89b-12d3-a456-426614174000",
@@ -4136,7 +4156,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 904);
+        assert_eq!(cases.len(), 913);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),

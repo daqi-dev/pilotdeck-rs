@@ -386,7 +386,15 @@ for (const [id, schema, data] of [
   // İ/ı) must not — Rust's Unicode (?i) needs the haystack masked instead.
   ['uri/upper', {type: 'string', format: 'uri'}, 'HTTP://EXAMPLE.COM/'],
   ['uri/long-s-scheme', {type: 'string', format: 'uri'}, 'ſcheme://x/'],
+  // fix-r1: the IPvFuture suffix class `[a-z0-9...]` in the bracket branch is
+  // fold-sensitive too; uppercase folds in, ſ/K must stay out.
+  ['uri/ipvfuture-upper', {type: 'string', format: 'uri'}, 'v://[V1.A]'],
+  ['uri/ipvfuture-long-s', {type: 'string', format: 'uri'}, 'v://[v1.ſ]'],
+  ['uri/ipvfuture-kelvin', {type: 'string', format: 'uri'}, 'v://[v1.K]'],
   ['uri-reference/upper', {type: 'string', format: 'uri-reference'}, 'HTTP://example.com/'],
+  // fix-r1: same bracketed IPvFuture branch, exercised without a scheme.
+  ['uri-reference/ipvfuture-upper', {type: 'string', format: 'uri-reference'}, '//[V1.A]'],
+  ['uri-reference/ipvfuture-long-s', {type: 'string', format: 'uri-reference'}, '//[v1.ſ]'],
   ['uri-reference/long-s-scheme', {type: 'string', format: 'uri-reference'}, '\u017F://x/'],
   ['uri-template/upper', {type: 'string', format: 'uri-template'}, '{VAR}'],
   ['uri-template/long-s', {type: 'string', format: 'uri-template'}, '{ſ}'],
@@ -397,6 +405,14 @@ for (const [id, schema, data] of [
   ['email/i-with-dot', {type: 'string', format: 'email'}, 'İ@example.com'],
   ['ipv6/upper-hex', {type: 'string', format: 'ipv6'}, '::ABCD'],
   ['ipv6/long-s', {type: 'string', format: 'ipv6'}, '::ſ'],
+  // fix-r1: ajv-formats' ipv6 regex has no IPvFuture branch at all (that
+  // branch lives only in the uri/uri-reference patterns), so every `v1.x`
+  // spelling — bare, `::`-prefixed or bracketed — must stay invalid, with or
+  // without a foldable ſ.
+  ['ipv6/ipvfuture-ascii', {type: 'string', format: 'ipv6'}, 'v1.s'],
+  ['ipv6/ipvfuture-bare-long-s', {type: 'string', format: 'ipv6'}, 'v1.ſ'],
+  ['ipv6/ipvfuture-long-s', {type: 'string', format: 'ipv6'}, '::v1.ſ'],
+  ['ipv6/ipvfuture-bracket-long-s', {type: 'string', format: 'ipv6'}, '[v1.ſ]'],
   ['json-pointer-uri-fragment/upper', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/A'],
   ['json-pointer-uri-fragment/long-s', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/ſ'],
   ['json-pointer-uri-fragment/kelvin', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/K'],
