@@ -64,11 +64,15 @@ def success_final(sequence):
         final=True, outcome="completed")
 
 
-if mode == "live-payload":
+if mode in ("live-payload", "live-manifest"):
     send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn,
                       receivedPayload=execute["payload"]))
-    send(success_final(2))
+    if mode == "live-manifest":
+        send_event(2, dict(type="agent_status", sessionId=session, turnId=turn,
+                          event="manifest", kind="status", text="payload observed",
+                          receivedPayload=execute["payload"]))
+    send(success_final(3 if mode == "live-manifest" else 2))
 elif mode == "live-interaction":
     send_event(0, dict(type="turn_started", sessionId=session, turnId=turn))
     send_event(1, dict(type="input_accepted", sessionId=session, turnId=turn))

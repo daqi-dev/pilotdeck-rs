@@ -837,3 +837,37 @@ fn recording_input_rejects_non_agent_input_and_drops_model_prototype() {
             .is_none()
     );
 }
+
+#[test]
+fn oracle_consumers_exist() {
+    let oracle = parse_json(include_str!(
+        "../../../tests/fixtures/turn-runner/oracle.json"
+    ))
+    .unwrap();
+    let sources = [
+        include_str!("runner_tests.rs"),
+        include_str!("live_stream_tests.rs"),
+    ]
+    .join("\n")
+    .split_whitespace()
+    .collect::<String>();
+    for group in ["matrix", "sidecar"] {
+        let JsValue::Array(rows) = oracle.get(group).unwrap() else {
+            panic!("rows")
+        };
+        for row in rows {
+            if let Some(name) = row
+                .get("consumption")
+                .and_then(|c| c.get("test"))
+                .and_then(JsValue::as_string)
+            {
+                let name = name.to_utf8().unwrap();
+                assert!(
+                    sources.contains(&format!("fn{name}("))
+                        || sources.contains(&format!("case!({name},")),
+                    "missing Rust consumer: {name}"
+                );
+            }
+        }
+    }
+}

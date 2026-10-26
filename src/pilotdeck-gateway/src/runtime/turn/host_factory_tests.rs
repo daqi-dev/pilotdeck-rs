@@ -583,6 +583,13 @@ async fn live_session_shares_recorder_and_reads_current_history() {
         }
         let completed = completed.expect("peer completed the turn");
         assert_eq!(
+            completed
+                .get("result")
+                .and_then(|result| result.get("type")),
+            Some(&"success".into()),
+            "every history turn must execute successfully in its own sidecar"
+        );
+        assert_eq!(
             completed.get("messages"),
             Some(&JsValue::Array(vec![
                 previous,
@@ -631,7 +638,20 @@ async fn reload_between_turns_uses_new_generation() {
                 JsValue::Object(options)
             })
             .unwrap();
-        while bounded(turn.next()).await.unwrap().is_some() {}
+        let mut completed = None;
+        while let Some(event) = bounded(turn.next()).await.unwrap() {
+            if event.get("type") == Some(&"turn_completed".into()) {
+                completed = Some(event);
+            }
+        }
+        assert_eq!(
+            completed
+                .as_ref()
+                .and_then(|event| event.get("result"))
+                .and_then(|result| result.get("type")),
+            Some(&"success".into()),
+            "every generation must execute successfully in its own sidecar"
+        );
         assert_peer_reaped(&pid_file).await;
         assert_eq!(old.lease_count(), 0);
         let current = registry.resolve(None).unwrap();
@@ -660,6 +680,8 @@ async fn reload_mid_turn_holds_old_lease_until_turn_drops() {
         bounded(turn.next()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
     );
+    bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+    drive_to_peer(turn.as_mut(), &pid_file, true).await;
     assert_eq!(old.lease_count(), 1);
     bounded(registry.reload()).await.unwrap();
     assert_eq!(old.state(), crate::runtime::project::RuntimeState::Retired);
@@ -694,6 +716,8 @@ async fn retire_does_not_dispose_while_lease_outstanding() {
         bounded(turn.next()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
     );
+    bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+    drive_to_peer(turn.as_mut(), &pid_file, true).await;
     assert_eq!(runtime.lease_count(), 1);
     bounded(registry.reload()).await.unwrap();
     assert_eq!(
@@ -734,11 +758,9 @@ async fn spawn_failure_releases_lease_once_and_returns_host_error() {
     }
     let factory = factory(registry.clone(), deployment, None);
     for _ in 0..2 {
-        let error = factory
-            .create(&identity(), test_recorder())
-            .await
-            .err()
-            .unwrap();
+        let host = factory.create(&identity(), test_recorder()).await.unwrap();
+        let error = host.client.await.err().unwrap();
+        drop(host.lease);
         assert!(
             error.message.contains("No such file") || error.message.contains("not found"),
             "{error:?}"
@@ -753,7 +775,7 @@ async fn spawn_failure_releases_lease_once_and_returns_host_error() {
 }
 
 #[tokio::test]
-async fn spawn_failure_awaits_release_of_concurrently_retired_generation() {
+async fn spawn_failure_releases_prepared_retired_generation() {
     let scratch = Scratch::new();
     let registry = registry(&scratch);
     let runtime = registry.resolve(None).unwrap();
@@ -762,8 +784,8 @@ async fn spawn_failure_awaits_release_of_concurrently_retired_generation() {
         *command = "/nonexistent-pdrs-sidecar".into();
     }
     // Retire the generation after `create` acquired its lease but before the
-    // spawn attempt. The explicit `lease.release().await` must then wait for
-    // cleanup; merely dropping the lease only schedules it.
+    // lazy spawn attempt. The preparer owns the lease until it drops/releases
+    // it; wait for that generation's disposal before asserting cleanup.
     let invalidating = registry.clone();
     let factory = TurnHostFactory::new(
         registry.clone(),
@@ -775,10 +797,12 @@ async fn spawn_failure_awaits_release_of_concurrently_retired_generation() {
             ports(None)
         },
     );
-    let error = bounded(factory.create(&identity(), test_recorder()))
+    let host = bounded(factory.create(&identity(), test_recorder()))
         .await
-        .err()
         .unwrap();
+    let error = bounded(host.client).await.err().unwrap();
+    drop(host.lease);
+    bounded(runtime.wait_disposed()).await.unwrap();
     assert!(
         error.message.contains("No such file") || error.message.contains("not found"),
         "{error:?}"
@@ -802,11 +826,9 @@ async fn handshake_failure_reaps_child_and_releases_lease() {
         peer("handshake-reject", Some(&pid_file)),
         None,
     );
-    let error = factory
-        .create(&identity(), test_recorder())
-        .await
-        .err()
-        .unwrap();
+    let host = factory.create(&identity(), test_recorder()).await.unwrap();
+    let error = host.client.await.err().unwrap();
+    drop(host.lease);
     assert!(
         error.message.contains("hello") || error.message.contains("handshake"),
         "{error:?}"
@@ -834,19 +856,10 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
             wire(),
         )
         .unwrap();
+    bounded(turn.next()).await.unwrap().unwrap(); // host started
+    bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+    drive_to_peer(turn.as_mut(), &pid_file, false).await;
     let mut pending = Box::pin(turn.next());
-    bounded(async {
-        tokio::select! {
-            result = &mut pending => panic!("host creation resolved before cancel: {result:?}"),
-            _ = async {
-                let marker = peer_marker(&pid_file);
-                while !peer_process_running(&marker).await {
-                    tokio::task::yield_now().await;
-                }
-            } => {}
-        }
-    })
-    .await;
     session.dispose().await.unwrap();
     let event = bounded(pending.as_mut()).await.unwrap().unwrap();
     assert_eq!(
@@ -872,20 +885,25 @@ async fn assert_peer_reaped(pid_file: &Path) {
         None => assert_no_peer_process(&peer_marker(pid_file)).await,
     }
 }
-async fn peer_process_running(marker: &str) -> bool {
-    let output = Command::new("pgrep")
-        .arg("-f")
-        .arg(marker)
-        .output()
-        .unwrap_or_else(|error| panic!("cannot run pgrep -f {marker}: {error}"));
-    match output.status.code() {
-        Some(0) => true,
-        Some(1) => false,
-        _ => panic!(
-            "pgrep -f {marker} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ),
-    }
+async fn drive_to_peer(
+    turn: &mut dyn crate::runtime::session::LiveTurn,
+    pid_file: &Path,
+    execute: bool,
+) {
+    let mut pending = turn.next();
+    bounded(async {
+        tokio::select! {
+            result = &mut pending => panic!("peer should remain pending: {result:?}"),
+            _ = async {
+                while !published_pid(pid_file).is_some_and(|pid| {
+                    !execute || PathBuf::from(format!("{}.{pid}.execute", pid_file.display())).exists()
+                }) {
+                    tokio::task::yield_now().await;
+                }
+            } => {}
+        }
+    })
+    .await;
 }
 async fn assert_no_peer_process(marker: &str) {
     timeout(Duration::from_secs(10), async {

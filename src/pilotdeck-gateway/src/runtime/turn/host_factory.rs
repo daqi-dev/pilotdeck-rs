@@ -14,11 +14,10 @@
 //! token accounting and `ContextStorageResources::create_session` all return
 //! turn-owned state.
 //!
-//! Failure ownership: the lease is acquired before assembly and lives in the
-//! returned [`InteractionHost`] until `InteractionTurn::bind` owns it. A spawn
-//! or handshake failure releases it exactly once before returning the host
-//! error; dropping any pending factory future (dispose/cancel) releases it via
-//! `RuntimeLease::Drop`.
+//! The lease is acquired during assembly; the returned connection is lazy.
+//! LiveSession binds the handler and commits start/accepted input before polling
+//! that connection. Failed gates therefore create no child; cancellation/drop
+//! still retains the lease until any outstanding recorder write exits.
 use crate::{
     config::Env,
     host::{
@@ -229,10 +228,19 @@ impl TurnHostFactory {
     /// The ports factory receives the same recorder on every turn; use it for
     /// any durable model/tool ports. `history` reads the current session view.
     pub fn into_live_session(
-        self,
+        mut self,
         recorder: Arc<Recorder>,
         history: impl Fn() -> Vec<JsValue> + Send + Sync + 'static,
     ) -> LiveSessionAdapter {
+        let ports = self.ports.clone();
+        self.ports = Arc::new(move |identity, recorder| {
+            let mut ports = ports(identity, recorder.clone());
+            ports.recorder = Some(model_port::DurableRecorder {
+                recorder,
+                recording_session_id: ports.recorder.and_then(|r| r.recording_session_id),
+            });
+            ports
+        });
         let factory = Arc::new(self);
         LiveSessionAdapter::with_interaction(recorder, history, move |identity, recorder| {
             let factory = factory.clone();
@@ -240,7 +248,7 @@ impl TurnHostFactory {
         })
     }
 
-    /// Acquire one generation lease and spawn its sidecar. Unsupported
+    /// Acquire one generation lease and prepare a lazy sidecar connection. Unsupported
     /// transports fail before any lease exists, so they cannot leak.
     pub async fn create(
         &self,
@@ -272,27 +280,23 @@ impl TurnHostFactory {
             .acquire(None)
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
         let ports = (self.ports)(identity, recorder);
-        let (router, input, mut lease) = match Self::assemble(lease, identity, ports).await {
+        let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.
             Err(error) => return Err(error),
         };
         let mut command = Command::new(command);
         command.args(args).current_dir(cwd).env_clear().envs(env);
-        match HostClient::spawn(&mut command, self.expected_module_id.as_ref(), self.limits).await {
-            Ok(client) => Ok(InteractionHost {
-                client,
-                lease,
-                router,
-                input,
+        let expected = self.expected_module_id.clone();
+        let limits = self.limits;
+        Ok(InteractionHost {
+            client: Box::pin(async move {
+                HostClient::spawn(&mut command, expected.as_ref(), limits).await
             }),
-            Err(error) => {
-                // Released exactly once; a failed release is secondary to the
-                // host failure that the caller must see.
-                let _ = lease.release().await;
-                Err(error)
-            }
-        }
+            lease,
+            router,
+            input,
+        })
     }
 
     /// Build the non-interaction handlers from the leased generation. Public

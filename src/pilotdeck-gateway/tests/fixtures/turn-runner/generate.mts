@@ -1,11 +1,12 @@
 // Real cc7c4e6 TurnRunner + recorder; deterministic writer failure seams only.
 import assert from 'node:assert/strict';
 import {probeSidecar} from './sidecar.mts';
+import {verifyConsumers} from './consumers.mjs';
 import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {dirname, join, relative, resolve} from 'node:path';
 import {createRequire} from 'node:module';
 import {existsSync} from 'node:fs';
-import {pathToFileURL} from 'node:url';
+import {pathToFileURL, fileURLToPath} from 'node:url';
 import {assertBaseline, baselineSourceHashes} from '../_shared/baseline.mts';
 const root = resolve(process.env.PDRS_BASELINE!);
 const output = resolve(process.argv[2]);
@@ -212,10 +213,11 @@ for(const name of [...completionCases,...catchCases,'loop-missing-message','loop
 matrixConsumers['input-synthetic-null']='recording_synthetic_null';
 for(const row of matrix) row.consumption = matrixConsumers[row.name]
   ? {status:row.name.startsWith('input-metadata-') || row.name==='input-text-original' ? 'pr3 端口已消费' : 'pr2 已消费',test:matrixConsumers[row.name],scope:'runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational'}
-  : {status:'仅记录，由 pr3 消费',test:`live_runner_${row.name.replaceAll('-','_')}`,scope:'LiveSessionAdapter + AgentLoop host integration'};
+  : {status:'仅记录，由 pr3 消费',plannedTest:`live_runner_${row.name.replaceAll('-','_')}`,scope:'LiveSessionAdapter + AgentLoop host integration'};
 for(const row of matrix) if (/^invalid-result-(session|number|array|missing-turn|missing-session|turn-undefined)-/.test(row.name))
   row.consumption = {status:'差异已登记，非 TS 对齐',test:matrixConsumers[row.name],scope:'raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001'};
-for(const row of sidecar) row.consumption = {status:'仅记录，由 pr3 消费',test:`live_sidecar_${row.name.replaceAll('-','_')}`,scope:'real TS sidecar + Rust host; approved differences require separate acceptance'};
+for(const row of sidecar) row.consumption = {status:'仅记录，由 pr3 消费',plannedTest:`live_sidecar_${row.name.replaceAll('-','_')}`,scope:'real TS sidecar + Rust host; approved differences require separate acceptance'};
+verifyConsumers([...matrix,...sidecar], ['runner_tests.rs','live_stream_tests.rs'].map(file=>join(dirname(fileURLToPath(import.meta.url)),'../../../src/runtime/turn',file)));
 assertBaseline(root);
 writeFileSync(join(output,'oracle.json'), JSON.stringify({sourceCommit,sourceSha256,matrix,recorderCases,sidecar},null,2)+'\n',{flag:'wx'});
 for(const row of matrix)console.log(JSON.stringify({name:row.name,events:row.events.map((e:any)=>e.type),error:row.error,

@@ -171,7 +171,7 @@ fn adapter_with_recorder(
         let lease = registry.acquire(None).unwrap();
         Box::pin(async move {
             Ok(InteractionHost {
-                client: client(mode).await?,
+                client: Box::pin(client(mode)),
                 lease,
                 router: router(&identity),
                 input: options(),
@@ -211,7 +211,7 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     let registry = Arc::new(interaction_registry(&scratch));
     let old = registry.resolve(None).unwrap();
     let old_events = event_resource(&old.resources().get::<ProjectResources>().unwrap().context());
-    let session = adapter(registry.clone(), "live-payload");
+    let session = adapter(registry.clone(), "live-manifest");
     let mut stream = session
         .submit(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
@@ -228,7 +228,7 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     let current = registry.resolve(None).unwrap();
     assert!(!Arc::ptr_eq(&old, &current));
     let recorder = test_recorder();
-    let second = adapter_with_recorder(registry.clone(), "live-payload", recorder.clone());
+    let second = adapter_with_recorder(registry.clone(), "live-manifest", recorder.clone());
     let mut predecessor = second
         .submit(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
@@ -247,8 +247,10 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     assert_eq!(old.lease_count(), 1);
     assert_eq!(current.lease_count(), 1);
     for running in [&mut stream, &mut newer] {
-        let accepted = bounded(running.next()).await.unwrap().unwrap();
-        let actual = accepted
+        bounded(running.next()).await.unwrap().unwrap(); // host accepted
+        let observed = bounded(running.next()).await.unwrap().unwrap();
+        assert_eq!(observed.get("type"), Some(&"agent_status".into()));
+        let actual = observed
             .get("receivedPayload")
             .unwrap()
             .get("hostModules")
@@ -548,7 +550,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
             let lease = owner.acquire(None).unwrap();
             Box::pin(async move {
                 Ok(InteractionHost {
-                    client,
+                    client: Box::pin(async move { Ok(client) }),
                     lease,
                     router: router(&identity),
                     input: options(),
@@ -561,9 +563,19 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
             wire_options(),
         )
         .unwrap();
-    bounded(first.next()).await.unwrap().unwrap();
+    bounded(first.next()).await.unwrap().unwrap(); // host started
+    bounded(first.next()).await.unwrap().unwrap(); // host accepted
+    {
+        let mut pending = first.next();
+        bounded(async {
+            tokio::select! {
+                _ = entered.notified() => {},
+                result = &mut pending => panic!("disposer must pause before terminal: {result:?}"),
+            }
+        })
+        .await;
+    }
     drop(first);
-    bounded(entered.notified()).await;
     println!(
         "drop sequence: old disposer paused before InteractionTurn::close; leases={}",
         runtime.lease_count()
@@ -682,7 +694,11 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
                 InteractionTurn::bind(lease.clone(), &turn_identity, router(&turn_identity), input)
                     .await?;
             bound.lock().unwrap().push(turn.ports().steer.unwrap());
-            Ok((client, Arc::new(turn) as Arc<dyn HostHandler>, lease))
+            Ok((
+                Box::pin(async move { Ok(client) }) as HostFuture<HostClient>,
+                Arc::new(turn) as Arc<dyn HostHandler>,
+                lease,
+            ))
         })
     });
     let mut first = session
