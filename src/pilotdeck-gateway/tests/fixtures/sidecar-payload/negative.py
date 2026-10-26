@@ -33,7 +33,13 @@ mutants = {
         'pending.and_then(|pending| pending.wait(&event_control))',
         'pending.and_then(|pending| pending.wait(&event_control)).and_then(|response| { if response.boundary.value().get("ok") == Some(&JsValue::Bool(false)) { Err(PortError::TransportBeforeDispatch { message: "known rejection".into() }) } else { Ok(response) } })'),
 }
-for route, test in [('wire-event', 'wire'), ('host-bridge', 'module'), ('embedded-reader', 'embedded_reader')]:
+# Every oracle route has a paired omit control: renaming that route's "missing"
+# case drops it from the replay test's route filter, so the replayed count
+# (24 for wire's two routes, 12 elsewhere) fails. #856 added wire-final and the
+# two terminal readers; their killer tests are named per cell.
+for route, test in [('wire-event', 'wire'), ('wire-final', 'wire'), ('host-bridge', 'module'),
+                    ('embedded-reader', 'embedded_reader'), ('terminal-reader', 'terminal_reader'),
+                    ('terminal-cancelled', 'terminal_cancelled')]:
     old = f'"name":"missing","route":"{route}"'
     mutants[f'omit-{route}'] = ('src/pilotdeck-gateway/tests/fixtures/sidecar-payload/oracle.json',
         'pilotdeck-gateway', f'sidecar_payload_{test}_matches_ts', old, old.replace(route, 'omitted'))

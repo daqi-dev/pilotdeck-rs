@@ -1,5 +1,5 @@
 use super::*;
-use crate::host::execution::module_response;
+use crate::host::execution::{module_response, validate_event};
 use crate::host::modules::ModuleRouter;
 use crate::host::modules::event::{EventSink, Handler, TurnIdentity};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -352,6 +352,42 @@ fn sidecar_payload_oracle() -> JsValue {
     ))
 }
 
+/// Replay one terminal-route case through the Rust terminal reader. TS probes
+/// its private readFinalTerminal with raw non-object payloads; the Rust wire
+/// decoder rejects those first (the wire-final route replays that), so each
+/// non-object payload replays as the wire-representable empty object — the same
+/// "no AgentLoop result" branch TS exercises for those values (probe:
+/// _tmp/20261026-issue-856/probe-standin.log).
+fn sidecar_payload_terminal(
+    outcome: &str,
+    case: &JsValue,
+    cancellation: &Cancellation,
+) -> Result<bool, HostError> {
+    let identity = ExecutionIdentity {
+        session_id: "session".into(),
+        turn_id: "turn".into(),
+        run_id: "run".into(),
+        operation_id: "operation".into(),
+        request_id: "request".into(),
+    };
+    let mut message = parse_json(r#"{"kind":"event","eventType":"agent_event","streamId":"stream","runId":"run","operationId":"operation","requestId":"request","sequence":0,"final":true,"outcome":"completed"}"#)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    message.insert("outcome".into(), outcome.into());
+    let payload = match case.get("payload").map(materialize) {
+        Some(object @ JsValue::Object(_)) => object,
+        _ => JsValue::Object(JsObject::new()),
+    };
+    message.insert("payload".into(), payload);
+    let envelope = JsValue::Object(message);
+    let MessageRef::Event(event) = decode(&envelope).expect("terminal envelope") else {
+        panic!("terminal envelope must decode as an event")
+    };
+    validate_event(event, &identity, cancellation)
+}
+
 #[test]
 fn sidecar_payload_wire_matches_ts() {
     let mut replayed = 0;
@@ -419,6 +455,74 @@ async fn sidecar_payload_module_matches_ts() {
             .map(|event| event.get("type").unwrap().clone())
             .collect();
         assert_eq!(JsValue::Array(types), *case.get("drained").unwrap());
+    }
+    assert_eq!(replayed, 12);
+}
+
+#[test]
+fn sidecar_payload_terminal_reader_matches_ts() {
+    let mut replayed = 0;
+    for case in array(&sidecar_payload_oracle(), "cases") {
+        if text(case.get("route").unwrap()) != "terminal-reader" {
+            continue;
+        }
+        replayed += 1;
+        let result = sidecar_payload_terminal("completed", case, &Cancellation::default());
+        assert_eq!(
+            result.is_ok(),
+            case.get("ok").unwrap().as_bool().unwrap(),
+            "{case:?}"
+        );
+        match result {
+            Err(error) => assert_eq!(error.message, text(case.get("error").unwrap()), "{case:?}"),
+            // A completed terminal is never the synthesized abort; the oracle's
+            // value is the terminal TS read, which the replay fed as the payload.
+            Ok(aborted) => {
+                assert!(!aborted, "{case:?}");
+                assert_eq!(
+                    case.get("payload").unwrap(),
+                    case.get("value").unwrap(),
+                    "{case:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(replayed, 12);
+}
+
+#[test]
+fn sidecar_payload_terminal_cancelled_matches_ts() {
+    let mut replayed = 0;
+    for case in array(&sidecar_payload_oracle(), "cases") {
+        if text(case.get("route").unwrap()) != "terminal-cancelled" {
+            continue;
+        }
+        replayed += 1;
+        // generate.mts aborts the input's signal with compaction_persistence_failed
+        // before reading the cancelled final's terminal.
+        let cancellation = Cancellation::default();
+        cancellation.cancel(Some("compaction_persistence_failed".into()));
+        let result = sidecar_payload_terminal("cancelled", case, &cancellation);
+        assert_eq!(
+            result.is_ok(),
+            case.get("ok").unwrap().as_bool().unwrap(),
+            "{case:?}"
+        );
+        // The oracle records the terminal's result.type: either the synthesized
+        // abort (TS client:1434-1450) or the accepted terminal's own type.
+        let projected = match result {
+            Err(error) => panic!("terminal-cancelled case must be accepted: {error:?} — {case:?}"),
+            Ok(true) => "aborted".to_owned(),
+            Ok(false) => text(
+                case.get("payload")
+                    .unwrap()
+                    .get("result")
+                    .unwrap()
+                    .get("type")
+                    .unwrap(),
+            ),
+        };
+        assert_eq!(projected, text(case.get("value").unwrap()), "{case:?}");
     }
     assert_eq!(replayed, 12);
 }
