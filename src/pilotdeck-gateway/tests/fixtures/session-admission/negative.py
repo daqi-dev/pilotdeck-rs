@@ -20,7 +20,36 @@ from negative_process import run_owned, wait_for_slot
 ANCHOR_COUNTS = {'run-id-is-identity': 2, 'discard-is-completion': 2}
 
 
-ANCHOR_COUNTS = {'run-id-is-identity': 2, 'discard-is-completion': 2}
+ABORT_START = "        // One admission snapshot"
+ABORT_END = "        allowed.then(|| abort(run_id.cloned(), reason))\n"
+# Two active reads and a session-scoped sink intentionally restore the old
+# behavior. Keep the current function's return expression and closing braces.
+OLD_ABORT_PREFIX = """        if let Some(active) = self.admission.active_turn_run_id(session_key)
+            && !active.is_empty()
+            && run_id.is_none_or(|id| id.is_empty() || id == &active)
+        {
+            self.aborted_reasons
+                .lock()
+                .unwrap()
+                .insert(turn_key(session_key, &active), reason.clone());
+        }
+        let cancelled = self.completion.cancel(session_key, Some(&reason), run_id);
+        let allowed = run_id.is_none()
+            || cancelled
+            || self.admission.active_turn_run_id(session_key).as_ref() == run_id;
+        allowed.then(|| abort(None, reason))
+"""
+
+
+def restore_original_abort(source):
+    if source.count(ABORT_START) != 1 or source.count(ABORT_END) != 1:
+        raise ValueError("ANCHOR_EXPIRED restore-original-abort: expected one start and one end")
+    start_index = source.index(ABORT_START)
+    end_index = source.index(ABORT_END)
+    if end_index <= start_index:
+        raise ValueError("ANCHOR_EXPIRED restore-original-abort: end must follow start")
+    fixed_prefix = source[start_index:end_index] + ABORT_END
+    return fixed_prefix, OLD_ABORT_PREFIX
 
 
 def main():
@@ -67,28 +96,13 @@ def main():
         ("drop-admitted-fallback", "mod.rs",
          " || active.as_ref() == run_id", ""),
     ]
-    # Restore the original two-read, session-scoped abort prefix in /tmp.
-    # The None argument adapts the old reason-only sink to the new signature;
-    # it intentionally carries no run fence, just as the original did.
-    fixed_prefix = originals["mod.rs"].split("        // One admission snapshot", 1)[1].split(
-        "        let session_key = session_key.clone();", 1)[0]
-    old_prefix = """        if let Some(active) = self.admission.active_turn_run_id(session_key)
-            && !active.is_empty()
-            && run_id.is_none_or(|id| id.is_empty() || id == &active)
-        {
-            self.aborted_reasons
-                .lock()
-                .unwrap()
-                .insert(turn_key(session_key, &active), reason.clone());
-        }
-        let cancelled = self.completion.cancel(session_key, Some(&reason), run_id);
-        let allowed = run_id.is_none()
-            || cancelled
-            || self.admission.active_turn_run_id(session_key).as_ref() == run_id;
-        let operation = allowed.then(|| abort(None, reason));
-"""
+    # Validate boundaries before deriving the statically readable table anchor.
+    # Both paths use the same delimiters and include the return expression.
+    restore_original_abort(originals["mod.rs"])
+    abort_source = originals["mod.rs"]
+    fixed_prefix = abort_source[abort_source.index(ABORT_START):abort_source.index(ABORT_END)] + ABORT_END
     mutants.append(("restore-original-abort", "mod.rs",
-                    "        // One admission snapshot" + fixed_prefix, old_prefix))
+                    fixed_prefix, OLD_ABORT_PREFIX))
     recorded_hash = json.loads(originals["oracle.json"])["sourceSha256"]["src/gateway/SessionRouter.ts"]
     mutants.append(("tampered-source-hash", "oracle.json", recorded_hash, "0" * 64))
     if not os.environ.get("CARGO_HOME"):
