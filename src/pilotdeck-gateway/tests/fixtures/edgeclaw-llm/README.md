@@ -75,8 +75,9 @@ debug. They do not prove Rust telemetry integration.
 
 `negative.py --check-anchors` checks every anchor exactly once. Mutations run
 inside `negative_process.mutating_sources`; cargo uses `run_owned`,
-`wait_for_slot`, and the caller's mandatory CARGO_TARGET_DIR. Compiler failures
-are INVALID, never KILLED. Each mutation has before/restored positives. Stale
+`wait_for_slot`, and the caller's mandatory CARGO_TARGET_DIR. Compiler failures, wrong tests, missing panic blocks and unrelated assertion
+messages are INVALID, never KILLED. Every mutant binds the full test name and
+its specific assertion line; before/restored positives also require that name. Each mutation has before/restored positives. Stale
 anchors exit 2. New files are not in HEAD before the coordinator commits them;
 the source guard intentionally refuses to run here. Run the script after commit,
 with an exclusive evidence directory, and review KILLED/restored logs before
@@ -89,3 +90,7 @@ the corresponding Rust body needs the shared transport follow-up. This is an
 explicit prerequisite before enabling this extractor for providers that return
 compressed responses. `model/http.rs` is read-only in this task, so that fix is
 not bundled here. No dependency or lockfile changed.
+
+## fix-r1 回归
+
+头部构造/发送分层、逐跳编码、底层 300/600 秒截止与迟到 poll 的补充真实 TS 金样及运行方法见 `../edgeclaw-llm-fix-r1/README.md`。原 270 格保持原字节；负控锚点已同步新实现。

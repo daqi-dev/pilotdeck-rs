@@ -13,7 +13,7 @@ use crate::{
             http::{ModelBody, ModelHttpTransport},
             providers::google::normalize_model_id,
         },
-        network::{Exchange, ExchangeFuture, exchange, node_timer_duration},
+        network::{Exchange, exchange_with_prearmed_parent, node_timer_duration},
     },
 };
 use bytes::Bytes;
@@ -26,11 +26,13 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, LazyLock},
+    time::Duration,
 };
 use tokio::time::Instant;
 
 type FutureResult<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 type Deadline = Option<(Instant, f64)>;
+type RequestHeaders = HeaderMap<Vec<u8>>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LlmError {
@@ -103,6 +105,7 @@ pub struct LlmMemoryExtractor {
     config: JsValue,
     transport: Arc<dyn ModelHttpTransport>,
     runtime: Arc<dyn LlmRuntime>,
+    transport_timeout: Duration,
 }
 impl LlmMemoryExtractor {
     pub fn new(
@@ -114,7 +117,14 @@ impl LlmMemoryExtractor {
             config,
             transport,
             runtime,
+            transport_timeout: Duration::from_secs(300),
         }
+    }
+    /// Match the host dispatcher: Node defaults to 300 s; the CLI installs 600 s.
+    /// This bounds headers and each body idle gap even when timeout_ms <= 0.
+    pub fn with_transport_timeout(mut self, timeout: Duration) -> Self {
+        self.transport_timeout = timeout;
+        self
     }
     pub async fn call_structured_json(
         &self,
@@ -157,7 +167,13 @@ impl LlmMemoryExtractor {
             }
             Err(error) => Err(error),
         }?;
-        let bytes = read_body(response.0.into_body(), response.1, input).await?;
+        let bytes = read_body(
+            response.0.into_body(),
+            response.1,
+            input,
+            self.transport_timeout,
+        )
+        .await?;
         // undici's Response.json() and TextDecoder each remove one BOM.
         let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
         let decoded = String::from_utf8_lossy(bytes);
@@ -212,7 +228,7 @@ impl LlmMemoryExtractor {
     async fn retry(
         &self,
         url: &str,
-        headers: &HeaderMap,
+        headers: &RequestHeaders,
         body: &JsValue,
         input: &StructuredInput,
     ) -> Result<(Response<ModelBody>, Deadline), LlmError> {
@@ -236,25 +252,62 @@ impl LlmMemoryExtractor {
                         "Request cannot be constructed from a URL that includes credentials: {url}"
                     )));
                 }
+                // Node Headers permits some bytes (e.g. 0x01 / DEL) that
+                // undici only rejects at dispatch, inside the retry loop.
+                let mut wire_headers = HeaderMap::new();
+                for (name, value) in headers {
+                    wire_headers.insert(
+                        name,
+                        HeaderValue::from_bytes(value).map_err(|_| type_error("fetch failed"))?,
+                    );
+                }
                 fetch_redirect::follow(
                     parsed,
                     Method::POST,
-                    headers.clone(),
+                    wire_headers,
                     body.clone(),
                     || type_error("fetch failed"),
-                    |request| async {
-                        match exchange(
+                    |mut request| async {
+                        // Undici derives these for every hop from the original
+                        // headers, so redirects cannot retain the previous scheme
+                        // default or append identity repeatedly.
+                        let secure = request.uri().scheme_str() == Some("https");
+                        let headers = request.headers_mut();
+                        if headers.contains_key("range") {
+                            let value = if let Some(value) = headers.get("accept-encoding") {
+                                let mut bytes = value.as_bytes().to_vec();
+                                bytes.extend(b", identity");
+                                HeaderValue::from_bytes(&bytes).expect("validated encoding")
+                            } else {
+                                HeaderValue::from_static("identity")
+                            };
+                            headers.insert("accept-encoding", value);
+                        }
+                        if !headers.contains_key("accept-encoding") {
+                            headers.insert(
+                                "accept-encoding",
+                                HeaderValue::from_static(if secure {
+                                    "br, gzip, deflate"
+                                } else {
+                                    "gzip, deflate"
+                                }),
+                            );
+                        }
+                        match exchange_with_prearmed_parent(
                             self.transport.send(request),
-                            std::future::pending(),
-                            || None,
-                            deadline.map(|(at, _)| at),
+                            wait_deadline(deadline),
+                            || deadline.map(|(at, _)| at),
+                            Some(Instant::now() + self.transport_timeout),
                         )
                         .await
                         {
                             Exchange::Response(result, _) => {
                                 result.map_err(|e| type_error(e.message))
                             }
-                            _ => Err(timeout_error(input, deadline.expect("request deadline").1)),
+                            Exchange::Timeout { .. } => Err(type_error("fetch failed")),
+                            Exchange::Aborted => {
+                                Err(timeout_error(input, deadline.expect("request deadline").1))
+                            }
                         }
                     },
                 )
@@ -266,7 +319,13 @@ impl LlmMemoryExtractor {
                     return Ok((response, deadline));
                 }
                 let status = response.status().as_u16();
-                let bytes = read_body(response.into_body(), deadline, input).await?;
+                let bytes = read_body(
+                    response.into_body(),
+                    deadline,
+                    input,
+                    self.transport_timeout,
+                )
+                .await?;
                 let decoded = String::from_utf8_lossy(&bytes);
                 let message = truncate(
                     &decoded.strip_prefix('\u{feff}').unwrap_or(&decoded).into(),
@@ -291,21 +350,10 @@ impl LlmMemoryExtractor {
         unreachable!("third attempt always returns")
     }
 }
-async fn bounded<T: Send + 'static>(
-    future: impl Future<Output = Result<T, LlmError>> + Send + 'static,
-    deadline: Deadline,
-    input: &StructuredInput,
-) -> Result<T, LlmError> {
-    match exchange(
-        ExchangeFuture::io(future),
-        std::future::pending(),
-        || None,
-        deadline.map(|(at, _)| at),
-    )
-    .await
-    {
-        Exchange::Response(result, _) => result,
-        _ => Err(timeout_error(input, deadline.expect("body deadline").1)),
+async fn wait_deadline(deadline: Deadline) {
+    match deadline {
+        Some((at, _)) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
     }
 }
 fn timeout_error(input: &StructuredInput, ms: f64) -> LlmError {
@@ -325,28 +373,22 @@ async fn read_body(
     body: ModelBody,
     deadline: Deadline,
     input: &StructuredInput,
+    idle: Duration,
 ) -> Result<Vec<u8>, LlmError> {
-    bounded(
-        async move {
-            fetch_redirect::read_text_body(
-                body,
-                fetch_redirect::MAX_STRING_LENGTH,
-                Some(std::time::Duration::from_secs(300)),
-            )
-            .await
-            .map_err(|error| LlmError {
-                name: "TypeError",
-                ..LlmError::new(if error == fetch_redirect::BodyError::TooLong {
-                    fetch_redirect::STRING_TOO_LONG
-                } else {
-                    "terminated"
-                })
-            })
-        },
-        deadline,
-        input,
+    fetch_redirect::read_text_body_with_deadline(
+        body,
+        fetch_redirect::MAX_STRING_LENGTH,
+        Some(idle),
+        deadline.map(|(at, _)| at),
     )
     .await
+    .map_err(|error| match error {
+        fetch_redirect::BodyError::Aborted => {
+            timeout_error(input, deadline.expect("body deadline").1)
+        }
+        fetch_redirect::BodyError::TooLong => type_error(fetch_redirect::STRING_TOO_LONG),
+        fetch_redirect::BodyError::Terminated => type_error("terminated"),
+    })
 }
 fn fields<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {
     entries
@@ -467,8 +509,10 @@ pub fn extract_text(api: &str, payload: &JsValue) -> Result<JsString, LlmError> 
 fn byte_string(value: &JsString) -> Result<Vec<u8>, LlmError> {
     value.units().iter().enumerate().map(|(index,&unit)|u8::try_from(unit).map_err(|_|type_error(format!("Cannot convert argument to a ByteString because the character at index {index} has a value of {unit} which is greater than 255.")))).collect()
 }
-fn header_value(value: &JsString, method: &str) -> Result<HeaderValue, LlmError> {
-    let bytes = byte_string(value)?;
+fn header_value(value: &JsString, method: &str) -> Result<Vec<u8>, LlmError> {
+    header_bytes(&byte_string(value)?, method)
+}
+fn header_bytes(bytes: &[u8], method: &str) -> Result<Vec<u8>, LlmError> {
     let trim = |b: &u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n');
     let start = bytes.iter().position(|b| !trim(b)).unwrap_or(bytes.len());
     let end = bytes
@@ -476,14 +520,15 @@ fn header_value(value: &JsString, method: &str) -> Result<HeaderValue, LlmError>
         .rposition(|b| !trim(b))
         .map_or(start, |i| i + 1);
     let bytes = &bytes[start..end];
-    HeaderValue::from_bytes(bytes).map_err(|_| {
-        type_error(format!(
+    if bytes.iter().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
+        return Err(type_error(format!(
             "Headers.{method}: \"{}\" is an invalid header value.",
-            text(value)
-        ))
-    })
+            bytes.iter().map(|b| char::from(*b)).collect::<String>()
+        )));
+    }
+    Ok(bytes.to_vec())
 }
-fn header(map: &mut HeaderMap, name: &'static str, value: JsString) -> Result<(), LlmError> {
+fn header(map: &mut RequestHeaders, name: &'static str, value: JsString) -> Result<(), LlmError> {
     if !map.contains_key(name) {
         map.insert(name, header_value(&value, "set")?);
     }
@@ -494,22 +539,34 @@ fn request(
     selection: &ModelSelection,
     api_key: &JsString,
     input: &StructuredInput,
-) -> Result<(String, HeaderMap, JsValue, String), LlmError> {
-    let mut headers: HeaderMap = HeaderMap::new();
+) -> Result<(String, RequestHeaders, JsValue, String), LlmError> {
+    let mut headers = RequestHeaders::default();
     if let Some(source) = &selection.headers {
-        for (name, value) in source.own_entries() {
-            let key = HeaderName::from_bytes(&byte_string(name)?).map_err(|_| {
+        // WebIDL converts the whole record to ByteStrings before appending.
+        let entries = source
+            .own_entries()
+            .into_iter()
+            .map(|(name, value)| {
+                Ok((
+                    name,
+                    byte_string(name)?,
+                    byte_string(value.as_string().expect("sanitized header"))?,
+                ))
+            })
+            .collect::<Result<Vec<_>, LlmError>>()?;
+        for (name, key, bytes) in entries {
+            let key = HeaderName::from_bytes(&key).map_err(|_| {
                 type_error(format!(
                     "Headers.append: \"{}\" is an invalid header name.",
                     text(name)
                 ))
             })?;
-            let mut value = header_value(value.as_string().expect("sanitized header"), "append")?;
+            let mut value = header_bytes(&bytes, "append")?;
             if let Some(old) = headers.get(&key) {
-                let mut joined = old.as_bytes().to_vec();
+                let mut joined = old.clone();
                 joined.extend(b", ");
-                joined.extend(value.as_bytes());
-                value = HeaderValue::from_bytes(&joined).expect("validated headers");
+                joined.extend(&value);
+                value = joined;
             }
             headers.insert(key, value);
         }
@@ -591,18 +648,10 @@ fn request(
         ("sec-fetch-mode", "cors"),
         ("user-agent", "node"),
         ("connection", "keep-alive"),
-        (
-            "accept-encoding",
-            if url.starts_with("https:") {
-                "br, gzip, deflate"
-            } else {
-                "gzip, deflate"
-            },
-        ),
     ] {
         header(&mut headers, name, value.into())?;
     }
-    headers.insert("sec-fetch-mode", HeaderValue::from_static("cors"));
+    headers.insert("sec-fetch-mode", b"cors".to_vec());
     Ok((url, headers, JsValue::Object(body), api))
 }
 fn google_url(base: &str, model: &str) -> Result<String, LlmError> {

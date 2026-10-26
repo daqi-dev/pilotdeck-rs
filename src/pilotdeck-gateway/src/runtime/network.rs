@@ -319,9 +319,25 @@ pub(crate) async fn body_frame<B: hyper::body::Body + Unpin>(
     signal: Option<&Cancellation>,
     continuation: &mut bool,
 ) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
-    body_frame_with_abort(
+    body_frame_at(
         body,
-        idle,
+        idle.map(|idle| Instant::now() + idle),
+        signal,
+        continuation,
+    )
+    .await
+}
+
+/// Absolute frame deadline, preserving its original timestamp on a late poll.
+pub(crate) async fn body_frame_at<B: hyper::body::Body + Unpin>(
+    body: &mut B,
+    deadline: Option<Instant>,
+    signal: Option<&Cancellation>,
+    continuation: &mut bool,
+) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
+    body_frame_ordered(
+        body,
+        deadline,
         async {
             match signal {
                 Some(signal) => signal.cancelled().await,
@@ -330,6 +346,7 @@ pub(crate) async fn body_frame<B: hyper::body::Body + Unpin>(
         },
         || signal.and_then(Cancellation::abort_event_at),
         continuation,
+        false,
     )
     .await
 }
@@ -342,7 +359,15 @@ pub(crate) async fn body_frame_with_abort<B: hyper::body::Body + Unpin>(
     continuation: &mut bool,
 ) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
     // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-PARENT-TIE-001.md
-    body_frame_ordered(body, idle, abort, parent_event_at, continuation, false).await
+    body_frame_ordered(
+        body,
+        idle.map(|idle| Instant::now() + idle),
+        abort,
+        parent_event_at,
+        continuation,
+        false,
+    )
+    .await
 }
 
 pub(crate) async fn body_frame_with_prearmed_parent<B: hyper::body::Body + Unpin>(
@@ -353,7 +378,7 @@ pub(crate) async fn body_frame_with_prearmed_parent<B: hyper::body::Body + Unpin
 ) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
     body_frame_ordered(
         body,
-        idle,
+        idle.map(|idle| Instant::now() + idle),
         async {
             match signal {
                 Some(signal) => signal.cancelled().await,
@@ -369,13 +394,12 @@ pub(crate) async fn body_frame_with_prearmed_parent<B: hyper::body::Body + Unpin
 
 async fn body_frame_ordered<B: hyper::body::Body + Unpin>(
     body: &mut B,
-    idle: Option<Duration>,
+    deadline: Option<Instant>,
     abort: impl Future<Output = ()>,
     parent_event_at: impl Fn() -> Option<Instant>,
     continuation: &mut bool,
     parent_first: bool,
 ) -> Exchange<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
-    let deadline = idle.map(|idle| Instant::now() + idle);
     let next = dispatch(
         body.frame(),
         abort,
