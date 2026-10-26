@@ -56,6 +56,8 @@ struct Inner<R> {
     executor: Handle,
     #[cfg(test)]
     settling: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    cancel_next: std::sync::atomic::AtomicBool,
 }
 /// Dropping a Tokio executor releases pending work; a later schedule may retry.
 struct Flight(Option<Arc<Mutex<State>>>);
@@ -90,6 +92,8 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
             executor: Handle::current(),
             #[cfg(test)]
             settling: Mutex::new(None),
+            #[cfg(test)]
+            cancel_next: std::sync::atomic::AtomicBool::new(false),
         }))
     }
     pub fn schedule(&self, key: Option<&JsString>) -> RuntimeResult {
@@ -133,7 +137,22 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
             let mut flight = flight;
             let mut next = first;
             loop {
-                match next.await {
+                // Each invocation is supervised separately: a panic must report
+                // the failure and still consume any request queued during it.
+                // Both tasks belong to the same executor; shutdown drops Flight.
+                let task = inner.executor.spawn(next);
+                #[cfg(test)]
+                if inner.cancel_next.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    task.abort();
+                }
+                let result = match task.await {
+                    Ok(result) => result,
+                    Err(error) => match error.try_into_panic() {
+                        Ok(payload) => Err(panic_error(payload)),
+                        Err(_) => return, // Executor cancelled this invocation.
+                    },
+                };
+                match result {
                     Ok(()) => inner.telemetry.track_feature_loop_stage(parse_json(r#"{"module":"memory","ownerModule":"memory","executionKind":"memory","phase":"maintenance","loopStage":"module_event","outcome":"success","metadata":{"phase":"maintenance_completed"}}"#).unwrap()),
                     Err(error) => {
                         let mut input = parse_json(r#"{"module":"memory","ownerModule":"memory","executionKind":"memory","phase":"maintenance","loopStage":"loop_end","errorCategory":"loop_error"}"#).unwrap().as_object().unwrap().clone();
@@ -162,6 +181,14 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
         });
         Ok(())
     }
+}
+fn panic_error(payload: Box<dyn std::any::Any + Send>) -> MemoryProviderError {
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("memory maintenance panicked");
+    MemoryProviderError::new(message)
 }
 fn invocation(service: Arc<dyn MemoryMaintenanceService>) -> MemoryFuture<'static, ()> {
     Box::pin(async move { service.run_due_scheduled_maintenance("scheduled").await })

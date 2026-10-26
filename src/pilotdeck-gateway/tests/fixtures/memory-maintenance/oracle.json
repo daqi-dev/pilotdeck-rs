@@ -628,6 +628,261 @@
           }
         ]
       ]
+    },
+    {
+      "name": "panic_after_await",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "error",
+          {
+            "name": "Error",
+            "message": "after await panic"
+          },
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "loop_end",
+            "errorCategory": "loop_error",
+            "code": "Error"
+          }
+        ],
+        [
+          "diagnostic",
+          "[pilotdeck] memory maintenance failed for project /project:",
+          {
+            "name": "Error",
+            "message": "after await panic"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "panic_requested",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "error",
+          {
+            "name": "Error",
+            "message": "after await panic"
+          },
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "loop_end",
+            "errorCategory": "loop_error",
+            "code": "Error"
+          }
+        ],
+        [
+          "diagnostic",
+          "[pilotdeck] memory maintenance failed for project /project:",
+          {
+            "name": "Error",
+            "message": "after await panic"
+          }
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "panic_retry",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "error",
+          {
+            "name": "Error",
+            "message": "after await panic"
+          },
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "loop_end",
+            "errorCategory": "loop_error",
+            "code": "Error"
+          }
+        ],
+        [
+          "diagnostic",
+          "[pilotdeck] memory maintenance failed for project /project:",
+          {
+            "name": "Error",
+            "message": "after await panic"
+          }
+        ],
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "success",
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "module_event",
+            "outcome": "success",
+            "metadata": {
+              "phase": "maintenance_completed"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "name": "panic_string",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "error",
+          {
+            "name": "Error",
+            "message": "after await panic"
+          },
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "loop_end",
+            "errorCategory": "loop_error",
+            "code": "Error"
+          }
+        ],
+        [
+          "diagnostic",
+          "[pilotdeck] memory maintenance failed for project /project:",
+          {
+            "name": "Error",
+            "message": "after await panic"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "panic_opaque",
+      "events": [
+        [
+          "resolve",
+          "/project"
+        ],
+        [
+          "call",
+          "A",
+          "scheduled"
+        ],
+        [
+          "returned"
+        ],
+        [
+          "error",
+          {
+            "name": "Error",
+            "message": "memory maintenance panicked"
+          },
+          {
+            "module": "memory",
+            "ownerModule": "memory",
+            "executionKind": "memory",
+            "phase": "maintenance",
+            "loopStage": "loop_end",
+            "errorCategory": "loop_error",
+            "code": "Error"
+          }
+        ],
+        [
+          "diagnostic",
+          "[pilotdeck] memory maintenance failed for project /project:",
+          {
+            "name": "Error",
+            "message": "memory maintenance panicked"
+          }
+        ]
+      ]
     }
   ]
 }

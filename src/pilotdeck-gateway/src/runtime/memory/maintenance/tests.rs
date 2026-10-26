@@ -42,7 +42,8 @@ struct Service {
     id: &'static str,
     events: Events,
     pending: Mutex<VecDeque<oneshot::Sender<Result<(), MemoryProviderError>>>>,
-    closed: AtomicBool,
+    panic_after: AtomicBool,
+    panic_kind: &'static str,
     panic_first: AtomicBool,
     immediate: bool,
 }
@@ -56,24 +57,23 @@ impl MemoryMaintenanceService for Service {
             .lock()
             .unwrap()
             .push(json!(["call", self.id, reason]));
-        if self.closed.load(Ordering::SeqCst) {
-            let observed = oracle("disposed")
-                .into_iter()
-                .find(|v| v[0] == "error")
-                .unwrap();
-            let mut e = failure(
-                observed[1]["name"].as_str().unwrap(),
-                observed[1]["message"].as_str().unwrap(),
-            );
-            e.code = Some(observed[1]["code"].as_str().unwrap().into());
-            return Box::pin(async { Err(e) });
-        }
         if self.immediate {
             return Box::pin(async { Ok(()) });
         }
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().push_back(tx);
-        Box::pin(async { rx.await.expect("test owns service completion") })
+        let panic_after = self.panic_after.swap(false, Ordering::SeqCst);
+        Box::pin(async move {
+            let result = rx.await.expect("test owns service completion");
+            if panic_after {
+                match self.panic_kind {
+                    "panic_string" => std::panic::panic_any(String::from("after await panic")),
+                    "panic_opaque" => std::panic::panic_any(17u8),
+                    _ => panic!("after await panic"),
+                }
+            }
+            result
+        })
     }
 }
 impl Service {
@@ -136,14 +136,15 @@ async fn drain() {
         tokio::task::yield_now().await;
     }
 }
-async fn replay(name: &str) -> (Weak<Runtime>, Vec<Arc<Mutex<State>>>) {
+async fn replay(name: &'static str) -> (Weak<Runtime>, Vec<Arc<Mutex<State>>>) {
     let events = Events::default();
     let make = |id| {
         Arc::new(Service {
             id,
             events: events.clone(),
             pending: Mutex::default(),
-            closed: AtomicBool::new(false),
+            panic_after: AtomicBool::new(name.starts_with("panic_")),
+            panic_kind: name,
             panic_first: AtomicBool::new(false),
             immediate: name == "before_await",
         })
@@ -223,7 +224,7 @@ async fn replay(name: &str) -> (Weak<Runtime>, Vec<Arc<Mutex<State>>>) {
         "never",
         "cancelled",
         "reject_requested",
-        "disposed",
+        "panic_requested",
     ]
     .contains(&name)
     {
@@ -237,10 +238,6 @@ async fn replay(name: &str) -> (Weak<Runtime>, Vec<Arc<Mutex<State>>>) {
         schedule();
         b.settle(Ok(()));
         drain().await;
-    }
-    if name == "disposed" {
-        a.closed.store(true, Ordering::SeqCst);
-        events.lock().unwrap().push(json!(["closed"]));
     }
     if name == "settling" {
         let (c, e) = (Arc::downgrade(&controller), events.clone());
@@ -263,6 +260,16 @@ async fn replay(name: &str) -> (Weak<Runtime>, Vec<Arc<Mutex<State>>>) {
             _ => Ok(()),
         });
         drain().await;
+        if name == "panic_retry" {
+            assert!(
+                !controller.0.states.lock().unwrap()[0]
+                    .1
+                    .lock()
+                    .unwrap()
+                    .in_flight
+            );
+            schedule();
+        }
         if !a.pending.lock().unwrap().is_empty() {
             a.settle(Ok(()));
             drain().await;
@@ -306,12 +313,16 @@ cases!(
     reject,
     reject_requested,
     generations,
-    disposed,
     absent,
     resolver_error,
     never,
     cancelled,
-    before_await
+    before_await,
+    panic_after_await,
+    panic_requested,
+    panic_retry,
+    panic_string,
+    panic_opaque
 );
 
 #[test]
@@ -327,7 +338,8 @@ fn concurrent_requests_and_first_poll_unwind() {
         id: "A",
         events: events.clone(),
         pending: Mutex::default(),
-        closed: AtomicBool::new(false),
+        panic_after: AtomicBool::new(false),
+        panic_kind: "",
         panic_first: AtomicBool::new(true),
         immediate: false,
     });
@@ -389,5 +401,76 @@ fn concurrent_requests_and_first_poll_unwind() {
             .filter(|e| e[0] == "call")
             .count(),
         2
+    );
+}
+
+#[tokio::test]
+async fn cancelled_invocation_releases_flight_and_retries() {
+    let events = Events::default();
+    let service = Arc::new(Service {
+        id: "A",
+        events: events.clone(),
+        pending: Mutex::default(),
+        panic_after: AtomicBool::new(false),
+        panic_kind: "",
+        panic_first: AtomicBool::new(false),
+        immediate: false,
+    });
+    let runtime = Arc::new(Runtime {
+        service: Some(service.clone()),
+    });
+    let diagnostics = events.clone();
+    let controller = ProjectMemoryMaintenanceController::new(
+        Arc::new(move |_| Ok(runtime.clone())),
+        Arc::new(Telemetry(events.clone())),
+        Some(Arc::new(move |_, e| {
+            diagnostics
+                .lock()
+                .unwrap()
+                .push(json!(["diagnostic", error(e)]));
+        })),
+    );
+    controller.0.cancel_next.store(true, Ordering::SeqCst);
+    controller.schedule(None).unwrap();
+    // First poll registered the pending receiver before the real task is aborted.
+    assert_eq!(service.pending.lock().unwrap().len(), 1);
+    drain().await;
+    assert!(
+        !controller.0.states.lock().unwrap()[0]
+            .1
+            .lock()
+            .unwrap()
+            .in_flight
+    );
+    assert!(
+        service
+            .pending
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap()
+            .is_closed()
+    );
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![json!(["call", "A", "scheduled"])]
+    );
+    controller.schedule(None).unwrap();
+    service.settle(Ok(()));
+    drain().await;
+    assert!(
+        !controller.0.states.lock().unwrap()[0]
+            .1
+            .lock()
+            .unwrap()
+            .in_flight
+    );
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            json!(["call", "A", "scheduled"]),
+            json!(["call", "A", "scheduled"]),
+            oracle("idle").last().unwrap().clone(),
+        ]
     );
 }
