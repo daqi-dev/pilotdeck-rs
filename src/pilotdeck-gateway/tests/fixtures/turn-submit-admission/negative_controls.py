@@ -64,7 +64,7 @@ mutations = [
     # port's refusal at admission time (probe sdk-config-invalid-wired).
     ('sdk-validate-ignored', source, 'Some(port) => port.validate(config),', 'Some(_port) => Ok(()),'),
     # fix-r1: a turn dropped mid-compaction must cancel its timeout timer.
-    ('compact-timer-orphan', source, 'if let Some(timer) = self.0.take() {\n            timer.abort();\n        }', 'if let Some(timer) = self.0.take() {\n            let _ = timer;\n        }'),
+    ('compact-timer-orphan', source, '            timer.abort();\n', '            let _ = timer;\n'),
     # fix-r2 (opus r2 boundary #2): a finite timeoutMs above 2^31-1 must clamp
     # to Node's 1 ms setTimeout behavior, not saturate into a never-firing
     # timer (killed by compact_timeout_clamps_node_overflow_delay).
