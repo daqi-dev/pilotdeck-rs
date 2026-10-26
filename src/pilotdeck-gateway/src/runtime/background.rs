@@ -565,18 +565,35 @@ impl BackgroundTaskRuntime {
         };
         // Queue the initial metadata before spawning can produce output or
         // settle the task. Pending is recoverable as Unknown after a crash.
-        let initial_snapshot = self.inner.snapshot_store.as_ref().map(|store| {
-            use crate::runtime::background_snapshot::{
-                PersistedBackgroundTask, PersistedOutput, persist_task,
-            };
-            store.write(PersistedBackgroundTask {
-                task: persist_task(&entry),
-                output: PersistedOutput {
-                    total_bytes: 0,
-                    persisted: false,
-                },
+        let initial_snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.inner.snapshot_store.as_ref().map(|store| {
+                use crate::runtime::background_snapshot::{
+                    PersistedBackgroundTask, PersistedOutput, persist_task,
+                };
+                store.write(PersistedBackgroundTask {
+                    task: persist_task(&entry),
+                    output: PersistedOutput {
+                        total_bytes: 0,
+                        persisted: false,
+                    },
+                })
             })
-        });
+        }));
+        let initial_snapshot = match initial_snapshot {
+            Ok(snapshot) => snapshot,
+            Err(payload) => {
+                // No child or entry exists yet. Release capacity before waking
+                // dispose's start-drain observers, like TS start's finally.
+                self.inner.state.lock().unwrap().pending_starts -= 1;
+                self.inner.starts.send_modify(|starts| *starts -= 1);
+                let message = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("Background initial snapshot construction failed.");
+                return Err(BackgroundTaskError::error(JsString::from(message)));
+            }
+        };
         #[cfg(test)]
         if let Some(before_spawn) = &self.before_spawn {
             before_spawn();
@@ -1665,6 +1682,179 @@ pub fn background_tasks_in_registry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ConstructionSnapshot {
+        first_write: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    }
+    impl crate::runtime::background_snapshot::BackgroundTaskSnapshotStore for ConstructionSnapshot {
+        fn load(&self) -> Vec<crate::runtime::background_snapshot::PersistedBackgroundTask> {
+            vec![]
+        }
+        fn write(
+            &self,
+            _: crate::runtime::background_snapshot::PersistedBackgroundTask,
+        ) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + '_>> {
+            let first = self.first_write.lock().unwrap().take();
+            if let Some(first) = first {
+                first();
+            }
+            Box::pin(async { Ok(()) })
+        }
+        fn flush(&self) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn construction_spec() -> StartTaskSpec {
+        StartTaskSpec {
+            // An invalid command exercises admission without creating a child.
+            command: "\0".into(),
+            cwd: "/".into(),
+            env: None,
+            session_id: "s".into(),
+            agent_id: "a".into(),
+            kind: JsValue::Undefined,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn initial_snapshot_construction_panic_releases_all_reservations() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let oracle_text = include_str!("../../tests/fixtures/runtime-spawn-panic/oracle.json");
+        crate::test_baseline::oracle(oracle_text);
+        let oracle: serde_json::Value = serde_json::from_str(oracle_text).unwrap();
+        for retry in [false, true] {
+            let id = if retry {
+                "construct-background-retry"
+            } else {
+                "construct-background"
+            };
+            let case = oracle["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap();
+            let scratch = crate::test_scratch::Scratch::new("796-construction");
+            let (started, entered) = tokio::sync::oneshot::channel();
+            let (resume, paused) = std::sync::mpsc::channel();
+            let store = Arc::new(ConstructionSnapshot {
+                first_write: Mutex::new(Some(Box::new(move || {
+                    let _ = started.send(());
+                    let _ = paused.recv_timeout(Duration::from_secs(5));
+                    panic!("injected construction panic");
+                }))),
+            });
+            let mut runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                max_tasks: Some(1),
+                snapshot_store: Some(store),
+                disk_spill_dir: Some(scratch.path().to_path_buf()),
+                ..Default::default()
+            });
+            let spawned = Arc::new(AtomicUsize::new(0));
+            let counted = spawned.clone();
+            runtime.before_spawn = Some(Arc::new(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }));
+            let starting = runtime.clone();
+            let start = tokio::spawn(async move { starting.start(construction_spec()).await });
+            tokio::time::timeout(Duration::from_secs(5), entered)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(*runtime.inner.starts.borrow(), 1);
+            assert_eq!(runtime.inner.state.lock().unwrap().pending_starts, 1);
+            let mut disposers = vec![];
+            if !retry {
+                disposers = (0..3).map(|_| Box::pin(runtime.dispose())).collect();
+                for dispose in &mut disposers {
+                    assert!(
+                        dispose
+                            .as_mut()
+                            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+                            .is_pending()
+                    );
+                }
+            }
+            resume.send(()).unwrap();
+            let error = tokio::time::timeout(Duration::from_secs(5), start)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err();
+            assert_eq!(
+                String::from_utf16_lossy(error.message.units()),
+                case["error"].as_str().unwrap(),
+                "construction panic error"
+            );
+            let released = *runtime.inner.starts.borrow() == 0
+                && runtime.inner.state.lock().unwrap().pending_starts == 0;
+            let empty = runtime.inner.state.lock().unwrap().entries.is_empty();
+            let not_spawned = spawned.load(Ordering::SeqCst) == 0;
+            let mut retry_accepted = false;
+            if retry {
+                retry_accepted = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    runtime.start(construction_spec()),
+                )
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+                    == TaskStatus::Failed;
+                assert_eq!(
+                    spawned.load(Ordering::SeqCst),
+                    1,
+                    "only retry reaches spawn"
+                );
+                disposers = (0..3).map(|_| Box::pin(runtime.dispose())).collect();
+            }
+            for dispose in disposers {
+                tokio::time::timeout(Duration::from_secs(5), dispose)
+                    .await
+                    .expect("construction dispose deadline");
+            }
+            let actual = serde_json::json!({"id":id, "error":String::from_utf16_lossy(error.message.units()),
+                "released":released, "empty":empty, "notSpawned":not_spawned, "retryAccepted":retry_accepted,
+                "disposed":runtime.inner.state.lock().unwrap().phase == Phase::Disposed});
+            assert_eq!(&actual, case, "construction reservation matrix");
+        }
+    }
+
+    #[tokio::test]
+    async fn initial_snapshot_construction_panic_payloads() {
+        for owned in [false, true] {
+            let scratch = crate::test_scratch::Scratch::new("796-payload");
+            let store = Arc::new(ConstructionSnapshot {
+                first_write: Mutex::new(Some(Box::new(move || {
+                    if owned {
+                        std::panic::panic_any(String::from("owned construction panic"));
+                    }
+                    std::panic::panic_any(7_u8);
+                }))),
+            });
+            let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                snapshot_store: Some(store),
+                disk_spill_dir: Some(scratch.path().to_path_buf()),
+                ..Default::default()
+            });
+            let error = runtime.start(construction_spec()).await.unwrap_err();
+            assert_eq!(
+                error.message,
+                JsString::from(if owned {
+                    "owned construction panic"
+                } else {
+                    "Background initial snapshot construction failed."
+                }),
+                "construction panic payload"
+            );
+            assert_eq!(*runtime.inner.starts.borrow(), 0);
+            assert_eq!(runtime.inner.state.lock().unwrap().pending_starts, 0);
+            tokio::time::timeout(Duration::from_secs(5), runtime.dispose())
+                .await
+                .unwrap();
+        }
+    }
     use tokio::sync::oneshot;
 
     #[tokio::test]

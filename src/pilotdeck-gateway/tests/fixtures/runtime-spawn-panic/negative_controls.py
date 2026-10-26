@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run after the patch is committed; mutate only under the shared source guard."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -12,25 +13,48 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 if not os.environ.get('CARGO_TARGET_DIR'):
     sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
-out = Path(sys.argv[1]).resolve()
+parser = argparse.ArgumentParser()
+parser.add_argument('output')
+parser.add_argument('--only', action='append', default=[])
+args = parser.parse_args()
+out = Path(args.output).resolve()
 out.mkdir(parents=True, exist_ok=False)
 mcp = 'src/pilotdeck-gateway/src/runtime/mcp/registry.rs'
 pub = 'src/pilotdeck-gateway/src/runtime/turn/publish.rs'
+background = 'src/pilotdeck-gateway/src/runtime/background.rs'
 fixture = 'src/pilotdeck-gateway/tests/fixtures/runtime-spawn-panic/oracle.json'
 shared = 'shared_spawn_panic_matrix'
 durable = 'durable_spawn_panic_matrix'
 payload = 'shared_spawn_outcomes_and_cancelled_gate'
+construction = 'durable_construction_panic_releases_fifo_and_all_waiters'
+reservation = 'initial_snapshot_construction_panic_releases_all_reservations'
 # Every mutant has its own test and runtime assertion anchor. No compile failures count.
 mutants = [
     ('shared-join', mcp, r'let outcome = task.await.unwrap_or_else\(\|error\| \{.*?\n        \}\);', 'let outcome = task.await.unwrap();', shared, 'shared failure:'),
     ('shared-retain', mcp, r'sender.send_replace\(Some\(outcome\)\);', 'drop((sender, outcome));', shared, 'shared failure:'),
     ('shared-owned-payload', mcp, re.escape('.or_else(|| payload.downcast_ref::<String>().map(String::as_str))'), '', payload, 'panic payload'),
     ('shared-fallback', mcp, re.escape('.unwrap_or("MCP lifecycle task ended unexpectedly")'), '.unwrap_or("wrong fallback")', payload, 'panic payload'),
-    ('durable-join', pub, r'let result = publication\s*\.executor\s*\.spawn\(future\).*?\n                \}\);', 'let result = future.await;', durable, 'spawn completion deadline'),
+    ('durable-join', pub, r'let outcome = match future \{.*?\n            \};', 'let outcome = match future { Ok(future) => Ok(future.await), Err(payload) => Err(payload) };', durable, 'spawn completion deadline'),
     ('durable-pending', pub, re.escape('state.pending.remove(&write);'), 'let _ = write;', durable, 'spawn completion deadline'),
     ('durable-notify', pub, r'(?m)^            publication\.changed\.notify_waiters\(\);', '            publication.changed.notify_one();', durable, 'spawn completion deadline|every drain waiter notified'),
     ('durable-failure', pub, re.escape('Err(_) if !state.failure_published =>'), 'Err(_) if false && !state.failure_published =>', durable, 'spawn completion deadline'),
     ('durable-once', pub, re.escape('Err(_) if !state.failure_published =>'), 'Err(_) =>', durable, 'single failure:'),
+    ('supervisor-closed', mcp, re.escape('Err(_) => Err(RuntimeError::new("MCP lifecycle task ended unexpectedly"))'), 'Err(_) => Ok(())', 'shared_supervisor_panics_before_send_close_all_observers', 'called `Result::unwrap_err()`'),
+    ('supervisor-dropped', mcp, re.escape('Err(_) => Err(RuntimeError::new("MCP lifecycle task ended unexpectedly"))'), 'Err(_) => Ok(())', 'shared_supervisor_dropped_before_send_closes_all_observers', 'called `Result::unwrap_err()`'),
+    ('durable-poison-cleanup', pub, re.escape('let mut state = lock(&publication.state);'), 'let mut state = publication.state.lock().unwrap();', 'durable_poisoned_state_cleans_pending_and_wakes_all', 'spawn completion deadline'),
+    ('durable-poison-wait', pub, re.escape('if lock(&self.state).pending.is_disjoint(writes)'), 'if self.state.lock().unwrap().pending.is_disjoint(writes)', 'durable_poisoned_state_cleans_pending_and_wakes_all', 'PoisonError'),
+    ('durable-poison-enqueue', pub, re.escape('mutex.lock().unwrap_or_else(|poison| poison.into_inner())'), 'mutex.lock().unwrap()', 'durable_poisoned_state_cleans_pending_and_wakes_all', 'PoisonError'),
+    ('durable-construction', pub, re.escape('let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));'), 'let future: Result<_, Box<dyn std::any::Any + Send>> = Ok(registry.append(&self.run, &event));', construction, 'injected construction panic'),
+    ('durable-construction-fifo', pub, re.escape('let _ = previous.await;'), 'drop(previous);', construction, 'construction successor cannot overtake pending predecessor'),
+    ('durable-payload-cleanup', pub, r'(?P<cleanup>            let mut state = lock\(&publication.state\);.*?let _ = done.send\(\(\)\);\n)            drop\(panic_payload\);', r'            drop(panic_payload);\n\g<cleanup>', 'durable_panic_payload_drop_runs_after_cleanup', 'spawn completion deadline'),
+    ('background-construction', background, r'let initial_snapshot = std::panic::catch_unwind\(std::panic::AssertUnwindSafe\(\|\| \{(?P<body>.*?)\n        \}\)\);', r'let initial_snapshot: Result<_, Box<dyn std::any::Any + Send>> = Ok({\g<body>\n        });', reservation, 'injected construction panic'),
+    ('background-capacity', background, re.escape('self.inner.state.lock().unwrap().pending_starts -= 1;'), 'let _ = &self.inner;', reservation, 'construction reservation matrix'),
+    ('background-start-drain', background, r'(?m)^                self\.inner\.starts\.send_modify\(\|starts\| \*starts -= 1\);', '                let _ = &self.inner.starts;', reservation, 'construction dispose deadline'),
+    ('background-str-payload', background, r'let message = payload\s*\.downcast_ref::<&str>\(\)\s*\.copied\(\)', 'let message = None::<&str>', reservation, 'construction panic error'),
+    ('background-owned-payload', background, re.escape('.or_else(|| payload.downcast_ref::<String>().map(String::as_str))'), '', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
+    ('background-fallback', background, re.escape('.unwrap_or("Background initial snapshot construction failed.")'), '.unwrap_or("wrong fallback")', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
+    ('construction-matrix', fixture, None, 'construct-', 'construction_oracle_has_exact_matrix', 'complete construction matrix'),
+    ('construction-duplicate', fixture, None, 'construct-', 'construction_oracle_has_exact_matrix', 'complete construction matrix'),
     ('shared-matrix', fixture, None, 'shared-', shared, 'complete shared matrix'),
     ('durable-matrix', fixture, None, 'durable-', durable, 'complete durable matrix'),
     ('shared-duplicate', fixture, None, 'shared-', shared, 'assertion failed: ids.insert(id)'),
@@ -48,6 +72,12 @@ def run(test, name):
         'pilotdeck-gateway', '--lib', test], cwd=root, env=os.environ.copy(), timeout=900)
     record(name + '.log', result.stdout + result.stderr)
     return result, result.stdout + result.stderr
+
+if args.only:
+    unknown = set(args.only) - {m[0] for m in mutants}
+    if unknown:
+        sys.exit(f'unknown mutants: {sorted(unknown)}')
+    mutants = [m for m in mutants if m[0] in args.only]
 
 for name, relative, pattern, replacement, test, anchor in mutants:
     path = root / relative

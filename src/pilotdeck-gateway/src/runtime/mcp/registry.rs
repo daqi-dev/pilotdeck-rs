@@ -1081,6 +1081,112 @@ mod tests {
     struct PanicStop(
         Mutex<Option<crate::runtime::mcp::runtime::McpFuture<'static, Result<(), RuntimeError>>>>,
     );
+
+    #[tokio::test]
+    async fn shared_supervisor_panics_before_send_close_all_observers() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // This payload is dropped by the real outer supervisor while mapping
+        // JoinError, after the inner panic was caught and before send_replace.
+        struct PanicOnDrop(Arc<AtomicBool>);
+        impl Drop for PanicOnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+                panic!("supervisor panic before send");
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let payload = PanicOnDrop(dropped.clone());
+        let receiver = shared(async move { std::panic::panic_any(payload) });
+        assert_closed_observers(receiver, || async {
+            tokio::task::yield_now().await;
+        })
+        .await;
+        assert!(dropped.load(Ordering::SeqCst), "outer panic reached");
+    }
+
+    async fn assert_closed_observers<F: std::future::Future<Output = ()>>(
+        receiver: Settle,
+        close: impl FnOnce() -> F,
+    ) {
+        use std::{future::Future, task::Context, task::Waker};
+        let mut waiters: Vec<_> = (0..3)
+            .map(|_| Box::pin(settled(receiver.clone())))
+            .collect();
+        for waiter in &mut waiters {
+            assert!(
+                waiter
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        // Cancelling an observer cannot keep the sender alive.
+        drop(waiters.pop());
+        close().await;
+        waiters.push(Box::pin(settled(receiver.clone())));
+        for waiter in waiters {
+            assert_eq!(
+                panic_deadline(waiter).await.unwrap_err().message,
+                "MCP lifecycle task ended unexpectedly",
+                "closed supervisor error"
+            );
+        }
+        assert!(receiver.borrow().is_none(), "no send occurred");
+        assert_eq!(
+            panic_deadline(settled(receiver)).await.unwrap_err().message,
+            "MCP lifecycle task ended unexpectedly",
+            "late observer after sender drop"
+        );
+    }
+
+    #[test]
+    fn shared_supervisor_dropped_before_send_closes_all_observers() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        for poll_inner in [false, true] {
+            let owner = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let observer = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let dropped = Arc::new(AtomicBool::new(false));
+            let guard = Dropped(dropped.clone());
+            let (started, entered) = tokio::sync::oneshot::channel();
+            let receiver = shared_on(owner.handle(), async move {
+                let _guard = guard;
+                let _ = started.send(());
+                std::future::pending().await
+            });
+            if poll_inner {
+                owner.block_on(panic_deadline(entered)).unwrap();
+            }
+            let (release, gate) = tokio::sync::oneshot::channel();
+            let mut observed = Box::pin(assert_closed_observers(receiver, || async {
+                gate.await.unwrap();
+            }));
+            use std::{future::Future, task::Context, task::Waker};
+            assert!(
+                observed
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+            // Drop outside either runtime's async context. This cancels the
+            // actual outer task and the never-ending inner before/after poll.
+            drop(owner);
+            release.send(()).unwrap();
+            observer.block_on(observed);
+            assert!(dropped.load(Ordering::SeqCst), "predecessor cancelled");
+        }
+    }
     impl SessionMcpRuntime for PanicStop {
         fn stop(&self) -> crate::runtime::mcp::runtime::McpFuture<'_, Result<(), RuntimeError>> {
             self.0.lock().unwrap().take().expect("stop called once")
@@ -1205,6 +1311,35 @@ mod tests {
         assert_eq!(
             panic_deadline(settled(shared(async { Ok(()) }))).await,
             Ok(())
+        );
+    }
+
+    #[test]
+    fn construction_oracle_has_exact_matrix() {
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/runtime-spawn-panic/oracle.json"
+        ))
+        .unwrap();
+        let mut ids: Vec<_> = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|case| {
+                case["id"]
+                    .as_str()
+                    .filter(|id| id.starts_with("construct-"))
+            })
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            vec![
+                "construct-background",
+                "construct-background-retry",
+                "construct-pending",
+                "construct-ready"
+            ],
+            "complete construction matrix"
         );
     }
 
