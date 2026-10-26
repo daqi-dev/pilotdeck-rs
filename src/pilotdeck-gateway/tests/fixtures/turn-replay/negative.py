@@ -4,6 +4,8 @@
 The isolated crate contains the same replay.rs/coordinator.rs sources with the
 same sibling layout, the recorded oracle, and the shared provenance guard. Each
 mutant must compile, run, and fail its targeted TS-oracle assertion.
+Every cell runs even after an invalid one, so one survivor neither hides the
+rest nor stops the summary; the exit code reports any survivor at the end.
 """
 import json
 import os
@@ -830,6 +832,8 @@ with tempfile.TemporaryDirectory(prefix="pdrs-turn-negative-", dir="/tmp") as di
             json.dumps(summary, ensure_ascii=False, indent=2) + "\n"
         )
         print(f"{name}: {'PASS' if valid else 'INVALID'} exit={returncode}", flush=True)
-        if not valid:
-            raise SystemExit(1)
+survivors = [cell["name"] for cell in summary if not cell["valid"]]
+if survivors:
+    print(f"invalid cells (baseline or surviving mutants): {', '.join(survivors)}", flush=True)
+    raise SystemExit(1)
 print("all mutations compiled and failed their targeted assertion; /tmp workspace removed")
