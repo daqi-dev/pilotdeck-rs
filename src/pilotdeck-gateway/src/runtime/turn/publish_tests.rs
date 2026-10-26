@@ -1062,3 +1062,220 @@ async fn pump_poison_does_not_disable_publication() {
         );
     }
 }
+
+fn executor_drop_case(poll_predecessor: bool, close_live: bool, panic_payload: bool) {
+    let runtime_a = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (started, entered) = oneshot::channel();
+    let successor_polled = Arc::new(AtomicBool::new(false));
+    let seen = Arc::clone(&successor_polled);
+    let first: RegistryFuture<()> = Box::pin(async move {
+        let _ = started.send(());
+        std::future::pending().await
+    });
+    let second: RegistryFuture<()> = Box::pin(async move {
+        seen.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    let registry: Arc<dyn TurnRunRegistry> = if panic_payload {
+        Arc::new(ConstructPanicRegistry {
+            first: Mutex::new(Some(first)),
+            calls: Default::default(),
+            panic_at: usize::from(poll_predecessor),
+            drop_panics: true,
+        })
+    } else {
+        Arc::new(PanicRegistry(Mutex::new(VecDeque::from([first, second]))))
+    };
+    let publisher = {
+        let _entered = runtime_a.enter();
+        let publisher = TurnPublisher::start(run_ref(), Some(registry), Arc::default());
+        for _ in 0..2 {
+            publisher.gateway_event(js(&json!({"type":"delta"})));
+        }
+        publisher
+    };
+    if poll_predecessor {
+        runtime_a.block_on(panic_deadline(async {
+            entered.await.unwrap();
+            publisher.publication.predecessor_waiting.notified().await;
+        }));
+    }
+    assert!(
+        !successor_polled.load(Ordering::SeqCst),
+        "successor waits for pending predecessor"
+    );
+    if close_live {
+        publisher.close_live();
+    }
+    let writes = lock(&publisher.publication.state).pending.clone();
+    assert_eq!(writes.len(), 2, "both reservations installed");
+    let flags: Vec<_> = (0..5)
+        .map(|_| Arc::new(WakeFlag(AtomicBool::new(false))))
+        .collect();
+    let poll = |future: Pin<&mut dyn Future<Output = ()>>, index: usize| {
+        assert!(
+            future
+                .poll(&mut std::task::Context::from_waker(
+                    &std::task::Waker::from(flags[index].clone())
+                ))
+                .is_pending()
+        );
+    };
+    // Cancel already-registered observers; cancellation must not own cleanup.
+    let mut cancelled_wait = Box::pin(publisher.publication.wait_for(&writes));
+    poll(cancelled_wait.as_mut(), 0);
+    drop(cancelled_wait);
+    let mut cancelled_next = Box::pin(publisher.next());
+    assert!(
+        cancelled_next
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+            .is_pending()
+    );
+    drop(cancelled_next);
+    let mut waiters: Vec<_> = (0..3)
+        .map(|_| Box::pin(publisher.publication.wait_for(&writes)))
+        .collect();
+    for (index, waiter) in waiters.iter_mut().enumerate() {
+        poll(waiter.as_mut(), index);
+    }
+    let mut finish = Box::pin(publisher.finish());
+    poll(finish.as_mut(), 3);
+    let mut next = Box::pin(publisher.next());
+    assert!(
+        next.as_mut()
+            .poll(&mut std::task::Context::from_waker(
+                &std::task::Waker::from(flags[4].clone())
+            ))
+            .is_pending()
+    );
+    // current_thread A cannot poll either supervisor while these observers register.
+    drop(runtime_a);
+    assert!(
+        lock(&publisher.publication.state).pending.is_empty(),
+        "executor drop pending cleanup"
+    );
+    assert!(
+        flags.iter().all(|flag| flag.0.load(Ordering::SeqCst)),
+        "executor drop wakes every observer"
+    );
+    let runtime_b = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime_b.block_on(panic_deadline(async {
+        for waiter in waiters {
+            waiter.await;
+        }
+        finish.await;
+        let received = next.await;
+        if close_live {
+            assert_eq!(
+                received, None,
+                "closed executor cannot reopen live delivery"
+            );
+        } else {
+            assert_eq!(
+                json(&received.unwrap()),
+                executor_failure(),
+                "executor failure event"
+            );
+        }
+        assert_eq!(
+            publisher.next().await,
+            None,
+            "executor failure published once"
+        );
+    }));
+    assert!(
+        !successor_polled.load(Ordering::SeqCst),
+        "shutdown never executes queued successor"
+    );
+}
+
+fn executor_failure() -> Value {
+    let oracle: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/runtime-spawn-panic/oracle.json"
+    ))
+    .unwrap();
+    oracle["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == "durable-1-P0-W")
+        .unwrap()["visible"][0]
+        .clone()
+}
+
+#[test]
+fn durable_executor_drop_before_first_poll() {
+    executor_drop_case(false, false, false);
+}
+#[test]
+fn durable_executor_drop_with_pending_predecessor() {
+    executor_drop_case(true, false, false);
+}
+#[test]
+fn durable_executor_drop_closed_before_first_poll() {
+    executor_drop_case(false, true, false);
+}
+#[test]
+fn durable_executor_drop_closed_with_pending_predecessor() {
+    executor_drop_case(true, true, false);
+}
+
+#[test]
+fn durable_executor_already_closed_releases_new_writes() {
+    let runtime_a = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let publisher = {
+        let _entered = runtime_a.enter();
+        TurnPublisher::start(
+            run_ref(),
+            Some(Arc::new(PanicRegistry(Mutex::new(VecDeque::from([
+                Box::pin(async { Ok(()) }) as RegistryFuture<()>,
+                Box::pin(async { Ok(()) }),
+            ]))))),
+            Arc::default(),
+        )
+    };
+    drop(runtime_a);
+    for _ in 0..2 {
+        publisher.gateway_event(js(&json!({"type":"delta"})));
+    }
+    let runtime_b = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime_b.block_on(panic_deadline(async {
+        publisher.finish().await;
+        assert_eq!(
+            json(&publisher.next().await.unwrap()),
+            executor_failure(),
+            "stopped executor failure"
+        );
+        assert_eq!(
+            publisher.next().await,
+            None,
+            "stopped executor failure published once"
+        );
+    }));
+    assert!(
+        lock(&publisher.publication.state).pending.is_empty(),
+        "stopped executor pending cleanup"
+    );
+}
+
+#[test]
+fn durable_executor_drop_with_payload_destructor_panic() {
+    executor_drop_case(false, false, true);
+}
+#[test]
+fn durable_executor_drop_payload_behind_pending_predecessor() {
+    executor_drop_case(true, false, true);
+}
