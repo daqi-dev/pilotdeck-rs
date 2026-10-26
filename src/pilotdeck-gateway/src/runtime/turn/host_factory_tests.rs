@@ -20,8 +20,8 @@ use crate::{
         permission::{self, DefaultPermissionContextOptions},
         project::{
             Families, Family, InteractionProfileName, ProjectResourcesFactory,
-            ProjectResourcesOptions, ProjectRuntimeRegistry, ResourceFamilySource, RuntimeProfile,
-            RuntimeProfileOverrides, RuntimeResult, StageContext, StageSink,
+            ProjectResourcesOptions, ProjectRuntime, ProjectRuntimeRegistry, ResourceFamilySource,
+            RuntimeProfile, RuntimeProfileOverrides, RuntimeResult, StageContext, StageSink,
             interaction_permission::PermissionTurnOptions,
         },
         session::LiveSession,
@@ -42,7 +42,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use tokio::time::timeout;
+use tokio::{sync::Notify, time::timeout};
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/host-factory");
 
@@ -140,6 +140,19 @@ async fn bounded<T>(future: impl Future<Output = T>) -> T {
     timeout(Duration::from_secs(10), future)
         .await
         .expect("bounded wait timed out")
+}
+// dispose signals cancellation; a detached handler disposer may still own the
+// last lease after the stream ends. Observe release with a deadline rather than
+// treating either stream EOF or child reaping as a lease barrier (#842).
+async fn wait_for_lease_release(
+    runtime: &ProjectRuntime,
+) -> Result<(), tokio::time::error::Elapsed> {
+    timeout(Duration::from_secs(10), async {
+        while runtime.lease_count() != 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
 }
 /// Regex-safe argv token unique to one test's pid path. `peer()` appends it so
 /// the reaping assertion can prove absence even when the child died before it
@@ -861,6 +874,8 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
     drive_to_peer(turn.as_mut(), &pid_file, false).await;
     let mut pending = Box::pin(turn.next());
     session.dispose().await.unwrap();
+    // The prepared handler still owns the lease until cancellation is polled.
+    assert_eq!(runtime.lease_count(), 1);
     let event = bounded(pending.as_mut()).await.unwrap().unwrap();
     assert_eq!(
         event.get("result").unwrap().get("type"),
@@ -868,10 +883,164 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
     );
     drop(pending);
     assert!(bounded(turn.next()).await.unwrap().is_none());
+    wait_for_lease_release(&runtime)
+        .await
+        .unwrap_or_else(|_| panic!("host cleanup left {} lease(s)", runtime.lease_count()));
     assert_eq!(runtime.lease_count(), 0);
     assert_peer_reaped(&pid_file).await;
     bounded(registry.dispose()).await.unwrap();
 }
+// Hold the real detached handler disposer after execute has acquired the
+// connected client. Child reaping alone must not satisfy the lease observer.
+struct PausedHostCleanup {
+    _scratch: Scratch,
+    registry: Arc<ProjectRuntimeRegistry>,
+    runtime: Arc<ProjectRuntime>,
+    release: Arc<Notify>,
+}
+impl Drop for PausedHostCleanup {
+    fn drop(&mut self) {
+        // Also unblock cleanup if a test assertion fails while holding it.
+        self.release.notify_one();
+    }
+}
+impl PausedHostCleanup {
+    async fn new() -> Self {
+        let scratch = Scratch::new();
+        let pid_file = scratch.0.join("paused-cleanup.pid");
+        let registry = registry(&scratch);
+        let runtime = registry.resolve(None).unwrap();
+        let factory = Arc::new(factory(
+            registry.clone(),
+            peer("hold", Some(&pid_file)),
+            None,
+        ));
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let gate = (entered.clone(), release.clone());
+        let session = LiveSessionAdapter::with_interaction(
+            test_recorder(),
+            Vec::new,
+            move |identity, recorder| {
+                let factory = factory.clone();
+                let (entered, release) = gate.clone();
+                Box::pin(async move {
+                    let mut host = factory.create(&identity, recorder).await?;
+                    let client = host.client;
+                    host.client = Box::pin(async move {
+                        let mut client = client.await?;
+                        client.pause_dispose_for_test(entered, release);
+                        Ok(client)
+                    });
+                    Ok(host)
+                })
+            },
+        );
+        let cleanup = Self {
+            _scratch: scratch,
+            registry,
+            runtime,
+            release,
+        };
+        let mut turn = session
+            .submit(
+                parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
+                wire(),
+            )
+            .unwrap();
+        assert_eq!(
+            bounded(turn.next()).await.unwrap().unwrap().get("type"),
+            Some(&"turn_started".into())
+        );
+        bounded(turn.next()).await.unwrap().unwrap(); // host accepted
+        drive_to_peer(turn.as_mut(), &pid_file, true).await;
+        session.dispose().await.unwrap();
+        drop(turn);
+        bounded(entered.notified()).await;
+        assert_peer_reaped(&pid_file).await;
+        assert_eq!(cleanup.runtime.lease_count(), 1, "disposer owns the lease");
+        cleanup
+    }
+
+    async fn finish(&self) {
+        self.release.notify_one();
+        wait_for_lease_release(&self.runtime).await.unwrap();
+        assert_eq!(self.runtime.lease_count(), 0);
+        bounded(self.registry.dispose()).await.unwrap();
+    }
+}
+
+async fn assert_pending(future: std::pin::Pin<&mut impl Future>) {
+    let mut future = future;
+    std::future::poll_fn(|cx| {
+        assert!(
+            future.as_mut().poll(cx).is_pending(),
+            "lease wait returned before cleanup"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn lease_wait_observes_delayed_host_cleanup() {
+    let cleanup = PausedHostCleanup::new().await;
+    let mut waiting = Box::pin(wait_for_lease_release(&cleanup.runtime));
+    assert_pending(waiting.as_mut()).await;
+    // The gate, not scheduler load, keeps the old instantaneous assertion at 1.
+    println!("#842: dispose returned, child reaped, gated lease_count=1; waiter Pending");
+    cleanup.release.notify_one();
+    bounded(waiting).await.unwrap();
+    assert_eq!(cleanup.runtime.lease_count(), 0);
+    let mut released = Box::pin(wait_for_lease_release(&cleanup.runtime));
+    std::future::poll_fn(|cx| {
+        assert!(matches!(
+            released.as_mut().poll(cx),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        std::task::Poll::Ready(())
+    })
+    .await;
+    cleanup.finish().await;
+}
+
+#[tokio::test]
+async fn lease_wait_times_out_while_host_cleanup_is_held() {
+    let cleanup = PausedHostCleanup::new().await;
+    // All real child I/O has finished. Virtual time now proves the observer's
+    // deadline even when its predecessor never completes; no wall-clock sleep.
+    tokio::time::pause();
+    let mut waiting = Box::pin(wait_for_lease_release(&cleanup.runtime));
+    assert_pending(waiting.as_mut()).await;
+    tokio::time::advance(Duration::from_secs(10)).await;
+    // Tokio timers have millisecond granularity, and advance() does not promise
+    // that every elapsed timer has been processed when it returns. Allow that
+    // timer-wheel tick, but bound it so a longer deadline cannot auto-advance
+    // virtual time unnoticed.
+    assert!(
+        timeout(Duration::from_millis(10), waiting)
+            .await
+            .expect("held cleanup must reach the 10-second deadline")
+            .is_err()
+    );
+    assert_eq!(cleanup.runtime.lease_count(), 1);
+    cleanup.finish().await;
+}
+
+#[tokio::test]
+async fn cancelling_lease_wait_does_not_release_or_block_cleanup() {
+    let cleanup = PausedHostCleanup::new().await;
+    let mut waiting = Box::pin(wait_for_lease_release(&cleanup.runtime));
+    assert_pending(waiting.as_mut()).await;
+    drop(waiting);
+    assert_eq!(
+        cleanup.runtime.lease_count(),
+        1,
+        "observer does not own the lease"
+    );
+    cleanup.finish().await;
+}
+
 fn published_pid(pid_file: &Path) -> Option<u32> {
     std::fs::read_to_string(pid_file).ok()?.trim().parse().ok()
 }
