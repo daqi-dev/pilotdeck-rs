@@ -9,6 +9,11 @@ regexTarget = "match"
 regexes = ['''200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e''']
 
 [[allowlists]]
+description = "A8.2-pr1 upload-gateway 夹具的 idempotencyKeyHash = sha256(\"key\")（generate.mts:207 固定幂等键 'key'），可用 printf key | shasum -a 256 复算，不是凭据"
+regexTarget = "match"
+regexes = ['''2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683''']
+
+[[allowlists]]
 description = "A6.4-pr2a model-cost 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件的 SHA-256（键名含 Token 触发 generic-api-key），可用 shasum -a 256 resources/PilotDeck/<path> 复算，不是凭据"
 regexTarget = "match"
 regexes = [
