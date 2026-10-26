@@ -23,6 +23,7 @@ mcp = 'src/pilotdeck-gateway/src/runtime/mcp/registry.rs'
 pub = 'src/pilotdeck-gateway/src/runtime/turn/publish.rs'
 background = 'src/pilotdeck-gateway/src/runtime/background.rs'
 fixture = 'src/pilotdeck-gateway/tests/fixtures/runtime-spawn-panic/oracle.json'
+tail_fixture = 'src/pilotdeck-gateway/tests/fixtures/background-clock/oracle.json'
 shared = 'shared_spawn_panic_matrix'
 durable = 'durable_spawn_panic_matrix'
 payload = 'shared_spawn_outcomes_and_cancelled_gate'
@@ -72,7 +73,18 @@ mutants = [
     ('tail-no-pid-clock', background, re.escape('let clock = catch_port(|| (inner.now)());\n        state.task.ended_at'), 'let clock: std::thread::Result<f64> = Ok((inner.now)());\n        state.task.ended_at', 'clock_tail_no_pid', 'tail observer deadline'),
     ('tail-subagent-clock', background, re.escape('let clock = catch_port(|| now());'), 'let clock: std::thread::Result<f64> = Ok(now());', 'clock_tail_subagent_finish', 'tail observer deadline'),
     ('tail-stop-clock', background, re.escape('let clock = catch_port(|| (self.now)());'), 'let clock: std::thread::Result<f64> = Ok((self.now)());', 'clock_tail_subagent_stop', 'tail observer deadline'),
-    ('tail-fallback', background, re.escape('task.ended_at = Some(*clock.as_ref().unwrap_or(&task.started_at));'), 'task.ended_at = Some(*clock.as_ref().unwrap_or(&0.0));', 'clock_tail_shell_exit', 'tail fallback timestamp'),
+    ('tail-shell-fallback', background, re.escape('let clock = catch_port(|| (inner.now)());\n                    task.ended_at = Some(*clock.as_ref().unwrap_or(&task.started_at));'), 'let clock = catch_port(|| (inner.now)());\n                    task.ended_at = Some(*clock.as_ref().unwrap_or(&0.0));', 'clock_tail_shell_exit', 'tail fallback timestamp'),
+    ('tail-finish-fallback', background, re.escape('let clock = catch_port(|| now());\n                    task.ended_at = Some(*clock.as_ref().unwrap_or(&task.started_at));'), 'let clock = catch_port(|| now());\n                    task.ended_at = Some(*clock.as_ref().unwrap_or(&0.0));', 'clock_tail_subagent_finish', 'tail fallback timestamp'),
+    ('tail-stop-fallback', background, re.escape('let clock = catch_port(|| (self.now)());\n        task.ended_at = Some(*clock.as_ref().unwrap_or(&task.started_at));'), 'let clock = catch_port(|| (self.now)());\n        task.ended_at = Some(*clock.as_ref().unwrap_or(&0.0));', 'clock_tail_subagent_stop', 'tail fallback timestamp'),
+    ('tail-no-pid-fallback', background, re.escape('let clock = catch_port(|| (inner.now)());\n        state.task.ended_at = Some(*clock.as_ref().unwrap_or(&state.task.started_at));'), 'let clock = catch_port(|| (inner.now)());\n        state.task.ended_at = Some(*clock.as_ref().unwrap_or(&0.0));', 'clock_tail_no_pid', 'tail fallback timestamp'),
+    ('tail-shutdown-payload', background, re.escape('let _ = catch_port(|| self.stop(&task_id));'), 'self.stop(&task_id);', 'clock_tail_shutdown_survives_payload_drop', 'tail shutdown isolates payload panic'),
+    ('tail-pending-body', background, re.escape('if task.status == TaskStatus::Cancelled {\n                    None'), 'if false && task.status == TaskStatus::Cancelled {\n                    None', 'clock_tail_subagent_pending_stop', 'tail pending body must not run'),
+    ('clock-failed-snapshot', background, r'                // The initial Pending write is already owned by the store\..*?                task.ended_at =', '                task.ended_at =', 'clock_start_failure_persists_terminal_snapshot', 'clock durable terminal snapshot'),
+    ('clock-pending-evidence', tail_fixture, None, '', 'clock_pending_snapshot_oracle_preserves_ts_observation', 'clock pending TS evidence'),
+    ('clock-durable-evidence', tail_fixture, None, '', 'clock_durable_oracle_preserves_ts_observation', 'clock durable TS evidence'),
+    ('tail-matrix', tail_fixture, None, 'B-', 'tail_oracle_has_exact_matrix', 'complete tail matrix'),
+    ('tail-duplicate', tail_fixture, None, 'S-', 'tail_oracle_has_exact_matrix', 'complete tail matrix'),
+    ('tail-shell-evidence', tail_fixture, None, 'B-reject', 'tail_oracle_has_exact_matrix', 'tail TS shell evidence'),
     ('tail-payload', background, re.escape('    inner.settle(&entry);\n    drop(clock);'), '    drop(clock);\n    inner.settle(&entry);', 'clock_tail_payload_drop', 'tail payload sees done'),
     ('tail-shell-done', background, re.escape('        entry.done.send_replace(true);\n    }\n}'), '        entry.done.send_replace(false);\n    }\n}', 'clock_tail_shell_exit', 'tail observer deadline'),
     ('tail-subagent-done', background, re.escape('            entry.done.send_replace(true);\n            drop(clock);'), '            entry.done.send_replace(false);\n            drop(clock);', 'clock_tail_subagent_finish', 'tail observer deadline'),
@@ -113,13 +125,20 @@ for name, relative, pattern, replacement, test, anchor in mutants:
         content = original[path].decode()
         if pattern is None:
             oracle = json.loads(content)
-            index = next(i for i, c in enumerate(oracle['cases']) if c['id'].startswith(replacement))
-            if name.endswith('-duplicate'): oracle['cases'].append(oracle['cases'][index].copy())
-            else: oracle['cases'].pop(index)
+            if name == 'clock-pending-evidence':
+                oracle['pendingSnapshotCase']['settled'] = True
+            elif name == 'clock-durable-evidence':
+                oracle['durableCase']['persisted'][0]['status'] = 'unknown'
+            else:
+                cases = oracle['tailCases' if relative == tail_fixture else 'cases']
+                index = next(i for i, c in enumerate(cases) if c['id'].startswith(replacement))
+                if name.endswith('-duplicate'): cases.append(cases[index].copy())
+                elif name == 'tail-shell-evidence': cases[index]['done'] = True
+                else: cases.pop(index)
             changed = json.dumps(oracle) + '\n'
         else:
             changed, count = re.subn(pattern, replacement, content, flags=re.S)
-            assert count == (3 if name == 'tail-fallback' else 1), (name, count)
+            assert count == 1, (name, count)
         if name == 'clock-pending-snapshot':
             changed, count = re.subn(re.escape('        Ok(task)\n    }\n\n    fn insert('), '        result\n    }\n\n    fn insert(', changed)
             assert count == 1, (name, 'return anchor', count)

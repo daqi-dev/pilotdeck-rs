@@ -757,6 +757,27 @@ impl BackgroundTaskRuntime {
             Err((false, message)) => {
                 let mut task = task;
                 task.status = TaskStatus::Failed;
+                // The initial Pending write is already owned by the store.
+                // Record the known spawn failure before calling Clock: even a
+                // second panic while dropping its payload must not recover as
+                // an Unknown task. Do not wait on the initial write's observer.
+                reservation.call(
+                    || {
+                        if let Some(store) = &self.inner.snapshot_store {
+                            use crate::runtime::background_snapshot::{
+                                PersistedBackgroundTask, PersistedOutput, persist_task,
+                            };
+                            drop(store.write(PersistedBackgroundTask {
+                                task: persist_task(&task),
+                                output: PersistedOutput {
+                                    total_bytes: 0,
+                                    persisted: false,
+                                },
+                            }));
+                        }
+                    },
+                    "Background failed snapshot construction failed.",
+                )?;
                 task.ended_at =
                     Some(reservation.call(|| (self.inner.now)(), "Background clock failed.")?);
                 let entry = self.insert(reservation, &task_id, new_entry(task, false, None));
@@ -1516,7 +1537,10 @@ impl BackgroundSubagentRuntime {
             .map(|entry| entry.task.lock().unwrap().task_id.clone())
             .collect();
         for task_id in ids {
-            self.stop(&task_id);
+            // A terminal Clock payload can panic again when stop drops it.
+            // One entry must not interrupt cancellation of later entries or
+            // prevent BackgroundResources from draining the shell runtime.
+            let _ = catch_port(|| self.stop(&task_id));
         }
     }
 }
@@ -1883,6 +1907,100 @@ mod tests {
         observers
     }
 
+    fn clock_oracle() -> serde_json::Value {
+        let text = include_str!("../../tests/fixtures/background-clock/oracle.json");
+        crate::test_baseline::oracle(text);
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn tail_case(id: &str) -> serde_json::Value {
+        clock_oracle()["tailCases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["id"] == id)
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn tail_oracle_has_exact_matrix() {
+        let oracle = clock_oracle();
+        let mut ids: Vec<_> = oracle["tailCases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|case| case["id"].as_str().unwrap())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            [
+                "B-never",
+                "B-nonzero",
+                "B-reject",
+                "B-zero",
+                "S-err",
+                "S-ok",
+                "S-pending",
+                "S-running"
+            ],
+            "complete tail matrix"
+        );
+        // B-reject has no equivalent injectable native child.wait error.
+        // Pin its entire TS observation as well as the three executable rows.
+        for mode in ["zero", "nonzero", "reject", "never"] {
+            assert_eq!(
+                tail_case(&format!("B-{mode}")),
+                serde_json::json!({
+                    "id": format!("B-{mode}"), "status": "running", "ended": false,
+                    "done": false, "events": 0, "retryRejected": true,
+                    "outcome": "aborted", "stopped": false, "disposed": false,
+                    "unhandled": if mode == "never" { vec![] } else { vec!["terminal clock panic"] }
+                }),
+                "tail TS shell evidence"
+            );
+        }
+    }
+
+    #[test]
+    fn clock_durable_oracle_preserves_ts_observation() {
+        assert_eq!(
+            clock_oracle()["durableCase"],
+            serde_json::json!({
+                "id": "B2-durable", "error": "injected clock panic",
+                "entries": [{"status": "failed", "ended": false}],
+                "persisted": [{"status": "pending", "ended": false}],
+                "restored": [{"status": "unknown", "ended": false}]
+            }),
+            "clock durable TS evidence"
+        );
+    }
+
+    #[test]
+    fn clock_pending_snapshot_oracle_preserves_ts_observation() {
+        assert_eq!(
+            clock_oracle()["pendingSnapshotCase"],
+            serde_json::json!({
+                "id": "B2-never", "writes": ["pending"], "clockCalls": 1,
+                "shellCalls": 0, "settled": false, "disposed": false, "activeStarts": 1,
+                "entries": [{"status": "pending", "ended": false}]
+            }),
+            "clock pending TS evidence"
+        );
+    }
+
+    fn subagent_observation(
+        id: &str,
+        task: &BackgroundSubagentTask,
+        ran: bool,
+        cancelled: bool,
+    ) -> serde_json::Value {
+        serde_json::json!({ "id": id, "status": task.status.as_str(),
+            "ended": task.ended_at.is_some(), "error": task.error.as_ref().map(|s| s.to_utf8().unwrap()),
+            "ran": ran, "cancelled": cancelled })
+    }
+
     async fn shell_tail(mode: &str, payload: bool) {
         let scratch = crate::test_scratch::Scratch::new("804-tail");
         let fifo = scratch.path().join("exit-gate");
@@ -1989,33 +2107,37 @@ mod tests {
         assert_eq!(task.status, expected, "tail terminal status");
         assert_eq!(task.ended_at, Some(42.0), "tail fallback timestamp");
         assert_eq!(task.exit_code, if no_pid { None } else { Some(Some(code)) });
-        {
+        let event_count = {
             let event = lock(&events);
             assert_eq!(event.len(), 1, "tail completion exactly once");
             assert_eq!(
                 event[0].get("status"),
                 Some(&JsValue::from(expected.as_str()))
             );
-        }
+            event.len()
+        };
         let id = &task.task_id;
         let undefined = &JsValue::Undefined;
         assert_eq!(runtime.list(&TaskListFilter::default(), None).len(), 1);
         assert!(runtime.get_output(id, undefined, undefined, None).is_ok());
-        tail_deadline(runtime.wait(id, undefined, None, None))
+        let waited = tail_deadline(runtime.wait(id, undefined, None, None))
             .await
+            .unwrap()
             .unwrap();
-        tail_deadline(runtime.stop(id, undefined, None))
+        let stopped = tail_deadline(runtime.stop(id, undefined, None))
             .await
-            .unwrap();
+            .is_ok();
+        assert!(stopped);
+        let retry = tail_deadline(runtime.start(construction_spec())).await;
+        let retry_rejected = retry.is_err();
         if !disposing {
             assert_eq!(
-                tail_deadline(runtime.start(construction_spec()))
-                    .await
-                    .unwrap()
-                    .status,
+                retry.unwrap().status,
                 TaskStatus::Failed,
                 "tail capacity released"
             );
+        } else {
+            assert!(retry_rejected, "tail disposed rejects retry");
         }
         let mut disposers = vec![];
         for _ in 0..3 {
@@ -2026,6 +2148,37 @@ mod tests {
             tail_deadline(observer).await.unwrap();
         }
         assert!(runtime.start(construction_spec()).await.is_err());
+        let id = if no_pid {
+            "B-never"
+        } else if code == 0 {
+            "B-zero"
+        } else {
+            "B-nonzero"
+        };
+        let mut expected_row = tail_case(id);
+        // CLOCK-TAIL-001 fixes the baseline's stuck terminal callback; B-never
+        // also uses the registered no-pid cancellation fix. Compare all fields.
+        expected_row["status"] = expected.as_str().into();
+        expected_row["ended"] = true.into();
+        expected_row["done"] = true.into();
+        expected_row["events"] = 1.into();
+        expected_row["retryRejected"] = disposing.into();
+        expected_row["outcome"] = "completed".into();
+        expected_row["stopped"] = true.into();
+        expected_row["disposed"] = true.into();
+        // unhandledRejection is a Node-only observation; its original value
+        // is pinned in tail_oracle_has_exact_matrix, not invented for Rust.
+        expected_row.as_object_mut().unwrap().remove("unhandled");
+        assert_eq!(
+            serde_json::json!({
+                "id": id, "status": task.status.as_str(), "ended": task.ended_at.is_some(),
+                "done": *entry.done.borrow(), "events": event_count,
+                "retryRejected": retry_rejected, "outcome": waited.outcome,
+                "stopped": stopped, "disposed": runtime.inner.state.lock().unwrap().phase == Phase::Disposed
+            }),
+            expected_row,
+            "tail TS shell matrix with registered differences"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2046,6 +2199,11 @@ mod tests {
     }
 
     async fn subagent_tail(mode: &str, payload: bool) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let ran = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let body_ran = ran.clone();
+        let body_cancelled = cancelled.clone();
         let on_drop: TailDrop = Arc::default();
         let (now, reached, resume) = tail_clock(on_drop.clone());
         let runtime = BackgroundSubagentRuntime::new(Some(now));
@@ -2055,9 +2213,11 @@ mod tests {
         let failing = mode == "err";
         let task = runtime.start(subagent_input(Box::new(move |signal| {
             Box::pin(async move {
+                body_ran.store(true, Ordering::SeqCst);
                 entered.send(()).unwrap();
                 if stopping {
                     signal.cancelled().await;
+                    body_cancelled.store(true, Ordering::SeqCst);
                 } else {
                     gate.await.unwrap();
                 }
@@ -2130,27 +2290,16 @@ mod tests {
             "tail cancellation delivered"
         );
         let task = runtime.get(&task.task_id).unwrap();
-        let text = include_str!("../../tests/fixtures/background-clock/oracle.json");
-        crate::test_baseline::oracle(text);
-        let oracle: serde_json::Value = serde_json::from_str(text).unwrap();
-        let expected = oracle["tailCases"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|c| c["id"] == format!("S-{mode}"))
-            .unwrap();
+        let id = format!("S-{mode}");
         assert_eq!(
-            task.status.as_str(),
-            expected["status"],
-            "tail subagent TS status"
-        );
-        assert_eq!(
-            task.error.map(|s| s.to_utf8().unwrap()),
-            if failing {
-                Some("body failure".into())
-            } else {
-                None
-            }
+            subagent_observation(
+                &id,
+                &task,
+                ran.load(Ordering::SeqCst),
+                cancelled.load(Ordering::SeqCst)
+            ),
+            tail_case(&id),
+            "tail subagent TS row"
         );
         assert_eq!(task.ended_at, Some(42.0), "tail fallback timestamp");
         assert_eq!(runtime.list(&SubagentListFilter::default()).len(), 1);
@@ -2183,7 +2332,7 @@ mod tests {
 
     #[tokio::test]
     async fn clock_tail_subagent_pending_stop() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         let calls = AtomicUsize::new(0);
         let runtime = BackgroundSubagentRuntime::new(Some(Arc::new(move || {
             assert_ne!(
@@ -2193,8 +2342,16 @@ mod tests {
             );
             42.0
         })));
-        let task = runtime.start(subagent_input(Box::new(|_| {
-            panic!("pending body must not run")
+        let ran = Arc::new(AtomicBool::new(false));
+        let body_ran = ran.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let body_cancelled = cancelled.clone();
+        let task = runtime.start(subagent_input(Box::new(move |signal| {
+            body_ran.store(true, Ordering::SeqCst);
+            Box::pin(async move {
+                body_cancelled.store(signal.is_cancelled(), Ordering::SeqCst);
+                Ok(())
+            })
         })));
         let entry = runtime.find(&task.task_id).unwrap();
         let result =
@@ -2206,9 +2363,193 @@ mod tests {
         assert!(result.unwrap());
         assert!(!tail_deadline(runtime.stop_and_wait(&task.task_id)).await);
         assert_eq!(
-            runtime.get(&task.task_id).unwrap().status,
-            TaskStatus::Cancelled
+            subagent_observation(
+                "S-pending",
+                &runtime.get(&task.task_id).unwrap(),
+                ran.load(Ordering::SeqCst),
+                cancelled.load(Ordering::SeqCst)
+            ),
+            tail_case("S-pending"),
+            "tail pending body must not run"
         );
+    }
+
+    #[tokio::test]
+    async fn clock_tail_shutdown_survives_payload_drop() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        struct Payload(Arc<AtomicBool>);
+        impl Drop for Payload {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+                panic!("shutdown payload drop");
+            }
+        }
+        for explicit_shutdown in [false, true] {
+            let calls = AtomicUsize::new(0);
+            let dropped = Arc::new(AtomicBool::new(false));
+            let drop_seen = dropped.clone();
+            let resources = BackgroundResources {
+                tasks: BackgroundTaskRuntime::default(),
+                subagents: BackgroundSubagentRuntime::new(Some(Arc::new(move || {
+                    if calls.fetch_add(1, Ordering::SeqCst) == 2 {
+                        std::panic::panic_any(Payload(drop_seen.clone()));
+                    }
+                    42.0
+                }))),
+            };
+            let mut tasks = vec![];
+            let mut observations = vec![];
+            for _ in 0..2 {
+                let (entered, ready) = tokio::sync::oneshot::channel();
+                let cancelled = Arc::new(AtomicBool::new(false));
+                let body_cancelled = cancelled.clone();
+                let task = resources
+                    .subagents
+                    .start(subagent_input(Box::new(move |signal| {
+                        Box::pin(async move {
+                            entered.send(()).unwrap();
+                            signal.cancelled().await;
+                            body_cancelled.store(true, Ordering::SeqCst);
+                            Ok(())
+                        })
+                    })));
+                tail_deadline(ready).await.unwrap();
+                tasks.push(task);
+                observations.push(cancelled);
+            }
+            let owner = resources.clone();
+            let dispose = tokio::spawn(async move {
+                if explicit_shutdown {
+                    owner.shutdown();
+                }
+                owner.dispose().await.unwrap();
+            });
+            assert!(
+                tail_deadline(dispose).await.is_ok(),
+                "tail shutdown isolates payload panic"
+            );
+            assert!(
+                dropped.load(Ordering::SeqCst),
+                "tail shutdown payload dropped"
+            );
+            let mut actual = vec![];
+            for (task, cancelled) in tasks.iter().zip(&observations) {
+                let entry = resources.subagents.find(&task.task_id).unwrap();
+                assert!(
+                    entry.controller.is_cancelled(),
+                    "tail shutdown cancels every entry"
+                );
+                let mut done = entry.done.subscribe();
+                tail_deadline(done.wait_for(|done| *done)).await.unwrap();
+                let mut row = subagent_observation(
+                    "",
+                    &resources.subagents.get(&task.task_id).unwrap(),
+                    true,
+                    cancelled.load(Ordering::SeqCst),
+                );
+                row.as_object_mut().unwrap().remove("id");
+                actual.push(row);
+            }
+            assert_eq!(
+                serde_json::json!({ "id": "S-two", "tasks": actual }),
+                clock_oracle()["shutdownCase"],
+                "tail shutdown TS pair"
+            );
+            assert_eq!(
+                resources.tasks.inner.state.lock().unwrap().phase,
+                Phase::Disposed,
+                "tail shutdown drains shell runtime"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn clock_start_failure_persists_terminal_snapshot() {
+        use crate::runtime::background_snapshot::{
+            BackgroundTaskSnapshotStore, JsonFileBackgroundTaskSnapshotStore,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        struct Payload(Arc<AtomicBool>);
+        impl Drop for Payload {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+                panic!("durable payload drop");
+            }
+        }
+        for payload in [false, true] {
+            let scratch = crate::test_scratch::Scratch::new("804-durable-clock");
+            let path = scratch.path().join("tasks.json");
+            let store = Arc::new(JsonFileBackgroundTaskSnapshotStore::new(path.clone()).unwrap());
+            let calls = AtomicUsize::new(0);
+            let dropped = Arc::new(AtomicBool::new(false));
+            let drop_seen = dropped.clone();
+            let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                snapshot_store: Some(store.clone()),
+                disk_spill_dir: Some(scratch.path().into()),
+                now: Some(Arc::new(move || {
+                    if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                        if payload {
+                            std::panic::panic_any(Payload(drop_seen.clone()));
+                        }
+                        panic!("injected clock panic");
+                    }
+                    42.0
+                })),
+                ..Default::default()
+            });
+            let owner = runtime.clone();
+            let started = tail_deadline(tokio::spawn(async move {
+                owner.start(construction_spec()).await
+            }))
+            .await;
+            let error = if payload {
+                assert_eq!(
+                    started.unwrap_err().into_panic().downcast_ref::<&str>(),
+                    Some(&"durable payload drop")
+                );
+                assert!(dropped.load(Ordering::SeqCst));
+                None
+            } else {
+                Some(started.unwrap().unwrap_err().message.to_utf8().unwrap())
+            };
+            assert_eq!(*runtime.inner.starts.borrow(), 0);
+            // Both write observers have been dropped. The real store still
+            // owns their chain; flush/reopen must see the compensating record.
+            tail_deadline(store.flush()).await.unwrap();
+            let persisted = Arc::new(JsonFileBackgroundTaskSnapshotStore::new(path).unwrap());
+            let snapshots = persisted.load();
+            let restored = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                snapshot_store: Some(persisted),
+                disk_spill_dir: Some(scratch.path().into()),
+                ..Default::default()
+            });
+            let project = |tasks: Vec<BackgroundBashTask>| {
+                tasks.iter().map(|task|
+                serde_json::json!({"status": task.status.as_str(), "ended": task.ended_at.is_some()})
+            ).collect::<Vec<_>>()
+            };
+            let mut expected = clock_oracle()["durableCase"].clone();
+            // CLOCK-START-001-R1: no orphan live entry; preserve known Failed
+            // instead of TS's Pending disk record / Unknown restored state.
+            expected["entries"] = serde_json::json!([]);
+            expected["persisted"] = serde_json::json!([{"status": "failed", "ended": false}]);
+            expected["restored"] = expected["persisted"].clone();
+            if payload {
+                expected["error"] = serde_json::Value::Null;
+            }
+            assert_eq!(
+                serde_json::json!({ "id": "B2-durable", "error": error,
+                    "entries": project(runtime.list(&TaskListFilter::default(), None)),
+                    "persisted": snapshots.iter().map(|s| serde_json::json!({"status": s.task.status,
+                        "ended": s.task.ended_at.is_some()})).collect::<Vec<_>>(),
+                    "restored": project(restored.list(&TaskListFilter::default(), None))
+                }),
+                expected,
+                "clock durable terminal snapshot"
+            );
+            tail_deadline(runtime.dispose()).await;
+            tail_deadline(restored.dispose()).await;
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2450,15 +2791,16 @@ mod tests {
     #[tokio::test]
     async fn clock_start_failure_does_not_wait_for_snapshot() {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        struct PendingSnapshot;
+        struct PendingSnapshot(Arc<Mutex<Vec<String>>>);
         impl crate::runtime::background_snapshot::BackgroundTaskSnapshotStore for PendingSnapshot {
             fn load(&self) -> Vec<crate::runtime::background_snapshot::PersistedBackgroundTask> {
                 vec![]
             }
             fn write(
                 &self,
-                _: crate::runtime::background_snapshot::PersistedBackgroundTask,
+                snapshot: crate::runtime::background_snapshot::PersistedBackgroundTask,
             ) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + '_>> {
+                lock(&self.0).push(snapshot.task.status);
                 Box::pin(std::future::pending())
             }
             fn flush(&self) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + '_>> {
@@ -2466,25 +2808,33 @@ mod tests {
             }
         }
         let scratch = crate::test_scratch::Scratch::new("804-pending");
-        let calls = AtomicUsize::new(0);
-        let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let clock_calls = calls.clone();
+        let writes = Arc::new(Mutex::new(vec![]));
+        let mut runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
             now: Some(Arc::new(move || {
                 assert_ne!(
-                    calls.fetch_add(1, Ordering::SeqCst),
+                    clock_calls.fetch_add(1, Ordering::SeqCst),
                     1,
                     "injected clock panic"
                 );
                 0.0
             })),
-            snapshot_store: Some(Arc::new(PendingSnapshot)),
+            snapshot_store: Some(Arc::new(PendingSnapshot(writes.clone()))),
             disk_spill_dir: Some(scratch.path().into()),
             ..Default::default()
         });
-        let error =
-            tokio::time::timeout(Duration::from_secs(5), runtime.start(construction_spec()))
-                .await
-                .expect("clock pending snapshot deadline")
-                .unwrap_err();
+        let spawned = Arc::new(AtomicUsize::new(0));
+        let observed = spawned.clone();
+        runtime.before_spawn = Some(Arc::new(move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+        }));
+        let result =
+            tokio::time::timeout(Duration::from_secs(5), runtime.start(construction_spec())).await;
+        let settled = result.is_ok();
+        let error = result
+            .expect("clock pending snapshot deadline")
+            .unwrap_err();
         assert!(
             error
                 .message
@@ -2496,6 +2846,27 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), runtime.dispose())
             .await
             .unwrap();
+        let mut expected = clock_oracle()["pendingSnapshotCase"].clone();
+        // Rust's store owns writes synchronously; the observer need not finish
+        // before spawn validation. CLOCK-START-001-R1 records this boundary.
+        expected["writes"] = serde_json::json!(["pending", "failed"]);
+        expected["clockCalls"] = 2.into();
+        expected["shellCalls"] = 1.into();
+        expected["settled"] = true.into();
+        expected["disposed"] = true.into();
+        expected["activeStarts"] = 0.into();
+        expected["entries"] = serde_json::json!([]);
+        assert_eq!(
+            serde_json::json!({ "id": "B2-never", "writes": *lock(&writes),
+            "clockCalls": calls.load(Ordering::SeqCst), "shellCalls": spawned.load(Ordering::SeqCst),
+            "settled": settled, "disposed": runtime.inner.state.lock().unwrap().phase == Phase::Disposed,
+            "activeStarts": *runtime.inner.starts.borrow(),
+            "entries": runtime.list(&TaskListFilter::default(), None).iter().map(|task|
+                serde_json::json!({"status": task.status.as_str(), "ended": task.ended_at.is_some()})
+            ).collect::<Vec<_>>() }),
+            expected,
+            "clock pending snapshot matrix"
+        );
     }
 
     #[test]
