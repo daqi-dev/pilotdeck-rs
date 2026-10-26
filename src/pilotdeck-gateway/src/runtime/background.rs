@@ -1296,6 +1296,20 @@ pub type SubagentFuture = Pin<Box<dyn Future<Output = Result<(), JsString>> + Se
 /// The fork body: `run(signal)`; `Err` is the rejection's message.
 pub type SubagentRun = Box<dyn FnOnce(ToolCancellation) -> SubagentFuture + Send>;
 
+fn subagent_panic_message(payload: Option<Box<dyn std::any::Any + Send>>) -> JsString {
+    JsString::from(
+        payload
+            .as_ref()
+            .and_then(|payload| {
+                payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            })
+            .unwrap_or("Background subagent task panicked."),
+    )
+}
+
 /// `StartBackgroundSubagentInput`.
 pub struct StartBackgroundSubagentInput {
     pub kind: Option<SubagentKind>,
@@ -1389,10 +1403,11 @@ impl BackgroundSubagentRuntime {
                 // A panicking body settles as a failure instead of leaving
                 // `stopAndWait` waiting forever.
                 let result = match body {
-                    Ok(body) => tokio::spawn(body).await.ok(),
-                    Err(_) => None,
-                }
-                .unwrap_or_else(|| Err(JsString::from("Background subagent task panicked.")));
+                    Ok(body) => tokio::spawn(body).await.unwrap_or_else(|error| {
+                        Err(subagent_panic_message(error.try_into_panic().ok()))
+                    }),
+                    Err(payload) => Err(subagent_panic_message(Some(payload))),
+                };
                 let mut task = entry.task.lock().unwrap();
                 match result {
                     Ok(()) => {
