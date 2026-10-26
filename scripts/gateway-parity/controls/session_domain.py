@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 # >>> apparatus bootstrap (verbatim in every A2 entry; test_safety checks it)
@@ -338,6 +339,20 @@ def check_case(name, output, source=None):
     observation_check(payload, output, 'mutated-observation')
 
 
+def _pid_state(pid):
+    """Three-state pid observation; ``blocked`` never means gone."""
+    return HeldProcessGroup.observe_pid(pid)
+
+
+def _grandchild_gone(pid):
+    """Only a proven ``missing`` pid may be called gone.
+
+    ``blocked`` (EPERM/EACCES) means this process cannot signal it, not that it
+    exited; collapsing it to gone would falsely pass the leftover check.
+    """
+    return _pid_state(pid) == 'missing'
+
+
 def cleanup_controls(output):
     """Exercise the ps-free group probe and its top-level status mapping.
 
@@ -349,6 +364,14 @@ def cleanup_controls(output):
 
     def check(name, ok, detail, **extra):
         results.append({'name': name, 'passed': bool(ok), 'detail': detail, **extra})
+
+    def skip(name, reason):
+        # A skipped platform-specific case is recorded as passed=None and is not
+        # counted as a pass; only Darwin gives the exact group census this
+        # apparatus proves.
+        results.append({'name': name, 'passed': None, 'skipped': reason, 'detail': reason})
+
+    exact_census = sys.platform == 'darwin'
 
     def group_empty(pgid):
         # Signal-0 observation through the same ownership entry; it never
@@ -365,43 +388,52 @@ def cleanup_controls(output):
             time.sleep(.05)
         return group_empty(pgid)
 
-    # 1. Leader exits as an unreaped zombie; empty group -> VERIFIED.
-    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
-    probe = probe_process_group(child, wait=10)
-    if child.returncode is None:
-        try:
-            child.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-    check('cleanup-empty-group', probe['status'] == CLEANUP_VERIFIED
-          and probe.get('leaderUnreaped') is True and probe.get('leaderReaped') is True
-          and cleanup_status({'processTreeCleanup': probe['status']}) == 'PASS',
-          f"status={probe['status']} top={cleanup_status({'processTreeCleanup': probe['status']})} "
-          f"leaderUnreaped={probe.get('leaderUnreaped')} leaderReaped={probe.get('leaderReaped')}",
-          probe=probe)
+    if exact_census:
+        # 1. Leader exits as an unreaped zombie; empty group -> VERIFIED.
+        child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
+        probe = probe_process_group(child, wait=10)
+        if child.returncode is None:
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        check('cleanup-empty-group', probe['status'] == CLEANUP_VERIFIED
+              and probe.get('leaderUnreaped') is True and probe.get('leaderReaped') is True
+              and cleanup_status({'processTreeCleanup': probe['status']}) == 'PASS',
+              f"status={probe['status']} top={cleanup_status({'processTreeCleanup': probe['status']})} "
+              f"leaderUnreaped={probe.get('leaderUnreaped')} leaderReaped={probe.get('leaderReaped')}",
+              probe=probe)
 
-    # 2. The launcher exits while a sleep grandchild stays in its group.  The
-    # probe waits with WNOWAIT (leader stays a zombie, pgid cannot be reused),
-    # reports GROUP_NOT_EMPTY, SIGTERMs that group, and reaps last.  The top
-    # level must not claim PASS.  The grandchild's stdio is /dev/null so a
-    # parent capture pipe cannot stay open if cleanup fails.
-    marker = output / 'leaky-grandchild.pid'
-    code = ("import subprocess,sys;"
-            "p=subprocess.Popen(['sleep','20'],stdout=subprocess.DEVNULL,"
-            "stderr=subprocess.DEVNULL);"
-            "open(sys.argv[1],'w').write(str(p.pid))")
-    child = subprocess.Popen([sys.executable, '-I', '-c', code, str(marker)],
-                             start_new_session=True)
-    probe = probe_process_group(child, wait=10)
-    top = cleanup_status({'processTreeCleanup': probe['status']})
-    grandchild = int(marker.read_text()) if marker.is_file() else None
-    grandchild_gone = grandchild is not None and not _pid_alive(grandchild)
-    group_empty_after = wait_group_empty(child.pid)
-    check('cleanup-leftover-grandchild',
-          probe['status'] == CLEANUP_GROUP_NOT_EMPTY and top == CLEANUP_UNVERIFIED_STATUS
-          and grandchild_gone and group_empty_after,
-          f"status={probe['status']} top={top} grandchildGone={grandchild_gone} "
-          f"groupEmpty={group_empty_after}", probe=probe)
+    else:
+        skip('cleanup-empty-group', 'non-darwin probe is BLOCKED (no exact group census)')
+
+    if exact_census:
+        # 2. The launcher exits while a sleep grandchild stays in its group.  The
+        # probe waits with WNOWAIT (leader stays a zombie, pgid cannot be reused),
+        # reports GROUP_NOT_EMPTY, SIGTERMs that group, and reaps last.  The top
+        # level must not claim PASS.  The grandchild's stdio is /dev/null so a
+        # parent capture pipe cannot stay open if cleanup fails.
+        marker = output / 'leaky-grandchild.pid'
+        code = ("import subprocess,sys;"
+                "p=subprocess.Popen(['sleep','20'],stdout=subprocess.DEVNULL,"
+                "stderr=subprocess.DEVNULL);"
+                "open(sys.argv[1],'w').write(str(p.pid))")
+        child = subprocess.Popen([sys.executable, '-I', '-c', code, str(marker)],
+                                 start_new_session=True)
+        probe = probe_process_group(child, wait=10)
+        top = cleanup_status({'processTreeCleanup': probe['status']})
+        grandchild = int(marker.read_text()) if marker.is_file() else None
+        grandchild_state = _pid_state(grandchild) if grandchild is not None else None
+        grandchild_gone = _grandchild_gone(grandchild) if grandchild is not None else False
+        group_empty_after = wait_group_empty(child.pid)
+        check('cleanup-leftover-grandchild',
+              probe['status'] == CLEANUP_GROUP_NOT_EMPTY and top == CLEANUP_UNVERIFIED_STATUS
+              and grandchild_gone and group_empty_after,
+              f"status={probe['status']} top={top} grandchildState={grandchild_state} "
+              f"grandchildGone={grandchild_gone} groupEmpty={group_empty_after}", probe=probe)
+
+    else:
+        skip('cleanup-leftover-grandchild', 'non-darwin probe is BLOCKED (no exact group census)')
 
     # 3. An inaccessible probe is BLOCKED and never a PASS.  Both killpg and
     # the leader kill(pid, 0) are denied, so the probe cannot mistake a sandbox
@@ -430,42 +462,46 @@ def cleanup_controls(output):
           and error is None,
           f"status={blocked.get('status')} top={blocked_top} error={error}", probe=blocked)
 
-    # 4. EPERM alone is not "only the zombie leader remains": deny just the
-    # group probe while a real live grandchild is in the group.  The independent
-    # live-member census must find it, so the probe reports GROUP_NOT_EMPTY and
-    # the top level is non-PASS, never VERIFIED.
-    folder = output / 'eperm-live-member'
-    folder.mkdir(parents=True, exist_ok=False)
-    marker = folder / 'grandchild.pid'
-    code = ("import subprocess,sys;"
-            "p=subprocess.Popen(['sleep','12'],stdout=subprocess.DEVNULL,"
-            "stderr=subprocess.DEVNULL);"
-            "open(sys.argv[1],'w').write(str(p.pid))")
-    child = subprocess.Popen([sys.executable, '-I', '-c', code, str(marker)],
-                             start_new_session=True)
-    state = wait_exit_unreaped(child.pid, 10)
-    eperm = {'status': None}
-    error = None
-    if state == 'EXITED':
-        try:
-            with patch.object(os, 'killpg', side_effect=PermissionError('denied')):
-                eperm = probe_process_group(child)
-        except Exception as exc:
-            error = f'{type(exc).__name__}: {exc}'
+    if exact_census:
+        # 4. EPERM alone is not "only the zombie leader remains": deny just the
+        # group probe while a real live grandchild is in the group.  The independent
+        # live-member census must find it, so the probe reports GROUP_NOT_EMPTY and
+        # the top level is non-PASS, never VERIFIED.
+        folder = output / 'eperm-live-member'
+        folder.mkdir(parents=True, exist_ok=False)
+        marker = folder / 'grandchild.pid'
+        code = ("import subprocess,sys;"
+                "p=subprocess.Popen(['sleep','12'],stdout=subprocess.DEVNULL,"
+                "stderr=subprocess.DEVNULL);"
+                "open(sys.argv[1],'w').write(str(p.pid))")
+        child = subprocess.Popen([sys.executable, '-I', '-c', code, str(marker)],
+                                 start_new_session=True)
+        state = wait_exit_unreaped(child.pid, 10)
+        eperm = {'status': None}
+        error = None
+        if state == 'EXITED':
+            try:
+                with patch.object(os, 'killpg', side_effect=PermissionError('denied')):
+                    eperm = probe_process_group(child)
+            except Exception as exc:
+                error = f'{type(exc).__name__}: {exc}'
+        else:
+            error = f'leader state {state}'
+        if child.returncode is None:
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        eperm_empty = wait_group_empty(child.pid, timeout=15)
+        eperm_top = cleanup_status({'processTreeCleanup': eperm.get('status')})
+        check('cleanup-eperm-live-member',
+              eperm.get('status') == CLEANUP_GROUP_NOT_EMPTY
+              and eperm_top == CLEANUP_UNVERIFIED_STATUS and eperm_empty and error is None,
+              f"status={eperm.get('status')} top={eperm_top} groupEmpty={eperm_empty} "
+              f"error={error}", probe=eperm)
+
     else:
-        error = f'leader state {state}'
-    if child.returncode is None:
-        try:
-            child.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-    eperm_empty = wait_group_empty(child.pid, timeout=15)
-    eperm_top = cleanup_status({'processTreeCleanup': eperm.get('status')})
-    check('cleanup-eperm-live-member',
-          eperm.get('status') == CLEANUP_GROUP_NOT_EMPTY
-          and eperm_top == CLEANUP_UNVERIFIED_STATUS and eperm_empty and error is None,
-          f"status={eperm.get('status')} top={eperm_top} groupEmpty={eperm_empty} "
-          f"error={error}", probe=eperm)
+        skip('cleanup-eperm-live-member', 'non-darwin probe is BLOCKED (no exact group census)')
 
     # 5. An already-reaped leader gives NOT_VERIFIED and provably no signal.
     child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
@@ -520,8 +556,10 @@ def cleanup_controls(output):
             raise PermissionError('sandbox denies group signals')
 
         try:
-            with patch.object(session_domain_module, '_darwin_group_pids',
-                              side_effect=next_snapshot), \
+            with patch.object(session_domain_module, 'sys',
+                              SimpleNamespace(platform='darwin')), \
+                    patch.object(session_domain_module, '_group_snapshot',
+                                 side_effect=next_snapshot), \
                     patch.object(os, 'killpg', side_effect=record_group):
                 race = probe_process_group(child)
         except Exception as exc:  # a crash must not count as the expected finding
@@ -547,7 +585,7 @@ def cleanup_controls(output):
     def next_members(*_args):
         return set(next(snapshots, [900, 424244]))
 
-    with patch.object(session_domain_module, '_darwin_group_pids', side_effect=next_members):
+    with patch.object(session_domain_module, '_group_snapshot', side_effect=next_members):
         members = live_group_members(900)
     check('cleanup-census-descendant', members == {900, 424244},
           f'members={None if members is None else sorted(members)}')
@@ -559,7 +597,7 @@ def cleanup_controls(output):
     def next_unstable(*_args):
         return set(next(alternating, [900, 424245]))
 
-    with patch.object(session_domain_module, '_darwin_group_pids', side_effect=next_unstable):
+    with patch.object(session_domain_module, '_group_snapshot', side_effect=next_unstable):
         unstable = live_group_members(900)
     check('cleanup-census-unstable', unstable is None,
           f'members={None if unstable is None else sorted(unstable)}')
@@ -588,7 +626,9 @@ def cleanup_controls(output):
     error = None
     if state == 'EXITED':
         try:
-            with patch.object(session_domain_module, '_darwin_group_pids', return_value=None), \
+            with patch.object(session_domain_module, 'sys',
+                              SimpleNamespace(platform='darwin')), \
+                    patch.object(session_domain_module, '_group_snapshot', return_value=None), \
                     patch.object(os, 'killpg', side_effect=PermissionError('denied')):
                 unavailable = probe_process_group(child)
         except Exception as exc:
@@ -654,14 +694,68 @@ def cleanup_controls(output):
           entry_error is None and outcome[0] == 'sent' and child.returncode is not None,
           f'outcome={outcome} returncode={child.returncode} error={entry_error}')
 
-    report = {'status': 'PASS' if all(row['passed'] for row in results) else 'FAIL',
-              'scope': 'cleanup probe behavior controls; not native evidence', 'cases': results}
+    # 13. kill(pid, 0)=EPERM is "blocked", not "gone": a denied probe must not
+    # satisfy the leftover-grandchild assertion.  The real observe_pid path is
+    # exercised by denying os.kill, so a call-site or source collapse to a
+    # two-state bool turns this red.
+    with patch.object(os, 'kill', side_effect=PermissionError('denied')):
+        blocked_state = _pid_state(os.getpid())
+        blocked_gone = _grandchild_gone(os.getpid())
+    check('cleanup-pid-blocked',
+          blocked_state == 'blocked' and not blocked_gone,
+          f'pidState={blocked_state} grandchildGone={blocked_gone}',
+          pidState=blocked_state, grandchildGone=blocked_gone)
+
+    # 14. Linux hidepid-style filtering: /proc shows only the leader while a
+    # live same-group descendant is hidden.  The non-darwin gate must report
+    # BLOCKED before reading that visible set or sending any signal; reading it
+    # as a complete group would return empty/VERIFIED/PASS.
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
+    state = wait_exit_unreaped(child.pid, 10)
+    leader = child.pid
+    visible = iter([[leader]] * 6)
+    census_calls = []
+
+    def visible_only(*args):
+        census_calls.append(args)
+        return set(next(visible, [leader]))
+
+    filtered = {'status': None}
+    error = None
+    if state == 'EXITED':
+        try:
+            with patch.object(session_domain_module, 'sys',
+                              SimpleNamespace(platform='linux')), \
+                    patch.object(session_domain_module, '_group_snapshot',
+                                 side_effect=visible_only), \
+                    patch.object(os, 'killpg', side_effect=PermissionError('EPERM')):
+                filtered = probe_process_group(child)
+        except Exception as exc:
+            error = f'{type(exc).__name__}: {exc}'
+    else:
+        error = f'leader state {state}'
+    if child.returncode is None:
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    filtered_top = cleanup_status({'processTreeCleanup': filtered.get('status')})
+    check('cleanup-linux-filtered-proc',
+          filtered.get('status') == CLEANUP_BLOCKED
+          and filtered_top == CLEANUP_UNVERIFIED_STATUS
+          and not census_calls and error is None,
+          f"status={filtered.get('status')} top={filtered_top} "
+          f"censusCalls={len(census_calls)} error={error}", probe=filtered)
+
+    executed = [row for row in results if row.get('passed') is not None]
+    skipped = [row['name'] for row in results if row.get('passed') is None]
+    passed = bool(executed) and all(row['passed'] for row in executed)
+    report = {'status': 'PASS' if passed and not skipped else (
+                  'PASS_WITH_SKIPS' if passed else 'FAIL'),
+              'scope': 'cleanup probe behavior controls; not native evidence',
+              'skipped': skipped, 'cases': results}
     save(output / 'cleanup-controls.json', report)
     return report
-
-def _pid_alive(pid):
-    return HeldProcessGroup.observe_pid(pid) == 'alive'
-
 
 def run_all(output, source=None):
     output.mkdir(parents=True, exist_ok=False)
@@ -691,7 +785,8 @@ def run_all(output, source=None):
               'notRun': [{'case': case, 'reason': 'requires real calibration --source'} for case in not_run]}
     cleanup = cleanup_controls(output)
     report['cleanup'] = cleanup
-    if cleanup['status'] != 'PASS':
+    report['cleanupSkipped'] = cleanup.get('skipped', [])
+    if cleanup['status'] == 'FAIL':
         report['status'] = 'FAIL'
     save(output / 'results.json', report)
     return report

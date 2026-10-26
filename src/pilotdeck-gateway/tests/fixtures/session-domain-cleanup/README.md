@@ -26,7 +26,11 @@ group snapshots and pins `GROUP_NOT_EMPTY`/non-PASS; `census-descendant` pins
 the stable pair that includes the descendant; `census-unstable` pins an
 unproven (None) census when the two snapshots disagree; `census-truncated`
 feeds a full libproc buffer and pins `None`, never a partial list;
-`census-enumeration` makes enumeration fail and pins `BLOCKED`; `signal-entry`
+`census-enumeration` makes enumeration fail and pins `BLOCKED`; `pid-blocked`
+denies `kill(pid, 0)` and pins the three-state `blocked` as "cannot exclude
+alive" (never gone); `linux-filtered-proc` simulates hidepid's visible-only
+`/proc` on Linux and pins `BLOCKED` before any census read or signal, never
+`VERIFIED`/`PASS`; `signal-entry`
 pins that the single signal entry refuses a reaped leader for both group and
 direct-pid sends while still sending to a live held child; `reap-state` forces
 `run_fixture` to see `REAPED` and pins no bare leader kill plus `NOT_VERIFIED`;
@@ -45,7 +49,10 @@ reused. macOS enumerates the group directly with
 `libproc.proc_listpids(PROC_PGRP_ONLY, pgid, ...)`, not a global pid snapshot
 followed by per-pid `getpgid`, so a member that forks a same-group descendant
 and exits between snapshot and query cannot be missed; two complete snapshots
-must agree. A libproc return count equal to the capacity is truncation: the
+must agree. Non-darwin has no equivalent completeness proof (`/proc` can be
+filtered by `hidepid`/permissions), so `probe_process_group` reports `BLOCKED`
+before reading a census or sending a signal; `linux-filtered-proc` pins that
+boundary. A libproc return count equal to the capacity is truncation: the
 implementation allocates slack and accepts only a strictly short, 4-byte
 aligned write, growing while full; it never returns a partial group. Enumeration
 failure, truncation, a changing group, or a denied leader probe all record
@@ -88,13 +95,14 @@ A pre-commit rehearsal can pass `--baseline <tree-ish>`; the default is `HEAD`.
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 15 mutants:
+`JUDGES`, keyed by the same names. The current table has 17 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
 `eperm-census-ignored`, `unavailable-census-as-empty`, `reap-guard-removed`,
 `snapshot-race-accepted`, `unstable-census-accepted`, `truncation-accepted`,
-`enumeration-failure-empty`, `signal-gate-removed`.
+`enumeration-failure-empty`, `signal-gate-removed`, `pid-blocked-as-gone`,
+`linux-visible-census-trusted`.
 
 `pgrep-before.txt` / `pgrep-after.txt` are collected around the mutations using
 the unique `session-domain-cleanup/launcher.py` pattern (bounded `timeout=5`);
