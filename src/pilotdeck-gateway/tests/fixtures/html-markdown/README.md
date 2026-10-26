@@ -140,12 +140,19 @@ SHA256。编码器会展开输出并与真实 TS 原始字节比较；Rust 回�
 | 10 MiB 稠密 inline | 1,023 × (`<p>` + 1,024 × `<em>x</em>` + `</p>`) + 3,079 个 `x` | 完整 10,485,760 bytes 与完整输出 |
 | 单段平铺 inline | 50,000 × `<em>x</em>` | 完整输入与完整输出 |
 
-`large_shallow_pages_match_real_ts_bytes_and_stay_fast` 覆盖以上四例，每例 release
-转换预算 5 秒、debug 60 秒（46033287、193e8a1e 自 30 秒放宽：CI 慢跑机 debug 实测 34 秒超限；release 预算未动）；输入与期望构造不计入转换计时。错误累计后统一失败，
-恢复旧节点上限时四例都必须报错，不能只靠第一例失败冒充全部负控。
-`ten_mib_of_flat_inline_siblings_stays_fast` 另把最后一例已经过 TS 逐字节验证的周期扩展到
-1,048,576 个 inline 元素（恰好 10 MiB），检查完整输出与相同时间预算；这条是
-Rust 宽度压力回归，**不声称完整平铺 10 MiB 已跑过 TS**。
+`large_shallow_pages_match_real_ts_bytes_and_stay_fast` 覆盖以上四例，`ten_mib_of_flat_inline_siblings_stays_fast`
+另把最后一例已经过 TS 逐字节验证的周期扩展到 1,048,576 个 inline 元素（恰好 10 MiB），
+`reparented_wide_subtrees_stay_fast` 覆盖宽子树重挂 8 MiB；这条是 Rust 宽度压力回归，
+**不声称完整平铺 10 MiB 已跑过 TS**。三个计时测试共用 `tests/common/timing.rs`
+（与 `html_compat` 的 deep-frame 单测同一份）：把每例的主重复减半构造半幅输入，
+交错采样取各自最快值，先断言 full ≤ 3 × half + 150 ms（二次复杂度需要约 4x），
+再保留原绝对上限 release 5 秒 / debug 60 秒作常数因子兜底（4fbb5f78b 之前的
+整子树重扫是线性但慢约 36 倍，只有绝对上限能抓住；46033287、193e8a1e 自 30 秒放宽：
+CI 慢跑机 debug 实测 34 秒超限；release 预算未动）。单次被抢占的样本不再决定结果。
+采样次数由 `PDRS_TIMING_SAMPLES` 控制（默认 3，有效 1..=9）；
+`tests/fixtures/html-timing/negative_controls.py` 的负控将其降为 1。
+输入与期望构造不计入转换计时。错误累计后统一失败，恢复旧节点上限时四例都必须报错，
+不能只靠第一例失败冒充全部负控。
 为避免并行压力影响有界耗时判据，性能自证用 `--test-threads=1`。
 
 资源保护保留 fetcher 的 10 MiB 输入上限、深度 256、线性 arena / rope 遍历与

@@ -2,6 +2,8 @@
 mod baseline;
 #[path = "common/scratch.rs"]
 mod scratch;
+#[path = "common/timing.rs"]
+mod timing;
 
 use pilotdeck_gateway::runtime::tools::builtin::web::{
     HtmlToMarkdown, UrlFetcher,
@@ -454,6 +456,41 @@ fn expand_large_recipe(rule: &serde_json::Value) -> String {
         .repeat(rule["repeat"].as_u64().unwrap() as usize)
 }
 
+/// The same recipe with its dominant (largest) repeat halved: the same shape
+/// at about half the bytes, for the linear-scaling ratio. The dominant repeat
+/// carries the repeated payload of every large-oracle recipe, so the halved
+/// page keeps the conversion work proportional to its size. There is no TS
+/// oracle at the halved size; only its timing matters.
+fn halved_recipe(rule: &serde_json::Value) -> serde_json::Value {
+    // Recipe nodes can be plain strings (leaf text); indexing those with a key
+    // would panic, so go through get().
+    fn dominant(rule: &serde_json::Value) -> u64 {
+        let own = rule
+            .get("repeat")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(1);
+        rule.get("parts")
+            .and_then(|value| value.as_array())
+            .map_or(own, |parts| parts.iter().map(dominant).fold(own, u64::max))
+    }
+    fn halve_first(rule: &mut serde_json::Value, target: u64) -> bool {
+        if target >= 2 && rule.get("repeat").and_then(|value| value.as_u64()) == Some(target) {
+            rule["repeat"] = (target / 2).into();
+            return true;
+        }
+        rule.get_mut("parts")
+            .and_then(|value| value.as_array_mut())
+            .is_some_and(|parts| parts.iter_mut().any(|part| halve_first(part, target)))
+    }
+    let mut halved = rule.clone();
+    let dominant = dominant(&halved);
+    assert!(
+        halve_first(&mut halved, dominant),
+        "recipe must contain a repeat"
+    );
+    halved
+}
+
 #[test]
 fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
     use sha2::{Digest, Sha256};
@@ -462,6 +499,7 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
     let oracle: serde_json::Value = serde_json::from_str(raw).unwrap();
     let cases = oracle["cases"].as_array().unwrap();
     assert_eq!(cases.len(), 5);
+    let samples = timing::timing_samples();
     let mut failures = Vec::new();
     for case in cases {
         let name = case["name"].as_str().unwrap();
@@ -480,26 +518,54 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
             format!("{:x}", Sha256::digest(expected.as_bytes())),
             case["markdownSha256"].as_str().unwrap()
         );
-        let started = std::time::Instant::now();
-        let actual = Turndown.convert(&html);
-        let elapsed = started.elapsed();
-        eprintln!("{name}: {} HTML bytes, {:?}", html.len(), elapsed);
-        match actual {
-            Ok(actual) => {
-                assert!(
-                    actual.as_bytes() == expected.as_bytes(),
-                    "{name}: TS bytes differ"
-                );
-                // ~2.1 million DOM nodes at 10 MiB: allow scheduler/allocator
-                // variance while keeping conversion in single-digit seconds.
-                let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
-                assert!(
-                    elapsed.as_secs_f64() < budget,
-                    "{name}: took {elapsed:?}, budget {budget}s"
-                );
+        let halved = expand_large_recipe(&halved_recipe(&case["html"]));
+        let error = std::cell::RefCell::new(None);
+        let (half_elapsed, full_elapsed) = timing::fastest_scaling(name, samples, |full| {
+            let (input, want) = if full {
+                (&html, Some(expected.as_str()))
+            } else {
+                (&halved, None)
+            };
+            let started = std::time::Instant::now();
+            let actual = Turndown.convert(input);
+            let elapsed = started.elapsed();
+            match actual {
+                Ok(actual) => match want {
+                    Some(want) => assert!(
+                        actual.as_bytes() == want.as_bytes(),
+                        "{name}: TS bytes differ"
+                    ),
+                    None => assert!(!actual.is_empty(), "{name}: halved page empty"),
+                },
+                Err(why) => *error.borrow_mut() = Some(why),
             }
-            Err(error) => failures.push(format!("{name}: {error}")),
+            elapsed
+        });
+        if let Some(why) = error.into_inner() {
+            failures.push(format!("{name}: {why}"));
+            continue;
         }
+        eprintln!(
+            "{name}: {} HTML bytes, fastest of {samples}: full {full_elapsed:?}, half {half_elapsed:?}",
+            html.len()
+        );
+        // ~2.1 million DOM nodes at 10 MiB. Doubling the input doubles linear
+        // conversion work; the ratio keeps a preempted single sample from
+        // turning the test red on a loaded host.
+        timing::assert_within_linear_band(
+            &format!("{name}: full page"),
+            half_elapsed,
+            full_elapsed,
+            samples,
+        );
+        // Constant-factor backstop at the same loose wall clock (the
+        // pre-4fbb5f78b moved-subtree rewalk was ~36x slower per byte while
+        // still scaling linearly).
+        let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
+        assert!(
+            full_elapsed.as_secs_f64() < budget,
+            "{name}: took {full_elapsed:?} (fastest of {samples}), budget {budget}s"
+        );
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -518,18 +584,33 @@ fn ten_mib_of_flat_inline_siblings_stays_fast() {
     assert_eq!(sampled, period.repeat(50_000));
     let html = "<em>x</em>".repeat(1024 * 1024);
     assert_eq!(html.len(), 10 * 1024 * 1024);
-    let started = std::time::Instant::now();
-    let actual = Turndown.convert(&html).unwrap();
-    let elapsed = started.elapsed();
-    assert!(actual.as_bytes() == period.repeat(1024 * 1024).as_bytes());
-    let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
+    let half_html = "<em>x</em>".repeat(512 * 1024);
+    let expected_full = period.repeat(1024 * 1024);
+    let expected_half = period.repeat(512 * 1024);
+    let samples = timing::timing_samples();
+    let (half_elapsed, full_elapsed) =
+        timing::fastest_scaling("dense-inline-10mib-flat", samples, |full| {
+            let (input, want) = if full {
+                (&html, expected_full.as_bytes())
+            } else {
+                (&half_html, expected_half.as_bytes())
+            };
+            let started = std::time::Instant::now();
+            let actual = Turndown.convert(input).unwrap();
+            let elapsed = started.elapsed();
+            assert!(actual.as_bytes() == want);
+            elapsed
+        });
     eprintln!(
-        "dense-inline-10mib-flat: {} HTML bytes, {elapsed:?}",
+        "dense-inline-10mib-flat: {} HTML bytes, fastest of {samples}: \
+         full {full_elapsed:?}, half {half_elapsed:?}",
         html.len()
     );
+    timing::assert_within_linear_band("flat inline: 10 MiB", half_elapsed, full_elapsed, samples);
+    let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
     assert!(
-        elapsed.as_secs_f64() < budget,
-        "flat inline: took {elapsed:?}, budget {budget}s"
+        full_elapsed.as_secs_f64() < budget,
+        "flat inline: took {full_elapsed:?} (fastest of {samples}), budget {budget}s"
     );
 }
 
@@ -725,25 +806,47 @@ fn reparented_wide_four_mib_succeeds() {
 
 #[test]
 fn reparented_wide_subtrees_stay_fast() {
-    let bytes = 8 * 1024 * 1024;
-    let (html, output_x_count) = reparented_wide_html(bytes);
-    let started = std::time::Instant::now();
-    let actual = Turndown.convert(&html).unwrap();
-    let elapsed = started.elapsed();
+    let (html, output_x_count) = reparented_wide_html(8 * 1024 * 1024);
+    let (half_html, half_x_count) = reparented_wide_html(4 * 1024 * 1024);
     let formatting = 240;
     // Real domino/turndown byte-compared at 1/2 MiB; the 4/8 MiB baseline
     // throws Invalid array length. Rust's unchanged successful output follows
     // the same lossless period, verified against the pre-fix implementation.
     let bold = "**".repeat(formatting);
-    assert_eq!(
-        actual,
-        format!("{bold}{}{bold}", "x".repeat(output_x_count))
+    let expected_full = format!("{bold}{}{bold}", "x".repeat(output_x_count));
+    let expected_half = format!("{bold}{}{bold}", "x".repeat(half_x_count));
+    let samples = timing::timing_samples();
+    let (half_elapsed, full_elapsed) =
+        timing::fastest_scaling("reparent-wide-8mib", samples, |full| {
+            let (input, want) = if full {
+                (&html, expected_full.as_str())
+            } else {
+                (&half_html, expected_half.as_str())
+            };
+            let started = std::time::Instant::now();
+            let actual = Turndown.convert(input).unwrap();
+            let elapsed = started.elapsed();
+            assert_eq!(actual, want);
+            elapsed
+        });
+    eprintln!(
+        "reparent-wide-8mib: {} HTML bytes, fastest of {samples}: \
+         full {full_elapsed:?}, half {half_elapsed:?}",
+        html.len()
     );
+    timing::assert_within_linear_band(
+        "reparent wide subtree: 8 MiB",
+        half_elapsed,
+        full_elapsed,
+        samples,
+    );
+    // The pre-4fbb5f78b moved-subtree rewalk scaled linearly too, just about
+    // 36x slower per byte, so keep the loose absolute cap as the backstop.
     let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
-    eprintln!("reparent-wide-8mib: {bytes} HTML bytes, {elapsed:?}");
     assert!(
-        elapsed.as_secs_f64() < budget,
-        "reparent wide subtree: took {elapsed:?}, budget {budget}s"
+        full_elapsed.as_secs_f64() < budget,
+        "reparent wide subtree: took {full_elapsed:?} (fastest of {samples}), \
+         budget {budget}s"
     );
 }
 
