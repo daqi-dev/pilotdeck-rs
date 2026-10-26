@@ -71,7 +71,14 @@ SURVIVED），再跑未变异套件要求退出 0，逐格要求编译成功且�
 `negative_shapes.py` 是 #826 的一组同构变异：每格撤掉
 `dream/helpers.rs` 的一个形状守卫（或 `String(reason)` 的错误映射），必须被
 oracle 指定的那条用例杀掉；逐格汇总 KILLED / SURVIVED，有存活退出 1。
-`NEGATIVE_CHECK_ANCHORS=1` 只对当前工作树核对 24 个锚点，不做变异；正式
+`None` 分支同时服务「对象缺键」与「非对象 receiver」，因此缺键变异体只对
+`JsValue::Object` 收窄（`members-missing-map` → `#40`、`dups-missing-map` →
+`#36`），显式 `undefined` 另设一格（`members-undefined-map` → `#42`、
+`dups-undefined-map` → `#37`）；否则更早的非对象用例先失败，宿主只能看到
+`did not fail case=#42`（fix-r1 的两个 SURVIVED）。目标签名先解码
+`{"$undefined": true}` 再匹配：否则 `{'duplicateProjectIds': ABSENT}` 会把
+「整个 group 是 undefined」的 `#29` 误当成缺键对象。
+`NEGATIVE_CHECK_ANCHORS=1` 只对当前工作树核对 26 个锚点，不做变异；正式
 运行仍走 `mutating_sources`，默认基线 `HEAD`。作者树上的 `helpers.rs` 未提交
 时会被「源码须等于 HEAD」守卫拒跑（不建影子 git、不建第二份构建目录）：
 提交后由协调者在宿主跑全量，或 `NEGATIVE_ONLY=a,b` 跑样本；未提交树可用
