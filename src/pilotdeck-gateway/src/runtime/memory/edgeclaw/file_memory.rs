@@ -80,6 +80,10 @@ pub enum FileMemoryError {
     /// A TS-conformance `TypeError` raised before any store call, e.g. a
     /// non-array `kinds` passed to `listGlobalMemoryEntries`.
     Type(String),
+    /// A TS-conformance `RangeError` raised before any store call, e.g. a
+    /// `String(value)` join that exceeds V8's array depth in a dropped-cluster
+    /// warning.
+    Range(String),
     Storage(StorageError),
     /// `MemoryBundleValidationError` (`sqlite.ts:104-109`); the message is the
     /// TS error text verbatim so import validation failures compare equal.
@@ -96,7 +100,9 @@ impl fmt::Display for FileMemoryError {
                 None => write!(f, "{e}"),
             },
             Self::InvalidUtf16(e) => write!(f, "{}", String::from_utf16_lossy(e.units())),
-            Self::Invalid(e) | Self::Collation(e) | Self::Type(e) => write!(f, "{e}"),
+            Self::Invalid(e) | Self::Collation(e) | Self::Type(e) | Self::Range(e) => {
+                write!(f, "{e}")
+            }
             Self::Storage(e) => write!(f, "{e}"),
             Self::Bundle(e) => write!(f, "{e}"),
         }

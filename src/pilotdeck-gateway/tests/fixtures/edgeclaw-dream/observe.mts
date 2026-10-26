@@ -270,9 +270,36 @@ export async function collect(baseline: string) {
       {memberRelativePaths: ['b.md', 'c.md'], reason: 1}], 8],
     [[{memberRelativePaths: null, reason: 1}], 8],
   ];
+  // `String(reason)` in a dropped warning goes through `ToPrimitive` and
+  // `Array.prototype.join`: a shadowed `toString` throws TypeError, and a
+  // too-deep array join throws RangeError (Node 22's own limit is 2516; the
+  // shared Rust bound is the conservative 2000, so 3000 throws on both sides).
+  shapeClusterCases.push(
+    [[{memberRelativePaths: ['a.md'], reason: {toString: null}}], 8],
+    [[{memberRelativePaths: ['a.md'], reason: [{toString: null}]}], 8],
+  );
   for (const [clusters, maxFiles] of shapeClusterCases) {
     addThrows('validateExclusiveClusters', [clusters, allowed, maxFiles],
       () => dream.validateExclusiveClusters(clusters, new Set(allowed), maxFiles));
+  }
+  // The observation is a real 3000-level array, but the recorded argument uses
+  // the lossless `$deepArray` sentinel: pretty-printing 3000 nested arrays is
+  // 14 MB of indentation. Rust `decode` expands it; `enc` would recurse one
+  // level per array and could overflow before `String(reason)` does.
+  const deepDepth = 3000;
+  let deepReason: any = 'x';
+  for (let i = 0; i < deepDepth; i += 1) deepReason = [deepReason];
+  const deepClusters = [{memberRelativePaths: ['a.md'], reason: deepReason}];
+  const deepArgs = [[{memberRelativePaths: ['a.md'], reason: {$deepArray: deepDepth}}], allowed, 8];
+  try {
+    cases.push({fn: 'validateExclusiveClusters', args: deepArgs,
+      expected: enc(jsonSafe(dream.validateExclusiveClusters(deepClusters, new Set(allowed), 8)))});
+  } catch (error: any) {
+    if (error?.name !== 'RangeError') {
+      throw new Error(`deep reason must throw RangeError, got ${error?.name}: ${error?.message}`);
+    }
+    cases.push({fn: 'validateExclusiveClusters', args: deepArgs,
+      throws: {name: String(error?.name), message: String(error?.message)}});
   }
 
   // -- user-note window ----------------------------------------------------

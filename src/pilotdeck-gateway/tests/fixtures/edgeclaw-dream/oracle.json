@@ -3278,6 +3278,92 @@
       }
     },
     {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md"
+            ],
+            "reason": {
+              "toString": null
+            }
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot convert object to primitive value"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md"
+            ],
+            "reason": [
+              {
+                "toString": null
+              }
+            ]
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot convert object to primitive value"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md"
+            ],
+            "reason": {
+              "$deepArray": 3000
+            }
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "RangeError",
+        "message": "Maximum call stack size exceeded"
+      }
+    },
+    {
       "fn": "selectUserNoteWindow",
       "args": [
         [

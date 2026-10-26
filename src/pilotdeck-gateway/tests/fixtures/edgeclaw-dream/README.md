@@ -25,8 +25,19 @@ Rust 侧用既有 `js_value::number_string` 还原 TS 模板串。`toDreamRecord
 `add()` 对 expected 先做 `JSON.parse(JSON.stringify(...))`，让金样与 Rust 的
 JSON 线格式同语义（对象里的 `undefined` 属性被丢弃）。畸形输入走
 `addThrows()`：记录 V8 的 `name` / `message`，金样条目写成
-`"throws": {"name": "TypeError", "message": "..."}`，Rust 侧必须返回
-`FileMemoryError::Type` 且消息逐字节相同（#826）。
+`"throws": {"name": "TypeError" | "RangeError", "message": "..."}`，Rust 侧必须
+返回 `FileMemoryError::Type` / `FileMemoryError::Range` 且消息逐字节相同
+（#826）。`String(reason)` 走 `ToPrimitive` 与 `Array#join`：`{toString:null}`
+（直接或数组元素）抛 `TypeError: Cannot convert object to primitive value`；
+3000 层数组抛 `RangeError: Maximum call stack size exceeded`（V8 实测阈值
+2516，Rust 保守常量 2000，3000 两边都抛）。3000 层数组在 `oracle.json` 里写成
+无损哨兵 `{"$deepArray": 3000}`（`decode` 展开为 3000 层、叶子 `"x"`）：真实
+TS 调用用的是真数组，但逐层缩进的金样会膨胀到约 14 MB。
+
+`negative_shapes.py` 的每个变异体在 `oracle.json` 里登记目标
+`(fn, args[0], throws)`：脚本算出该用例的稳定 ID `<fn>#<fn 内序号>`，只有
+日志同时出现 `test <test> ... FAILED` 与该 `case=<id>` 才算 KILLED；先失败的
+兄弟用例、无关 panic、编译失败都不算。目标签名找不到即 `STALE TARGET` 退出 2。
 
 生成两次并核字节（从仓库根目录运行）：
 
@@ -58,8 +69,10 @@ SURVIVED），再跑未变异套件要求退出 0，逐格要求编译成功且�
 `CARGO_TARGET_DIR`。
 
 `negative_shapes.py` 是 #826 的一组同构变异：每格撤掉
-`dream/helpers.rs` 的一个形状守卫，必须被 oracle 的 `throws` 用例杀掉。
-`NEGATIVE_CHECK_ANCHORS=1` 只对当前工作树核对 22 个锚点，不做变异；正式
+`dream/helpers.rs` 的一个形状守卫（或 `String(reason)` 的错误映射），必须被
+oracle 指定的那条用例杀掉；逐格汇总 KILLED / SURVIVED，有存活退出 1。
+`NEGATIVE_CHECK_ANCHORS=1` 只对当前工作树核对 24 个锚点，不做变异；正式
 运行仍走 `mutating_sources`，默认基线 `HEAD`。作者树上的 `helpers.rs` 未提交
 时会被「源码须等于 HEAD」守卫拒跑（不建影子 git、不建第二份构建目录）：
-提交后由协调者在宿主跑全量，或 `NEGATIVE_ONLY=a,b` 跑样本。
+提交后由协调者在宿主跑全量，或 `NEGATIVE_ONLY=a,b` 跑样本；未提交树可用
+`NEGATIVE_BASELINE=$(git stash create)` 指到当前工作树的悬空提交。
