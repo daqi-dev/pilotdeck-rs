@@ -226,8 +226,8 @@ for name, path, old, new, tests in cases:
                 failure_ok = 'assertion `left == right` failed' in log
             else:
                 failure_ok = (
-                    f'left: Other({list(map(ord, "wrong outer retry message"))})' in log
-                    and f'right: Other({list(map(ord, "Network retry aborted."))})' in log
+                    f'left: Other {{ name: Some("NetworkFetchError"), message: {list(map(ord, "wrong outer retry message"))} }}' in log
+                    and f'right: Other {{ name: Some("NetworkFetchError"), message: {list(map(ord, "Network retry aborted."))} }}' in log
                     and 'assertion `left == right` failed' in log
                     if test.startswith('web_tools::')
                     else assertion_anchors.get(name, 'assertion `left == right` failed: network timing cell:') in log)
