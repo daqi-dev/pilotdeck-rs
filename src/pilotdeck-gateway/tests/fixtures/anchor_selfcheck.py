@@ -6,6 +6,8 @@ python3 -I .../anchor_selfcheck.py                  # local, env gaps fail
 
 Supported tables: (name, path, before, after[, count/test...]), single-source
 (name, before, after...), and mutation(name, path, before, after, ...) calls.
+Dictionary tables use name keys and tuple values; new keys may be added in
+literal loops, but overwriting keys is rejected. Byte anchors count raw bytes.
 Paths/constants are interpreted by a small AST allowlist. ANCHOR_COUNTS is an
 optional {name: positive integer} declaration of *source occurrences*, distinct
 from replace(..., 1)'s replacement limit. Unknown formats fail closed.
@@ -29,6 +31,7 @@ UNSUPPORTED = {
     'negative_oracle_guard.py': 'JSON provenance corruption, no source before fragments',
     'test_negative_process.py': 'unit tests of the shared process/source guard',
     'background-output/test_negative.py': 'unit tests of the mutation runner',
+    'background-panic/test_negative_controls.py': 'mutation helper unit tests on in-memory strings/JSON, no product source replacement table',
     'replacement/test-negative-518.py': 'unit tests of the mutation runner',
     'edgeclaw-entries/test_negative_runners.py': 'unit tests of the mutation runners',
     'turn-runner/_negative_common.py': 'shared function-scoped replacement helper',
@@ -62,7 +65,12 @@ IMPLICIT = {
     'edgeclaw-heartbeat/negative.py': 'helpers',
     'edgeclaw-entries/negative_round7.py': 'path',
     'turn-submit/negative.py': 'source',
+    'host-event-pump/negative_controls.py': 'path',
+    'output-schema/negative.py': 'source',
+    'host-factory/negative.py': 'SOURCE',
 }
+# (name, path, package, test, before, after), unlike the usual table layout.
+FIELD_ORDER = {'sidecar-payload/negative.py': (1, 4, 5)}
 ROW_EXCEPTIONS = {
     ('turn-gates/negative.py', 'factory-ready-priority'): 'moves the lazy factory branch before cancellation with ordered replacements on the first select',
     ('turn-gates/negative.py', 'omit-prepared-cleanup'): 'moves pending_host.handoff with ordered removal and insertion',
@@ -83,7 +91,7 @@ class Unsupported(ValueError):
 class Anchor:
     name: str
     path: Path
-    before: str
+    before: str | bytes
     count: int = 1
     regex: bool = False
     line: int = 0
@@ -272,8 +280,37 @@ class Static:
         raise Unsupported(f'unresolved source path: {value!r}')
 
 
-def table_rows(tree):
+def table_rows(tree, static):
     """Only mutation table definitions/extensions, not incidental tuples."""
+    dictionary_keys = {}
+
+    def dictionary_context(node, *, declaration=False):
+        conditional = (ast.If, ast.While, ast.Try, ast.With, ast.Match,
+                       ast.AsyncFor, ast.AsyncWith, ast.Break, ast.Continue)
+        parent = static.parents.get(node)
+        while parent is not None:
+            if (isinstance(parent, conditional)
+                    or isinstance(parent, ast.For) and (declaration or any(
+                        isinstance(child, conditional) for child in ast.walk(parent)))):
+                raise Unsupported('conditional dictionary mutation declaration is not supported')
+            parent = static.parents.get(parent)
+
+    def dictionary_row(table, key, value):
+        if key is None or not isinstance(value, ast.Tuple):
+            raise Unsupported('unsupported dictionary mutation row')
+        dictionary_context(value)
+        row = ast.copy_location(ast.Tuple(elts=[key, *value.elts], ctx=ast.Load()), value)
+        # Retain the original ancestry for literal-loop expansion of new keys.
+        static.parents[row] = value
+        for local in static.contexts(row):
+            name = static.value(key, row.lineno, local)
+            if not isinstance(name, str) or not name:
+                raise Unsupported('invalid dictionary mutation key')
+            if name in dictionary_keys[table]:
+                raise Unsupported(f'duplicate mutation key: {name}')
+            dictionary_keys[table].add(name)
+        return row
+
     def lists(node):
         if isinstance(node, ast.List):
             for row in node.elts:
@@ -297,21 +334,53 @@ def table_rows(tree):
         else:
             raise Unsupported(f'unsupported mutation table: {ast.unparse(node)[:100]}')
     for node in sorted(ast.walk(tree), key=lambda n: getattr(n, 'lineno', 0)):
+        if isinstance(node, (ast.Delete, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Delete) else [node.target]
+            for target in targets:
+                name = target.value if isinstance(target, ast.Subscript) else target
+                if isinstance(name, ast.Name) and name.id.lower() in TABLES:
+                    raise Unsupported('deleting/annotating mutation tables is not supported')
         if isinstance(node, (ast.Assign, ast.AugAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
                 if (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
                         and target.value.id.lower() in TABLES):
-                    raise Unsupported('in-place mutation table assignment is not supported')
-            if any(isinstance(t, ast.Name) and t.id.lower() in TABLES for t in targets):
-                yield from lists(node.value)
+                    table = target.value.id
+                    if table not in dictionary_keys or not isinstance(node, ast.Assign):
+                        raise Unsupported('in-place mutation table assignment is not supported')
+                    yield dictionary_row(table, target.slice, node.value)
+                elif isinstance(target, ast.Name) and target.id.lower() in TABLES:
+                    table = target.id
+                    if table in dictionary_keys:
+                        raise Unsupported('dictionary mutation table reassignment is not supported')
+                    if isinstance(node.value, ast.Dict) and isinstance(node, ast.Assign):
+                        dictionary_context(node.value, declaration=True)
+                        dictionary_keys[table] = set()
+                        for key, value in zip(node.value.keys, node.value.values):
+                            yield dictionary_row(table, key, value)
+                    else:
+                        yield from lists(node.value)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id.lower() in TABLES:
+            if node.func.value.id in dictionary_keys:
+                raise Unsupported('unsupported dictionary mutation table update')
             if node.func.attr == 'append' and len(node.args) == 1:
                 yield node.args[0]
             elif node.func.attr == 'extend' and len(node.args) == 1:
                 yield from lists(node.args[0])
             else:
                 raise Unsupported('unsupported mutation table update')
+
+
+def host_pump_count(tree, static, name, local):
+    """Read this runner's exact occurrence guard, including its wire exception."""
+    guards = [node for node in ast.walk(tree) if isinstance(node, ast.Assert)
+              and isinstance(node.test, ast.Compare)
+              and ast.unparse(node.test.left) == 'content.count(old)']
+    if (len(guards) != 1 or len(guards[0].test.ops) != 1
+            or not isinstance(guards[0].test.ops[0], ast.Eq)):
+        raise Unsupported('expected one content.count(old) equality guard')
+    guard = guards[0]
+    return static.value(guard.test.comparators[0], guard.lineno, dict(local, name=name))
 
 
 def extract(script, root):
@@ -325,7 +394,7 @@ def extract(script, root):
         raise Unsupported('ANCHOR_COUNTS must map names to positive integers')
     used = set()
     exempted = set()
-    for row in table_rows(tree):
+    for row in table_rows(tree, static):
         for local in static.contexts(row):
             line = row.lineno
             if isinstance(row, ast.Call) and isinstance(row.func, ast.Name) and row.func.id == 'dict':
@@ -385,25 +454,36 @@ def extract(script, root):
                     path = routing.get(name, static.value(target, line, local))
                 else:
                     path = static.target(target, line, local)
+                after_node = fields[2]
             else:
-                if len(fields) < 4:
+                path_index, before_index, after_index = FIELD_ORDER.get(relative, (1, 2, 3))
+                if len(fields) <= max(path_index, before_index, after_index):
                     raise Unsupported(f'{name}: expected name/path/before/after')
-                path = static.target(fields[1], line, local)
-                before_node = fields[2]
+                path = static.target(fields[path_index], line, local)
+                before_node = fields[before_index]
+                after_node = fields[after_index]
             before = static.value(before_node, line, local)
             if before is None and relative in REGEX_SCRIPTS and path.suffix == '.json':
                 notes.append(f'{name}: JSON matrix/provenance mutation, no source anchor')
                 continue
             # Generated after strings may depend on extra split/index/replace_once
             # anchors. Validate these dependencies without applying a mutation.
-            static.value(fields[2 if relative in IMPLICIT else 3], line, local)
-            if not isinstance(before, str) or not before:
+            after = static.value(after_node, line, local)
+            if not isinstance(before, (str, bytes)) or not before:
                 raise Unsupported(f'{name}: empty or non-string anchor')
+            if type(after) is not type(before):
+                raise Unsupported(f'{name}: before/after must have the same string/byte type')
+            if isinstance(before, bytes) and flags is not None:
+                raise Unsupported(f'{name}: byte anchors require literal consumers')
             count = declarations.get(name, 1)
+            if relative == 'host-event-pump/negative_controls.py':
+                if name in declarations:
+                    raise Unsupported(f'{name}: duplicate count declaration')
+                count = host_pump_count(tree, static, name, local)
             if name in declarations:
                 used.add(name)
             fifth = None
-            if relative not in IMPLICIT and len(fields) > 4:
+            if relative not in IMPLICIT and relative not in FIELD_ORDER and len(fields) > 4:
                 item = fields[4]
                 if ((isinstance(item, ast.Constant) and isinstance(item.value, (int, float)))
                         or isinstance(item, ast.UnaryOp)):
@@ -593,7 +673,8 @@ def check(root, *, anchors_only=False, environ=None):
             for note in notes:
                 print(f'NON_SOURCE {relative}: {note}')
             for anchor in anchors:
-                text = anchor.path.read_text(encoding='utf-8')
+                text = (anchor.path.read_bytes() if isinstance(anchor.before, bytes)
+                        else anchor.path.read_text(encoding='utf-8'))
                 actual = sum(1 for _ in re.finditer(anchor.before, text, anchor.flags)) if anchor.regex else text.count(anchor.before)
                 total += 1
                 if actual != anchor.count:
