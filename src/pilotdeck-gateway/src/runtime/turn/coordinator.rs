@@ -12,7 +12,14 @@
 //! coordinator (a reentrant `emit` from inside the session's own sink is
 //! delivered synchronously inside that call, like TS, after the events that
 //! concurrent emitters already recorded, and returns once its own event's
-//! delivery completes), and a panicking sink must not poison the state.
+//! delivery completes), and a panicking sink must not poison the state. The
+//! same holds for the replay store's injected timer (#805): a panic inside
+//! `start`/`retain_terminal`/`dispose` surfaces at the call site like a
+//! throwing TS call — after the same partial state, since the methods apply
+//! their mutations in the TS order — but the guard is released before the
+//! unwind resumes, and every state entry (including the drain cleanup
+//! guard) recovers a poisoned lock instead of panicking, so no session and
+//! no queued observer is wedged by the failure.
 //! Delivery order per session is preserved by a FIFO queue drained by one
 //! thread at a time, identified by a token that `dispose` invalidates so a
 //! stale drainer — or a sink left over from before a restart — cannot touch
@@ -64,11 +71,22 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use super::replay::{ActiveTurnSnapshot, ActiveTurnSnapshotInput, TurnReplayStore};
 
 type Sink = Arc<dyn Fn(&JsValue) + Send + Sync>;
+
+/// Recovers the composite-state guard from a poisoned lock instead of
+/// panicking. TS keeps no lock, so a throwing host timer (or a panicking
+/// replay store) only fails its own call; a coordinator whose lock a panic
+/// elsewhere poisoned must keep serving every session and release every
+/// drain queue (#805, the same tolerant-lock shape as `mcp/wire.rs` and
+/// `runtime/refresh.rs`). Every state entry uses it, including the drain
+/// cleanup guard.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The registration record `emit`'s liveness check looks up. Separating it
 /// from the sink it owns is what keeps that check honest (codex-r8 P1 #1):
@@ -198,8 +216,17 @@ impl TurnEventCoordinator {
         let registration = Arc::new(SinkRegistration {
             sink: Arc::new(sink),
         });
-        let mut state = self.state.lock().unwrap();
-        self.replay.start(session_key, run_id);
+        let mut state = lock(&self.state);
+        // The replay store may panic through its injected timer (#805): the
+        // panic surfaces at the call site like a throwing TS call, but the
+        // guard is dropped first so it cannot poison the composite-state
+        // lock for every session.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.replay.start(session_key, run_id);
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }
         #[cfg(test)]
         self.fire_start();
         state
@@ -213,7 +240,7 @@ impl TurnEventCoordinator {
         // call site for an event JSON cannot express; the panic is resumed
         // after the guard is dropped, so it cannot poison the lock for every
         // other session.
-        let state = self.state.lock().unwrap();
+        let state = lock(&self.state);
         if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
             self.replay.record(session_key, event);
         })) {
@@ -241,7 +268,7 @@ impl TurnEventCoordinator {
     pub fn emit(&self, session_key: &JsString, event: &JsValue) -> bool {
         let marker_token = self.drain_token_on_this_thread(session_key);
         let (token, boundary) = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = lock(&self.state);
             // Registration liveness, not sink liveness (codex-r8 P1 #1): the
             // queue and any in-flight drainer hold the sink strongly, so
             // asking the sink would accept new events after the last
@@ -306,11 +333,20 @@ impl TurnEventCoordinator {
     /// inside this session's sink may deliver one more already-accepted event
     /// after this returns; the sink must stay valid until then.
     pub fn retain_terminal(&self, session_key: &JsString, run_id: &JsString) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         state.sinks.remove(session_key);
         #[cfg(test)]
         self.fire_retain_remove();
-        self.replay.retain_terminal(session_key, run_id);
+        // The replay store may panic through its injected timer (#805),
+        // after the sink removal — the same partial state a throwing TS
+        // retainTerminal leaves. The guard is dropped first so the unwind
+        // cannot poison the composite-state lock for every session.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.replay.retain_terminal(session_key, run_id);
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }
     }
     /// Detaches the sink registered for `session_key` without touching the
     /// replay buffer: later `emit` calls return `false`, exactly like
@@ -323,13 +359,13 @@ impl TurnEventCoordinator {
     /// takes effect even while the host still holds the registration (see
     /// A7.2-COORDINATOR-SINK-OWNERSHIP-001).
     pub fn unregister(&self, session_key: &JsString) {
-        self.state.lock().unwrap().sinks.remove(session_key);
+        lock(&self.state).sinks.remove(session_key);
     }
     pub fn snapshot(&self, input: &ActiveTurnSnapshotInput) -> ActiveTurnSnapshot {
         self.replay.snapshot(input)
     }
     pub fn dispose(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         state.sinks.clear();
         #[cfg(test)]
         self.fire_dispose_clear();
@@ -337,7 +373,16 @@ impl TurnEventCoordinator {
         // touches a restarted session's queue; its cleanup guard is a no-op.
         state.deliveries.clear();
         state.draining.clear();
-        self.replay.dispose();
+        // The replay store may panic through its injected timer (#805), with
+        // the sinks and drain tokens already cleared — the same partial state
+        // a throwing TS dispose leaves. The guard is dropped first so the
+        // unwind cannot poison the composite-state lock for every session.
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.replay.dispose();
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }
     }
 
     /// The drain token of the innermost sink call this thread is running for
@@ -379,9 +424,12 @@ impl TurnEventCoordinator {
                 if !self.armed {
                     return;
                 }
-                if let Ok(mut state) = self.coordinator.state.lock()
-                    && owns_drain(&state, self.session_key, self.token)
-                {
+                // The same tolerant lock as the drain loop: a poisoned
+                // composite state must not strand the queue on a stale
+                // `draining` entry (#805), which would wedge every later
+                // emit for the session behind a drainer that never returns.
+                let mut state = lock(&self.coordinator.state);
+                if owns_drain(&state, self.session_key, self.token) {
                     state.draining.remove(self.session_key);
                     state.deliveries.remove(self.session_key);
                 }
@@ -395,7 +443,7 @@ impl TurnEventCoordinator {
         };
         loop {
             let next = {
-                let mut state = self.state.lock().unwrap();
+                let mut state = lock(&self.state);
                 if !owns_drain(&state, session_key, token) {
                     // dispose took the queue over; this drainer has no
                     // business left.
@@ -447,6 +495,17 @@ impl TurnEventCoordinator {
     #[cfg(test)]
     pub(crate) fn set_after_start_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
         *self.hooks.after_start_replay.lock().unwrap() = Some(hook);
+    }
+    /// Poisons the composite-state lock so a test can prove every entry —
+    /// including the drain cleanup guard — recovers the guard and keeps
+    /// serving sessions (#805); the same test-only hook shape as
+    /// `runtime/steer.rs` and `runtime/hooks/exec.rs`.
+    #[cfg(test)]
+    pub(crate) fn poison_state_for_test(&self) {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _state = self.state.lock().unwrap();
+            panic!("injected coordinator state poison");
+        }));
     }
     #[cfg(test)]
     pub(crate) fn set_after_emit_run_id_hook(&self, hook: Arc<dyn Fn() + Send + Sync>) {
@@ -539,7 +598,9 @@ pub fn same_turn_epoch(left: &ActiveTurnSnapshot, right: &ActiveTurnSnapshot) ->
 #[cfg(test)]
 mod tests {
     use super::super::replay::TurnReplayOptions;
-    use super::super::replay::test_support::{ManualTimer, production_timer_with_exit_flag};
+    use super::super::replay::test_support::{
+        ManualTimer, PanicTimer, production_timer_with_exit_flag,
+    };
     use super::*;
     use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -2071,6 +2132,335 @@ mod tests {
         assert!(snapshot.active);
         assert_eq!(snapshot.events.len(), 1);
         assert_eq!(*delivered.lock().unwrap(), vec!["later".to_string()]);
+    }
+
+    fn panic_coordinator(timer: &Arc<PanicTimer>) -> Arc<TurnEventCoordinator> {
+        Arc::new(TurnEventCoordinator::with_replay_store(
+            TurnReplayStore::with_options(TurnReplayOptions::new().with_timer(timer.clone())),
+        ))
+    }
+
+    /// Regression for #805 (probe cell C1): a timer panic surfacing through
+    /// `start` throws after `replay.start`'s clearTerminal and before the
+    /// sink registration, so the old terminal replay survives, `emit`
+    /// rejects the session (its sink was removed by the earlier retain), and
+    /// every other session keeps delivering — the composite-state lock is
+    /// never poisoned.
+    #[test]
+    fn timer_panic_in_coordinator_start_keeps_state_usable() {
+        let timer = PanicTimer::wrap(ManualTimer::new());
+        let coordinator = panic_coordinator(&timer);
+        let key = JsString::from("s");
+        let other = JsString::from("other");
+        let run = JsString::from("r1");
+        let delivered = Arc::new(Mutex::new(Vec::<String>::new()));
+        let _key_registration = coordinator.start(&key, &run, |_| {});
+        coordinator.record(&key, &tick_event("e0"));
+        let _other_registration = {
+            let log = Arc::clone(&delivered);
+            coordinator.start(&other, &run, move |event| {
+                log.lock().unwrap().push(kind_of(event));
+            })
+        };
+        // The prior retain gives the panicking start a pending terminal
+        // timer, the same setup where a throwing host clearTimeout makes
+        // the TS call throw.
+        coordinator.retain_terminal(&key, &run);
+
+        timer.arm();
+        let panicked = catch_unwind(AssertUnwindSafe(|| {
+            coordinator.start(&key, &JsString::from("r2"), |_| {})
+        }));
+        assert!(
+            panicked.is_err(),
+            "the timer panic must surface at the call site"
+        );
+        assert!(
+            !coordinator.state.is_poisoned(),
+            "the panic must unwind outside the composite-state guard"
+        );
+
+        // TS C1: the old terminal replay survives; the failed start never
+        // registered its sink, so emit rejects the session.
+        let same = coordinator.snapshot(&ActiveTurnSnapshotInput::new(key.clone()));
+        assert!(same.terminal);
+        assert_eq!(same.run_id.as_ref(), Some(&run));
+        assert!(!coordinator.emit(&key, &tick_event("e1")));
+        // The other session still delivers, and explicit teardown of it
+        // completes instead of panicking on a poisoned lock.
+        assert!(coordinator.emit(&other, &tick_event("e2")));
+        assert_eq!(*delivered.lock().unwrap(), vec!["e2".to_string()]);
+        coordinator.unregister(&other);
+        assert!(!coordinator.emit(&other, &tick_event("e3")));
+        // A healthy retry starts the same session.
+        let _again = coordinator.start(&key, &JsString::from("r3"), |_| {});
+        let recovered = coordinator.snapshot(&ActiveTurnSnapshotInput::new(key.clone()));
+        assert!(recovered.active);
+        assert_eq!(recovered.run_id.as_ref(), Some(&JsString::from("r3")));
+    }
+
+    /// Regression for #805 (probe cell C2): `retain_terminal` removes the
+    /// sink before the replay transition, so a panicking `set` leaves the
+    /// session terminal-but-unscheduled while every other session keeps
+    /// working.
+    #[test]
+    fn timer_panic_in_coordinator_retain_keeps_state_usable() {
+        let timer = PanicTimer::wrap(ManualTimer::new());
+        let coordinator = panic_coordinator(&timer);
+        let key = JsString::from("s");
+        let other = JsString::from("other");
+        let run = JsString::from("r1");
+        let delivered = Arc::new(Mutex::new(Vec::<String>::new()));
+        let _key_registration = coordinator.start(&key, &run, |_| {});
+        coordinator.record(&key, &tick_event("e0"));
+        let _other_registration = {
+            let log = Arc::clone(&delivered);
+            coordinator.start(&other, &run, move |event| {
+                log.lock().unwrap().push(kind_of(event));
+            })
+        };
+
+        timer.arm();
+        let panicked = catch_unwind(AssertUnwindSafe(|| coordinator.retain_terminal(&key, &run)));
+        assert!(
+            panicked.is_err(),
+            "the timer panic must surface at the call site"
+        );
+        assert!(
+            !coordinator.state.is_poisoned(),
+            "the panic must unwind outside the composite-state guard"
+        );
+
+        // TS C2: the sink was removed and the replay is terminal, but no
+        // timer was registered, so the terminal replay never expires.
+        assert!(!coordinator.emit(&key, &tick_event("e1")));
+        let same = coordinator.snapshot(&ActiveTurnSnapshotInput::new(key.clone()));
+        assert!(same.terminal);
+        assert_eq!(same.run_id.as_ref(), Some(&run));
+        timer.advance(30_000);
+        assert!(
+            coordinator
+                .snapshot(&ActiveTurnSnapshotInput::new(key.clone()))
+                .terminal,
+            "a terminal replay without a timer never expires on its own"
+        );
+        // The other session delivers and tears down normally.
+        assert!(coordinator.emit(&other, &tick_event("e2")));
+        assert_eq!(*delivered.lock().unwrap(), vec!["e2".to_string()]);
+        coordinator.unregister(&other);
+        // A healthy retry terminalizes and expires the stranded replay.
+        coordinator.retain_terminal(&key, &run);
+        timer.advance(30_000);
+        let expired = coordinator.snapshot(&ActiveTurnSnapshotInput::new(key.clone()));
+        assert!(!expired.terminal);
+        assert!(expired.run_id.is_none());
+    }
+
+    /// Regression for #805 (probe cell C3): `dispose` clears the sinks and
+    /// drain tokens before the replay store's `cancel_all`, so a panicking
+    /// timer leaves both replays in place while `emit` already rejects; a
+    /// healthy retry clears everything.
+    #[test]
+    fn timer_panic_in_coordinator_dispose_keeps_state_usable() {
+        let timer = PanicTimer::wrap(ManualTimer::new());
+        let coordinator = panic_coordinator(&timer);
+        let key = JsString::from("s");
+        let other = JsString::from("other");
+        let run = JsString::from("r1");
+        let _key_registration = coordinator.start(&key, &run, |_| {});
+        coordinator.record(&key, &tick_event("e0"));
+        coordinator.retain_terminal(&key, &run);
+        let _other_registration = coordinator.start(&other, &run, |_| {});
+        coordinator.record(&other, &tick_event("e1"));
+
+        timer.arm();
+        let panicked = catch_unwind(AssertUnwindSafe(|| coordinator.dispose()));
+        assert!(
+            panicked.is_err(),
+            "the timer panic must surface at the call site"
+        );
+        assert!(
+            !coordinator.state.is_poisoned(),
+            "the panic must unwind outside the composite-state guard"
+        );
+
+        // TS C3: the sinks were cleared, the replays were not.
+        assert!(!coordinator.emit(&other, &tick_event("e2")));
+        let terminal = coordinator.snapshot(&ActiveTurnSnapshotInput::new(key.clone()));
+        assert!(terminal.terminal);
+        assert_eq!(terminal.run_id.as_ref(), Some(&run));
+        let active = coordinator.snapshot(&ActiveTurnSnapshotInput::new(other.clone()));
+        assert!(active.active);
+        assert_eq!(active.run_id.as_ref(), Some(&run));
+        // Explicit teardown and a healthy retry both complete.
+        coordinator.unregister(&other);
+        coordinator.dispose();
+        assert!(
+            coordinator
+                .snapshot(&ActiveTurnSnapshotInput::new(key.clone()))
+                .run_id
+                .is_none()
+        );
+        assert!(
+            coordinator
+                .snapshot(&ActiveTurnSnapshotInput::new(other.clone()))
+                .run_id
+                .is_none()
+        );
+    }
+
+    /// Regression for #805 (matrix cell I1): the panic must not wedge the
+    /// composite-state lock while another session's drainer is parked inside
+    /// its sink. The drainer finishes within the bound once released, its
+    /// cleanup releases the queue, and a later emit claims the drain and
+    /// delivers immediately.
+    #[test]
+    fn timer_panic_during_an_in_flight_delivery_keeps_observers_bounded() {
+        let timer = PanicTimer::wrap(ManualTimer::new());
+        let coordinator = panic_coordinator(&timer);
+        let key = JsString::from("s");
+        let other = JsString::from("other");
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        let _key_registration = coordinator.start(&key, &JsString::from("r1"), move |_event| {
+            entered_tx.send(()).unwrap();
+            release_rx.lock().unwrap().recv().unwrap();
+        });
+        let emitting = Arc::clone(&coordinator);
+        let emit_key = key.clone();
+        let (done_tx, done) = mpsc::channel();
+        let emit_thread = std::thread::spawn(move || {
+            assert!(emitting.emit(&emit_key, &tick_event("e0")));
+            let _ = done_tx.send(());
+        });
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        // The drainer is parked inside its sink, holding no lock; a timer
+        // panic in another session's retain_terminal must surface without
+        // wedging the coordinator state.
+        let _other_registration = coordinator.start(&other, &JsString::from("r2"), |_| {});
+        coordinator.record(&other, &tick_event("e1"));
+        timer.arm();
+        let panicked = catch_unwind(AssertUnwindSafe(|| {
+            coordinator.retain_terminal(&other, &JsString::from("r2"))
+        }));
+        assert!(
+            panicked.is_err(),
+            "the timer panic must surface at the call site"
+        );
+        assert!(
+            !coordinator.state.is_poisoned(),
+            "the panic must unwind outside the coordinator state guard"
+        );
+
+        // The composite-state lock is free: an unrelated API call completes
+        // while the drainer is still parked.
+        let unregistering = Arc::clone(&coordinator);
+        let unregister_key = key.clone();
+        let (freed_tx, freed) = mpsc::channel();
+        let unregister_thread = std::thread::spawn(move || {
+            unregistering.unregister(&unregister_key);
+            let _ = freed_tx.send(());
+        });
+        freed
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the coordinator state must not be wedged by the panic");
+        unregister_thread.join().unwrap();
+
+        // The parked drainer finishes once released, within the bound.
+        release.send(()).unwrap();
+        done.recv_timeout(Duration::from_secs(2))
+            .expect("the in-flight delivery must finish after the panic");
+        emit_thread.join().unwrap();
+
+        // The queue was released by the drainer's cleanup: a new emit claims
+        // the drain and delivers synchronously.
+        let delivered = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = Arc::clone(&delivered);
+        let _again = coordinator.start(&key, &JsString::from("r3"), move |event| {
+            log.lock().unwrap().push(kind_of(event));
+        });
+        assert!(coordinator.emit(&key, &tick_event("e2")));
+        assert_eq!(
+            *delivered.lock().unwrap(),
+            vec!["e2".to_string()],
+            "the drain queue must be free for the next drainer"
+        );
+    }
+
+    /// Regression for #805 (matrix cell P1): a coordinator whose
+    /// composite-state lock was poisoned by a panic elsewhere still serves
+    /// every session — emit delivers through the recovered guard and the
+    /// drain cleanup releases the queue.
+    #[test]
+    fn poisoned_coordinator_state_lock_still_serves_every_session() {
+        let timer = ManualTimer::new();
+        let coordinator = coordinator(&timer);
+        let key = JsString::from("s");
+        let delivered = Arc::new(Mutex::new(Vec::<String>::new()));
+        let panicking = Arc::new(AtomicBool::new(false));
+        let trip = Arc::clone(&panicking);
+        let _registration = {
+            let log = Arc::clone(&delivered);
+            coordinator.start(&key, &JsString::from("r1"), move |event| {
+                if trip.load(Ordering::SeqCst) {
+                    panic!("injected sink failure while the state is poisoned");
+                }
+                log.lock().unwrap().push(kind_of(event));
+            })
+        };
+        coordinator.record(&key, &tick_event("e0"));
+        coordinator.poison_state_for_test();
+        assert!(
+            coordinator.state.is_poisoned(),
+            "the hook must poison the lock"
+        );
+
+        // The same session still emits and delivers through the recovered
+        // guard, including the drain loop and its cleanup guard.
+        assert!(coordinator.emit(&key, &tick_event("e1")));
+        assert_eq!(*delivered.lock().unwrap(), vec!["e1".to_string()]);
+        // The cleanup released the queue despite the poison: a second emit
+        // claims the drain again instead of queueing behind a stranded one.
+        assert!(coordinator.emit(&key, &tick_event("e1b")));
+        assert_eq!(
+            *delivered.lock().unwrap(),
+            vec!["e1".to_string(), "e1b".to_string()]
+        );
+        let snapshot = coordinator.snapshot(&ActiveTurnSnapshotInput::new(key.clone()));
+        assert!(snapshot.active);
+        assert_eq!(snapshot.events.len(), 3);
+        // A sink panic unwinds through the drain cleanup guard while the lock
+        // is still poisoned: the guard's tolerant lock must release the queue,
+        // or every later emit for the session queues behind the dead drainer.
+        panicking.store(true, Ordering::SeqCst);
+        let panicked = catch_unwind(AssertUnwindSafe(|| {
+            coordinator.emit(&key, &tick_event("e2"))
+        }));
+        assert!(
+            panicked.is_err(),
+            "the sink panic must surface at the emitter"
+        );
+        panicking.store(false, Ordering::SeqCst);
+        assert!(coordinator.emit(&key, &tick_event("e2b")));
+        assert_eq!(
+            *delivered.lock().unwrap(),
+            vec!["e1".to_string(), "e1b".to_string(), "e2b".to_string()],
+            "the poisoned cleanup guard must release the drain queue"
+        );
+        // Retain, expiry and explicit teardown all complete.
+        coordinator.retain_terminal(&key, &JsString::from("r1"));
+        assert!(!coordinator.emit(&key, &tick_event("e2")));
+        timer.advance(30_000);
+        assert!(
+            coordinator
+                .snapshot(&ActiveTurnSnapshotInput::new(key.clone()))
+                .run_id
+                .is_none()
+        );
+        coordinator.unregister(&key);
+        coordinator.dispose();
     }
 
     fn epoch_snapshot(value: &JsValue) -> ActiveTurnSnapshot {
