@@ -1177,18 +1177,25 @@ fn executor_drop_case(poll_predecessor: bool, close_live: bool, panic_payload: b
                 received, None,
                 "closed executor cannot reopen live delivery"
             );
+            // The first next resumes inside its trailing-write wait and returns
+            // None without rechecking the queue; a fresh next must stay closed too.
+            assert_eq!(
+                publisher.next().await,
+                None,
+                "closed executor cannot reopen live delivery"
+            );
         } else {
             assert_eq!(
                 json(&received.unwrap()),
                 executor_failure(),
                 "executor failure event"
             );
+            assert_eq!(
+                publisher.next().await,
+                None,
+                "executor failure published once"
+            );
         }
-        assert_eq!(
-            publisher.next().await,
-            None,
-            "executor failure published once"
-        );
     }));
     assert!(
         !successor_polled.load(Ordering::SeqCst),
