@@ -17,6 +17,8 @@
 //! Retrieval, extraction and heartbeat belong to the remaining work packages.
 pub mod file_memory;
 mod node_fs;
+#[path = "retrieval/helpers.rs"]
+pub mod retrieval;
 pub mod storage;
 pub mod text;
 
