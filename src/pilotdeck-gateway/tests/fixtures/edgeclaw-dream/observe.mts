@@ -210,6 +210,14 @@ export async function collect(baseline: string) {
     [[{memberRelativePaths: ['a.md', 'b.md'], reason: '同属这两个项目'}], 8],
     [[{memberRelativePaths: ['a.md', 'b.md'], reason: 'all of these belong to same project'}], 8],
     [[{memberRelativePaths: ['a.md', 'b.md'], reason: 'all\nsame project'}], 8],
+    // `/i` without `u` folds ASCII only (dream-review.ts:342-355): U+017F LONG
+    // S and U+212A KELVIN SIGN must not match `s` / `k`.
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: '\u017Fame project'}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: 'same wor\u212Aspace'}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: 'same project but incon\u017Fistent'}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: 'same project, same ris\u212A'}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: 'same project but incon\u0130stent'}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: 'same project but incon\u0131stent'}], 8],
   ];
   for (const [clusters, maxFiles] of clusterCases) {
     add('validateExclusiveClusters', [clusters, allowed, maxFiles],

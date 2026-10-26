@@ -13,6 +13,7 @@
 //! - the look-ahead `rm` rules are evaluated by enumerating every match end of
 //!   the `rm\s+` prefix and testing each anchored look-ahead body there, which
 //!   is exactly the backtracking search `RegExp#test` performs.
+use crate::js_value::ascii_fold_haystack;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use regex::Regex;
 use std::sync::LazyLock;
@@ -47,16 +48,6 @@ fn command_pattern(body: &str, ignore_case: bool) -> Regex {
 fn pattern(body: &str, ignore_case: bool) -> Regex {
     let flags = if ignore_case { "(?i)" } else { "" };
     Regex::new(&format!("{flags}{body}")).expect("bash permission pattern")
-}
-
-/// Masks the two code points that Unicode simple case folding maps onto ASCII
-/// letters, so a Unicode `(?i)` match behaves like a JS `/i` (non-`u`) match.
-pub(super) fn ascii_fold_haystack(text: &str) -> std::borrow::Cow<'_, str> {
-    if text.contains(['\u{017F}', '\u{212A}']) {
-        std::borrow::Cow::Owned(text.replace(['\u{017F}', '\u{212A}'], "\u{FFFD}"))
-    } else {
-        std::borrow::Cow::Borrowed(text)
-    }
 }
 
 /// A `/i` (non-`u`) or case-sensitive pattern.

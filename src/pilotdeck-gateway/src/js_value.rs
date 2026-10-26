@@ -1,5 +1,6 @@
 //! ECMAScript `String(value)` / `Number(value)` for wire `JsValue`s, shared by
-//! the skills manager and the run registry.
+//! the skills manager and the run registry. [`ascii_fold_haystack`] keeps
+//! ported `(?i)` regexes on the non-unicode `/i` fold.
 //!
 //! Wire arrays may nest arbitrarily deep (the protocol parser and `Drop` are
 //! iterative), while V8's `Array.prototype.join` recurses and throws
@@ -29,6 +30,23 @@ impl StackOverflow {
 /// JS Number#toString (radix 10).
 pub(crate) fn number_string(n: f64) -> String {
     pilotdeck_protocol::number::number_to_string(n)
+}
+
+/// Masks the two non-ASCII code points whose Unicode *simple* case folding
+/// maps onto ASCII letters, so a Unicode `(?i)` regex over the masked text
+/// behaves like a JS `/i` regex without the `u` flag.
+///
+/// U+017F `ſ` folds to `s` and U+212A `K` (Kelvin sign) folds to `k` in the
+/// `regex` crate's Unicode simple folding, but V8's non-unicode `i` refuses to
+/// fold any non-ASCII code unit onto an ASCII one. Replacing both with U+FFFD
+/// removes those folds; the replacement is inside every wildcard class the
+/// ported patterns use, so it cannot change whether a wildcard matches.
+pub(crate) fn ascii_fold_haystack(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains(['\u{017F}', '\u{212A}']) {
+        std::borrow::Cow::Owned(text.replace(['\u{017F}', '\u{212A}'], "\u{FFFD}"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
 }
 
 /// ECMAScript `GetSubstitution` for `String.prototype.replace` when the

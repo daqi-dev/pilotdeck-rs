@@ -11,7 +11,7 @@ use crate::runtime::memory::edgeclaw::{
     text::{hash_text, normalize_text},
 };
 use crate::{
-    js_value::number_string,
+    js_value::{ascii_fold_haystack, number_string},
     project_files::{node_collator, node_compare_utf16, node_locale},
     runtime::memory::js_trim_units,
 };
@@ -426,7 +426,10 @@ fn is_generic_same_project_reason(reason: Option<&JsValue>) -> bool {
         return false;
     }
     let text = regex_text(&normalized);
-    same_project_pattern().is_match(&text) && !semantic_pattern().is_match(&text)
+    // dream-review.ts:342-355 uses `/i` without the `u` flag: V8 folds ASCII
+    // only, while Rust `(?i)` also maps U+017F/U+212A onto `s`/`k`.
+    let text = ascii_fold_haystack(&text);
+    same_project_pattern().is_match(text.as_ref()) && !semantic_pattern().is_match(text.as_ref())
 }
 
 pub fn validate_exclusive_clusters(

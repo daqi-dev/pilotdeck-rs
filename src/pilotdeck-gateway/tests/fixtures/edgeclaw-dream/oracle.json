@@ -2189,6 +2189,192 @@
       }
     },
     {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "ſame project"
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "ſame project"
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "same worKspace"
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "same worKspace"
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "same project but inconſistent"
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": [
+          "Dropped low-quality cluster because the reason only referenced same-project membership without concrete overlap/conflict: a.md, b.md"
+        ]
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "same project, same risK"
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": [
+          "Dropped low-quality cluster because the reason only referenced same-project membership without concrete overlap/conflict: a.md, b.md"
+        ]
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "same project but inconİstent"
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": [
+          "Dropped low-quality cluster because the reason only referenced same-project membership without concrete overlap/conflict: a.md, b.md"
+        ]
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "same project but inconıstent"
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": [
+          "Dropped low-quality cluster because the reason only referenced same-project membership without concrete overlap/conflict: a.md, b.md"
+        ]
+      }
+    },
+    {
       "fn": "selectUserNoteWindow",
       "args": [
         [

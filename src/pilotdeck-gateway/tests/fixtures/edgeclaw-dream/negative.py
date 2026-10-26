@@ -31,6 +31,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
 helpers = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/helpers.rs'
+js_value = root / 'src/pilotdeck-gateway/src/js_value.rs'
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
@@ -139,6 +140,21 @@ cases = [
                     lossy(&keeper)
                 }''',
      '                lossy(&keeper)', 'merge_groups_match_ts'),
+    # 17. A reason's U+017F / U+212A fold onto ASCII s / k again.
+    ('clusters-ascii-fold', helpers,
+     '    let text = ascii_fold_haystack(&text);\n',
+     '', 'clusters_match_ts'),
+    # 18. The 200-file cap becomes exclusive, so the 201st record is accepted.
+    ('window-count-geq', helpers,
+     '        if selected.len() >= DREAM_USER_NOTE_MAX_FILES {',
+     '        if selected.len() > DREAM_USER_NOTE_MAX_FILES {', 'window_matches_ts'),
+    # 19. Only U+017F is masked, so U+212A folds onto ASCII k again.
+    ('clusters-kelvin-fold', js_value,
+     r'''    if text.contains(['\u{017F}', '\u{212A}']) {
+        std::borrow::Cow::Owned(text.replace(['\u{017F}', '\u{212A}'], "\u{FFFD}"))''',
+     r'''    if text.contains(['\u{017F}']) {
+        std::borrow::Cow::Owned(text.replace(['\u{017F}'], "\u{FFFD}"))''',
+     'clusters_match_ts'),
 ]
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
@@ -156,7 +172,7 @@ def assertion_failure(log):
 
 
 killed, survived = [], []
-with mutating_sources(root, [helpers], baseline=baseline) as originals:
+with mutating_sources(root, [helpers, js_value], baseline=baseline) as originals:
     base_cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                 '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_dream_helpers']
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
