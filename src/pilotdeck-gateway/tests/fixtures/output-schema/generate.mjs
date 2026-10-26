@@ -478,6 +478,18 @@ for (const [id, schema, data] of [
   ['url/host-nel', {type: 'string', format: 'url'}, 'http://exa\u0085mple.com/'],
   ['url/host-ideographic-space', {type: 'string', format: 'url'}, 'http://exa\u2000mple.com/'],
   ['url/host-nbsp', {type: 'string', format: 'url'}, 'http://exa\u00A0mple.com/'],
+  // #848 fix-r1: the optional userinfo is `\S+(?::\S*)?@` and may contain a
+  // `/`, so the first `/` is not necessarily the path start. The review
+  // counterexample is valid (userinfo `example.com/bar@`, host
+  // `exa\uFEFFmple.com`); a real path BOM stays invalid, and the
+  // userinfo-less first-`/` reading of `user/x@host.com` must not win.
+  ['url/userinfo-slash-bom', {type: 'string', format: 'url'},
+    'http://example.com/bar@exa\uFEFFmple.com/'],
+  ['url/userinfo-slash-nel', {type: 'string', format: 'url'},
+    'http://example.com/bar@exa\u0085mple.com/'],
+  ['url/userinfo-slash', {type: 'string', format: 'url'}, 'http://user/x@host.com/'],
+  ['url/userinfo-slash-path-bom', {type: 'string', format: 'url'},
+    'http://example.com/bar@host.com/\uFEFF'],
   // #834: `byte` is the one ajv-formats regex compiled with /gm — `^`/`$`
   // match around every ECMAScript line terminator (\n, \r, U+2028, U+2029;
   // U+0085 is not one), and `test` succeeds when any single full line is a
