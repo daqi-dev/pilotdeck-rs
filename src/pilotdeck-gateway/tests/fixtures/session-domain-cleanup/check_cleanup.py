@@ -20,6 +20,9 @@ Modes:
   census-unstable - two complete scans disagree: no stable census
   census-truncated - libproc reports a full buffer: no complete enumeration
   census-enumeration - enumeration failure: BLOCKED, not empty
+  pid-blocked - kill(pid, 0) EPERM is 'blocked', never 'gone'
+  linux-filtered-proc - hidepid-style visible /proc subset on Linux: BLOCKED,
+                       no census read, never VERIFIED/PASS
   signal-entry - the single signal entry refuses a reaped leader, sends while held
   reap-state - the leader was reported REAPED: no bare kill, NOT_VERIFIED
   status - status mapping for VERIFIED / GROUP_NOT_EMPTY / BLOCKED / NOT_VERIFIED
@@ -38,6 +41,7 @@ import io
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import signal
 import subprocess
 import sys
@@ -65,8 +69,24 @@ def load_session_domain():
     return module
 
 
-def pid_alive(pid):
-    return md.HeldProcessGroup.observe_pid(pid) == 'alive'
+def pid_state(pid):
+    """Three-state pid observation; ``blocked`` never means gone."""
+    return md.HeldProcessGroup.observe_pid(pid)
+
+
+def grandchild_view(pid):
+    """Derive the leftover assertion from the three-state observation.
+
+    Only a proven ``missing`` pid may be reported as gone.  ``blocked``
+    (EPERM/EACCES) proves only that this process cannot signal it, so it must
+    stay "cannot exclude alive" and make the leftover check fail.
+    """
+    if pid is None:
+        return {'grandchildState': None, 'grandchildAlive': False,
+                'grandchildGone': False}
+    state = pid_state(pid)
+    return {'grandchildState': state, 'grandchildAlive': state != 'missing',
+            'grandchildGone': state == 'missing'}
 
 
 def group_empty(pgid):
@@ -105,7 +125,7 @@ def run_fixture(md, output, mode):
         'psCensus': audit.get('psCensus'),
         'probe': audit.get('processGroupProbe'),
         'grandchildPid': grandchild,
-        'grandchildAlive': bool(grandchild and pid_alive(grandchild)),
+        **grandchild_view(grandchild),
         'groupEmptyAfterRun': group_empty_after,
         'launcherExitCode': audit.get('exitCode'),
         'launcherStatus': audit.get('status'),
@@ -430,7 +450,8 @@ def census_snapshot_race_control(md):
         raise PermissionError('sandbox denies group signals')
 
     try:
-        with patch.object(md, '_darwin_group_pids', side_effect=next_snapshot), \
+        with patch.object(md, 'sys', SimpleNamespace(platform='darwin')), \
+                patch.object(md, '_group_snapshot', side_effect=next_snapshot), \
                 patch.object(md.os, 'killpg', side_effect=record_group):
             race = md.probe_process_group(child)
     except Exception as exc:  # a crash must not count as the expected finding
@@ -461,7 +482,7 @@ def census_descendant_control(md):
         return set(next(snapshots, [900, 424244]))
 
     try:
-        with patch.object(md, '_darwin_group_pids', side_effect=next_members):
+        with patch.object(md, '_group_snapshot', side_effect=next_members):
             members = md.live_group_members(900)
         error = None
     except Exception as exc:
@@ -481,7 +502,7 @@ def census_unstable_control(md):
         return set(next(alternating, [900, 424245]))
 
     try:
-        with patch.object(md, '_darwin_group_pids', side_effect=next_unstable):
+        with patch.object(md, '_group_snapshot', side_effect=next_unstable):
             members = md.live_group_members(900)
         error = None
     except Exception as exc:
@@ -525,7 +546,8 @@ def census_enumeration_failure_control(md):
     """An unavailable enumeration is not an empty group."""
     child = _zombie_child()
     try:
-        with patch.object(md, '_darwin_group_pids', return_value=None), \
+        with patch.object(md, 'sys', SimpleNamespace(platform='darwin')), \
+                patch.object(md, '_group_snapshot', return_value=None), \
                 patch.object(md.os, 'killpg', side_effect=PermissionError('denied')):
             probe = md.probe_process_group(child)
         error = None
@@ -630,6 +652,67 @@ def reap_state_control(md, output):
     return result
 
 
+def pid_blocked_control(md):
+    """kill(pid, 0)=EPERM is 'blocked', not 'gone'.
+
+    Denying the real ``os.kill`` exercises ``observe_pid`` itself.  A call site
+    that collapses ``blocked`` to a two-state bool (or a source change that
+    returns ``missing`` on OSError) makes ``grandchildGone`` true and this
+    leftover assertion red.
+    """
+    with patch.object(md.os, 'kill', side_effect=PermissionError('denied')):
+        view = grandchild_view(os.getpid())
+    result = {'mode': 'pid-blocked', **view}
+    result['passed'] = bool(view['grandchildState'] == 'blocked'
+                            and view['grandchildAlive'] is True
+                            and view['grandchildGone'] is False)
+    return result
+
+
+def linux_filtered_proc_control(md):
+    """A filtered /proc on Linux is BLOCKED, never a complete group.
+
+    ``/proc`` can hide a live same-group descendant (hidepid, EACCES/EPERM, a
+    changing read) without an error.  The visible set below contains only the
+    leader; reading it as complete would return empty/VERIFIED/PASS.  The
+    non-darwin gate must return BLOCKED before the census is read or a signal
+    is sent.
+    """
+    child = _zombie_child()
+    leader = child.pid
+    visible = iter([[leader]] * 8)
+    calls = []
+
+    def visible_only(*args):
+        calls.append(args)
+        return set(next(visible, [leader]))
+
+    probe = None
+    error = None
+    try:
+        with patch.object(md, 'sys', SimpleNamespace(platform='linux')), \
+                patch.object(md, '_group_snapshot', side_effect=visible_only), \
+                patch.object(md.os, 'killpg', side_effect=PermissionError('EPERM')):
+            probe = md.probe_process_group(child)
+    except Exception as exc:  # a crash must not count as the expected finding
+        error = f'{type(exc).__name__}: {exc}'
+    finally:
+        if child.returncode is None:
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    status = (probe or {}).get('status')
+    result = {'mode': 'linux-filtered-proc', 'processTreeCleanup': status,
+              'topLevel': md.cleanup_status({'processTreeCleanup': status}),
+              'censusCalls': len(calls), 'error': error}
+    result['passed'] = bool(error is None and probe is not None
+                            and status == md.CLEANUP_BLOCKED
+                            and result['topLevel'] == md.CLEANUP_UNVERIFIED_STATUS
+                            and not calls)
+    return result
+
+
 def _blocked_case(md, killpg_error, kill_error=None):
     child = _zombie_child()
     patches = [patch.object(md.os, 'killpg', side_effect=killpg_error)]
@@ -692,8 +775,10 @@ def main():
     parser.add_argument('--mode', choices=('clean', 'leak', 'ignore', 'blocked', 'status',
                                            'eperm-live-member', 'identity-lost', 'census-unavailable',
                                            'census-snapshot', 'census-descendant', 'census-unstable',
-                                           'census-truncated', 'census-enumeration', 'signal-entry',
-                                           'reap-state', 'wiring', 'runtime-negative', 'all'),
+                                           'census-truncated', 'census-enumeration',
+                                           'pid-blocked', 'linux-filtered-proc',
+                                           'signal-entry', 'reap-state', 'wiring',
+                                           'runtime-negative', 'all'),
                         default='all')
     args = parser.parse_args()
     output = args.output.resolve()
@@ -705,7 +790,8 @@ def main():
         () if args.mode in ('status', 'runtime-negative', 'blocked', 'wiring',
                             'eperm-live-member', 'identity-lost', 'census-unavailable',
                             'census-snapshot', 'census-descendant', 'census-unstable',
-                            'census-truncated', 'census-enumeration', 'signal-entry',
+                            'census-truncated', 'census-enumeration', 'pid-blocked',
+                            'linux-filtered-proc', 'signal-entry',
                             'reap-state') else (args.mode,))
     for mode in modes:
         result = run_fixture(md, output, mode)
@@ -745,6 +831,14 @@ def main():
         print(json.dumps(result, ensure_ascii=False), flush=True)
     if args.mode in ('census-enumeration', 'all'):
         result = census_enumeration_failure_control(md)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('pid-blocked', 'all'):
+        result = pid_blocked_control(md)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('linux-filtered-proc', 'all'):
+        result = linux_filtered_proc_control(md)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
     if args.mode in ('signal-entry', 'all'):

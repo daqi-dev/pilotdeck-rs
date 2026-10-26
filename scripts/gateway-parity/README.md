@@ -81,8 +81,14 @@ libproc 返回的字节数等于缓冲容量即视为截断（XNU 按容量复�
 小于容量且 4 字节对齐的写，满缓冲继续增长重试，重试仍满返回「不可核验」。两次完整组快照
 必须一致，成员在两次快照之间变化同样不可核验。枚举失败、截断、快照变化、leader 探测被拒
 一律 `BLOCKED`、不发信号；只有两次完整一致且除未回收 leader 外无成员才记 `VERIFIED`。
-Linux 的 `/proc` 回退仍是逐 pid `getpgid`，任一查询失败即不可核验（该平台不会在僵尸语义
-未立时走到普查）。组内仍有存活成员记 `GROUP_NOT_EMPTY` 并只向该组 SIGTERM（5 s 有界等待
+非 Darwin 平台没有等价的完整组枚举：Linux `/proc` 受挂载选项 `hidepid` 与
+dumpable/权限过滤影响，`iterdir`/`getpgid` 可以**无错误地漏掉仍在本组的活后代**，
+逐 pid 汇总的可见集合不能证明完整性；因此 `probe_process_group` 在非 darwin 上 leader
+未回收后直接 `BLOCKED`，不读普查、不发信号（即使 `killpg0=ESRCH` 也不判 `empty`）。
+这是证明边界：非 Darwin 的 cleanup 不会出现 `VERIFIED`/`PASS`，由宿主上的 macOS
+calibrate 证明。`observe_pid` 保留 `alive`/`missing`/`blocked` 三态，只有 `missing`
+才可当已消失；`blocked`（EPERM/EACCES）只说明本进程无权探测，必须记未核验/失败，
+不得当已清理。组内仍有存活成员记 `GROUP_NOT_EMPTY` 并只向该组 SIGTERM（5 s 有界等待
 后仍不空则只对该组 SIGKILL）；leader 已被他人回收或平台无法证明归属时记 `NOT_VERIFIED`
 且不发信号。所有实际信号（生产主路径、辅助清理、Node 探针、controls）都走同一个持有检查
 入口：Python 是 `HeldProcessGroup`，只有 `waitid(WNOWAIT)` 仍证明 leader 为 `RUNNING` 或
@@ -103,7 +109,8 @@ CI/shell 调用方也不会把它当通过。
 `cleanup-leftover-grandchild`、`cleanup-probe-blocked`、`cleanup-eperm-live-member`、
 `cleanup-identity-lost`、`cleanup-census-snapshot-race`、`cleanup-census-descendant`、
 `cleanup-census-unstable`、`cleanup-census-truncated`、`cleanup-census-enumeration-failure`、
-`cleanup-signal-entry-reaped`、`cleanup-signal-entry-held` 等行为控制，cleanup 结果计入
+`cleanup-pid-blocked`、`cleanup-linux-filtered-proc`、`cleanup-signal-entry-reaped`、
+`cleanup-signal-entry-held` 等行为控制，cleanup 结果计入
 `results.json:cleanup`，任一失败即整批 FAIL。行为 fixture
 `src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/` 的 `ignore` 孙进程先装好
 `SIG_IGN` 并写就绪标记，launcher 有界等待后才退出；源码变异负控按变异绑定期望字段，

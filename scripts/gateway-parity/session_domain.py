@@ -218,45 +218,19 @@ def _darwin_group_pids(pgid, library=None):
     return None
 
 
-def _proc_pids():
-    try:
-        return [int(entry.name) for entry in Path('/proc').iterdir() if entry.name.isdigit()]
-    except OSError:
-        return None
-
-
-def _linux_group_members(pgid):
-    """Linux fallback: per-pid ``getpgid`` census; any unknown pid is fatal.
-
-    Linux never reaches this census for a zombie-only group (a zombie is
-    signalable there, so ``killpg(pgid, 0)`` succeeds and the caller fails
-    closed before the census).  It is kept permission-independent and strict
-    for completeness; an ESRCH mid-scan returns ``None``.
-    """
-    pids = _proc_pids()
-    if pids is None:
-        return None
-    members = set()
-    own = os.getpid()
-    for pid in pids:
-        if pid == own:
-            continue
-        try:
-            group = os.getpgid(pid)
-        except ProcessLookupError:
-            return None
-        except OSError:
-            return None
-        if group == pgid:
-            members.add(pid)
-    return members
-
-
 def _group_snapshot(pgid):
+    """One complete group enumeration, or ``None`` when completeness is unproven.
+
+    Only macOS libproc gives a direct, exact group census on this apparatus.
+    Linux ``/proc`` is mount-dependent: ``hidepid`` and dumpable/permission
+    filters can omit live members from ``iterdir``/``getpgid`` without any error,
+    so a visible set is not a complete set and an empty visible set is not an
+    empty group.  There is no portable proof of completeness here, so every
+    non-darwin platform stays unproven and ``probe_process_group`` fails closed
+    before reading a census or sending any signal.
+    """
     if sys.platform == 'darwin':
         return _darwin_group_pids(pgid)
-    if Path('/proc').is_dir():
-        return _linux_group_members(pgid)
     return None
 
 
@@ -351,6 +325,13 @@ class HeldProcessGroup:
 
     @classmethod
     def observe_pid(cls, pid):
+        """Three-state signal-0 observation; never delivers a signal.
+
+        ``missing`` is the only state that proves the pid is gone.  ``blocked``
+        (EPERM/EACCES or any other OS refusal) proves only that this process may
+        not signal it, so callers must treat it as "cannot exclude alive", never
+        as "cleaned up".
+        """
         try:
             os.kill(pid, 0)
             return 'alive'
@@ -426,16 +407,24 @@ def probe_process_group(child, wait=5):
                              'pgid ownership unprovable, no signal sent')
         return result
     result['leaderUnreaped'] = True
+    if sys.platform != 'darwin':
+        # A filtered /proc can hide a live same-group descendant (hidepid,
+        # EACCES/EPERM on a pid, a changing read) with no observable error.
+        # Neither killpg0=EPERM nor killpg0=ESRCH can then prove the group is
+        # empty, and Linux has no libproc-equivalent exact group census.  Do not
+        # read a census and do not signal: unproven is BLOCKED, never VERIFIED.
+        result.update(status=CLEANUP_BLOCKED,
+                      reason='group membership completeness cannot be proven on '
+                             + sys.platform + ' (filtered /proc); no census read, '
+                             'no signal sent')
+        try:
+            child.wait(timeout=5)
+            result['leaderReaped'] = True
+        except subprocess.TimeoutExpired:
+            result['leaderReaped'] = False
+        return result
     try:
         state, detail = group_probe_state(held)
-        if sys.platform != 'darwin' and state == 'alive':
-            # Elsewhere a zombie is signalable, so signal 0 cannot separate
-            # "only the zombie leader" from a live member.  Fail closed rather
-            # than signal a group whose membership we cannot prove.
-            result.update(status=CLEANUP_NOT_VERIFIED,
-                          reason='zombie-only killpg0 semantics not established on '
-                                 + sys.platform + '; no signal sent')
-            return result
         if state == 'empty':
             result.update(status=CLEANUP_VERIFIED, reason=detail)
         elif state == 'blocked':

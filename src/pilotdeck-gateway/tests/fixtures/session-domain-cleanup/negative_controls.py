@@ -178,6 +178,14 @@ MUTATIONS = [
     ('signal-gate-removed', SOURCE,
      "        state = self._state()\n        if state not in states:\n            return 'refused', state",
      "        state = self._state()\n        # mutant: signal without proving ownership"),
+    ('pid-blocked-as-gone', SOURCE,
+     "        except ProcessLookupError:\n            return 'missing'\n"
+     "        except OSError:\n            return 'blocked'",
+     "        except ProcessLookupError:\n            return 'missing'\n"
+     "        except OSError:\n            return 'missing'  # mutant: blocked == gone"),
+    ('linux-visible-census-trusted', SOURCE,
+     "    if sys.platform != 'darwin':\n",
+     "    if False:  # mutant: trust the platform's visible process set\n"),
 ]
 
 JUDGES = {
@@ -262,6 +270,23 @@ JUDGES = {
             'groupOutcome': 'denied',
             'leaderOutcome': 'denied',
             'killCalls': 2,
+        }),
+        False,
+        ()),
+    'pid-blocked-as-gone': (
+        'pid-blocked',
+        lambda rows: match(rows, 'pid-blocked', {
+            'grandchildState': 'missing',
+            'grandchildAlive': False,
+            'grandchildGone': True,
+        }),
+        False,
+        ()),
+    'linux-visible-census-trusted': (
+        'linux-filtered-proc',
+        lambda rows: match(rows, 'linux-filtered-proc', {
+            'processTreeCleanup': 'VERIFIED',
+            'topLevel': 'PASS',
         }),
         False,
         ()),
