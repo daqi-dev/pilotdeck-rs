@@ -12,6 +12,11 @@ original byte is restored. An anchor that no longer occurs exactly once is a
 harness defect: print ``STALE ANCHOR`` and exit 2 instead of counting it as
 SURVIVED.
 
+Each ``cases`` row is ``(name, path, before, after, test, fn, target
+signature, expected thrown name or None)``: the second field is the actual
+product source path, so main's ``anchor_selfcheck.py`` can statically resolve
+and count every anchor instead of reading ``before`` as a filename.
+
 Case binding: ``oracle.json`` cases have no id field, so the replay names each
 one ``<fn>#<index within that fn>`` in every failure message. The harness below
 locates each mutant's target in ``oracle.json`` from its recorded signature and
@@ -183,23 +188,23 @@ def matches(signature, args0):
     return signature(args0) if callable(signature) else subset(signature, args0)
 
 
-# (name, before, after, test, fn, target signature, expected thrown name or None)
+# (name, path, before, after, test, fn, target signature, expected thrown name or None)
 cases = [
     # 1. Non-iterable `clusters` becomes an empty result again.
-    ('clusters-not-iterable',
+    ('clusters-not-iterable', helpers,
      '        _ => return Err(type_error("clusters is not iterable")),',
      '        _ => &[],', 'clusters_match_ts', 'validateExclusiveClusters',
      None, 'TypeError'),
     # 2. A non-empty string `clusters` stops iterating characters.
-    ('clusters-string', clusters_string_block,
+    ('clusters-string', helpers, clusters_string_block,
      '        JsValue::String(_) => &[],', 'clusters_match_ts',
      'validateExclusiveClusters', 'ab', 'TypeError'),
     # 3. Null cluster entries read as an absent field instead of throwing.
-    ('cluster-null-prop', cluster_null_block,
+    ('cluster-null-prop', helpers, cluster_null_block,
      '        JsValue::Null => None,', 'clusters_match_ts',
      'validateExclusiveClusters', [None], 'TypeError'),
     # 4. Null memberRelativePaths reads as an empty list.
-    ('members-null-map',
+    ('members-null-map', helpers,
      '        Some(JsValue::Null) => Err(type_error("Cannot read properties of null (reading \'map\')")),',
      '        Some(JsValue::Null) => Ok(&[]),', 'clusters_match_ts',
      'validateExclusiveClusters', [{'memberRelativePaths': None}], 'TypeError'),
@@ -207,7 +212,7 @@ cases = [
     #    Non-object receivers also reach the same `None` arm; restricting the
     #    replacement to object clusters keeps case #37 (a number cluster) red
     #    only when its own guard is removed, so the kill lands on #40.
-    ('members-missing-map',
+    ('members-missing-map', helpers,
      '''        Some(JsValue::Undefined) | None => Err(type_error(
             "Cannot read properties of undefined (reading 'map')",
         )),''',
@@ -220,7 +225,7 @@ cases = [
     # 6. An explicitly undefined memberRelativePaths reads as an empty list.
     #    Only `Some(Undefined)` changes; the absent-key and non-object `None`
     #    path still throws, so the first (and only) observable case is #42.
-    ('members-undefined-map',
+    ('members-undefined-map', helpers,
      '''        Some(JsValue::Undefined) | None => Err(type_error(
             "Cannot read properties of undefined (reading 'map')",
         )),''',
@@ -231,51 +236,51 @@ cases = [
      'validateExclusiveClusters',
      [{'memberRelativePaths': UNDEFINED}], 'TypeError'),
     # 7. A non-array memberRelativePaths reads as an empty list.
-    ('members-nonarray-map',
+    ('members-nonarray-map', helpers,
      '''        Some(_) => Err(type_error(
             "cluster.memberRelativePaths.map is not a function",
         )),''',
      '        Some(_) => Ok(&[]),', 'clusters_match_ts',
      'validateExclusiveClusters', [{'memberRelativePaths': 1}], 'TypeError'),
     # 8. A non-string member is normalized to "" again.
-    ('member-nonstring',
+    ('member-nonstring', helpers,
      '            let member = normalize_whitespace(Some(member))?;',
      '            let member = normalize_whitespace(Some(member)).unwrap_or_default();',
      'clusters_match_ts', 'validateExclusiveClusters',
      [{'memberRelativePaths': ['a.md', 1]}], 'TypeError'),
     # 9. A non-string reason is normalized to "" again in the generic-reason guard.
-    ('reason-nonstring',
+    ('reason-nonstring', helpers,
      '    let normalized = normalize_whitespace(reason)?;',
      '    let normalized = normalize_whitespace(reason).unwrap_or_default();',
      'clusters_match_ts', 'validateExclusiveClusters',
      [{'memberRelativePaths': ['a.md', 'b.md'], 'reason': 1}], 'TypeError'),
     # 10. Only the non-string coercion in a dropped warning is removed; string
     #    reasons keep flowing, so the kill must be the numeric one-member case.
-    ('drop-reason-coerce', drop_reason_checked,
+    ('drop-reason-coerce', helpers, drop_reason_checked,
      '''        Some(JsValue::String(value)) => Ok(value.clone()),
         Some(value) if js_truthy(value) => Ok(join_units(members, ", ")),''',
      'clusters_match_ts', 'validateExclusiveClusters',
      [{'memberRelativePaths': ['a.md'], 'reason': 1}], None),
     # 11. Non-array `metas` becomes empty again.
-    ('metas-nonarray-map',
+    ('metas-nonarray-map', helpers,
      '        Some(_) => return Err(type_error("input.metas.map is not a function")),',
      '        Some(_) => &[],', 'merge_groups_match_ts',
      'validateGeneralProjectMergeGroups', {'metas': 1}, 'TypeError'),
     # 12. Null `metas` becomes empty again.
-    ('metas-null-map', metas_null_block,
+    ('metas-null-map', helpers, metas_null_block,
      '        Some(JsValue::Null) => &[],', 'merge_groups_match_ts',
      'validateGeneralProjectMergeGroups', {'metas': None}, 'TypeError'),
     # 13. Missing/undefined `metas` becomes empty again.
-    ('metas-missing-map', metas_missing_block,
+    ('metas-missing-map', helpers, metas_missing_block,
      '        Some(JsValue::Undefined) | None => &[],', 'merge_groups_match_ts',
      'validateGeneralProjectMergeGroups',
      {'metas': ABSENT, 'groups': []}, 'TypeError'),
     # 14. A null meta entry reads as a missing projectId.
-    ('meta-null-entry', meta_null_block,
+    ('meta-null-entry', helpers, meta_null_block,
      '            JsValue::Null => {}', 'merge_groups_match_ts',
      'validateGeneralProjectMergeGroups', {'metas': [None]}, 'TypeError'),
     # 15. Non-array `groups` becomes empty again.
-    ('groups-nonarray-entries',
+    ('groups-nonarray-entries', helpers,
      '''        Some(_) => {
             return Err(type_error(
                 "input.groups.entries is not a function or its return value is not iterable",
@@ -284,26 +289,26 @@ cases = [
      '        Some(_) => &[],', 'merge_groups_match_ts',
      'validateGeneralProjectMergeGroups', {'groups': 1}, 'TypeError'),
     # 16. Null `groups` becomes empty again.
-    ('groups-null-entries', groups_null_block,
+    ('groups-null-entries', helpers, groups_null_block,
      '        Some(JsValue::Null) => &[],', 'merge_groups_match_ts',
      'validateGeneralProjectMergeGroups', {'groups': None}, 'TypeError'),
     # 17. Missing/undefined `groups` becomes empty again.
-    ('groups-missing-entries', groups_missing_block,
+    ('groups-missing-entries', helpers, groups_missing_block,
      '        Some(JsValue::Undefined) | None => &[],', 'merge_groups_match_ts',
      'validateGeneralProjectMergeGroups',
      {'groups': ABSENT}, 'TypeError'),
     # 18. A null group entry reads as a missing keeper.
-    ('group-null-keeper', group_null_block,
+    ('group-null-keeper', helpers, group_null_block,
      '            JsValue::Null => None,', 'merge_groups_match_ts',
      'validateGeneralProjectMergeGroups', {'groups': [None]}, 'TypeError'),
     # 19. A non-string keeper is normalized to "" again.
-    ('keeper-nonstring',
+    ('keeper-nonstring', helpers,
      '        let keeper = normalize_whitespace(keeper_value)?;',
      '        let keeper = normalize_whitespace(keeper_value).unwrap_or_default();',
      'merge_groups_match_ts', 'validateGeneralProjectMergeGroups',
      {'groups': [{'keeperProjectId': 1}]}, 'TypeError'),
     # 20. Null duplicateProjectIds reads as an empty list.
-    ('dups-null-map', dups_null_block,
+    ('dups-null-map', helpers, dups_null_block,
      '            Some(JsValue::Null) => &[],', 'merge_groups_match_ts',
      'validateGeneralProjectMergeGroups',
      {'groups': [{'duplicateProjectIds': None}]}, 'TypeError'),
@@ -311,7 +316,7 @@ cases = [
     #     list. Non-object entries also reach the shared `None` arm; restricting
     #     the replacement to object groups keeps case #30 (a number group) red
     #     only when its own guard is removed, so the kill lands on #36.
-    ('dups-missing-map', dups_missing_block,
+    ('dups-missing-map', helpers, dups_missing_block,
      '''            Some(JsValue::Undefined) | None
                 if matches!(group, JsValue::Object(_)) => &[],
             Some(JsValue::Undefined) | None => {
@@ -324,7 +329,7 @@ cases = [
     # 22. An explicitly undefined duplicateProjectIds reads as an empty list.
     #     Only `Some(Undefined)` changes; the absent-key and non-object `None`
     #     path still throws, so the first (and only) observable case is #37.
-    ('dups-undefined-map', dups_missing_block,
+    ('dups-undefined-map', helpers, dups_missing_block,
      '''            Some(JsValue::Undefined) => &[],
             None => {
                 return Err(type_error(
@@ -334,7 +339,7 @@ cases = [
      'validateGeneralProjectMergeGroups',
      {'groups': [{'duplicateProjectIds': UNDEFINED}]}, 'TypeError'),
     # 23. A non-array duplicateProjectIds reads as an empty list.
-    ('dups-nonarray-map',
+    ('dups-nonarray-map', helpers,
      '''            Some(_) => {
                 return Err(type_error(
                     "group.duplicateProjectIds.map is not a function",
@@ -344,20 +349,20 @@ cases = [
      'validateGeneralProjectMergeGroups',
      {'groups': [{'duplicateProjectIds': 1}]}, 'TypeError'),
     # 24. A non-string duplicate id is normalized to "" again.
-    ('dup-nonstring',
+    ('dup-nonstring', helpers,
      '            let value = normalize_whitespace(Some(value))?;',
      '            let value = normalize_whitespace(Some(value)).unwrap_or_default();',
      'merge_groups_match_ts', 'validateGeneralProjectMergeGroups',
      {'groups': [{'duplicateProjectIds': ['p2', 1]}]}, 'TypeError'),
     # 25. The unchecked String() swallows the shadowed-toString TypeError.
-    ('drop-reason-unchecked', drop_reason_checked,
+    ('drop-reason-unchecked', helpers, drop_reason_checked,
      '''        Some(value) if js_truthy(value) => crate::js_value::to_string_units(value)
             .map(JsString::from_utf16)
             .map_err(|_| FileMemoryError::Range(StackOverflow::MESSAGE.into())),''',
      'clusters_match_ts', 'validateExclusiveClusters',
      [{'memberRelativePaths': ['a.md'], 'reason': {'toString': None}}], 'TypeError'),
     # 26. A depth overflow is mapped back to the invented Invalid message.
-    ('drop-reason-overflow-invalid', drop_reason_overflow_map,
+    ('drop-reason-overflow-invalid', helpers, drop_reason_overflow_map,
      '''                ToStringError::StackOverflow => {
                     FileMemoryError::Invalid("dream reason too deep for String()".into())
                 }''',
@@ -373,7 +378,7 @@ assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
 # source. A moved fixture is a stale control, not a surviving mutant.
 stale_targets = []
 case_ids = {}
-for name, _before, _after, _test, fn, signature, throws_name in cases:
+for name, _path, _before, _after, _test, fn, signature, throws_name in cases:
     seq = [case for case in oracle['cases'] if case['fn'] == fn]
     found = None
     for index, case in enumerate(seq):
@@ -403,7 +408,7 @@ if stale_targets:
 # goes through `mutating_sources` below).
 if os.environ.get('NEGATIVE_CHECK_ANCHORS'):
     source = helpers.read_text()
-    stale = [(name, source.count(before)) for name, before, *_rest in cases
+    stale = [(name, source.count(before)) for name, _path, before, *_rest in cases
              if source.count(before) != 1]
     for name, count in stale:
         print(f'STALE ANCHOR {name}: {count} matches')
@@ -435,7 +440,7 @@ def run_suite(label):
 killed, survived = [], []
 with mutating_sources(root, [helpers], baseline=baseline) as originals:
     stale = []
-    for name, before, _after, _test, _fn, _signature, _throws in cases:
+    for name, _path, before, _after, _test, _fn, _signature, _throws in cases:
         count = originals[helpers].decode().count(before)
         if count != 1:
             stale.append((name, helpers.relative_to(root).as_posix(), count))
@@ -452,7 +457,7 @@ with mutating_sources(root, [helpers], baseline=baseline) as originals:
         print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
         sys.exit(1)
 
-    for name, before, after, test, _fn, _signature, _throws in cases:
+    for name, _path, before, after, test, _fn, _signature, _throws in cases:
         if only and name not in only:
             continue
         reason = None
