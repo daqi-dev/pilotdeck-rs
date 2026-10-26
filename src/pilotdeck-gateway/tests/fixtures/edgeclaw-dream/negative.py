@@ -17,6 +17,11 @@ the coordinator runs this once after committing. For the uncommitted tree,
 current worktree (stage new files first) and ``NEGATIVE_ONLY=a,b`` runs a
 sample. The default baseline remains HEAD.
 
+Every mutation anchor is checked against the baseline bytes *before* the
+unmutated suite runs. A stale anchor (the product source moved on but this list
+did not) is a harness defect, not a surviving mutant, so it prints ``STALE
+ANCHOR`` and exits 2 instead of being counted as SURVIVED.
+
 A surviving mutant does not abort the run: every case executes, then the script
 prints KILLED/SURVIVED and exits 1 when anything survived. It never starts a
 second build directory and cargo always uses the caller's ``CARGO_TARGET_DIR``.
@@ -104,9 +109,11 @@ cases = [
     # 8. A cluster may reuse files already consumed by an accepted cluster.
     ('clusters-overlap', helpers, overlap_block, '', 'clusters_match_ts'),
     # 9. A reason with both same-project and concrete overlap wording drops.
+    #    Anchor only the operator: the receiver is `text.as_ref()` after the
+    #    non-unicode /i fold, and that refactor must not stale the control.
     ('clusters-generic-and', helpers,
-     'same_project_pattern().is_match(&text) && !semantic_pattern().is_match(&text)',
-     'same_project_pattern().is_match(&text) || !semantic_pattern().is_match(&text)',
+     '&& !semantic_pattern().is_match',
+     '|| !semantic_pattern().is_match',
      'clusters_match_ts'),
     # 10. Unknown paths are no longer filtered before counting a cluster.
     ('clusters-allowed', helpers,
@@ -173,6 +180,23 @@ def assertion_failure(log):
 
 killed, survived = [], []
 with mutating_sources(root, [helpers, js_value], baseline=baseline) as originals:
+    # A changed product line that this list did not follow used to be reported
+    # as SURVIVED (`AssertionError: (name, 0)`), hiding a broken control behind
+    # the same label as a real surviving mutant. Refuse before compiling.
+    stale = []
+    for name, path, before, _after, _test in cases:
+        count = originals[path].decode().count(before)
+        if count != 1:
+            stale.append((name, path.relative_to(root).as_posix(), count))
+    if stale:
+        report = '\n'.join(
+            f'STALE ANCHOR {name}: {count} matches in {relative}'
+            for name, relative, count in stale) + '\n'
+        (out / 'stale-anchors.log').write_text(report)
+        print(report, end='', flush=True)
+        print('STALE ANCHORS: negative.py is out of sync with the product source; refusing to run',
+              flush=True)
+        sys.exit(2)
     base_cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                 '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_dream_helpers']
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
@@ -188,7 +212,6 @@ with mutating_sources(root, [helpers, js_value], baseline=baseline) as originals
         reason = None
         try:
             source = originals[path].decode()
-            assert source.count(before) == 1, (name, source.count(before))
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             path.write_text(source.replace(before, after))
             try:

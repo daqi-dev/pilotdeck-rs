@@ -45,8 +45,10 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-dream/negative.py /tmp/edgeclaw-dream-negative
 ```
 
-`negative.py` 用 `mutating_sources` 锁定并恢复产品源码，先跑未变异套件要求
-退出 0，逐格要求编译成功且运行时断言转红；逐格汇总 KILLED / SURVIVED，有
-存活退出 1。脚本 cargo 强制使用调用方 `CARGO_TARGET_DIR`。新增文件在提交前
-不在 HEAD，默认 `mutating_sources` 会拒跑；协调者提交后在宿主跑全量，或
+`negative.py` 用 `mutating_sources` 锁定并恢复产品源码，先校验每个变异锚点
+在产品源码中恰好出现一次（锚点过期报 `STALE ANCHOR` 并退出 2，不冒充
+SURVIVED），再跑未变异套件要求退出 0，逐格要求编译成功且运行时断言转红；
+逐格汇总 KILLED / SURVIVED，有存活退出 1。脚本 cargo 强制使用调用方
+`CARGO_TARGET_DIR`。新增文件在提交前不在 HEAD，默认 `mutating_sources` 会
+拒跑；协调者提交后在宿主跑全量，或
 `NEGATIVE_BASELINE=$(git stash create) NEGATIVE_ONLY=...` 跑样本。
