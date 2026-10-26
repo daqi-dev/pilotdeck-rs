@@ -115,6 +115,67 @@ class ScannerControls(unittest.TestCase):
         self.source.write_text('before')
         self.run_check(1)
 
+    def test_sequential_regex_rewrite_requires_explicit_file_exception(self):
+        name = 'runtime-spawn-panic/negative_controls.py'
+        self.script.unlink()
+        self.script = self.fixtures / name
+        self.script.parent.mkdir()
+        self.source.write_text('before\nreturn old\n')
+        self.write("""import re
+import os
+assert os.environ.get('CARGO_TARGET_DIR')
+mutants = [('clock-pending-snapshot', source, 'before', '')]
+for name, path, pattern, replacement in mutants:
+    content = path.read_text()
+    changed, count = re.subn(pattern, replacement, content, flags=re.S)
+    if name == 'clock-pending-snapshot':
+        changed, count = re.subn(re.escape('return old'), 'return new', changed)
+    path.write_text(changed)
+""")
+        env = {'CARGO_TARGET_DIR': str(self.root / 'target')}
+        self.assertIn('unsupported regex consumer', self.run_check(
+            1, env=env, label='sequential-regex-unregistered'))
+        self.assertIn(name, PRODUCTION_UNSUPPORTED)
+        reason = PRODUCTION_UNSUPPORTED[name]
+        self.assertTrue(reason.strip())
+        CHECK.UNSUPPORTED[name] = reason
+        for anchors_only in (False, True):
+            with self.subTest(anchors_only=anchors_only):
+                report = self.run_check(env=env, anchors_only=anchors_only,
+                                        label='sequential-regex-explicit-exception')
+                self.assertIn(f'UNSUPPORTED {name}: {reason}', report)
+                self.assertIn('checked=0 unsupported=1 anchors=0 errors=0', report)
+        self.assertIn('MISSING_ENV CARGO_TARGET_DIR', self.run_check(
+            1, anchors_only=False, label='sequential-regex-missing-environment'))
+        del CHECK.UNSUPPORTED[name]
+        self.assertIn('unsupported regex consumer', self.run_check(
+            1, env=env, label='sequential-regex-exception-removed'))
+        CHECK.UNSUPPORTED[name] = reason
+        self.run_check(env=env, anchors_only=False, label='sequential-regex-restored')
+        other = self.fixtures / 'sample/negative.py'
+        other.write_text(self.script.read_text())
+        self.assertIn('ERROR sample/negative.py: unsupported regex consumer',
+                      self.run_check(1, env=env, label='sequential-regex-other-file'))
+        other.unlink()
+        self.run_check(env=env, anchors_only=False)
+        self.assertEqual(self.source.read_text(), 'before\nreturn old\n')
+
+    def test_heartbeat_implicit_source_checks_anchors(self):
+        self.script.unlink()
+        self.script = self.fixtures / 'edgeclaw-heartbeat/negative.py'
+        self.script.parent.mkdir()
+        self.write("helpers = source\ncases = [('same-role', 'before', 'after', 'assertion')]\n")
+        self.assertIn('checked=1 unsupported=0 anchors=1 errors=0',
+                      self.run_check(label='heartbeat-implicit-source'))
+        self.source.write_text('BROKEN\n')
+        self.assertIn('same-role: src/example.rs expected=1 actual=0',
+                      self.run_check(1, label='heartbeat-missing-anchor'))
+        self.source.write_text('before before\n')
+        self.assertIn('expected=1 actual=2',
+                      self.run_check(1, label='heartbeat-duplicate-anchor'))
+        self.source.write_text('before\n')
+        self.run_check(label='heartbeat-restored')
+
     def test_compiled_aliased_and_mixed_regex_consumers_fail_closed(self):
         self.source.write_text('[')
         table = "mutants = [('sample', source, '[', 'after')]\n"
@@ -249,7 +310,11 @@ mutants = [('sample', source, text, part + 'after')]
                 self.script = self.fixtures / name
                 self.script.parent.mkdir(parents=True, exist_ok=True)
                 good = "('good', source, 'before', 'after')"
+                siblings = ', '.join(f"({other!r}, source, unknown_scoped_anchor, 'after')"
+                                     for file, other in CHECK.ROW_EXCEPTIONS
+                                     if file == name and other != label)
                 excluded = f"({label!r}, source, unknown_scoped_anchor, 'after')"
+                good = ', '.join(part for part in (good, siblings) if part)
                 self.write(f'mutants = [{good}, {excluded}]\n')
                 self.run_check()
                 self.write(f'mutants = [{good}]\n')

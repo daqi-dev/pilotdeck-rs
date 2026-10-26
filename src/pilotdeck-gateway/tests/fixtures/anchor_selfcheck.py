@@ -36,6 +36,7 @@ UNSUPPORTED = {
     'turn-runner/runner_negative.py': 'anchors are scoped to Rust functions by _negative_common.mutate',
     'turn-runner/input_negative.py': 'mixed function-scoped and whole-file replacements',
     'turn-runner/live_negative.py': 'ordered multi-step replacements on a generated function body',
+    'runtime-spawn-panic/negative_controls.py': 'conditional sequential re.subn rewrites of changed content with different flags, not whole-file table anchors',
     'plugin-runtime/negative-controls.py': 'CASES contains precomputed complete mutated files, not before fragments',
     'plugin-runtime/panic-negative.py': 'CASES contains precomputed complete mutated files, not before fragments',
     'plugin-runtime/notify-window-negative.py': 'imperative slicing and chained replacements, no mutation table',
@@ -52,16 +53,19 @@ UNSUPPORTED = {
     'run-registry/count-negative.py': 'imperative replacement chain, no mutation table',
     'skills/negative_controls.py': 'mixed imperative Rust edits and generated TS fixture corruption',
 }
-REGEX_SCRIPTS = {'background-panic/negative_controls.py', 'runtime-spawn-panic/negative_controls.py'}
+REGEX_SCRIPTS = {'background-panic/negative_controls.py'}
 IMPLICIT = {
     'hooks-output/negative.py': 'source',
     'model-complete/negative-controls.py': 'HTTP',
     'session-owner-hooks/negative.py': 'source',
     'edgeclaw-file-memory/negative.py': 'source',
+    'edgeclaw-heartbeat/negative.py': 'helpers',
     'edgeclaw-entries/negative_round7.py': 'path',
     'turn-submit/negative.py': 'source',
 }
 ROW_EXCEPTIONS = {
+    ('turn-gates/negative.py', 'factory-ready-priority'): 'moves the lazy factory branch before cancellation with ordered replacements on the first select',
+    ('turn-gates/negative.py', 'omit-prepared-cleanup'): 'moves pending_host.handoff with ordered removal and insertion',
     ('turn-runner/recording_negative.py', 'text-value'): 'anchor is scoped to from_agent_input by _negative_common.mutate',
     ('session-abort-contract/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
     ('session-owner/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
