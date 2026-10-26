@@ -18,6 +18,7 @@ const FINAL_SYNC_TIMEOUT: Duration = Duration::from_secs(3);
 struct Handler {
     events: Mutex<Vec<JsValue>>,
     calls: AtomicUsize,
+    block_module: AtomicBool,
     disposed: AtomicUsize,
     fail_event: bool,
     /// Each callback synchronously captures one programmed host-buffer drain.
@@ -42,7 +43,13 @@ struct Handler {
 impl HostHandler for Handler {
     fn module_call(&self, _call: JsValue) -> HostFuture<JsObject> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async { Ok(JsObject::new()) })
+        let block = self.block_module.load(Ordering::SeqCst);
+        Box::pin(async move {
+            if block {
+                std::future::pending::<()>().await;
+            }
+            Ok(JsObject::new())
+        })
     }
 
     fn event(&self, event: JsValue) -> HostFuture<()> {
@@ -3246,6 +3253,9 @@ fn live_history_regenerates_identically() {
 
 #[path = "gates_tests.rs"]
 mod gates_tests;
+
+#[path = "host_pump_tests.rs"]
+mod host_pump_tests;
 
 // A prepared handler must stop even when dispose never completes. Virtual time
 // distinguishes both shorter and longer configured budgets from the old 5 s.
