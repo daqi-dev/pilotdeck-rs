@@ -49,8 +49,8 @@ fn harness(project: &Path, other: &Path, options: &JsValue) -> Harness {
     let missing = options.get("missingProject").and_then(JsValue::as_bool) == Some(true);
     let (resolved, other, listed) = (project.to_owned(), other.to_owned(), project.to_owned());
     let mut opts = UploadStoreOptions::new(
-        move |key| {
-            Ok(if key == "other" {
+        move |key: &JsString| {
+            Ok(if key.equals_str("other") {
                 other.clone()
             } else if missing {
                 resolved.join("absent")

@@ -50,13 +50,20 @@ const FILE: any = {
 };
 const file = (extra: any = {}) => ({ ...FILE, ...extra });
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+const ZEROS_8M_SHA = digest(Buffer.alloc(8 * 1024 * 1024));
 
 const normalize = (text: string, project: string) => text.split(project).join('<PROJECT>');
 const clean = (value: any, project: string) => JSON.parse(normalize(JSON.stringify(value), project));
 const expand = (value: any): any => {
   if (Array.isArray(value)) return value.map(expand);
   if (value && typeof value === 'object') {
-    if (typeof value.$zerosBytes === 'number') return 'A'.repeat(4 * Math.ceil(value.$zerosBytes / 3));
+    if (typeof value.$zerosBytes === 'number') {
+      const bytes = value.$zerosBytes;
+      const full = Math.floor(bytes / 3);
+      const rem = bytes % 3;
+      return 'A'.repeat(full * 4 + (rem === 0 ? 0 : rem + 1)) +
+        (rem === 0 ? '' : rem === 1 ? '==' : '=');
+    }
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item)]));
   }
   return value;
@@ -106,6 +113,12 @@ add('idempotency-key', [
   params({ projectKey: 'p', files: [file()], idempotencyKey: true }),
   params({ projectKey: 'p', files: [file()], idempotencyKey: [] }),
   params({ projectKey: 'p', files: [file()], idempotencyKey: {} }),
+  // Cross-invalid inputs: project/manifest errors win over the key type, and
+  // Node formats the number with Number#toString (not Rust's expanded form).
+  params({ projectKey: 'missing', files: [file()], idempotencyKey: 5 }),
+  params({ projectKey: 'p', files: [], idempotencyKey: 5 }),
+  params({ projectKey: 'p', files: [file()], idempotencyKey: 1e21 }),
+  params({ projectKey: 'p', files: [file()], idempotencyKey: 1e-7 }),
 ]);
 
 add('get-validation', [
@@ -217,6 +230,29 @@ add('response-adaptation', [
   call('part', { uploadId: 'upload-2', clientFileId: 'file-1', contentBase64: 'aGVsbG8=' }),
   params({ projectKey: 'p', files: [file({ mimeType: undefined })] }),
   call('part', { uploadId: 'upload-3', clientFileId: 'file-1', contentBase64: 'aGVsbG8=' }),
+  { tamper: 'attachments-null' },
+  call('get', { uploadId: 'upload-1' }),
+]);
+
+// Raw UTF-16 parameters must reach the provider/resolver unchanged: a lone
+// surrogate is not the real U+FFFD, even though both encode to the same UTF-8
+// bytes at the filesystem/hash boundary.
+add('parameter-fidelity', [
+  params({ projectKey: 'p\ud800', files: [file()] }),
+  params({ projectKey: 'p\ufffd', files: [file()] }),
+  call('get', { uploadId: 'upload-1' }),
+  call('get', { uploadId: 'upload-2' }),
+  call('part', { uploadId: 'upload-1', clientFileId: 'file-1', contentBase64: 'aGVsbG8=' }),
+]);
+
+// decodeUploadPart checks the 8 MiB ceiling before decoding. Exactly 8 MiB is
+// accepted and written; one byte more is rejected before decodeUploadPart
+// returns, so the provider is never called.
+add('part-size-limits', [
+  params({ projectKey: 'p', files: [file({ size: 8388608, sha256: ZEROS_8M_SHA })] }),
+  call('part', { uploadId: 'upload-1', clientFileId: 'file-1', contentBase64: { $zerosBytes: 8388608 } }),
+  params({ projectKey: 'p', files: [file({ size: 8388609, sha256: ZEROS_8M_SHA })] }),
+  call('part', { uploadId: 'upload-2', clientFileId: 'file-1', contentBase64: { $zerosBytes: 8388609 } }),
 ]);
 
 async function tamper(kind: string, project: string) {
@@ -235,6 +271,8 @@ async function tamper(kind: string, project: string) {
     record.status = 'failed';
     record.errorCode = 'E_RECORDED';
     record.errorMessage = 'recorded failure';
+  } else if (kind === 'attachments-null') {
+    record.attachments = [null];
   } else {
     throw new Error('unknown tamper ' + kind);
   }
@@ -277,11 +315,14 @@ try {
     const base = join(scratch, `${index}-${scenario.name}`);
     await mkdir(base);
     const project = await realpath(base);
+    const replacement = join(project, 'replacement');
+    await mkdir(replacement);
     let now = epoch;
     let created = 0;
     const store = new UploadStore({
-      resolveProject: async (key: string) => (key === 'missing' ? join(project, 'absent') : project),
-      listProjects: async () => [project],
+      resolveProject: async (key: string) =>
+        key === 'missing' ? join(project, 'absent') : key === 'p\ufffd' ? replacement : project,
+      listProjects: async () => [project, replacement],
       now: () => new Date(now),
       uuid: () => `upload-${++created}`,
     });

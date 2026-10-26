@@ -10,58 +10,113 @@ after the coordinator commits the branch:
 
 ``--check`` only verifies that every mutation anchor still matches the current
 source; it does not mutate, compile, or need a commit.
+
+A mutation counts as KILLED only when the *named* test fails with the
+mutation's own expected assertion text: the same command can also kill an
+unrelated assertion, e.g. the oracle's property-order check, which is not
+evidence for the behavior under test (review P1-5).
 """
 import difflib
 import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
-source = root / 'src/pilotdeck-gateway/src/upload/gateway.rs'
+GATEWAY = root / 'src/pilotdeck-gateway/src/upload/gateway.rs'
+STORE = root / 'src/pilotdeck-gateway/src/upload/mod.rs'
 ORACLE = 'upload::gateway_tests::upload_gateway_oracle_replay_matches_ts_results'
 PATH_TEST = 'upload::gateway_tests::upload_gateway_never_projects_attachment_disk_path'
+PROJECTION = 'upload::gateway_tests::upload_gateway_projection_drops_unknown_and_empty_optional_fields'
+ORDER = 'upload::gateway_tests::upload_gateway_validation_order_matches_ts'
+NULL_ATTACH = 'upload::gateway_tests::upload_gateway_null_attachment_keeps_ts_property_error'
+KEY_ORDER = 'upload::gateway_tests::upload_gateway_idempotency_key_type_is_checked_after_project_and_manifest'
+KEY_NUMBER = 'upload::gateway_tests::upload_gateway_idempotency_number_messages_match_node'
+KEY_DEDUPE = 'upload::gateway_tests::upload_gateway_idempotency_hash_still_dedupes_after_moving_into_store'
+FIDELITY = 'upload::gateway_tests::upload_gateway_preserves_raw_utf16_parameters'
+SIZE = 'upload::gateway_tests::upload_gateway_part_size_cap_is_checked_before_decoding'
 
+# (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
 mutations = [
-    ('attachment-path-leak', '''    let mut out = object([
+    ('attachment-path-leak', GATEWAY, '''    let mut out = object([
         ("attachmentId", value(attachment, "attachmentId")),
         ("name", value(attachment, "name")),
         ("relativePath", value(attachment, "relativePath")),
-    ]);''', '    let mut out = attachment.clone();', PATH_TEST),
-    ('record-unknown-leak', '    let mut out = JsObject::new();',
-     '    let mut out = record.as_object().cloned().unwrap_or_default();', ORACLE),
-    ('optional-empties-kept', '        if !truthy(&field) {',
-     '        if field.is_undefined() {', ORACLE),
-    ('files-not-array', '        if !matches!(files, JsValue::Array(_)) {',
-     '        if false {', ORACLE),
-    ('project-key-not-trimmed',
+    ]);''', '    let mut out = (*attachment).clone();', PATH_TEST,
+     'attachment projection must drop the store path'),
+    ('record-unknown-leak', GATEWAY, '    let mut out = JsObject::new();',
+     '    let mut out = record.as_object().cloned().unwrap_or_default();', PROJECTION,
+     'diskPath leaked:'),
+    ('optional-empties-kept', GATEWAY, '        if !truthy(&field) {',
+     '        if field.is_undefined() {', PROJECTION, '"errorCode" leaked:'),
+    ('files-not-array', GATEWAY, '        if !matches!(files, JsValue::Array(_)) {',
+     '        if false {', ORDER, 'files must be an array before the store'),
+    ('project-key-not-trimmed', GATEWAY,
      '        JsValue::String(key) if trim_js(key).units().is_empty() => Err(required()),',
-     '        JsValue::String(key) if key.units().is_empty() => Err(required()),', ORACLE),
-    ('project-key-nonstring-accepted',
+     '        JsValue::String(key) if key.units().is_empty() => Err(required()),', ORDER,
+     'projectKey whitespace must be rejected before the provider'),
+    ('project-key-nonstring-accepted', GATEWAY,
      '        // `input.projectKey?.trim()` boxes primitives; only nullish short-circuits.\n'
      '        _ => Err(request_failed("input.projectKey?.trim is not a function")),',
      '        // `input.projectKey?.trim()` boxes primitives; only nullish short-circuits.\n'
-     '        _ => Ok(String::new()),', ORACLE),
-    ('upload-id-not-safe', '    assert_id(&id)?;', '    let _ = &id;', ORACLE),
-    ('client-file-id-not-trimmed',
+     '        _ => Ok(JsString::from("")),', ORDER,
+     'non-string projectKey must be rejected before the provider'),
+    ('upload-id-not-safe', GATEWAY, '    assert_id(&id)?;', '    let _ = &id;', ORDER,
+     'uploadId safety must be checked before clientFileId'),
+    ('client-file-id-not-trimmed', GATEWAY,
      '    if trim_js(raw).units().is_empty() {',
-     '    if raw.units().is_empty() {', ORACLE),
-    ('base64-limit-off-by-one',
-     '    if bytes.len() > MAX_REMOTE_UPLOAD_PART_BYTES {',
-     '    if bytes.len() > MAX_REMOTE_UPLOAD_PART_BYTES + 1 {', ORACLE),
-    ('base64-trailing-bits-rejected',
+     '    if raw.units().is_empty() {', ORDER,
+     'whitespace-only clientFileId must be rejected before base64'),
+    ('base64-limit-off-by-one', GATEWAY,
+     '    if decoded_len > MAX_REMOTE_UPLOAD_PART_BYTES {',
+     '    if decoded_len > MAX_REMOTE_UPLOAD_PART_BYTES + 1 {', SIZE,
+     'oversized part decoded'),
+    ('base64-precheck-removed', GATEWAY,
+     '    if decoded_len > MAX_REMOTE_UPLOAD_PART_BYTES {',
+     '    if false {', SIZE, 'oversized part decoded'),
+    ('base64-trailing-bits-rejected', GATEWAY,
      '        .with_decode_allow_trailing_bits(true)',
-     '        .with_decode_allow_trailing_bits(false)', ORACLE),
-    ('idempotency-hash-skipped',
-     '        let key = match idempotency_key.filter(|key| truthy(key)) {',
-     '        let key = match None::<&JsValue> {', ORACLE),
-    ('part-requires-provider-first', '''        let upload_id = upload_id(params)?;
+     '        .with_decode_allow_trailing_bits(false)', ORDER,
+     'non-zero trailing bits must stay accepted'),
+    ('surrogate-key-hash-not-lossy', STORE,
+     'Some(hash(String::from_utf16_lossy(key.units()).as_bytes()))',
+     'Some(hash(key.to_utf8().unwrap_or_default().as_bytes()))',
+     'upload::gateway_tests::upload_gateway_lone_surrogate_idempotency_key_hashes_like_node',
+     'Node hashes a lone surrogate and U+FFFD to the same UTF-8 bytes'),
+    ('idempotency-hash-skipped', STORE,
+     '        let key_hash = match idempotency_key.filter(|key| truthy(key)) {',
+     '        let key_hash = match None::<&JsValue> {', KEY_DEDUPE,
+     "idempotencyKey must hash into the store's dedup path"),
+    ('idempotency-type-before-manifest', GATEWAY,
+     '        let record = provider.create(&project_key, files, idempotency_key)?;',
+     '''        if let Some(key) = idempotency_key.filter(|key| key.as_string().is_none()) {
+            return Err(UploadError::dialog(
+                "ERR_INVALID_ARG_TYPE",
+                crypto_received(key),
+            ));
+        }
+        let record = provider.create(&project_key, files, idempotency_key)?;''', KEY_ORDER,
+     'project validation must precede the idempotencyKey type'),
+    ('number-format-expanded', GATEWAY,
+     '''        JsValue::Number(number) => {
+            format!("type number ({})", crate::js_value::number_string(*number))
+        }''',
+     '        JsValue::Number(number) => format!("type number ({number})"),', KEY_NUMBER,
+     'Node spells 1e21 as 1e+21'),
+    ('surrogate-lossy-bridge', GATEWAY,
+     '        JsValue::String(key) => Ok(key.clone()),',
+     '        JsValue::String(key) => Ok(JsString::from(String::from_utf16_lossy(key.units()))),',
+     FIDELITY, 'lone surrogate must not be replaced before the provider'),
+    ('null-attachment-swallowed', GATEWAY,
+     '    if matches!(attachment, JsValue::Undefined | JsValue::Null) {',
+     '    if matches!(attachment, JsValue::Undefined) {', NULL_ATTACH,
+     'null attachment must keep the TS property-access error'),
+    ('part-requires-provider-first', GATEWAY, '''        let upload_id = upload_id(params)?;
         let client_file_id = client_file_id(params)?;
         let content = parameter(params, "contentBase64")?;
         let bytes = decode_upload_part(content)?;
@@ -69,19 +124,21 @@ mutations = [
         let upload_id = upload_id(params)?;
         let client_file_id = client_file_id(params)?;
         let content = parameter(params, "contentBase64")?;
-        let bytes = decode_upload_part(content)?;''', ORACLE),
-    ('get-requires-provider-after-upload-id', '''        let provider = self.require()?;
+        let bytes = decode_upload_part(content)?;''', ORDER,
+     'part must validate params before requiring the provider'),
+    ('get-requires-provider-after-upload-id', GATEWAY, '''        let provider = self.require()?;
         let upload_id = upload_id(params)?;
         gateway_record(&provider.get(&upload_id)?)''', '''        let upload_id = upload_id(params)?;
         let provider = self.require()?;
-        gateway_record(&provider.get(&upload_id)?)''', ORACLE),
+        gateway_record(&provider.get(&upload_id)?)''', ORDER,
+     'get must require the provider before validating uploadId'),
 ]
 
 if '--check' in sys.argv[1:]:
-    original = source.read_text()
-    for name, old, _new, _test in mutations:
+    for name, source, old, _new, _test, _expected in mutations:
+        original = source.read_text()
         assert original.count(old) == 1, (name, original.count(old))
-    print(f'PASS: {len(mutations)} mutation anchors match {source}')
+    print(f'PASS: {len(mutations)} mutation anchors match their sources')
     sys.exit(0)
 
 out = Path(sys.argv[1]).resolve()
@@ -93,8 +150,8 @@ if selected:
 env = os.environ.copy()
 assert env.get('CARGO_TARGET_DIR'), 'set CARGO_TARGET_DIR to the caller build directory'
 summary = []
-with mutating_sources(root, [source]) as snapshots:
-    for name, old, new, test in mutations:
+with mutating_sources(root, [GATEWAY, STORE]) as snapshots:
+    for name, source, old, new, test, expected in mutations:
         original = snapshots[source]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
@@ -102,7 +159,7 @@ with mutating_sources(root, [source]) as snapshots:
         changed = content.replace(old, new, 1)
         (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
             content.splitlines(True), changed.splitlines(True),
-            fromfile='gateway.rs', tofile='gateway.rs')))
+            fromfile=source.name, tofile=source.name)))
         try:
             wait_for_slot(root / 'scripts/cargo-slots.sh')
             source.write_text(changed)
@@ -114,15 +171,18 @@ with mutating_sources(root, [source]) as snapshots:
             (out / f'{name}.log').write_text(log)
             killed = (result.returncode == 101
                       and f'{test} ... FAILED' in log
+                      and expected in log
                       and 'panicked at' in log
                       and 'error[E' not in log)
             failure = next((line.strip() for line in log.splitlines()
-                            if 'assertion' in line or 'panicked at' in line), '')
-            summary.append(dict(name=name, test=test, killed=killed,
+                            if 'assertion' in line or 'panicked at' in line
+                            or expected in line), '')
+            summary.append(dict(name=name, source=str(source.relative_to(root)),
+                                test=test, expected=expected, killed=killed,
                                 returncode=result.returncode, failure=failure,
                                 sourceSha256=before))
             print(f'{name}: {"KILLED" if killed else "NOT KILLED"} rc={result.returncode} {failure}', flush=True)
-            assert killed, f'{name}: compile/signal failure or surviving mutant is not evidence'
+            assert killed, f'{name}: did not hit its named assertion ({expected!r})'
         finally:
             source.write_bytes(original)
             assert hashlib.sha256(source.read_bytes()).hexdigest() == before
