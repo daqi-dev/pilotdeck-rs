@@ -268,7 +268,25 @@ cases = [
             out.insert(key.clone(), JsValue::String(text));
         }''',
      'llm_config_matches_ts'),
+    # #836: the cached bad-file `null` must satisfy later callers; treating
+    # that `Some(None)` as a miss re-probes home, which the #836 test's
+    # panicking closure turns into the issue-specific failure message.
+    ('openclaw-null-retry', config,
+     '''        if let Some(value) = self.read_cache() {
+            return value;
+        }''',
+     '''        if let Some(Some(value)) = self.read_cache() {
+            return Some(value);
+        }''',
+     'open_claw_cache_bad_first_read_stays_null_without_reprobe'),
 ]
+
+# A kill must be the named test failing on its own assertion. Cases listed
+# here additionally pin the failure text, so an unrelated panic in the same
+# binary (or a harness fault) cannot pass for a kill.
+KILL_FAILURE_TEXT = {
+    'openclaw-null-retry': '#836: cached bad-file null must not re-probe home',
+}
 
 names = [case[0] for case in cases]
 assert len(names) == len(set(names)), 'duplicate control name'
@@ -374,6 +392,12 @@ with mutating_sources(root, [config]) as originals:
             outcome = classify(log, returncode)
             # A red baseline makes every mutation's "failure" untrustworthy.
             if outcome == 'KILLED' and not baseline_ok:
+                outcome = 'INVALID'
+            # A pinned kill must show its own failure text: the #836 message is
+            # what the panicking home closure emits, so anything else is an
+            # unrelated fault wearing this test's name.
+            required = KILL_FAILURE_TEXT.get(name)
+            if outcome == 'KILLED' and required is not None and required not in log:
                 outcome = 'INVALID'
             (out / f'{name}.log').write_text(
                 'COMMAND ' + ' '.join(command + [test, '--', '--exact']) + '\n' +
