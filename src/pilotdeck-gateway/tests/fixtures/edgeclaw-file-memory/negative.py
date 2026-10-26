@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 
@@ -71,7 +72,9 @@ def main():
                     raw = (output / f'{name}.log').read_text()
                     killed = (code == 101 and 'test result: FAILED' in raw
                               and 'could not compile' not in raw
-                              and any(m in raw for m in marker.split('|')))
+                              # #813: every a|b candidate must be in this test's
+                              # own panic block, not any other test's output.
+                              and named_test_killed(raw, test, marker.split('|')))
                     results.append(dict(name=name, test=test, exit=code, marker=marker, killed=killed))
                     print(f'{name}: killed={killed}, exit={code}', flush=True)
                     assert killed, f'{name}: expected a compiled test assertion failure'

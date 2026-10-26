@@ -5,6 +5,8 @@ Every mutant rewrites a copy of `projector.rs` (or the oracle hash ledger) in an
 isolated /tmp crate and must make the real replay fail with an assertion naming
 the affected case/test. The baseline copy must pass. No source in the worktree
 is modified.
+
+Usage: ``negative.py <evidence-dir> [mutant-id ...]``.
 """
 import json
 import os
@@ -13,6 +15,9 @@ import signal
 import subprocess
 import sys
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 
 output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
@@ -597,6 +602,44 @@ impl ArtifactWrites {''',
 ]
 
 
+# #813: each mutant names the one test that must report the failure. Markers
+# that are test function names run that test directly; projection-case names
+# run the oracle test; the tuple marker is the native deep-stack control.
+TEST_PREFIX = "projector::tests::"
+ORACLE_TEST = TEST_PREFIX + "agent_event_projections_match_ts_oracle"
+DEEP_TEST = TEST_PREFIX + "deep_tool_data_returns_ts_range_error_instead_of_overflowing_the_stack"
+NAMED_TESTS = {
+    "advisory_persist_returns_before_the_write_completes",
+    "deep_provider_raw_and_args_preview_fall_back_to_ts_string_conversion",
+    "artifact_session_parent_dir_escape_is_refused",
+    "artifact_session_parent_dir_escape_keeps_projection_without_a_path",
+    "artifact_owner_check_is_wired_through_the_real_writer",
+    "artifact_root_parent_symlink_is_refused",
+    "artifact_file_hardlink_is_not_truncated",
+    "artifact_directories_are_0700_and_the_file_is_0600",
+    "artifact_file_symlink_is_not_followed_or_truncated",
+    "artifact_writer_refuses_a_path_beside_the_root",
+    "artifact_root_without_a_parent_is_refused",
+    "every_advisory_write_is_eventually_persisted",
+    "dropping_the_store_does_not_join_a_blocked_artifact_write",
+    "default_store_throws_on_non_string_path_part_like_ts",
+    "map_agent_event_default_calls_share_one_artifact_writer",
+}
+
+
+# Scenario markers whose failure belongs to the dedicated deep-stack test
+# rather than the oracle replay.
+DEEP_MARKERS = {"deep-tool-data-array"}
+
+
+def named_test(marker):
+    if isinstance(marker, tuple) or marker in DEEP_MARKERS:
+        return DEEP_TEST
+    if marker in NAMED_TESTS:
+        return TEST_PREFIX + marker
+    return ORACLE_TEST
+
+
 def run_tests(command):
     """Run cargo test in its own session so a timeout kills the whole tree."""
     process = subprocess.Popen(
@@ -616,6 +659,9 @@ def run_tests(command):
         return -9, stdout + stderr + "\nTIMEOUT after 900s\n"
 
 
+selected = set(sys.argv[2:])
+known = {mutant[0] for mutant in mutants}
+assert not selected - known, f"unknown controls: {selected - known}"
 summary = []
 with tempfile.TemporaryDirectory(prefix="pdrs-aep-negative-", dir="/tmp") as temp:
     scratch = Path(temp)
@@ -768,6 +814,8 @@ fn directory_flags() -> rustix::fs::OFlags {
     )
 
     for name, filename, before, after, marker in [("baseline", None, None, None, None)] + mutants:
+        if selected and name not in selected:
+            continue
         for file, content in originals.items():
             if file == filename:
                 assert content.count(before) == 1, (name, file, content.count(before))
@@ -793,6 +841,7 @@ fn directory_flags() -> rustix::fs::OFlags {
             )
         except subprocess.TimeoutExpired:
             raise SystemExit("cargo-slots gate timed out after 1800s")
+        used_test = None if name == "baseline" else named_test(marker)
         command = [
             "cargo",
             "test",
@@ -800,32 +849,33 @@ fn directory_flags() -> rustix::fs::OFlags {
             "--manifest-path",
             str(scratch / "Cargo.toml"),
             "--lib",
-            "projector::tests::",
+            "projector::tests::" if used_test is None else used_test,
             "--",
             "--nocapture",
         ]
+        if used_test is not None:
+            command.insert(-1, "--exact")
         returncode, raw = run_tests(command)
         if name == "baseline":
             passed = returncode == 0 and "test result: ok." in raw and "0 failed" in raw
         elif isinstance(marker, tuple):
             # Restoring the old recursion must kill the test process on the
-            # native stack; accept a plain assertion if this platform's stack
-            # happens to survive 30,000 frames (still a red test).
+            # native stack. A native abort cannot print libtest's `FAILED`
+            # line, so that branch requires this named test's overflow report;
+            # if the platform survives, the normal assertion branch applies.
+            overflow = "has overflowed its stack" in raw and used_test in raw
             passed = (
                 returncode != 0
-                and any(text in raw for text in marker)
                 and "could not compile" not in raw
-                and "deep_tool_data_returns_ts_range_error" in raw
+                and (overflow or named_test_killed(raw, used_test, "should throw"))
             )
         else:
-            # `assert!(cond, "msg")` panics with only the message, while
-            # `assert_eq!` adds "assertion `left == right` failed".
-            failed_assertion = "assertion" in raw or "panicked at" in raw
+            # #813: the named test must be the one that failed, and the marker
+            # must be inside its own panic block (not stdout or a sibling test).
             passed = (
                 returncode == 101
-                and failed_assertion
                 and "could not compile" not in raw
-                and marker in raw
+                and named_test_killed(raw, used_test, marker)
             )
         (output / f"negative-{name}.log").write_text(
             gate.stdout

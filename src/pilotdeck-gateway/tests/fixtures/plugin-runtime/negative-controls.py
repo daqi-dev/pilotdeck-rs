@@ -17,13 +17,16 @@ MUTANT_ENV = dict(os.environ)
 MUTANT_ENV.pop('PDRS_BASELINE', None)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
 OUTPUT = Path(sys.argv[1]).resolve()
 OUTPUT.mkdir(parents=True, exist_ok=True)
-assert Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'src/target')).resolve() == ROOT / 'src/target'
+target_dir = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'src/target')).resolve()
+assert target_dir in {(ROOT / 'src/target').resolve(), (ROOT / '_build/cargo-target').resolve()}, \
+    'use this tree src/target or _build/cargo-target'
 with mutating_sources(ROOT, [SOURCE]) as snapshots:
     BASE = snapshots[SOURCE]
     TEXT = BASE.decode()
@@ -94,7 +97,9 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
                                    timeout=max(1, min(120, deadline-time.monotonic())))
                 log = result.stdout + result.stderr
                 (OUTPUT / f'{name}.log').write_text(log)
-                killed = (result.returncode == 101 and f'test {test} ... FAILED' in log and marker in log
+                # #813: `test {test} ... FAILED` plus the marker inside that
+                # test's panic block, not stdout or a sibling test.
+                killed = (result.returncode == 101 and named_test_killed(log, test, marker)
                           and 'could not compile' not in log)
                 summary.append({'mutation': name, 'mutationSha256': hashlib.sha256(mutation.encode()).hexdigest(),
                                 'test': test, 'exit': result.returncode, 'killed': killed,
