@@ -18,6 +18,9 @@
 `Math.random().toString(36).slice(2, 10)`，`mutation` 的随机值以 f64 记录，
 Rust 侧用既有 `js_value::number_string` 还原 TS 模板串。`toDreamRecordInput`
 的金样调用真实 `FileMemoryStore.prototype.toCandidate`（不构造 store、不落盘）。
+`validateExclusiveClusters` 的 reason 金样含 U+017F `ſ` / U+212A `K` 以及
+`İ` / `ı`：TS 正则不带 `u` 标志，`/i` 只折叠 ASCII；Rust 侧复用
+`js_value::ascii_fold_haystack` 屏蔽前两个码点。
 
 `add()` 对 expected 先做 `JSON.parse(JSON.stringify(...))`，让金样与 Rust 的
 JSON 线格式同语义（对象里的 `undefined` 属性被丢弃）。
