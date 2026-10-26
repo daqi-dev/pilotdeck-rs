@@ -36,8 +36,9 @@ use crate::{
             live::{InteractionHost, LiveSessionAdapter},
         },
     },
+    storage::recorder::Recorder,
 };
-use pilotdeck_protocol::{JsObject, JsString, admission::ExecutionIdentity};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -196,7 +197,7 @@ pub struct SessionPorts {
     pub interaction: InteractionTurnInput,
 }
 
-type PortsFactory = dyn Fn(&ExecutionIdentity) -> SessionPorts + Send + Sync;
+type PortsFactory = dyn Fn(&ExecutionIdentity, Arc<Recorder>) -> SessionPorts + Send + Sync;
 
 pub struct TurnHostFactory {
     registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
@@ -212,7 +213,7 @@ impl TurnHostFactory {
         deployment: Deployment,
         limits: Limits,
         expected_module_id: Option<JsString>,
-        ports: impl Fn(&ExecutionIdentity) -> SessionPorts + Send + Sync + 'static,
+        ports: impl Fn(&ExecutionIdentity, Arc<Recorder>) -> SessionPorts + Send + Sync + 'static,
     ) -> Self {
         Self {
             registry,
@@ -225,17 +226,27 @@ impl TurnHostFactory {
 
     /// Build the production `LiveSession` over this factory. The registry must
     /// outlive the session and be disposed by its owner after the session.
-    pub fn into_live_session(self) -> LiveSessionAdapter {
+    /// The ports factory receives the same recorder on every turn; use it for
+    /// any durable model/tool ports. `history` reads the current session view.
+    pub fn into_live_session(
+        self,
+        recorder: Arc<Recorder>,
+        history: impl Fn() -> Vec<JsValue> + Send + Sync + 'static,
+    ) -> LiveSessionAdapter {
         let factory = Arc::new(self);
-        LiveSessionAdapter::with_interaction(move |identity| {
+        LiveSessionAdapter::with_interaction(recorder, history, move |identity, recorder| {
             let factory = factory.clone();
-            Box::pin(async move { factory.create(&identity).await })
+            Box::pin(async move { factory.create(&identity, recorder).await })
         })
     }
 
     /// Acquire one generation lease and spawn its sidecar. Unsupported
     /// transports fail before any lease exists, so they cannot leak.
-    pub async fn create(&self, identity: &ExecutionIdentity) -> Result<InteractionHost, HostError> {
+    pub async fn create(
+        &self,
+        identity: &ExecutionIdentity,
+        recorder: Arc<Recorder>,
+    ) -> Result<InteractionHost, HostError> {
         let (command, args, cwd, env) = match &self.deployment {
             Deployment::Stdio {
                 command,
@@ -260,7 +271,7 @@ impl TurnHostFactory {
             .registry
             .acquire(None)
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
-        let ports = (self.ports)(identity);
+        let ports = (self.ports)(identity, recorder);
         let (router, input, mut lease) = match Self::assemble(lease, identity, ports).await {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.
