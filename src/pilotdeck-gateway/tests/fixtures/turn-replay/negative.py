@@ -1,35 +1,36 @@
 #!/usr/bin/env python3
-"""Compile real product mutations in an owned /tmp workspace; never edit the checkout.
+"""Mutate committed runtime sources with the shared guard; require runtime RED.
 
-The isolated crate contains the same replay.rs/coordinator.rs sources with the
-same sibling layout, the recorded oracle, and the shared provenance guard. Each
-mutant must compile, run, and fail its targeted TS-oracle assertion.
-Every cell runs even after an invalid one, so one survivor neither hides the
-rest nor stops the summary; the exit code reports any survivor at the end.
+Every anchor is checked before selection. No scratch crate or alternate target
+is created; CARGO_TARGET_DIR must be provided by the caller.
 """
+import argparse
 import json
 import os
 from pathlib import Path
-import shutil
-import signal
-import subprocess
 import sys
-import tempfile
-import time
 
-output = Path(sys.argv[1]).resolve()
-output.mkdir(parents=True, exist_ok=True)
-# `--only NAME` (repeatable) restricts the cargo runs to the named mutants;
-# every anchor is still asserted against the current sources, and the
-# baseline always runs first.
-requested = {sys.argv[index + 1] for index, arg in enumerate(sys.argv[2:-1], start=2)
-             if arg == "--only"}
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources, run_owned, wait_for_slot
+
+if not os.environ.get('CARGO_TARGET_DIR'):
+    sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('output', type=Path)
+parser.add_argument('--only', action='append', default=[])
+args = parser.parse_args()
+output = args.output.resolve()
+output.mkdir(parents=True, exist_ok=False)
+# Every anchor is still checked when selecting a single mutation.
+requested = set(args.only)
 fixture = Path(__file__).resolve().parent
 rust = Path(__file__).resolve().parents[4]
 turn = rust / "pilotdeck-gateway/src/runtime/turn"
-baseline_helper = rust / "pilotdeck-gateway/tests/common/baseline.rs"
+cleanup = rust / "pilotdeck-gateway/src/runtime/cleanup_task.rs"
 oracle_path = fixture / "oracle.json"
 originals = {
+    "cleanup_task.rs": cleanup.read_text(),
     "replay.rs": (turn / "replay.rs").read_text(),
     "coordinator.rs": (turn / "coordinator.rs").read_text(),
     "oracle.json": oracle_path.read_text(),
@@ -38,7 +39,7 @@ env = dict(os.environ, CARGO_NET_OFFLINE="true", PDRS_BASELINE=os.environ["PDRS_
 
 # Shared verbatim blocks of the current sources for the #805 panic-recovery
 # pins: the guarded timer/replay calls (fix round 9) and the two
-# poison-tolerant lock helpers.
+# poison-tolerant shared lock helper.
 START_CANCEL_GUARDED = """        // panic still surfaces at the call site like a throwing host
         // `clearTimeout`, but the guard is dropped first so the unwind
         // cannot poison the store's lock for every session.
@@ -177,11 +178,13 @@ COORDINATOR_DISPOSE_PLAIN = COORDINATOR_DISPOSE_GUARDED.replace(
     "        }",
     "        self.replay.dispose();",
 )
-LOCK_HELPER = """fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+LOCK_HELPER = """pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }"""
 LOCK_HELPER_UNWRAP = LOCK_HELPER.replace(
-    "    mutex.lock().unwrap_or_else(PoisonError::into_inner)\n", "    mutex.lock().unwrap()\n")
+    ".unwrap_or_else(|poisoned| poisoned.into_inner())", ".unwrap()")
 DRAIN_GUARD_TOLERANT = """                // The same tolerant lock as the drain loop: a poisoned
                 // composite state must not strand the queue on a stale
                 // `draining` entry (#805), which would wedge every later
@@ -717,7 +720,7 @@ mutants = [
      DISPOSE_CANCEL_ALL_GUARDED, DISPOSE_CANCEL_ALL_PLAIN,
      "replay::tests::timer_panic_in_dispose_keeps_the_store_usable"),
     # P1: every state entry must recover the guard from a poisoned lock.
-    ("poison-tolerant-state-lock-removed", "replay.rs",
+    ("poison-tolerant-state-lock-removed", "cleanup_task.rs",
      LOCK_HELPER, LOCK_HELPER_UNWRAP,
      "replay::tests::poisoned_replay_state_lock_still_serves_every_session"),
     ("coordinator-timer-panic-carried-by-start-guard", "coordinator.rs",
@@ -729,7 +732,7 @@ mutants = [
     ("coordinator-timer-panic-carried-by-dispose-guard", "coordinator.rs",
      COORDINATOR_DISPOSE_GUARDED, COORDINATOR_DISPOSE_PLAIN,
      "coordinator::tests::timer_panic_in_coordinator_dispose_keeps_state_usable"),
-    ("coordinator-poison-tolerant-lock-removed", "coordinator.rs",
+    ("coordinator-poison-tolerant-lock-removed", "cleanup_task.rs",
      LOCK_HELPER, LOCK_HELPER_UNWRAP,
      "coordinator::tests::poisoned_coordinator_state_lock_still_serves_every_session"),
     # The drain cleanup guard must use the same tolerant lock: skipping the
@@ -742,98 +745,44 @@ mutants = [
 for name, filename, before, after, _test in mutants:
     assert originals[filename].count(before) == 1, (name, originals[filename].count(before))
 
-manifest = f"""[package]
-name = "pdrs-turn-negative"
-version = "0.0.0"
-edition = "2024"
-
-[dependencies]
-pilotdeck-protocol = {{ path = {json.dumps(str(rust / 'pilotdeck-protocol'))} }}
-serde_json = {{ version = "=1.0.151", features = ["float_roundtrip"] }}
-sha2 = "=0.10.9"
-uuid = {{ version = "=1.27.0", features = ["v4"] }}
-"""
-lib_source = (
-    '#[path="runtime/turn/replay.rs"] pub mod replay;\n'
-    '#[path="runtime/turn/coordinator.rs"] pub mod coordinator;\n'
-    f'#[cfg(test)] #[path={json.dumps(str(baseline_helper))}] mod test_baseline;\n'
-)
+if requested - {m[0] for m in mutants}:
+    sys.exit(f"unknown mutants: {sorted(requested - {m[0] for m in mutants})}")
+selected = [m for m in mutants if not requested or m[0] in requested]
+paths = {"cleanup_task.rs": cleanup, "replay.rs": turn / "replay.rs",
+         "coordinator.rs": turn / "coordinator.rs", "oracle.json": oracle_path}
 
 
-def wait_for_slot():
-    slots = rust.parent / "scripts/cargo-slots.sh"
-    deadline = time.monotonic() + 1800
-    while True:
-        result = subprocess.run(["bash", str(slots)], capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            return
-        if "Operation not permitted" in result.stderr:
-            # Slot accounting needs `ps`; when the sandbox forbids it, fall
-            # back to running one mutant at a time, which is the same bound.
-            return
-        assert time.monotonic() < deadline, 'cargo slots unavailable for 30 minutes'
-        time.sleep(30)
+def run(name, test):
+    slots = wait_for_slot(rust.parent / "scripts/cargo-slots.sh")
+    with (output / f"{name}.slots.log").open("x") as log:
+        log.write(slots.stdout + slots.stderr)
+    result = run_owned(["cargo", "test", "--offline", "--manifest-path", str(rust / "Cargo.toml"),
+                        "-p", "pilotdeck-gateway", "--lib", "runtime::turn::" + test,
+                        "--", "--exact"], cwd=rust.parent, env=env, timeout=600)
+    raw = result.stdout + result.stderr
+    with (output / f"{name}.log").open("x") as log:
+        log.write(raw)
+    return result, raw
 
 
 summary = []
-with tempfile.TemporaryDirectory(prefix="pdrs-turn-negative-", dir="/tmp") as directory:
-    scratch = Path(directory)
-    env["CARGO_TARGET_DIR"] = str(scratch / "target")
-    (scratch / "src/runtime/turn").mkdir(parents=True)
-    (scratch / "tests/fixtures/turn-replay").mkdir(parents=True)
-    (scratch / "Cargo.toml").write_text(manifest)
-    (scratch / "src/lib.rs").write_text(lib_source)
-    for name, filename, before, after, test in [("baseline", None, None, None, "tests::")] + mutants:
-        if name != "baseline" and requested and name not in requested:
-            continue
-        for file, content in originals.items():
-            if file == filename:
-                assert content.count(before) == 1, (name, content.count(before))
-                content = content.replace(before, after, 1)
-            destination = (scratch / "tests/fixtures/turn-replay" if file == "oracle.json"
-                           else scratch / "src/runtime/turn")
-            (destination / file).write_text(content)
-        wait_for_slot()
-        command = ["cargo", "test", "--offline", "--manifest-path", str(scratch / "Cargo.toml"),
-                   "--lib", test, "--", "--nocapture"]
-        # Own process group so a timed-out mutant kills cargo *and* its rustc
-        # children; otherwise orphans keep writing into the temp target dir.
-        process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, text=True,
-                                   start_new_session=True)
-        try:
-            stdout, stderr = process.communicate(timeout=600)
-        except subprocess.TimeoutExpired:
-            # The process may exit between the timeout and the signal; a
-            # vanished group must not abort the remaining mutants.
-            try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            stdout, stderr = process.communicate()
-        raw = stdout + stderr
-        (output / f"negative-{name}.log").write_text(
-            "CARGO_TARGET_DIR=" + env["CARGO_TARGET_DIR"] + "\nCOMMAND " + " ".join(command)
-            + "\n" + raw + f"\nexit={process.returncode}\n"
-        )
-        returncode = process.returncode
-        if name == "baseline":
-            valid = returncode == 0 and "test result: ok" in raw
-        else:
-            valid = (
-                returncode == 101
-                and "test result: FAILED" in raw
-                and "could not compile" not in raw
-                and test in raw
-            )
-        summary.append(dict(name=name, file=filename, before=before, after=after,
-                            test=test, exit=returncode, valid=valid))
-        (output / "negative-summary.json").write_text(
-            json.dumps(summary, ensure_ascii=False, indent=2) + "\n"
-        )
-        print(f"{name}: {'PASS' if valid else 'INVALID'} exit={returncode}", flush=True)
-survivors = [cell["name"] for cell in summary if not cell["valid"]]
-if survivors:
-    print(f"invalid cells (baseline or surviving mutants): {', '.join(survivors)}", flush=True)
-    raise SystemExit(1)
-print("all mutations compiled and failed their targeted assertion; /tmp workspace removed")
+for name, filename, before, after, test in selected:
+    path = paths[filename]
+    with mutating_sources(rust.parent, [path]) as snapshots:
+        original = snapshots[path].decode()
+        assert original.count(before) == 1, (name, "stale anchor")
+        result, raw = run(name + "-positive", test)
+        assert result.returncode == 0 and "1 passed" in raw, (name, "positive failed")
+        path.write_text(original.replace(before, after, 1))
+        result, raw = run(name, test)
+        assert (result.returncode == 101 and "test result: FAILED" in raw
+                and f"{test} ... FAILED" in raw and "could not compile" not in raw), (
+                    name, "not a targeted runtime failure")
+    with mutating_sources(rust.parent, [path]):
+        result, raw = run(name + "-restored", test)
+        assert result.returncode == 0 and "1 passed" in raw, (name, "restore failed")
+    summary.append({"name": name, "test": test, "killed": True, "restored": True})
+    print(f"{name}: KILLED; restored PASS", flush=True)
+with (output / "summary.json").open("x") as log:
+    json.dump(summary, log, indent=2)
+print(f"{len(summary)} mutants killed and restored", flush=True)

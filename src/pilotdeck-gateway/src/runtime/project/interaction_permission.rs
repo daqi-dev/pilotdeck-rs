@@ -4,6 +4,7 @@
 //! adapter in interaction_hooks consumes request(); binding alone does not install hooks.
 use super::interaction_notice::{DiscardNotice, DiscardSource, take_session_notices};
 use super::{DisposeFuture, FamilyResource, InteractionProfile, RuntimeError, RuntimeResult};
+use crate::runtime::cleanup_task::lock;
 use crate::{
     config::permission::RuleSetHandle,
     host::{
@@ -24,7 +25,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -519,9 +520,7 @@ fn denied(message: &str) -> JsValue {
 fn stale() -> HostError {
     ModuleError::new("Permission generation or run is closed or superseded.").into()
 }
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|p| p.into_inner())
-}
+
 pub(super) fn close_resource(resource: Option<Arc<dyn FamilyResource>>) -> RuntimeResult {
     if let Some(resource) = resource {
         resource

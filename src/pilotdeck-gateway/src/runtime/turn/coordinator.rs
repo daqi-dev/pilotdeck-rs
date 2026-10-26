@@ -66,27 +66,17 @@
 //! residual ownership semantics — including this unenforceable contract —
 //! are registered as A7.2-COORDINATOR-SINK-OWNERSHIP-001 in
 //! `specs/gateway-parity/accepted-diffs.md`.
+use crate::runtime::cleanup_task::lock;
 use pilotdeck_protocol::{JsString, JsValue};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use super::replay::{ActiveTurnSnapshot, ActiveTurnSnapshotInput, TurnReplayStore};
 
 type Sink = Arc<dyn Fn(&JsValue) + Send + Sync>;
-
-/// Recovers the composite-state guard from a poisoned lock instead of
-/// panicking. TS keeps no lock, so a throwing host timer (or a panicking
-/// replay store) only fails its own call; a coordinator whose lock a panic
-/// elsewhere poisoned must keep serving every session and release every
-/// drain queue (#805, the same tolerant-lock shape as `mcp/wire.rs` and
-/// `runtime/refresh.rs`). Every state entry uses it, including the drain
-/// cleanup guard.
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// The registration record `emit`'s liveness check looks up. Separating it
 /// from the sink it owns is what keeps that check honest (codex-r8 P1 #1):

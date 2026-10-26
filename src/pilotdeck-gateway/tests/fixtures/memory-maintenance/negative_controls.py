@@ -11,10 +11,12 @@ root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 baseline = sys.argv[2] if len(sys.argv) > 2 else 'HEAD'
+helper = root / 'src/pilotdeck-gateway/src/runtime/cleanup_task.rs'
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/maintenance.rs'
 refresh = root / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 env = os.environ.copy()
-env['CARGO_TARGET_DIR'] = str(root / '_build/cargo-target')
+if not env.get('CARGO_TARGET_DIR'):
+    sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
 mutations = [
     ('cancel-reported-as-error', source, 'Err(_) => return, // Executor cancelled this invocation.', 'Err(_) => Err(MemoryProviderError::new("cancelled")),', 'cancelled_invocation_releases_flight_and_retries'),
     ('cancel-flight-leaked', source, 'Flight(Some(state.clone()))', 'Flight(None)', 'cancelled_invocation_releases_flight_and_retries'),
@@ -23,8 +25,8 @@ mutations = [
     ('panic-no-diagnostic', source, '(inner.diagnostic)(&JsString::from_utf16(message), &error);', 'let _ = message;', 'panic_after_await'),
     ('panic-lost-request', source, 'state.requested = true;', 'state.requested = false;', 'panic_requested'),
     ('panic-stuck-flight', source, 'state.in_flight = false;\n                    // Disarm', 'state.in_flight = true;\n                    // Disarm', 'panic_retry'),
-    ('panic-string-lost', source, 'payload.downcast_ref::<String>().map(String::as_str)', 'None', 'panic_string'),
-    ('panic-str-lost', source, '.downcast_ref::<&str>()\n        .copied()', '.downcast_ref::<&str>()\n        .and(None)' , 'panic_after_await'),
+    ('panic-string-lost', helper, 'payload.downcast_ref::<String>().map(String::as_str)', 'None', 'panic_string'),
+    ('panic-str-lost', helper, '.downcast_ref::<&str>()\n        .copied()', '.downcast_ref::<&str>()\n        .and(None)' , 'panic_after_await'),
     ('panic-fallback-lost', source, '.unwrap_or("memory maintenance panicked")', '.unwrap_or("wrong panic")', 'panic_opaque'),
     ('repoll-completed', source, 'first = Box::pin(std::future::ready(result));', 'let _ = result;', 'before_await'),
     ('production-root', source, 'self.project_root().to_string_lossy().as_ref().into()', '"/wrong".into()', 'runtime::project::factory::tests::memory_bundle_tests::memory_factory_injects_provider_and_publishes_three_handles'),
@@ -57,7 +59,7 @@ def run(name, test):
     log = result.stdout + result.stderr
     with (out / (name + '.log')).open('x') as f: f.write(log)
     return result, log
-with mutating_sources(root, [source, refresh], baseline=baseline) as snapshots:
+with mutating_sources(root, [source, refresh, helper], baseline=baseline) as snapshots:
     for name, path, old, new, test in mutations:
         original = snapshots[path]
         text = original.decode()
@@ -72,12 +74,13 @@ with mutating_sources(root, [source, refresh], baseline=baseline) as snapshots:
         finally:
             path.write_bytes(original)
 # The context manager verifies restoration against the same Git tree.
-slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-result = run_owned(['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib','runtime::memory::maintenance::tests'],cwd=root,env=env,timeout=240)
-with (out / 'restored.log').open('x') as f: f.write(result.stdout + result.stderr)
-assert result.returncode == 0
-if any(m[0] == 'production-handle' for m in mutations):
-    result, log = run('restored-production-handle', next(m[4] for m in mutations if m[0] == 'production-handle'))
-    assert result.returncode == 0 and '1 passed' in log
+with mutating_sources(root, [source, refresh, helper], baseline=baseline):
+    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+    result = run_owned(['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib','runtime::memory::maintenance::tests'],cwd=root,env=env,timeout=240)
+    with (out / 'restored.log').open('x') as f: f.write(result.stdout + result.stderr)
+    assert result.returncode == 0
+    if any(m[0] == 'production-handle' for m in mutations):
+        result, log = run('restored-production-handle', next(m[4] for m in mutations if m[0] == 'production-handle'))
+        assert result.returncode == 0 and '1 passed' in log
 with (out / 'summary.json').open('x') as f: json.dump(summary,f,indent=2)
 print(f'{len(summary)}/{len(mutations)} KILLED; restored PASS',flush=True)

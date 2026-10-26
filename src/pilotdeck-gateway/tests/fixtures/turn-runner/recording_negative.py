@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+
+ANCHOR_COUNTS = {'blocks-shape': 2}
 from _negative_common import mutate, run
 
 root = Path(__file__).resolve().parents[5]

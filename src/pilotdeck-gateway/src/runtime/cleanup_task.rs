@@ -1,6 +1,7 @@
 //! Completion must survive a task that is never polled, aborted, or panics.
 use crate::host::{HostError, ModuleError};
 use std::{
+    any::Any,
     future::Future,
     panic::AssertUnwindSafe,
     sync::{Mutex, MutexGuard},
@@ -95,8 +96,54 @@ pub(crate) fn spawn_completion<T: Send + Sync + 'static, E: Send + Sync + 'stati
     }));
 }
 
+/// Borrow a string panic payload; callers retain their own fallback wording.
+/// Borrowing also leaves payload destruction at the caller's cleanup boundary.
+pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> Option<&str> {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+}
+
+/// Recover the same guard after poisoning without clearing the poison flag.
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panic_messages_preserve_string_bytes_and_leave_fallback_to_callers() {
+        for message in ["", "panic", "错误\0\nſK"] {
+            assert_eq!(panic_message(&message), Some(message), "borrowed payload");
+            assert_eq!(
+                panic_message(&message.to_owned()),
+                Some(message),
+                "owned payload"
+            );
+        }
+        assert_eq!(panic_message(&42_u8), None, "opaque payload");
+    }
+
+    #[test]
+    fn recovering_lock_preserves_value_mutability_and_poison() {
+        let mutex = Mutex::new(1);
+        *lock(&mutex) += 1;
+        assert_eq!(*lock(&mutex), 2);
+        assert!(!mutex.is_poisoned());
+        let panic = std::panic::catch_unwind(|| {
+            let mut value = mutex.lock().unwrap();
+            *value = 7;
+            panic!("poison the mutex");
+        });
+        assert!(panic.is_err());
+        assert!(mutex.is_poisoned());
+        *lock(&mutex) += 1;
+        assert_eq!(*lock(&mutex), 8, "poisoned value retained");
+        assert!(mutex.is_poisoned(), "recovery must not clear poisoning");
+    }
 }

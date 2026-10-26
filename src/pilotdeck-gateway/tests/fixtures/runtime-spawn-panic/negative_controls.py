@@ -19,6 +19,7 @@ parser.add_argument('--only', action='append', default=[])
 args = parser.parse_args()
 out = Path(args.output).resolve()
 out.mkdir(parents=True, exist_ok=False)
+helper = 'src/pilotdeck-gateway/src/runtime/cleanup_task.rs'
 mcp = 'src/pilotdeck-gateway/src/runtime/mcp/registry.rs'
 pub = 'src/pilotdeck-gateway/src/runtime/turn/publish.rs'
 background = 'src/pilotdeck-gateway/src/runtime/background.rs'
@@ -41,7 +42,7 @@ mutants = [
     ('durable-construction', pub, re.escape('Err(_) if !state.failure_published =>'), 'Err(_) if false && !state.failure_published =>', construction, 'construction complete visible trace'),
     ('shared-join', mcp, r'let outcome = task.await.unwrap_or_else\(\|error\| \{.*?\n        \}\);', 'let outcome = task.await.unwrap();', shared, 'shared failure:'),
     ('shared-retain', mcp, r'sender.send_replace\(Some\(outcome\)\);', 'drop((sender, outcome));', shared, 'shared failure:'),
-    ('shared-owned-payload', mcp, re.escape('.or_else(|| payload.downcast_ref::<String>().map(String::as_str))'), '', payload, 'panic payload'),
+    ('shared-owned-payload', helper, re.escape('.or_else(|| payload.downcast_ref::<String>().map(String::as_str))'), '', payload, 'panic payload'),
     ('shared-fallback', mcp, re.escape('.unwrap_or("MCP lifecycle task ended unexpectedly")'), '.unwrap_or("wrong fallback")', payload, 'panic payload'),
     ('durable-join', pub, r'let outcome = match future \{.*?\n            \};', 'let outcome = match future { Ok(future) => { let _ = publication.executor.spawn(future).await; Ok(Ok(())) }, Err(payload) => Err(payload) };', durable, 'failure event:'),
     ('durable-pending', pub, re.escape('state.pending.remove(&write);'), 'let _ = write;', durable, 'spawn completion deadline'),
@@ -59,8 +60,8 @@ mutants = [
     ('background-construction', background, re.escape('match catch_port(callback) {'), 'match Ok::<_, Box<dyn std::any::Any + Send>>(callback()) {', reservation, 'injected construction panic'),
     ('background-capacity', background, re.escape('lock(&self.inner.state).pending_starts -= 1;'), 'let _ = &self.inner;', reservation, 'construction reservation matrix'),
     ('background-start-drain', background, r'(?m)^        self\.inner\.starts\.send_modify\(\|starts\| \*starts -= 1\);', '        let _ = &self.inner.starts;', reservation, 'construction dispose deadline'),
-    ('background-str-payload', background, r'let message = payload\s*\.downcast_ref::<&str>\(\)\s*\.copied\(\)', 'let message = None::<&str>', reservation, 'construction panic error'),
-    ('background-owned-payload', background, re.escape('.or_else(|| payload.downcast_ref::<String>().map(String::as_str))'), '', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
+    ('background-str-payload', helper, re.escape('.downcast_ref::<&str>()\n        .copied()'), '.downcast_ref::<&str>().and(None)', reservation, 'construction panic error'),
+    ('background-owned-payload', helper, re.escape('.or_else(|| payload.downcast_ref::<String>().map(String::as_str))'), '', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
     ('background-fallback', background, re.escape('            "Background initial snapshot construction failed.",'), '            "wrong fallback",', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
     ('clock-catch', background, re.escape('match catch_port(callback) {'), 'match Ok::<_, Box<dyn std::any::Any + Send>>(callback()) {', 'clock_start_panic_releases_reservations_and_observers', 'injected clock panic'),
     ('clock-locked', background, re.escape('started_at: reservation.call(|| (self.inner.now)(), "Background clock failed.")?,'), 'started_at: reservation.call(|| { let _state = lock(&self.inner.state); (self.inner.now)() }, "Background clock failed.")?,', 'clock_start_panic_releases_reservations_and_observers', 'WouldBlock'),
@@ -146,6 +147,7 @@ for name, relative, pattern, replacement, test, anchor in mutants:
         result, log = run(test, name)
         assert result.returncode == 101 and f'{test} ... FAILED' in log and any(part in log for part in anchor.split('|')) and 'test result: FAILED' in log, (name, 'not an anchored runtime failure')
         print(f'{name}: KILLED ({test}: {anchor})', flush=True)
-    result, log = run(test, name + '-restored')
-    assert result.returncode == 0 and f'{test} ... ok' in log, (name, 'restored test failed')
+    with mutating_sources(root, [path]):
+        result, log = run(test, name + '-restored')
+        assert result.returncode == 0 and f'{test} ... ok' in log, (name, 'restored test failed')
 print(f'{len(mutants)} mutants killed and restored', flush=True)

@@ -3,6 +3,7 @@
 use super::interaction_notice::{DiscardNotice, DiscardSource, take_session_notices};
 use super::interaction_permission::{InteractionPermission, TurnPermission};
 use super::{DisposeFuture, FamilyResource, RuntimeError, RuntimeResult};
+use crate::runtime::cleanup_task::lock;
 use crate::{
     config::permission::PermissionRule,
     hooks::protocol::*,
@@ -23,7 +24,7 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashMap;
 use std::sync::{
-    Arc, Mutex, MutexGuard, Weak,
+    Arc, Mutex, Weak,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use tokio::{runtime::Handle, sync::watch};
@@ -682,9 +683,7 @@ fn session_allow_rules(value: Option<&JsValue>, fallback: &JsString) -> Vec<Perm
 fn stale() -> HostError {
     ModuleError::new("Hook generation or run is closed or superseded.").into()
 }
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|p| p.into_inner())
-}
+
 pub(super) async fn close_resource(resource: Option<Arc<dyn FamilyResource>>) -> RuntimeResult {
     if let Some(resource) = resource {
         resource

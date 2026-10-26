@@ -17,6 +17,8 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import run_owned, wait_for_slot
 
+ANCHOR_COUNTS = {'run-id-is-identity': 2, 'discard-is-completion': 2}
+
 
 ANCHOR_COUNTS = {'run-id-is-identity': 2, 'discard-is-completion': 2}
 

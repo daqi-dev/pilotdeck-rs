@@ -730,11 +730,8 @@ fn start_ready_disposals(
                         future.as_mut().poll(cx)
                     }))
                     .unwrap_or_else(|payload| {
-                        let message = payload
-                            .downcast_ref::<String>()
-                            .cloned()
-                            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-                            .unwrap_or_else(|| "Plugin dispose callback panicked.".to_owned());
+                        let message = crate::runtime::cleanup_task::panic_message(payload.as_ref())
+                            .unwrap_or("Plugin dispose callback panicked.");
                         std::task::Poll::Ready(Err(PluginRuntimeError::new(message)))
                     })
                 }));

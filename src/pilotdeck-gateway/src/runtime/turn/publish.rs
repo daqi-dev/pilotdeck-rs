@@ -12,11 +12,12 @@
 //! no-op. `next` waits for those trailing writes before retaining replay and
 //! detaching the sink. A result_unknown is an operational uncertainty, not a
 //! second business completion or the final WS response (owned by connection).
+use crate::runtime::cleanup_task::lock;
 use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 
 use pilotdeck_protocol::{JsString, JsValue};
 use tokio::sync::{Notify, oneshot};
@@ -28,10 +29,6 @@ use super::projector::{
 use crate::metadata::object;
 
 use crate::storage::{FileRunRegistry, RunAcceptInput, RunRef, RunRegistryError};
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
-}
 
 type RegistryResult<T> = Result<T, RunRegistryError>;
 pub type RegistryFuture<T> = Pin<Box<dyn Future<Output = RegistryResult<T>> + Send + 'static>>;

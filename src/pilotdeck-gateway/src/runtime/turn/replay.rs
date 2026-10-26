@@ -40,25 +40,17 @@
 //! entry therefore recovers a poisoned lock instead of panicking, and each
 //! timer call releases the guard before resuming the unwind.
 
+use crate::runtime::cleanup_task::lock;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json, timer_delay_ms};
 use std::collections::{HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_EVENT_LIMIT: usize = 500;
 pub const DEFAULT_BYTE_LIMIT: usize = 256 * 1024;
 pub const DEFAULT_TERMINAL_RETENTION_MS: u64 = 30_000;
-
-/// Recovers the state guard from a poisoned lock instead of panicking. TS
-/// keeps no lock, so a throwing host timer only fails its own call; a store
-/// whose lock a panic elsewhere poisoned must keep serving every session
-/// (#805, the same tolerant-lock shape as `mcp/wire.rs` and
-/// `runtime/refresh.rs`). Every state entry uses it.
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// A per-session deadline timer, the Rust counterpart of the TS store's
 /// `Map<string, setTimeout>`: `set` replaces the session's timer and `cancel`

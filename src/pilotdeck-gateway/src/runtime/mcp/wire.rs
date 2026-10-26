@@ -29,12 +29,13 @@ use super::client::{McpClientError, McpErrorCode};
 use super::http::HttpLink;
 use super::protocol::{Inbound, ResultSchema, parse_inbound, parse_result};
 use crate::js_value;
+pub(super) use crate::runtime::cleanup_task::lock;
 use pilotdeck_protocol::{JsObject, JsValue};
 use std::{
     collections::HashMap,
     process::Stdio,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -95,10 +96,6 @@ const DEFAULT_INHERITED_ENV_VARS: [&str; 6] = ["HOME", "LOGNAME", "PATH", "SHELL
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
 
 pub(super) type Reply = Result<JsValue, McpClientError>;
-
-pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|error| error.into_inner())
-}
 
 /// A Node `setTimeout` delay: out-of-range or `NaN` becomes 1 ms, and
 /// fractional milliseconds truncate (`async_hooks::timer_delay_ms`).

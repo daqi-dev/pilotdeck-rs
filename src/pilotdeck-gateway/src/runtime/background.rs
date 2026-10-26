@@ -319,10 +319,7 @@ impl StartReservation<'_> {
             Err(payload) => {
                 // Even a payload whose destructor panics cannot strand starts.
                 self.release();
-                let message = payload
-                    .downcast_ref::<&str>()
-                    .copied()
-                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                let message = crate::runtime::cleanup_task::panic_message(payload.as_ref())
                     .unwrap_or(fallback);
                 Err(BackgroundTaskError::error(JsString::from(message)))
             }

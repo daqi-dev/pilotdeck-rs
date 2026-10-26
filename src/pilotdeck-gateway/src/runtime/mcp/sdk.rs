@@ -25,12 +25,13 @@ use super::super::project::ProjectRuntime;
 use crate::config::permission::{GatewaySessionPermissionRuleSetRegistry, PermissionRule};
 use crate::config::session_value::SessionValue;
 use crate::js_value;
+use crate::runtime::cleanup_task::lock;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fmt,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
 };
 
 /// The warning returned for `mode: "auto"`.
@@ -716,10 +717,6 @@ impl SdkMcpConfig {
 }
 
 // ------------------------------------------------------------------ helpers
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|error| error.into_inner())
-}
 
 fn require_input<'a>(input: &'a JsValue, field: &str) -> Result<&'a JsValue, SdkMcpError> {
     match input {

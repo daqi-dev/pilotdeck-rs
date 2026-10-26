@@ -32,6 +32,7 @@ use super::{
     DisposeFuture, ProjectRuntimeFactory, ResourceBundle, RuntimeError, RuntimeResources,
     RuntimeResult, TelemetryClient,
 };
+use crate::runtime::cleanup_task::lock;
 use crate::{
     config::{self, Env},
     runtime::plugins::PluginRuntimeOptions,
@@ -663,12 +664,6 @@ struct Slots {
     memory: Option<Arc<dyn FamilyResource>>,
     memory_service: Option<Arc<dyn FamilyResource>>,
     memory_management: Option<Arc<dyn FamilyResource>>,
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Read view of one in-progress (or published) generation.
