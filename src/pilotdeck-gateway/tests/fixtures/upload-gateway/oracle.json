@@ -3758,6 +3758,126 @@
       ]
     },
     {
+      "name": "error-message-fidelity",
+      "operations": [
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "absent\ud800",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "f\ud800",
+            "contentBase64": "AA=="
+          }
+        }
+      ],
+      "results": [
+        {
+          "error": {
+            "code": "PROJECT_NOT_FOUND",
+            "message": "Unknown projectKey: absent\ud800"
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "absent\ud800",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "Unexpected or duplicate file part: f\ud800"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-1",
+              "clientFileId": "f\ud800",
+              "bytes": 1,
+              "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "part-size-limits",
       "operations": [
         {

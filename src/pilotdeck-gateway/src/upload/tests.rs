@@ -88,6 +88,25 @@ fn harness(project: &Path, other: &Path, options: &JsValue) -> Harness {
 fn normalize(text: &str, project: &Path) -> String {
     text.replace(&*project.to_string_lossy(), "<PROJECT>")
 }
+/// `normalize` over UTF-16 units: the A8.1 fixture has no surrogate messages,
+/// but the shared replay must not introduce a lossy boundary of its own.
+fn normalize_message(message: &JsString, project: &Path) -> JsString {
+    let needle = project.to_string_lossy().encode_utf16().collect::<Vec<_>>();
+    let replacement = "<PROJECT>".encode_utf16().collect::<Vec<_>>();
+    let haystack = message.units();
+    let mut out = Vec::with_capacity(haystack.len());
+    let mut index = 0;
+    while index < haystack.len() {
+        if haystack[index..].starts_with(&needle) {
+            out.extend_from_slice(&replacement);
+            index += needle.len();
+        } else {
+            out.push(haystack[index]);
+            index += 1;
+        }
+    }
+    JsString::from_utf16(out)
+}
 fn compact(value: &JsValue) -> String {
     stringify_json(value)
         .unwrap()
@@ -197,7 +216,7 @@ fn replay_oracle() -> HashSet<String> {
                     } else {
                         text(&e.code)
                     };
-                    let message = text(&normalize(&e.message, &h.project));
+                    let message = JsValue::String(normalize_message(&e.message, &h.project));
                     object([("error", object([("code", code), ("message", message)]))])
                 }
             };
@@ -453,7 +472,7 @@ fn upload_lease_pins_release_is_idempotent_and_orphans_expire() {
         .err()
         .unwrap();
     assert_eq!(
-        (e.code.as_str(), e.message.as_str()),
+        (e.code.as_str(), e.message_string().as_str()),
         ("ATTACHMENT_EXPIRED", "Upload expired.")
     );
     assert_eq!(status(&h.store.get("upload-1").unwrap()), "expired");
@@ -535,7 +554,7 @@ fn lease_link_enoent_code() -> String {
         .err()
         .unwrap();
     assert_eq!(
-        e.message,
+        e.message_string(),
         "Attachment artifact became unavailable while acquiring its Gateway lease."
     );
     // TS:272 removes the half-built lease directory.
@@ -646,7 +665,7 @@ fn part_write_failure_code() -> String {
     assert_eq!(e.code, "ENOSPC");
     let record = h.store.get("upload-1").unwrap();
     assert_eq!(status(&record), "failed");
-    assert_eq!(string(&record, "errorMessage"), Some(e.message));
+    assert_eq!(string(&record, "errorMessage"), Some(e.message_string()));
     string(&record, "errorCode").unwrap()
 }
 
@@ -792,7 +811,7 @@ fn upload_paths_outside_upload_root_are_rejected() {
     for id in ["../evil", "a/b", "..", "", long.as_str(), "a..b", "é"] {
         let e = h.store.get(id).err().unwrap();
         assert_eq!(
-            (e.code.as_str(), e.message.as_str()),
+            (e.code.as_str(), e.message_string().as_str()),
             ("UPLOAD_NOT_FOUND", "Invalid uploadId."),
             "{id:?}"
         );
@@ -849,7 +868,7 @@ fn upload_metadata_directory_reports_the_read_stage() {
     let error = h.store.get("upload-1").unwrap_err();
     assert_eq!(error.code, "EISDIR");
     assert_eq!(
-        error.message,
+        error.message_string(),
         "EISDIR: illegal operation on a directory, read"
     );
     assert!(!error.dialog);
@@ -975,7 +994,7 @@ fn upload_mkdir_failure_matches_real_ts_caller() {
     assert_eq!(error.code, row["observed"]["code"]);
     assert_eq!(
         error
-            .message
+            .message_string()
             .replace(&scratch.0.to_string_lossy().into_owned(), "<dir>"),
         row["observed"]["message"]
     );

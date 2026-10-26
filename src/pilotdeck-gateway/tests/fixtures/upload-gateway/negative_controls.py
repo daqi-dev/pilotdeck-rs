@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Temporary upload-gateway product mutations; each must turn a named test red.
 
-The adapter source is new in this PR, so ``mutating_sources`` refuses to run
-before it exists in HEAD (it verifies the committed bytes first). Run this
-after the coordinator commits the branch:
+The product files already exist in HEAD, but ``mutating_sources`` also refuses
+while the fix-r2 patch is uncommitted (the working tree must match HEAD). Run
+this after the coordinator commits the branch:
 
     CARGO_TARGET_DIR=<worktree>/_build/cargo-target \
       python3 src/pilotdeck-gateway/tests/fixtures/upload-gateway/negative_controls.py <out-dir>
+
+For a pre-commit rehearsal only, set ``PDRS_NEG_BASELINE`` to a tree object with
+the exact same bytes as the working tree (e.g. ``git stash create <label>``);
+the default remains ``HEAD`` so a stale tree is never silently accepted.
 
 ``--check`` only verifies that every mutation anchor still matches the current
 source; it does not mutate, compile, or need a commit.
@@ -38,7 +42,8 @@ KEY_ORDER = 'upload::gateway_tests::upload_gateway_idempotency_key_type_is_check
 KEY_NUMBER = 'upload::gateway_tests::upload_gateway_idempotency_number_messages_match_node'
 KEY_DEDUPE = 'upload::gateway_tests::upload_gateway_idempotency_hash_still_dedupes_after_moving_into_store'
 FIDELITY = 'upload::gateway_tests::upload_gateway_preserves_raw_utf16_parameters'
-SIZE = 'upload::gateway_tests::upload_gateway_part_size_cap_is_checked_before_decoding'
+SIZE = 'upload::gateway_tests::upload_gateway_part_size_cap_is_checked_before_allocating'
+MESSAGES = 'upload::gateway_tests::upload_gateway_error_messages_preserve_lone_surrogates'
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -75,10 +80,62 @@ mutations = [
     ('base64-limit-off-by-one', GATEWAY,
      '    if decoded_len > MAX_REMOTE_UPLOAD_PART_BYTES {',
      '    if decoded_len > MAX_REMOTE_UPLOAD_PART_BYTES + 1 {', SIZE,
-     'oversized part decoded'),
+     '#865: 8 MiB + 1 must be rejected by the upload-part cap'),
     ('base64-precheck-removed', GATEWAY,
      '    if decoded_len > MAX_REMOTE_UPLOAD_PART_BYTES {',
-     '    if false {', SIZE, 'oversized part decoded'),
+     '    if false {', SIZE,
+     '#865: 8 MiB + 1 must be rejected by the upload-part cap'),
+    ('cap-after-decode', GATEWAY, '''    // Check the exact decoded size before either allocation: a 1 GiB spelling
+    // must be rejected without first copying it into an encoded buffer.
+    if decoded_len > MAX_REMOTE_UPLOAD_PART_BYTES {
+        return Err(UploadError::dialog(
+            "UPLOAD_PART_TOO_LARGE",
+            format!("Remote upload parts are limited to {MAX_REMOTE_UPLOAD_PART_BYTES} bytes."),
+        ));
+    }
+    // Shape validation proves the input is ASCII, so the byte view is exact.
+    #[cfg(test)]
+    DECODE_CALLS.with(|calls| calls.set(calls.get() + 1));
+    let encoded: Vec<u8> = units.iter().map(|&unit| unit as u8).collect();
+    let bytes = BASE64.decode(encoded).map_err(|_| invalid())?;''', '''    // Shape validation proves the input is ASCII, so the byte view is exact.
+    #[cfg(test)]
+    DECODE_CALLS.with(|calls| calls.set(calls.get() + 1));
+    let encoded: Vec<u8> = units.iter().map(|&unit| unit as u8).collect();
+    let bytes = BASE64.decode(encoded).map_err(|_| invalid())?;
+    // Check the exact decoded size before either allocation: a 1 GiB spelling
+    // must be rejected without first copying it into an encoded buffer.
+    if decoded_len > MAX_REMOTE_UPLOAD_PART_BYTES {
+        return Err(UploadError::dialog(
+            "UPLOAD_PART_TOO_LARGE",
+            format!("Remote upload parts are limited to {MAX_REMOTE_UPLOAD_PART_BYTES} bytes."),
+        ));
+    }''', SIZE,
+     '#865: 8 MiB + 1 must be rejected before the encoded allocation and decode'),
+    ('project-error-lossy', STORE, '''fn unknown_project_key(project_key: &JsString) -> UploadError {
+    let mut message = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
+    message.extend_from_slice(project_key.units());
+    UploadError::dialog("PROJECT_NOT_FOUND", JsString::from_utf16(message))
+}''', '''fn unknown_project_key(project_key: &JsString) -> UploadError {
+    let mut message = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
+    message.extend_from_slice(project_key.units());
+    UploadError::dialog(
+        "PROJECT_NOT_FOUND",
+        JsString::from(String::from_utf16_lossy(&message)),
+    )
+}''', MESSAGES,
+     '#865: PROJECT_NOT_FOUND must keep the raw UTF-16 projectKey (no from_utf16_lossy)'),
+    ('part-error-lossy', STORE, '''fn part_message(prefix: &str, value: &JsString, suffix: &str) -> JsString {
+    let mut message = prefix.encode_utf16().collect::<Vec<_>>();
+    message.extend_from_slice(value.units());
+    message.extend(suffix.encode_utf16());
+    JsString::from_utf16(message)
+}''', '''fn part_message(prefix: &str, value: &JsString, suffix: &str) -> JsString {
+    let mut message = prefix.encode_utf16().collect::<Vec<_>>();
+    message.extend_from_slice(value.units());
+    message.extend(suffix.encode_utf16());
+    JsString::from(String::from_utf16_lossy(&message))
+}''', MESSAGES,
+     '#865: UPLOAD_MANIFEST_MISMATCH must keep the raw UTF-16 clientFileId (no from_utf16_lossy)'),
     ('base64-trailing-bits-rejected', GATEWAY,
      '        .with_decode_allow_trailing_bits(true)',
      '        .with_decode_allow_trailing_bits(false)', ORDER,
@@ -150,7 +207,8 @@ if selected:
 env = os.environ.copy()
 assert env.get('CARGO_TARGET_DIR'), 'set CARGO_TARGET_DIR to the caller build directory'
 summary = []
-with mutating_sources(root, [GATEWAY, STORE]) as snapshots:
+baseline = os.environ.get('PDRS_NEG_BASELINE', 'HEAD')
+with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:
     for name, source, old, new, test, expected in mutations:
         original = snapshots[source]
         before = hashlib.sha256(original).hexdigest()

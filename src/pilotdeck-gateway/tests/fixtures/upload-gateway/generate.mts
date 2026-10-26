@@ -245,6 +245,15 @@ add('parameter-fidelity', [
   call('part', { uploadId: 'upload-1', clientFileId: 'file-1', contentBase64: 'aGVsbG8=' }),
 ]);
 
+// Error messages that echo a caller string keep its raw UTF-16 units: Node
+// only replacement-encodes lone surrogates at the filesystem/UTF-8 boundary,
+// never while building the Error.message returned to the gateway (#865 P1-1).
+add('error-message-fidelity', [
+  params({ projectKey: 'absent\ud800', files: [file()] }),
+  params({ projectKey: 'p', files: [file()] }),
+  call('part', { uploadId: 'upload-1', clientFileId: 'f\ud800', contentBase64: 'AA==' }),
+]);
+
 // decodeUploadPart checks the 8 MiB ceiling before decoding. Exactly 8 MiB is
 // accepted and written; one byte more is rejected before decodeUploadPart
 // returns, so the provider is never called.
@@ -321,7 +330,10 @@ try {
     let created = 0;
     const store = new UploadStore({
       resolveProject: async (key: string) =>
-        key === 'missing' ? join(project, 'absent') : key === 'p\ufffd' ? replacement : project,
+        key === 'missing' ||
+        (scenario.name === 'error-message-fidelity' && key === 'absent\ud800')
+          ? join(project, 'absent')
+          : key === 'p\ufffd' ? replacement : project,
       listProjects: async () => [project, replacement],
       now: () => new Date(now),
       uuid: () => `upload-${++created}`,

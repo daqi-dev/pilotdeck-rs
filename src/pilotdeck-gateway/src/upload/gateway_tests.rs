@@ -1,6 +1,7 @@
 //! Replays the real-TS gateway oracle and pins projection/ordering rules.
 use super::gateway::{
-    MAX_REMOTE_UPLOAD_PART_BYTES, UploadGateway, UploadProvider, decode_upload_part,
+    MAX_REMOTE_UPLOAD_PART_BYTES, UploadGateway, UploadProvider, decode_calls, decode_upload_part,
+    reset_decode_calls,
 };
 use super::*;
 use sha2::{Digest, Sha256};
@@ -119,15 +120,20 @@ fn harness(project: &Path, unavailable: bool) -> Harness {
     let now = Arc::new(AtomicI64::new(EPOCH));
     let resolved = project.to_owned();
     let listed = vec![project.to_owned(), project.join("replacement")];
+    // "absent" + U+D800 (lone surrogate) is the P1-1 #865 project-not-found
+    // probe; only this exact UTF-16 spelling resolves off the real project.
+    let absent_surrogate = "absent".encode_utf16().chain([0xd800]).collect::<Vec<_>>();
     let mut options = UploadStoreOptions::new(
         move |key: &JsString| {
-            Ok(if key.equals_str("missing") {
-                resolved.join("absent")
-            } else if key.equals_str("p\u{fffd}") {
-                resolved.join("replacement")
-            } else {
-                resolved.clone()
-            })
+            Ok(
+                if key.equals_str("missing") || key.units() == absent_surrogate.as_slice() {
+                    resolved.join("absent")
+                } else if key.equals_str("p\u{fffd}") {
+                    resolved.join("replacement")
+                } else {
+                    resolved.clone()
+                },
+            )
         },
         move || Ok(listed.clone()),
     );
@@ -161,6 +167,25 @@ fn compact(value: &JsValue) -> String {
 fn normalized(value: &JsValue, project: &Path) -> JsValue {
     let path = project.to_string_lossy();
     parse_json(&compact(value).replace(&*path, "<PROJECT>")).unwrap()
+}
+/// Same `<PROJECT>` normalization as `normalized`, but over UTF-16 units so a
+/// message's lone surrogate is not replaced by a lossy String round trip.
+fn normalize_message(message: &JsString, project: &Path) -> JsString {
+    let needle = project.to_string_lossy().encode_utf16().collect::<Vec<_>>();
+    let replacement = "<PROJECT>".encode_utf16().collect::<Vec<_>>();
+    let haystack = message.units();
+    let mut out = Vec::with_capacity(haystack.len());
+    let mut index = 0;
+    while index < haystack.len() {
+        if haystack[index..].starts_with(&needle) {
+            out.extend_from_slice(&replacement);
+            index += needle.len();
+        } else {
+            out.push(haystack[index]);
+            index += 1;
+        }
+    }
+    JsString::from_utf16(out)
 }
 fn expand(value: &JsValue) -> JsValue {
     if let JsValue::Object(fields) = value
@@ -267,10 +292,7 @@ fn run(h: &Harness, operation: &JsValue) -> JsValue {
                     ("code", text(&e.code)),
                     (
                         "message",
-                        text(
-                            &e.message
-                                .replace(&*h.project.to_string_lossy(), "<PROJECT>"),
-                        ),
+                        JsValue::String(normalize_message(&e.message, &h.project)),
                     ),
                 ]),
             ),
@@ -302,8 +324,8 @@ fn upload_gateway_oracle_replay_matches_ts_results() {
             operations += 1;
         }
     }
-    assert_eq!(array(&oracle, "scenarios").len(), 9, "scenario coverage");
-    assert!(operations >= 145, "operation coverage: {operations}");
+    assert_eq!(array(&oracle, "scenarios").len(), 10, "scenario coverage");
+    assert!(operations >= 148, "operation coverage: {operations}");
     println!("PDRS_UPLOAD_GATEWAY operations={operations}");
 }
 
@@ -364,7 +386,8 @@ fn upload_gateway_validation_order_matches_ts() {
     let js = |text: &str| parse_json(text).unwrap();
     let error = |params: &str| {
         let e = h.gateway.part(&js(params)).unwrap_err();
-        (e.code, e.message)
+        let message = e.message_string();
+        (e.code, message)
     };
     // uploadId wins over clientFileId and contentBase64.
     assert_eq!(
@@ -406,7 +429,10 @@ fn upload_gateway_validation_order_matches_ts() {
         .create(&js(r#"{"projectKey":"   ","files":[],"idempotencyKey":5}"#))
         .expect_err("projectKey whitespace must be rejected before the provider");
     assert_eq!(
-        (whitespace.code.as_str(), whitespace.message.as_str()),
+        (
+            whitespace.code.as_str(),
+            whitespace.message_string().as_str()
+        ),
         ("PROJECT_NOT_FOUND", "projectKey is required for uploads."),
         "projectKey whitespace must be rejected before the provider"
     );
@@ -415,7 +441,10 @@ fn upload_gateway_validation_order_matches_ts() {
         .create(&js(r#"{"projectKey":5,"files":[],"idempotencyKey":5}"#))
         .expect_err("non-string projectKey must be rejected before the provider");
     assert_eq!(
-        (non_string.code.as_str(), non_string.message.as_str()),
+        (
+            non_string.code.as_str(),
+            non_string.message_string().as_str()
+        ),
         (
             "gateway_request_failed",
             "input.projectKey?.trim is not a function"
@@ -429,7 +458,7 @@ fn upload_gateway_validation_order_matches_ts() {
         ))
         .unwrap_err();
     assert_eq!(
-        (files.code.as_str(), files.message.as_str()),
+        (files.code.as_str(), files.message_string().as_str()),
         ("UPLOAD_MANIFEST_INVALID", "files must be an array."),
         "files must be an array before the store's manifest validation"
     );
@@ -537,7 +566,7 @@ fn upload_gateway_null_attachment_keeps_ts_property_error() {
         .get(&object([("uploadId", text(&upload_id))]))
         .expect_err("null attachment must keep the TS property-access error");
     assert_eq!(
-        (error.code.as_str(), error.message.as_str()),
+        (error.code.as_str(), error.message_string().as_str()),
         (
             "gateway_request_failed",
             "Cannot read properties of null (reading 'attachmentId')"
@@ -591,10 +620,10 @@ fn upload_gateway_idempotency_number_messages_match_node() {
         assert_eq!(error.code, "ERR_INVALID_ARG_TYPE");
         assert!(
             error
-                .message
+                .message_string()
                 .ends_with(&format!("type number ({received})")),
             "Node spells {literal} as {received}, got: {}",
-            error.message
+            error.message_string()
         );
     }
 }
@@ -707,7 +736,63 @@ fn upload_gateway_lone_surrogate_idempotency_key_hashes_like_node() {
 }
 
 #[test]
-fn upload_gateway_part_size_cap_is_checked_before_decoding() {
+fn upload_gateway_error_messages_preserve_lone_surrogates() {
+    let scratch = Scratch::new();
+    let h = harness(&scratch.project("message-fidelity"), false);
+    let lone = |prefix: &str| {
+        JsString::from_utf16(prefix.encode_utf16().chain([0xd800]).collect::<Vec<_>>())
+    };
+    let files = parse_json(r#"[{"clientFileId":"file-1","name":"f","relativePath":"f","size":5}]"#)
+        .unwrap();
+    let project_key = lone("absent");
+    let error = h
+        .gateway
+        .create(&object([
+            ("projectKey", JsValue::String(project_key.clone())),
+            ("files", files),
+        ]))
+        .unwrap_err();
+    let mut expected = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
+    expected.extend_from_slice(project_key.units());
+    assert_eq!(
+        error.message,
+        JsString::from_utf16(expected),
+        "#865: PROJECT_NOT_FOUND must keep the raw UTF-16 projectKey (no from_utf16_lossy)"
+    );
+    assert_eq!(
+        error.message.units().last(),
+        Some(&0xd800),
+        "#865: the PROJECT_NOT_FOUND message must end in the lone surrogate"
+    );
+
+    let upload_id = created(&h);
+    let client_file_id = lone("f");
+    let error = h
+        .gateway
+        .part(&object([
+            ("uploadId", text(&upload_id)),
+            ("clientFileId", JsValue::String(client_file_id.clone())),
+            ("contentBase64", text("AA==")),
+        ]))
+        .unwrap_err();
+    let mut expected = "Unexpected or duplicate file part: "
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    expected.extend_from_slice(client_file_id.units());
+    assert_eq!(
+        error.message,
+        JsString::from_utf16(expected),
+        "#865: UPLOAD_MANIFEST_MISMATCH must keep the raw UTF-16 clientFileId (no from_utf16_lossy)"
+    );
+    assert_eq!(
+        error.message.units().last(),
+        Some(&0xd800),
+        "#865: the UPLOAD_MANIFEST_MISMATCH message must end in the lone surrogate"
+    );
+}
+
+#[test]
+fn upload_gateway_part_size_cap_is_checked_before_allocating() {
     let zeros = |bytes: usize| {
         let (full, rem) = (bytes / 3, bytes % 3);
         let mut units = vec![u16::from(b'A'); full * 4 + if rem == 0 { 0 } else { rem + 1 }];
@@ -721,22 +806,29 @@ fn upload_gateway_part_size_cap_is_checked_before_decoding() {
         ]);
         JsValue::String(JsString::from_utf16(units))
     };
+    reset_decode_calls();
+    let error = decode_upload_part(&zeros(MAX_REMOTE_UPLOAD_PART_BYTES + 1))
+        .expect_err("#865: 8 MiB + 1 must be rejected by the upload-part cap");
+    assert_eq!(
+        error.code, "UPLOAD_PART_TOO_LARGE",
+        "8 MiB + 1 must hit the upload-part cap"
+    );
+    assert_eq!(
+        decode_calls(),
+        0,
+        "#865: 8 MiB + 1 must be rejected before the encoded allocation and decode"
+    );
     let exact = decode_upload_part(&zeros(MAX_REMOTE_UPLOAD_PART_BYTES)).unwrap();
     assert_eq!(
         exact.len(),
         MAX_REMOTE_UPLOAD_PART_BYTES,
         "exactly 8 MiB must decode"
     );
-    match decode_upload_part(&zeros(MAX_REMOTE_UPLOAD_PART_BYTES + 1)) {
-        Err(error) => assert_eq!(
-            error.code, "UPLOAD_PART_TOO_LARGE",
-            "8 MiB + 1 must hit the upload-part cap"
-        ),
-        Ok(bytes) => panic!(
-            "oversized part decoded to {} bytes instead of being rejected by the pre-allocation cap",
-            bytes.len()
-        ),
-    }
+    assert_eq!(
+        decode_calls(),
+        1,
+        "the decode/allocate counter must observe an accepted part"
+    );
 }
 
 #[test]

@@ -33,6 +33,23 @@ const BASE64: GeneralPurpose = GeneralPurpose::new(
 );
 static UNDEFINED: JsValue = JsValue::Undefined;
 
+// P1-2 #865 test-only seam: increments when `decode_upload_part` reaches the
+// encoded-buffer allocation and `BASE64.decode`. The oversize case must leave
+// this at zero, proving the cap runs before any allocation/decode. Thread-local
+// so concurrently running tests cannot perturb each other's count.
+#[cfg(test)]
+std::thread_local! {
+    static DECODE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(super) fn reset_decode_calls() {
+    DECODE_CALLS.with(|calls| calls.set(0));
+}
+#[cfg(test)]
+pub(super) fn decode_calls() -> usize {
+    DECODE_CALLS.with(std::cell::Cell::get)
+}
+
 /// The five lifecycle calls the gateway layer is allowed to make. Keeping this
 /// a trait lets tests record the exact calls without a second store
 /// implementation; production uses [`UploadStore`] itself.
@@ -161,7 +178,7 @@ impl UploadGateway {
     }
 }
 
-fn request_failed(message: impl Into<String>) -> UploadError {
+fn request_failed(message: impl Into<JsString>) -> UploadError {
     UploadError::dialog("gateway_request_failed", message)
 }
 
@@ -242,6 +259,8 @@ pub(super) fn decode_upload_part(value: &JsValue) -> Result<Vec<u8>> {
         ));
     }
     // Shape validation proves the input is ASCII, so the byte view is exact.
+    #[cfg(test)]
+    DECODE_CALLS.with(|calls| calls.set(calls.get() + 1));
     let encoded: Vec<u8> = units.iter().map(|&unit| unit as u8).collect();
     let bytes = BASE64.decode(encoded).map_err(|_| invalid())?;
     debug_assert_eq!(

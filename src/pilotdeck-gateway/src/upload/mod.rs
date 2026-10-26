@@ -128,15 +128,7 @@ impl UploadStore {
         idempotency_key: Option<&JsValue>,
     ) -> Result<UploadRecord> {
         let root = (self.options.resolve_project)(project_key)?;
-        let root = fs::canonicalize(root).map_err(|_| {
-            UploadError::dialog(
-                "PROJECT_NOT_FOUND",
-                format!(
-                    "Unknown projectKey: {}",
-                    String::from_utf16_lossy(project_key.units())
-                ),
-            )
-        })?;
+        let root = fs::canonicalize(root).map_err(|_| unknown_project_key(project_key))?;
         let gate = {
             let mut gates = self.creates.lock().unwrap();
             gates.retain(|_, g| g.strong_count() > 0);
@@ -238,7 +230,7 @@ impl UploadStore {
     /// Raw bridge for `upload_part`: the manifest comparison is over the exact
     /// UTF-16 units TS compares (`item.clientFileId === clientFileId`), so a
     /// lone surrogate never matches a real U+FFFD id. Conversion to UTF-8 is
-    /// limited to paths and messages, where Node also replaces lone surrogates.
+    /// limited to the filesystem path; messages keep the caller's units.
     pub fn write_part_js(
         &self,
         upload_id: &str,
@@ -246,7 +238,6 @@ impl UploadStore {
         mut stream: impl Read,
     ) -> Result<UploadedAttachment> {
         let client_value = JsValue::String(client_file_id.clone());
-        let client_file_id = String::from_utf16_lossy(client_file_id.units());
         let mut record = self.get(upload_id)?;
         require_active(&record)?;
         let expected = array(&record, "manifest")
@@ -256,12 +247,16 @@ impl UploadStore {
         if expected.is_none() || array(&record, "receivedClientFileIds").contains(&client_value) {
             return Err(UploadError::dialog(
                 "UPLOAD_MANIFEST_MISMATCH",
-                format!("Unexpected or duplicate file part: {client_file_id}"),
+                part_message("Unexpected or duplicate file part: ", client_file_id, ""),
             ));
         }
         let expected = expected.unwrap();
+        // Only the filesystem path crosses a UTF-8 boundary. Honest manifest
+        // ids are ASCII (`safe_id`); a tampered record gets exactly Node's
+        // replacement encoding here, never in a message.
+        let client_path = String::from_utf16_lossy(client_file_id.units());
         record = self.mutate(&record, |r| set(r, "status", text("uploading")))?;
-        let destination = task_dir(&record).join("files").join(&client_file_id);
+        let destination = task_dir(&record).join("files").join(&client_path);
         let result = (|| {
             let mut file = open_new(&destination)?;
             let mut digest = Sha256::new();
@@ -281,7 +276,11 @@ impl UploadStore {
                 if bytes as f64 > number(&expected, "size") || bytes > self.options.max_file_bytes {
                     return Err(UploadError::dialog(
                         "UPLOAD_INTEGRITY_MISMATCH",
-                        format!("Uploaded bytes exceed the declared size for {client_file_id}."),
+                        part_message(
+                            "Uploaded bytes exceed the declared size for ",
+                            client_file_id,
+                            ".",
+                        ),
                     ));
                 }
                 digest.update(&chunk[..count]);
@@ -311,11 +310,11 @@ impl UploadStore {
             {
                 return Err(UploadError::dialog(
                     "UPLOAD_INTEGRITY_MISMATCH",
-                    format!("Size or SHA-256 mismatch for {client_file_id}."),
+                    part_message("Size or SHA-256 mismatch for ", client_file_id, "."),
                 ));
             }
             let mut attachment = object([
-                ("attachmentId", text(&client_file_id)),
+                ("attachmentId", JsValue::String(client_file_id.clone())),
                 ("name", value(&expected, "name")),
                 ("relativePath", value(&expected, "relativePath")),
             ]);
@@ -327,7 +326,7 @@ impl UploadStore {
             set(&mut attachment, "path", path_value(&destination));
             self.mutate(&record, |r| {
                 let mut received = array(r, "receivedClientFileIds").to_vec();
-                received.push(text(&client_file_id));
+                received.push(JsValue::String(client_file_id.clone()));
                 set(r, "receivedClientFileIds", JsValue::Array(received));
                 let mut attachments = array(r, "attachments").to_vec();
                 attachments.push(attachment.clone());
@@ -359,8 +358,8 @@ impl UploadStore {
             .iter()
             .any(|m| !array(&record, "receivedClientFileIds").contains(&value(m, "clientFileId")))
         {
-            let message = "One or more declared files were not uploaded.";
-            self.fail(upload_id, "UPLOAD_MANIFEST_MISMATCH", message)?;
+            let message = JsString::from("One or more declared files were not uploaded.");
+            self.fail(upload_id, "UPLOAD_MANIFEST_MISMATCH", &message)?;
             return Err(UploadError::dialog("UPLOAD_MANIFEST_MISMATCH", message));
         }
         self.mutate(&record, |r| {
@@ -385,12 +384,12 @@ impl UploadStore {
         Ok(updated)
     }
 
-    pub fn fail(&self, upload_id: &str, code: &str, message: &str) -> Result<UploadRecord> {
+    pub fn fail(&self, upload_id: &str, code: &str, message: &JsString) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
         self.mutate(&record, |r| {
             set(r, "status", text("failed"));
             set(r, "errorCode", text(code));
-            set(r, "errorMessage", text(message));
+            set(r, "errorMessage", JsValue::String(message.clone()));
         })
     }
 
@@ -884,6 +883,22 @@ fn value(object: &JsValue, key: &str) -> JsValue {
 }
 fn text(s: &str) -> JsValue {
     JsValue::from(s)
+}
+/// `Unknown projectKey: ${projectKey}` (UploadStore.ts:63) with the caller's
+/// raw UTF-16 units. `display`/lossy decoding would turn a lone surrogate into
+/// U+FFFD, changing the message even though the key stayed unavailable.
+fn unknown_project_key(project_key: &JsString) -> UploadError {
+    let mut message = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
+    message.extend_from_slice(project_key.units());
+    UploadError::dialog("PROJECT_NOT_FOUND", JsString::from_utf16(message))
+}
+/// `Unexpected or duplicate file part: ${clientFileId}` and the other part
+/// messages, keeping every UTF-16 unit (P1-1 #865).
+fn part_message(prefix: &str, value: &JsString, suffix: &str) -> JsString {
+    let mut message = prefix.encode_utf16().collect::<Vec<_>>();
+    message.extend_from_slice(value.units());
+    message.extend(suffix.encode_utf16());
+    JsString::from_utf16(message)
 }
 fn string(object: &JsValue, key: &str) -> Option<String> {
     object.get(key)?.as_string()?.to_utf8().ok()
