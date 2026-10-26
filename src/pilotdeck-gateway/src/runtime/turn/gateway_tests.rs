@@ -490,7 +490,7 @@ async fn replay_case(case: &Value) {
         .await;
         assert!(
             ready.is_ok(),
-            "transport observation did not arrive: {} step {step}",
+            "{}: step {step}: transport observation did not arrive",
             case["name"]
         );
         settle(&host, &registry).await;
@@ -592,7 +592,12 @@ async fn replay_case(case: &Value) {
         && case["name"] != "close-preserves-pending"
         && case["name"] != "close-after-busy"
     {
-        assert_eq!(session.aborts.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            session.aborts.load(Ordering::SeqCst),
+            1,
+            "{}: aborts after close",
+            case["name"]
+        );
     }
     drop(connection);
     drop(host);
@@ -614,7 +619,7 @@ async fn real_ts_gateway_frames_registry_replay_and_concurrency() {
         selected += 1;
         tokio::time::timeout(Duration::from_secs(15), replay_case(case))
             .await
-            .expect("gateway case deadlock");
+            .unwrap_or_else(|_| panic!("{}: gateway case deadlock", case["name"]));
     }
     assert!(
         selected > 0,

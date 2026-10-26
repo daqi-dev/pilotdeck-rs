@@ -35,10 +35,16 @@ TIMER = GATEWAY + 'serial_timer_cancels_queued_callbacks_and_replacements'
 EMIT = GATEWAY + 'concurrent_external_emits_are_serialized_on_the_serial_host'
 NOTIFY = GATEWAY + 'hosted_connection_notify_enters_the_serial_host'
 
-def mutation(name, path, before, after, case=None, marker='assertion', test=REPLAY):
-    # Every mutant names the test that must catch it; the runner uses that name
-    # with --exact and requires both `... FAILED` and a marker in its panic
-    # block (#813).
+def mutation(name, path, before, after, case=None, marker=None, test=REPLAY):
+    # Every mutant names the test that must catch it and the assertion message
+    # that test prints for the selected scenario; the runner uses that name
+    # with --exact and requires both `... FAILED` and the marker inside that
+    # test's panic block (#813). There is deliberately no generic fallback:
+    # `'assertion'` also matched any other assert_eq! in the same test, so a
+    # surviving mutant could be recorded as KILLED (#813 fix-r7).
+    assert marker is not None, (name, 'needs an explicit assertion message marker')
+    assert marker != 'assertion' and not marker.startswith('assertion `left == right`'), \
+        (name, 'generic assertion diagnostic is not evidence')
     return dict(name=name, changes=[(path, before, after)], case=case, marker=marker, test=test)
 
 mutants = [
@@ -57,23 +63,23 @@ mutants = [
     # A total-only count also sees 16 here; the named per-event assertion must
     # name the duplicated event instead of only reporting a wrong total.
     mutation('emit-duplicated-delivery', gateway, 'let gateway = self.gateway.clone();\n        self.call(async move { gateway.0.submitter.coordinator.emit(&session, &event) })\n            .await', 'let gateway = self.gateway.clone();\n        self.call(async move {\n            let accepted = gateway.0.submitter.coordinator.emit(&session, &event);\n            gateway.0.submitter.coordinator.emit(&session, &event);\n            accepted\n        })\n        .await', None, 'A7.2-COORDINATOR-DELIVERY-001-R1: event concurrent-0 must reach the sink exactly once', test=EMIT),
-    mutation('dropped-event', gateway, '                emit(event);', '                let _ = event;', 'permission-before-event-and-final', 'transport observation did not arrive'),
-    mutation('duplicated-event', gateway, '                emit(event);', '                emit(event.clone()); emit(event);', 'permission-before-event-and-final'),
-    mutation('early-final', gateway, '                emit(event);', '                emit(event); break;', 'permission-before-event-and-final'),
-    mutation('registry-seq-used-as-ws-seq', connection, 'Mutex::new((0u64, None, None))', 'Mutex::new((1u64, None, None))', 'permission-before-event-and-final'),
-    mutation('module-seq-used-as-ws-seq', connection, 'out.insert("seq".into(), JsValue::Number(stream.0 as f64));', 'out.insert("seq".into(), event.get("sequence").cloned().unwrap_or(JsValue::Number(stream.0 as f64)));', 'permission-before-event-and-final'),
-    mutation('ws-seq-used-as-registry-seq', registry, 'record.insert("lastSeq".into(), JsValue::Number(0.0));', 'record.insert("lastSeq".into(), JsValue::Number(-1.0));', 'permission-before-event-and-final'),
-    mutation('module-seq-used-as-registry-seq', registry, 'record.insert("lastSeq".into(), JsValue::Number(0.0));', 'record.insert("lastSeq".into(), JsValue::Number(41.0));', 'permission-before-event-and-final'),
-    mutation('ws-seq-overwrites-module-seq', gateway, '                emit(event);', '                let mut event = event; if event.get("sequence").is_some() && let JsValue::Object(ref mut data) = event { data.insert("sequence".into(), JsValue::Number(0.0)); } emit(event);', 'permission-before-event-and-final'),
-    mutation('registry-seq-overwrites-module-seq', gateway, '                emit(event);', '                let mut event = event; if event.get("sequence").is_some() && let JsValue::Object(ref mut data) = event { data.insert("sequence".into(), JsValue::Number(1.0)); } emit(event);', 'permission-before-event-and-final'),
-    mutation('notification-dropped', connection, 'self.notify("permission_changed", Some(JsValue::Object(payload)));\n            }\n            let mut out', 'let _ = payload;\n            }\n            let mut out', 'permission-before-event-and-final', 'transport observation did not arrive'),
-    mutation('final-seq-skipped', connection, 'out.insert("seq".into(), JsValue::Number(seq as f64));', 'out.insert("seq".into(), JsValue::Number((seq + 1) as f64));', 'permission-before-event-and-final'),
-    mutation('final-marked-nonterminal', connection, 'out.insert("final".into(), JsValue::Bool(true));', 'out.insert("final".into(), JsValue::Bool(false));', 'permission-before-event-and-final'),
-    mutation('completion-overrides-error', connection, 'error.or(completed)', 'completed.or(error)', 'error-before-success'),
-    mutation('pending-interaction-not-preserved', gateway, 'Ok(result.get("preserveTurn") == Some(&JsValue::Bool(true)))', 'let _ = result; Ok(false)', 'close-preserves-pending'),
-    mutation('close-binding-corrupted', gateway, '.disconnect(session, &binding)', '.disconnect(session, &InteractionBinding { generation: binding.generation + 1, ..binding })', 'close-preserves-pending'),
-    mutation('submit-error-code-lost', gateway, 'code: error.code,', 'code: "lost_code".into(),', 'finally-error-response'),
-    mutation('abort-consumer-fence-skipped', gateway, 'let _ = done.wait_for(|done| *done).await;', 'let _ = &mut done;', 'abort-generated-run-id'),
+    mutation('dropped-event', gateway, '                emit(event);', '                let _ = event;', 'permission-before-event-and-final', '"permission-before-event-and-final": step "observe"'),
+    mutation('duplicated-event', gateway, '                emit(event);', '                emit(event.clone()); emit(event);', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('early-final', gateway, '                emit(event);', '                emit(event); break;', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('registry-seq-used-as-ws-seq', connection, 'Mutex::new((0u64, None, None))', 'Mutex::new((1u64, None, None))', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('module-seq-used-as-ws-seq', connection, 'out.insert("seq".into(), JsValue::Number(stream.0 as f64));', 'out.insert("seq".into(), event.get("sequence").cloned().unwrap_or(JsValue::Number(stream.0 as f64)));', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('ws-seq-used-as-registry-seq', registry, 'record.insert("lastSeq".into(), JsValue::Number(0.0));', 'record.insert("lastSeq".into(), JsValue::Number(-1.0));', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('module-seq-used-as-registry-seq', registry, 'record.insert("lastSeq".into(), JsValue::Number(0.0));', 'record.insert("lastSeq".into(), JsValue::Number(41.0));', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('ws-seq-overwrites-module-seq', gateway, '                emit(event);', '                let mut event = event; if event.get("sequence").is_some() && let JsValue::Object(ref mut data) = event { data.insert("sequence".into(), JsValue::Number(0.0)); } emit(event);', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('registry-seq-overwrites-module-seq', gateway, '                emit(event);', '                let mut event = event; if event.get("sequence").is_some() && let JsValue::Object(ref mut data) = event { data.insert("sequence".into(), JsValue::Number(1.0)); } emit(event);', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('notification-dropped', connection, 'self.notify("permission_changed", Some(JsValue::Object(payload)));\n            }\n            let mut out', 'let _ = payload;\n            }\n            let mut out', 'permission-before-event-and-final', '"permission-before-event-and-final": step "permission"'),
+    mutation('final-seq-skipped', connection, 'out.insert("seq".into(), JsValue::Number(seq as f64));', 'out.insert("seq".into(), JsValue::Number((seq + 1) as f64));', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('final-marked-nonterminal', connection, 'out.insert("final".into(), JsValue::Bool(true));', 'out.insert("final".into(), JsValue::Bool(false));', 'permission-before-event-and-final', '"permission-before-event-and-final": '),
+    mutation('completion-overrides-error', connection, 'error.or(completed)', 'completed.or(error)', 'error-before-success', '"error-before-success": '),
+    mutation('pending-interaction-not-preserved', gateway, 'Ok(result.get("preserveTurn") == Some(&JsValue::Bool(true)))', 'let _ = result; Ok(false)', 'close-preserves-pending', '"close-preserves-pending": '),
+    mutation('close-binding-corrupted', gateway, '.disconnect(session, &binding)', '.disconnect(session, &InteractionBinding { generation: binding.generation + 1, ..binding })', 'close-preserves-pending', '"close-preserves-pending": '),
+    mutation('submit-error-code-lost', gateway, 'code: error.code,', 'code: "lost_code".into(),', 'finally-error-response', '"finally-error-response": '),
+    mutation('abort-consumer-fence-skipped', gateway, 'let _ = done.wait_for(|done| *done).await;', 'let _ = &mut done;', 'abort-generated-run-id', '"abort-generated-run-id": '),
     # These run the timer test, whose assertions are not the replay test's
     # "serial timer: <case>" message. Anchor each on the assertion that its
     # selected test actually trips (#813 fix-r1). expiry-runs-on-clock-thread
@@ -93,16 +99,16 @@ for name, case in [
 ]:
     mutants.append(mutation(name, gateway,
         'let Some(key) = params.get("sessionKey").and_then(JsValue::as_string) else {\n                return Ok(());\n            };',
-        'let key = params.get("sessionKey").and_then(JsValue::as_string).ok_or_else(|| RequestError::new("sessionKey must be a string."))?;', case))
+        'let key = params.get("sessionKey").and_then(JsValue::as_string).ok_or_else(|| RequestError::new("sessionKey must be a string."))?;', case, f'"{case}": '))
 for name, case in [
     ('nonstring-abort-run-as-session-abort', 'abort-numeric-run'),
     ('null-abort-run-as-session-abort', 'abort-null-run'),
 ]:
     mutants.append(mutation(name, gateway,
         '.is_some_and(|run| !matches!(run, JsValue::String(_) | JsValue::Undefined))',
-        '.is_some_and(|run| { let _ = run; false })', case))
+        '.is_some_and(|run| { let _ = run; false })', case, f'"{case}": '))
 # Change only ordering, keeping exactly one ordinary event and notification.
-mutants.append(dict(name='notification-after-event', case='permission-before-event-and-final', marker='assertion', test=REPLAY, changes=[
+mutants.append(dict(name='notification-after-event', case='permission-before-event-and-final', marker='"permission-before-event-and-final": step "permission"', test=REPLAY, changes=[
     (connection, 'let emit = |event: JsValue| {', 'let emit = |event: JsValue| { let mut delayed_notification = None;'),
     (connection, 'self.notify("permission_changed", Some(JsValue::Object(payload)));\n            }\n            let mut out', 'delayed_notification = Some(JsValue::Object(payload));\n            }\n            let mut out'),
     (connection, 'self.send(JsValue::Object(out));\n            stream.0 += 1;', 'self.send(JsValue::Object(out)); if let Some(payload) = delayed_notification { self.notify("permission_changed", Some(payload)); }\n            stream.0 += 1;'),
