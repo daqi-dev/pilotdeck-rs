@@ -259,7 +259,10 @@ impl AsyncHookRegistry {
             // would then have returned the stored outcome instead.
             return ready(Ok(result(self.expire(&pending))));
         }
-        let mut in_flight = pending.delivery.lock().unwrap();
+        let mut in_flight = pending
+            .delivery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // A concurrent submit may have captured this entry before the first
         // delivery settled. Recheck under admission's lock before reusing it.
         if let Some(prior) = self.0.state.lock().unwrap().outcomes.get(&invocation_id) {
@@ -340,8 +343,8 @@ impl AsyncHookRegistry {
         *in_flight = Some(receiver.clone());
         drop(in_flight);
         let registry = self.clone();
-        tokio::spawn(async move {
-            let outcome = match delivery.await {
+        spawn_delivery(pending.clone(), sender, async move {
+            match delivery.await {
                 Ok(result) if result.accepted => {
                     registry.settle(&pending, AsyncHookStatus::Delivered);
                     registry.flush();
@@ -359,11 +362,7 @@ impl AsyncHookRegistry {
                     })
                 }
                 Err(error) => Err(error),
-            };
-            // Clear before waking callers: an immediate retry after a failed
-            // delivery must not subscribe to the already-failed operation.
-            *pending.delivery.lock().unwrap() = None;
-            sender.send_replace(Some(outcome));
+            }
         });
         wait_for_delivery(receiver, false)
     }
@@ -499,6 +498,45 @@ impl AsyncHookRegistry {
         }
     }
 }
+struct DeliveryCompletion {
+    pending: Arc<Pending>,
+    sender: Option<watch::Sender<Option<Delivery>>>,
+}
+impl DeliveryCompletion {
+    fn finish(&mut self, outcome: Delivery) {
+        // Clear before waking callers, including on unwind/cancellation.
+        *self
+            .pending
+            .delivery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        self.sender.take().unwrap().send_replace(Some(outcome));
+    }
+}
+impl Drop for DeliveryCompletion {
+    fn drop(&mut self) {
+        if self.sender.is_some() {
+            self.finish(Err(error(
+                "ASYNC_HOOK_DELIVERY_FAILED",
+                "Async hook delivery stopped.",
+            )));
+        }
+    }
+}
+fn spawn_delivery(
+    pending: Arc<Pending>,
+    sender: watch::Sender<Option<Delivery>>,
+    delivery: impl std::future::Future<Output = Delivery> + Send + 'static,
+) {
+    let mut completion = DeliveryCompletion {
+        pending,
+        sender: Some(sender),
+    };
+    tokio::spawn(async move {
+        completion.finish(delivery.await);
+    });
+}
+
 fn ready(result: Delivery) -> HostFuture<AsyncHookResult> {
     Box::pin(async { result })
 }
@@ -626,4 +664,181 @@ fn js_string(value: &JsValue) -> Result<JsString, HostError> {
     crate::js_value::to_string_units(value)
         .map(JsString::from_utf16)
         .map_err(|_| overflow())
+}
+
+#[cfg(test)]
+#[path = "../../tests/common/spawn_completion.rs"]
+pub(super) mod spawn_test;
+
+#[cfg(test)]
+mod spawn_tests {
+    use super::spawn_test::{Port, Wait, Work, bounded};
+    use super::*;
+    use std::future::Future;
+    use tokio::sync::oneshot;
+
+    fn pending_entry() -> Arc<Pending> {
+        Arc::new(Pending {
+            input: AsyncHookRegistration {
+                session_key: "s".into(),
+                invocation_id: "i".into(),
+                hook_name: "h".into(),
+                hook_event: "e".into(),
+                timeout_ms: None,
+                include_hook_events: false,
+            },
+            run_id: "r".into(),
+            expires_at: f64::INFINITY,
+            timer: Mutex::new(None),
+            delivery: Mutex::new(None),
+        })
+    }
+    fn start(
+        pending: &Arc<Pending>,
+        future: impl Future<Output = Delivery> + Send + 'static,
+    ) -> DeliveryReceiver {
+        let (sender, receiver) = watch::channel(None);
+        *pending
+            .delivery
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(receiver.clone());
+        spawn_delivery(pending.clone(), sender, future);
+        receiver
+    }
+    fn success() -> Delivery {
+        Ok(AsyncHookResult {
+            invocation_id: "i".into(),
+            status: AsyncHookStatus::Delivered,
+        })
+    }
+    async fn observe(receiver: DeliveryReceiver, repeated: bool) -> Delivery {
+        bounded(wait_for_delivery(receiver, repeated)).await
+    }
+
+    struct DeliveryPort(Arc<Pending>, Option<DeliveryReceiver>);
+    impl Port for DeliveryPort {
+        const SCOPE: &'static str = "delivery";
+        const PANIC: &'static str = "Async hook delivery stopped.";
+        fn new() -> Self {
+            Self(pending_entry(), None)
+        }
+        fn begin(&self, work: Work) -> Wait {
+            Self::wait(
+                start(&self.0, async move {
+                    work.await.map_err(|_| error("TEST", "ordinary failure"))?;
+                    success()
+                }),
+                false,
+            )
+        }
+        fn snapshot(&mut self) {
+            self.1 = self.0.delivery.lock().unwrap().clone();
+        }
+        fn subscribe(&self, repeated: bool) -> Wait {
+            Self::wait(self.1.clone().unwrap(), repeated)
+        }
+        fn cached(&self) -> bool {
+            self.0.delivery.lock().unwrap().is_some()
+        }
+        fn published(&self) -> bool {
+            self.1.as_ref().unwrap().borrow().is_some()
+        }
+    }
+    impl DeliveryPort {
+        fn wait(receiver: DeliveryReceiver, repeated: bool) -> Wait {
+            Box::pin(async move {
+                wait_for_delivery(receiver, repeated)
+                    .await
+                    .map(|value| value.status.as_str().into())
+                    .map_err(|e| e.module_error.unwrap().message.to_utf8().unwrap())
+            })
+        }
+    }
+    #[test]
+    fn delivery_spawn_failure_matrix() {
+        spawn_test::matrix::<DeliveryPort>(false);
+    }
+    #[test]
+    fn delivery_spawn_drop_matrix() {
+        spawn_test::matrix::<DeliveryPort>(true);
+    }
+
+    #[tokio::test]
+    async fn delivery_poison_failure() {
+        let entry = pending_entry();
+        let (release, gate) = oneshot::channel();
+        let receiver = start(&entry, async move {
+            gate.await.unwrap();
+            panic!("delivery panic");
+        });
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _locked = entry.delivery.lock().unwrap();
+            panic!("poison delivery lock");
+        }));
+        release.send(()).unwrap();
+        assert!(observe(receiver.clone(), false).await.is_err());
+        assert!(
+            entry
+                .delivery
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none(),
+            "poisoned delivery cleared"
+        );
+        assert!(receiver.borrow().is_some(), "poisoned delivery published");
+    }
+
+    #[tokio::test]
+    async fn submit_sink_panic_clears_delivery() {
+        let mailbox = SteerMailbox::new(None);
+        mailbox.start("r".into());
+        let registry = AsyncHookRegistry::new(
+            Arc::new(TokioHookClock),
+            move |_| {
+                Some(AsyncHookTurn {
+                    run_id: "r".into(),
+                    mailbox: mailbox.clone(),
+                })
+            },
+            |_, _| panic!("injected sink panic"),
+        );
+        let mut input = pending_entry().input.clone();
+        input.include_hook_events = true;
+        registry.register(input).unwrap();
+        let entry = registry
+            .0
+            .state
+            .lock()
+            .unwrap()
+            .pending(&"i".into())
+            .unwrap();
+        let output = object([(
+            "hookSpecificOutput",
+            object([
+                ("hookEventName", "e".into()),
+                ("additionalContext", "context".into()),
+            ]),
+        )]);
+        let first = registry.submit("s".into(), "i".into(), output.clone());
+        let second = registry.submit("s".into(), "i".into(), output.clone());
+        for waiter in [first, second] {
+            let failure = bounded(waiter).await.unwrap_err();
+            assert_eq!(
+                failure.module_error.unwrap().code,
+                Some("ASYNC_HOOK_DELIVERY_FAILED".into())
+            );
+        }
+        assert!(
+            entry.delivery.lock().unwrap().is_none(),
+            "submit panic clears delivery"
+        );
+        assert_eq!(
+            registry
+                .submit("s".into(), "i".into(), output)
+                .await
+                .unwrap()
+                .status,
+            AsyncHookStatus::Duplicate
+        );
+    }
 }
