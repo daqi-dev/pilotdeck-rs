@@ -2375,6 +2375,909 @@
       }
     },
     {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        null,
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "clusters is not iterable"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        1,
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "clusters is not iterable"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        {},
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "clusters is not iterable"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        true,
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "clusters is not iterable"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        "",
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        "ab",
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          null
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'memberRelativePaths')"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "$undefined": true
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'memberRelativePaths')"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          1
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          "x"
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          []
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {}
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": null
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": {
+              "$undefined": true
+            }
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": 1
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "cluster.memberRelativePaths.map is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": {}
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "cluster.memberRelativePaths.map is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": "ab"
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "cluster.memberRelativePaths.map is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              1
+            ]
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              true,
+              "b.md"
+            ]
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              {},
+              "b.md"
+            ]
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              null,
+              "b.md"
+            ]
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ]
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              {
+                "$undefined": true
+              },
+              "b.md"
+            ]
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ]
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": 1
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": true
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": {}
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": [
+              1,
+              2
+            ]
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md"
+            ],
+            "reason": 1
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": [
+          "Dropped cluster because it had fewer than 2 valid files: 1"
+        ]
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md"
+            ],
+            "reason": true
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": [
+          "Dropped cluster because it had fewer than 2 valid files: true"
+        ]
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md"
+            ],
+            "reason": [
+              1,
+              2
+            ]
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": [
+          "Dropped cluster because it had fewer than 2 valid files: 1,2"
+        ]
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md"
+            ],
+            "reason": false
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": [
+          "Dropped cluster because it had fewer than 2 valid files: a.md"
+        ]
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": null
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": null
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": ""
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": ""
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md",
+              "c.md"
+            ],
+            "reason": 1
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        2
+      ],
+      "expected": {
+        "clusters": [],
+        "droppedWarnings": [
+          "Dropped cluster because it exceeded the 2-file limit: a.md, b.md, c.md"
+        ]
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "overlap"
+          },
+          {
+            "memberRelativePaths": [
+              "b.md",
+              "c.md"
+            ],
+            "reason": 1
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "expected": {
+        "clusters": [
+          {
+            "memberRelativePaths": [
+              "a.md",
+              "b.md"
+            ],
+            "reason": "overlap"
+          }
+        ],
+        "droppedWarnings": [
+          "Dropped overlapping cluster: b.md, c.md"
+        ]
+      }
+    },
+    {
+      "fn": "validateExclusiveClusters",
+      "args": [
+        [
+          {
+            "memberRelativePaths": null,
+            "reason": 1
+          }
+        ],
+        [
+          "a.md",
+          "b.md",
+          "c.md",
+          "d.md",
+          "e.md",
+          "f.md"
+        ],
+        8
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'map')"
+      }
+    },
+    {
       "fn": "selectUserNoteWindow",
       "args": [
         [
@@ -9815,6 +10718,1427 @@
         "droppedWarnings": [
           "Dropped group 2: project id p1 was already used in another merge group."
         ]
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": null,
+          "groups": []
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": 1,
+          "groups": []
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "input.metas.map is not a function"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": {},
+          "groups": []
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "input.metas.map is not a function"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "groups": []
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": {
+            "$undefined": true
+          },
+          "groups": []
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            null
+          ],
+          "groups": []
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'projectId')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "$undefined": true
+            }
+          ],
+          "groups": []
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'projectId')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            1
+          ],
+          "groups": []
+        }
+      ],
+      "expected": {
+        "acceptedGroups": [],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            "x"
+          ],
+          "groups": []
+        }
+      ],
+      "expected": {
+        "acceptedGroups": [],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": null
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'entries')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": 1
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "input.groups.entries is not a function or its return value is not iterable"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": {}
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "input.groups.entries is not a function or its return value is not iterable"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": "ab"
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "input.groups.entries is not a function or its return value is not iterable"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'entries')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": {
+            "$undefined": true
+          }
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'entries')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            null
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'keeperProjectId')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "$undefined": true
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'keeperProjectId')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            1
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            []
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            "p1"
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": 1,
+              "duplicateProjectIds": []
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": {},
+              "duplicateProjectIds": []
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": null,
+              "duplicateProjectIds": []
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "acceptedGroups": [],
+        "droppedWarnings": [
+          "Dropped group 1: unknown keeper project id (empty)."
+        ]
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1"
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": {
+                "$undefined": true
+              }
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": null
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'map')"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": 1
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "group.duplicateProjectIds.map is not a function"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": {}
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "group.duplicateProjectIds.map is not a function"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": "p2"
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "group.duplicateProjectIds.map is not a function"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2",
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2",
+                true
+              ]
+            }
+          ]
+        }
+      ],
+      "throws": {
+        "name": "TypeError",
+        "message": "(value ?? \"\").replace is not a function"
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2",
+                null
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "acceptedGroups": [
+          {
+            "keeperProjectId": "p1",
+            "duplicateProjectIds": [
+              "p2"
+            ],
+            "reason": "Model identified these project metas as duplicates."
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2",
+                {
+                  "$undefined": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "acceptedGroups": [
+          {
+            "keeperProjectId": "p1",
+            "duplicateProjectIds": [
+              "p2"
+            ],
+            "reason": "Model identified these project metas as duplicates."
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2"
+              ],
+              "reason": 1
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "acceptedGroups": [
+          {
+            "keeperProjectId": "p1",
+            "duplicateProjectIds": [
+              "p2"
+            ],
+            "reason": 1
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2"
+              ],
+              "reason": {}
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "acceptedGroups": [
+          {
+            "keeperProjectId": "p1",
+            "duplicateProjectIds": [
+              "p2"
+            ],
+            "reason": {}
+          }
+        ],
+        "droppedWarnings": []
+      }
+    },
+    {
+      "fn": "validateGeneralProjectMergeGroups",
+      "args": [
+        {
+          "metas": [
+            {
+              "projectId": "p1",
+              "projectName": "One",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p2",
+              "projectName": "Two",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p3",
+              "projectName": "Three",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            },
+            {
+              "projectId": "p4",
+              "projectName": "Four",
+              "description": "",
+              "status": "active",
+              "updatedAt": "U"
+            }
+          ],
+          "groups": [
+            {
+              "keeperProjectId": "p1",
+              "duplicateProjectIds": [
+                "p2"
+              ],
+              "reason": null
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "acceptedGroups": [
+          {
+            "keeperProjectId": "p1",
+            "duplicateProjectIds": [
+              "p2"
+            ],
+            "reason": "Model identified these project metas as duplicates."
+          }
+        ],
+        "droppedWarnings": []
       }
     }
   ]

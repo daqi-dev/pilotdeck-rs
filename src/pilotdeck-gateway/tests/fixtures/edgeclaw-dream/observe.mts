@@ -64,6 +64,16 @@ export async function collect(baseline: string) {
   const cases: any[] = [];
   const add = (fn: string, args: any[], expected: any) =>
     cases.push({fn, args: enc(args), expected: enc(jsonSafe(expected))});
+  // A malformed LLM JSON shape must abort loud. Record the exact V8
+  // TypeError name/message so Rust can match the throw path, not just the
+  // happy-path result.
+  const addThrows = (fn: string, args: any[], run: () => unknown) => {
+    try {
+      add(fn, args, run());
+    } catch (error: any) {
+      cases.push({fn, args: enc(args), throws: {name: String(error?.name), message: String(error?.message)}});
+    }
+  };
   const withRandom = <T>(value: number, fn: () => T): T => {
     const saved = Math.random;
     Math.random = () => value;
@@ -223,6 +233,47 @@ export async function collect(baseline: string) {
     add('validateExclusiveClusters', [clusters, allowed, maxFiles],
       dream.validateExclusiveClusters(clusters, new Set(allowed), maxFiles));
   }
+  // Malformed LLM JSON shapes (#826): the TS helper throws a TypeError instead
+  // of silently normalizing. `addThrows` records the exact V8 name/message.
+  const shapeClusterCases: Array<[any, number]> = [
+    [null, 8], [1, 8], [{}, 8], [true, 8],
+    ['', 8],
+    ['ab', 8],
+    [[null], 8],
+    [[undefined], 8],
+    [[1], 8],
+    [['x'], 8],
+    [[[]], 8],
+    [[{}], 8],
+    [[{memberRelativePaths: null}], 8],
+    [[{memberRelativePaths: undefined}], 8],
+    [[{memberRelativePaths: 1}], 8],
+    [[{memberRelativePaths: {}}], 8],
+    [[{memberRelativePaths: 'ab'}], 8],
+    [[{memberRelativePaths: ['a.md', 1]}], 8],
+    [[{memberRelativePaths: ['a.md', true, 'b.md']}], 8],
+    [[{memberRelativePaths: ['a.md', {}, 'b.md']}], 8],
+    [[{memberRelativePaths: ['a.md', null, 'b.md']}], 8],
+    [[{memberRelativePaths: ['a.md', undefined, 'b.md']}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: 1}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: true}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: {}}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: [1, 2]}], 8],
+    [[{memberRelativePaths: ['a.md'], reason: 1}], 8],
+    [[{memberRelativePaths: ['a.md'], reason: true}], 8],
+    [[{memberRelativePaths: ['a.md'], reason: [1, 2]}], 8],
+    [[{memberRelativePaths: ['a.md'], reason: false}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: null}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: ''}], 8],
+    [[{memberRelativePaths: ['a.md', 'b.md', 'c.md'], reason: 1}], 2],
+    [[{memberRelativePaths: ['a.md', 'b.md'], reason: 'overlap'},
+      {memberRelativePaths: ['b.md', 'c.md'], reason: 1}], 8],
+    [[{memberRelativePaths: null, reason: 1}], 8],
+  ];
+  for (const [clusters, maxFiles] of shapeClusterCases) {
+    addThrows('validateExclusiveClusters', [clusters, allowed, maxFiles],
+      () => dream.validateExclusiveClusters(clusters, new Set(allowed), maxFiles));
+  }
 
   // -- user-note window ----------------------------------------------------
   const note = (relativePath: string, updatedAt: string, content: string) =>
@@ -273,6 +324,50 @@ export async function collect(baseline: string) {
   for (const groups of mergeCases) {
     const input = {metas: mergeMetas, groups};
     add('validateGeneralProjectMergeGroups', [input], dream.validateGeneralProjectMergeGroups(input));
+  }
+  // Malformed LLM JSON shapes (#826): eager `metas.map` / `groups.entries` and
+  // per-entry property reads throw instead of being filtered out.
+  const shapeMergeCases: any[] = [
+    {metas: null, groups: []},
+    {metas: 1, groups: []},
+    {metas: {}, groups: []},
+    {groups: []},
+    {metas: undefined, groups: []},
+    {metas: [null], groups: []},
+    {metas: [undefined], groups: []},
+    {metas: [1], groups: []},
+    {metas: ['x'], groups: []},
+    {metas: mergeMetas, groups: null},
+    {metas: mergeMetas, groups: 1},
+    {metas: mergeMetas, groups: {}},
+    {metas: mergeMetas, groups: 'ab'},
+    {metas: mergeMetas},
+    {metas: mergeMetas, groups: undefined},
+    {metas: mergeMetas, groups: [null]},
+    {metas: mergeMetas, groups: [undefined]},
+    {metas: mergeMetas, groups: [1]},
+    {metas: mergeMetas, groups: [[]]},
+    {metas: mergeMetas, groups: ['p1']},
+    {metas: mergeMetas, groups: [{keeperProjectId: 1, duplicateProjectIds: []}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: {}, duplicateProjectIds: []}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: null, duplicateProjectIds: []}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1'}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: undefined}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: null}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: 1}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: {}}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: 'p2'}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: ['p2', 1]}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: ['p2', true]}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: ['p2', null]}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: ['p2', undefined]}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: ['p2'], reason: 1}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: ['p2'], reason: {}}]},
+    {metas: mergeMetas, groups: [{keeperProjectId: 'p1', duplicateProjectIds: ['p2'], reason: null}]},
+  ];
+  for (const input of shapeMergeCases) {
+    addThrows('validateGeneralProjectMergeGroups', [input],
+      () => dream.validateGeneralProjectMergeGroups(input));
   }
 
   return {cases, clockMs: nowMs};
