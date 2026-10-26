@@ -3034,36 +3034,67 @@ async fn live_recording_matrix(phase: usize, action: &str) {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
-macro_rules! live_recording_case {
-    ($name:ident, $phase:literal, $action:literal) => {
-        #[tokio::test]
+fn assert_fixture_consumed(rows: &[JsValue], expected: impl Iterator<Item = String>) {
+    let mut actual: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            row.get("name")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap()
+        })
+        .collect();
+    let mut expected: Vec<_> = expected.collect();
+    actual.sort();
+    expected.sort();
+    assert_eq!(
+        actual, expected,
+        "oracle rows must be fully consumed exactly once"
+    );
+}
+
+macro_rules! live_recording_cases {
+    ($($name:ident, $phase:literal, $action:literal;)*) => {
+        $(#[tokio::test]
         async fn $name() {
             live_recording_matrix($phase, $action).await;
+        })*
+        #[test]
+        fn live_recording_oracle_fully_consumed() {
+            let oracle = crate::test_baseline::oracle(include_str!(
+                "../../../tests/fixtures/live-recording/oracle.json"
+            ));
+            let JsValue::Array(rows) = oracle.get("matrix").unwrap() else { panic!("matrix") };
+            assert_fixture_consumed(rows, [$(($phase, $action)),*].into_iter()
+                .filter(|(_, action)| *action != "failure")
+                .map(|(phase, action)| format!("{}-{action}", ["start", "accept", "complete"][phase])));
         }
     };
 }
-live_recording_case!(live_recording_start_cancel, 0, "cancel");
-live_recording_case!(live_recording_start_drop, 0, "drop");
-live_recording_case!(live_recording_start_resubmit, 0, "resubmit");
-live_recording_case!(live_recording_start_dispose, 0, "dispose");
-live_recording_case!(live_recording_accept_cancel, 1, "cancel");
-live_recording_case!(live_recording_accept_drop, 1, "drop");
-live_recording_case!(live_recording_accept_resubmit, 1, "resubmit");
-live_recording_case!(live_recording_accept_dispose, 1, "dispose");
-live_recording_case!(live_recording_complete_cancel, 2, "cancel");
-live_recording_case!(live_recording_complete_drop, 2, "drop");
-live_recording_case!(live_recording_complete_resubmit, 2, "resubmit");
-live_recording_case!(live_recording_complete_dispose, 2, "dispose");
+live_recording_cases! {
+    live_recording_start_cancel, 0, "cancel";
+    live_recording_start_drop, 0, "drop";
+    live_recording_start_resubmit, 0, "resubmit";
+    live_recording_start_dispose, 0, "dispose";
+    live_recording_start_failure, 0, "failure";
+    live_recording_accept_cancel, 1, "cancel";
+    live_recording_accept_drop, 1, "drop";
+    live_recording_accept_resubmit, 1, "resubmit";
+    live_recording_accept_dispose, 1, "dispose";
+    live_recording_accept_failure, 1, "failure";
+    live_recording_complete_cancel, 2, "cancel";
+    live_recording_complete_drop, 2, "drop";
+    live_recording_complete_resubmit, 2, "resubmit";
+    live_recording_complete_dispose, 2, "dispose";
+    live_recording_complete_failure, 2, "failure";
+}
 #[test]
 #[ignore = "requires fixed PDRS_BASELINE with installed TS dependencies"]
 fn live_recording_regenerates_identically() {
     crate::test_baseline::regenerates_identically("live-recording");
 }
-
-live_recording_case!(live_recording_accept_failure, 1, "failure");
-live_recording_case!(live_recording_complete_failure, 2, "failure");
-
-live_recording_case!(live_recording_start_failure, 0, "failure");
 
 #[tokio::test]
 async fn live_history_slot_matrix() {
@@ -3153,7 +3184,13 @@ async fn live_history_slot_matrix() {
         seen.push(observe(name));
     }
     drop(first);
-    let fresh = rows[3].get("messages").unwrap().clone();
+    let fresh = rows
+        .iter()
+        .find(|row| row.get("name") == Some(&"released".into()))
+        .expect("released history row")
+        .get("messages")
+        .unwrap()
+        .clone();
     let JsValue::Array(messages) = &fresh else {
         panic!("messages")
     };
@@ -3209,3 +3246,108 @@ fn live_history_regenerates_identically() {
 
 #[path = "gates_tests.rs"]
 mod gates_tests;
+
+// A prepared handler must stop even when dispose never completes. Virtual time
+// distinguishes both shorter and longer configured budgets from the old 5 s.
+#[tokio::test]
+async fn live_prepared_cleanup_uses_close_timeout() {
+    struct PendingDispose {
+        calls: Arc<AtomicUsize>,
+        entered: Arc<tokio::sync::Notify>,
+        done: Mutex<Option<oneshot::Sender<()>>>,
+    }
+    struct Exited(Option<oneshot::Sender<()>>);
+    impl Drop for Exited {
+        fn drop(&mut self) {
+            let _ = self.0.take().unwrap().send(());
+        }
+    }
+    impl HostHandler for PendingDispose {
+        fn module_call(&self, _: JsValue) -> HostFuture<JsObject> {
+            Box::pin(async { panic!("unexecuted client") })
+        }
+        fn dispose(&self) -> HostFuture<()> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let guard = Exited(self.done.lock().unwrap().take());
+            self.entered.notify_one();
+            Box::pin(async move {
+                let _guard = guard;
+                std::future::pending().await
+            })
+        }
+    }
+    for budget in [Duration::from_millis(7), Duration::from_secs(7)] {
+        use crate::runtime::{
+            project::{ProjectRuntimeRegistry, ResourceBundle},
+            turn::host_factory::{Deployment, TurnHostFactory},
+        };
+        let registry = Arc::new(ProjectRuntimeRegistry::new(
+            std::env::temp_dir(),
+            Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+        ));
+        let configured = TurnHostFactory::new(
+            registry,
+            Deployment::Native,
+            Limits {
+                close_timeout: budget,
+                ..Limits::default()
+            },
+            None,
+            |_, _| panic!("factory must remain lazy"),
+        )
+        .into_live_session(test_recorder(), Vec::new);
+        assert_eq!(
+            configured.close_timeout, budget,
+            "factory forwards close_timeout"
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let (done, mut exited) = oneshot::channel();
+        let handler = Arc::new(PendingDispose {
+            calls: calls.clone(),
+            entered: entered.clone(),
+            done: Mutex::new(Some(done)),
+        });
+        let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
+            let handler = handler.clone();
+            Box::pin(async move {
+                let connect: HostFuture<HostClient> =
+                    Box::pin(async { panic!("connection must remain lazy") });
+                Ok((connect, handler as Arc<dyn HostHandler>, test_lease()))
+            })
+        })
+        .with_close_timeout(budget);
+        let mut turn = session.submit(input(), options()).unwrap();
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+            Some(&"turn_started".into())
+        );
+        tokio::time::pause();
+        drop(turn); // No accept/execute; TurnScope owns the never-ending dispose.
+        timeout(Duration::from_secs(15), entered.notified())
+            .await
+            .unwrap();
+        tokio::time::advance(budget - Duration::from_millis(1)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            exited.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty),
+            "cleanup must retain the configured budget"
+        );
+        tokio::time::advance(Duration::from_millis(2)).await;
+        assert!(
+            timeout(Duration::from_millis(1), &mut exited).await.is_ok(),
+            "cleanup must stop at the configured deadline"
+        );
+        tokio::time::resume();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "prepared dispose exactly once"
+        );
+        assert!(
+            session.state.lock().unwrap().active.is_none(),
+            "cleanup releases slot"
+        );
+    }
+}

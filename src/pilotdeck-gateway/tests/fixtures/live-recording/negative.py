@@ -14,7 +14,7 @@ controls = [
  ('disposed-admission', live, 'if state.disposed {', 'if false {', 'live_recording_start_dispose', 'disposed session stays closed'),
  ('active-admission', live, 'if state.active.is_some() {', 'if false {', 'live_recording_start_resubmit', 'pending write blocks resubmit'),
  ('start-error-propagates', runner, 'self.io(|r, s, t| r.start_turn(s, t)).await?;', 'let _ = self.io(|r, s, t| r.start_turn(s, t)).await;', 'live_recording_start_failure', 'called `Result::unwrap_err()` on an `Ok` value'),
- ('shared-lease-wait-cycle', interaction, 'if let Ok(mut lease) = Arc::try_unwrap(owned.lease)', 'while Arc::strong_count(&owned.lease) > 1 { tokio::task::yield_now().await; }\n                if let Ok(mut lease) = Arc::try_unwrap(owned.lease)', 'recording_shared_lease_outlives_handler_cleanup', 'lifecycle operation hung'),
+ ('shared-lease-exclusive-only', interaction, 'if let Ok(mut lease) = Arc::try_unwrap(owned.lease)', 'if Arc::strong_count(&owned.lease) > 1 { return Err(ModuleError::new("shared recorder lease incorrectly blocks handler cleanup").into()); }\n                if let Ok(mut lease) = Arc::try_unwrap(owned.lease)', 'recording_shared_lease_outlives_handler_cleanup', 'shared recorder lease incorrectly blocks handler cleanup'),
  ('accept-failure-not-success', runner, '("type", "error".into()),', '("type", "success".into()),', 'live_recording_accept_failure', 'assertion `left == right` failed'),
  ('complete-failure-not-success', runner, '("type", "error".into()),', '("type", "success".into()),', 'live_recording_complete_failure', 'assertion `left == right` failed'),
  ('real-slot', live, 'Recording::new(runner, owner)', 'Recording::new(runner, { drop(owner); Arc::new(()) })', 'live_recording_start_drop', 'worker owns active slot'),
@@ -34,7 +34,8 @@ for phase, kind, field in [('start','turn_started','sessionId'),('accept','input
  old = 'self.pending_event = Some((event, terminal));' if phase == 'complete' else 'fn deliver_recorded(&mut self, event: JsValue) -> Result<Option<JsValue>, RuntimeError> {'
  injection = f'let event = if event.get("type") == Some(&"{kind}".into()) {{ let mut fields = event.as_object().unwrap().clone(); fields.insert("{field}".into(), JsValue::Null); JsValue::Object(fields) }} else {{ event }};'
  new = injection + old if phase == 'complete' else old + injection
- controls.append((f'payload-fields-{phase}', live, old, new, f'live_recording_{phase}_cancel', 'original payload survives cancelled next'))
+ for action in ['cancel', 'resubmit']:
+  controls.append((f'payload-fields-{phase}-{action}', live, old, new, f'live_recording_{phase}_{action}', 'original payload survives cancelled next'))
 if sys.argv[2:]:
  selected = set(sys.argv[2:])
  assert selected <= {c[0] for c in controls}

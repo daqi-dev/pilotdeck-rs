@@ -241,11 +241,13 @@ impl TurnHostFactory {
             });
             ports
         });
+        let close_timeout = self.limits.close_timeout;
         let factory = Arc::new(self);
         LiveSessionAdapter::with_interaction(recorder, history, move |identity, recorder| {
             let factory = factory.clone();
             Box::pin(async move { factory.create(&identity, recorder).await })
         })
+        .with_close_timeout(close_timeout)
     }
 
     /// Acquire one generation lease and prepare a lazy sidecar connection. Unsupported
