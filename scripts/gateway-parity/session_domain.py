@@ -7,6 +7,8 @@ tests, never evidence that a Rust host has run or retired the TS host.
 """
 import argparse
 from collections import Counter
+import ctypes
+import ctypes.util
 import json
 import os
 from pathlib import Path
@@ -169,16 +171,87 @@ def wait_exit_unreaped(pid, timeout):
         time.sleep(.02)
 
 
+_PROC_LIBRARY = None
+
+
+def _darwin_pids():
+    """All pids from libproc, without spawning ``ps``. ``None`` if unavailable."""
+    global _PROC_LIBRARY
+    try:
+        if _PROC_LIBRARY is None:
+            _PROC_LIBRARY = ctypes.CDLL(ctypes.util.find_library('proc') or 'libproc.dylib',
+                                        use_errno=True)
+            _PROC_LIBRARY.proc_listpids.restype = ctypes.c_int
+            _PROC_LIBRARY.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32,
+                                                    ctypes.c_void_p, ctypes.c_int]
+        library = _PROC_LIBRARY
+        needed = library.proc_listpids(1, 0, None, 0)  # PROC_ALL_PIDS
+        if needed <= 0:
+            return None
+        for _ in range(3):
+            buffer = (ctypes.c_uint32 * max(needed // 4, 1))()
+            written = library.proc_listpids(1, 0, buffer, needed)
+            if 0 < written <= needed:
+                return [pid for pid in buffer[:written // 4] if pid]
+            if written <= 0:
+                return None
+            needed = written
+    except (OSError, AttributeError, ValueError):
+        return None
+    return None
+
+
+def _proc_pids():
+    try:
+        return [int(entry.name) for entry in Path('/proc').iterdir() if entry.name.isdigit()]
+    except OSError:
+        return None
+
+
+def live_group_members(pgid):
+    """Live (non-zombie) pids in *pgid*, independently of ps and signal permission.
+
+    ``killpg(pgid, 0)`` returning EPERM only proves "no member this process may
+    signal": XNU filters the unreaped zombie in the group path, and a live
+    descendant with different credentials is denied too.  ``getpgid(pid)``
+    answers for every live pid regardless of owner, and an exited-unreaped pid
+    is already gone from it (measured 2026-10-26), so a full pid scan gives a
+    permission-independent census.  ``None`` means the census could not be
+    taken; callers must fail closed instead of guessing "empty".
+    """
+    if sys.platform == 'darwin':
+        pids = _darwin_pids()
+    elif Path('/proc').is_dir():
+        pids = _proc_pids()
+    else:
+        return None
+    if pids is None:
+        return None
+    members = set()
+    own = os.getpid()
+    for pid in pids:
+        if pid == own:
+            continue
+        try:
+            if os.getpgid(pid) == pgid:
+                members.add(pid)
+        except ProcessLookupError:
+            continue  # exited between the scan and the query
+        except OSError:
+            return None
+    return members
+
+
 def group_probe_state(pgid, leader_pid):
     """State of our group while its leader is an unreaped zombie.
 
-    macOS returns EPERM to ``killpg(pgid, 0)`` when the only member is the
-    unreaped zombie leader (measured 2026-10-26: Python 3.14.3 and Node
-    v22.22.0 both EPERM; a live grandchild returns success/``alive``).  In a
-    new session only the leader's own descendants can join its group, so a
-    succeeding ``kill(leader_pid, 0)`` proves the zombie is still there while
-    ``killpg`` has no signalable member left.  If even ``kill(leader_pid, 0)``
-    is denied, the probe itself is blocked and no signal may be sent.
+    macOS returns EPERM to ``killpg(pgid, 0)`` when the only signalable member
+    is gone (measured 2026-10-26: Python 3.14.3 and Node v22.22.0 both EPERM;
+    a live same-uid grandchild returns success/``alive``).  EPERM alone is not
+    proof of emptiness: a live descendant we may not signal also yields EPERM.
+    Only an independent member census that finds nothing besides this run's
+    unreaped leader may be reported as ``empty``.  A census that cannot be
+    taken, or a denied leader probe, is ``blocked`` and gets no signal.
     """
     try:
         os.killpg(pgid, 0)
@@ -186,11 +259,18 @@ def group_probe_state(pgid, leader_pid):
     except ProcessLookupError:
         return 'empty', 'killpg0=ESRCH'
     except PermissionError as error:
+        live = live_group_members(pgid)
+        if live is None:
+            return 'blocked', f'killpg0=EPERM; independent group census unavailable: {error}'
+        live.discard(leader_pid)
         try:
             os.kill(leader_pid, 0)
         except OSError as denied:
-            return 'blocked', f'{error}; leader probe: {denied}'
-        return 'empty', f'killpg0=EPERM with the unreaped zombie leader still present: {error}'
+            return 'blocked', f'{error}; leader probe: {denied}; census={sorted(live)}'
+        if live:
+            return 'alive', f'killpg0=EPERM but census found live members {sorted(live)}: {error}'
+        return 'empty', (f'killpg0=EPERM with the unreaped zombie leader present '
+                         f'and an empty live-member census: {error}')
     except OSError as error:
         return 'blocked', str(error)
 
@@ -204,7 +284,10 @@ def probe_process_group(child, wait=5):
     zombie itself).  Signals happen before ``wait()``; reaping is the last
     step.  A leader that is still running or was already reaped has no
     provable ownership, so it is reported NOT_VERIFIED and gets no signal.
-    A live group is a finding (``GROUP_NOT_EMPTY``), not something to hide
+    A group whose signal probe is EPERM is only called empty after an
+    independent live-member census (``group_probe_state``) finds nothing but
+    this run's unreaped leader; an unavailable census is BLOCKED.  A live
+    group is a finding (``GROUP_NOT_EMPTY``), not something to hide
     after remediation: record it, SIGTERM only that group, and never rewrite
     the status to VERIFIED just because our own SIGTERM eventually emptied it.
     """
@@ -367,15 +450,21 @@ def run_fixture(output, baseline, command=None):
             try:
                 # Fixture evidence is read only after the group was probed and
                 # reaped; a truncated/missing launch.json must not skip cleanup.
-                if child.returncode is None:
+                # Never signal a bare pid after the leader's identity was lost
+                # (wait_exit_unreaped reported REAPED, or another reaper won):
+                # only a still-RUNNING direct child is ours to SIGKILL.
+                if child.returncode is None and leader_state == 'RUNNING':
                     try:
                         child.kill()
                     except OSError:
                         pass
+                if child.returncode is None:
                     try:
                         child.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         audit['cleanupBlocked'] = 'launcher survived SIGKILL'
+                    except ChildProcessError:
+                        audit['cleanupBlocked'] = 'launcher was reaped by someone else'
                 if child.returncode is not None:
                     audit['exitCode'] = child.returncode
                     audit['status'] = 'DONE' if child.returncode == 0 else 'FAIL'

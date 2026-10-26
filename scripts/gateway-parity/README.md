@@ -73,19 +73,25 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 用 `os.waitid(P_PID, pid, WEXITED|WNOWAIT)` 等 launcher 退出但不回收：leader 还是僵尸时
 它的 pid/pgid 不会被复用，`os.killpg(pgid, 0)` 仍指向本次 `start_new_session` 的组，
 探测与 SIGTERM/SIGKILL 都在回收之前完成，最后才 `wait()`。macOS 上组内只剩僵尸 leader 时
-`killpg(pgid, 0)` 返回 `EPERM`，再以 `kill(leaderPid, 0)` 成功证明僵尸仍在，记 `VERIFIED`
-（不依赖 ps）；组内仍有存活成员记 `GROUP_NOT_EMPTY` 并只向该组 SIGTERM（5 s 有界等待后
-仍不空则只对该组 SIGKILL）；探测被拒记 `BLOCKED`；leader 已被他人回收或平台无法证明归属时
-记 `NOT_VERIFIED` 且不发信号。只有 `processTreeCleanup=VERIFIED` 才允许顶层
+`killpg(pgid, 0)` 返回 `EPERM`；`EPERM` 只说明「没有本进程可发信号的成员」，不能排除
+权限受限的活后代，所以**不再**用 `kill(leaderPid, 0)` 直接判空：另用
+`libproc.proc_listpids` + `os.getpgid`（Linux 用 `/proc`）做**不依赖 ps、不依赖发信号权限**的
+活成员普查，普查为空且未回收 leader 仍在才记 `VERIFIED`；普查不可用、或 leader 探测被拒
+记 `BLOCKED` 且不发信号。组内仍有存活成员记 `GROUP_NOT_EMPTY` 并只向该组 SIGTERM
+（5 s 有界等待后仍不空则只对该组 SIGKILL）；leader 已被他人回收或平台无法证明归属时
+记 `NOT_VERIFIED` 且不发信号。本证明的对象只是 launcher 进程组；后代自行 `setsid` /
+`detached` 逃出该组后不在 `VERIFIED` 范围内，登记为 P2 边界跟进，不把 `VERIFIED`
+表述为「所有后代均无残留」。只有 `processTreeCleanup=VERIFIED` 才允许顶层
 `status` / `executionStatus` 为 `PASS`；`GROUP_NOT_EMPTY` / `BLOCKED` / `NOT_VERIFIED`
 一律为 `PASS_WITH_CLEANUP_UNVERIFIED`，`freezeStatus` 为
 `BLOCKED_CLEANUP_UNVERIFIED`（只认 PASS 的冻结 / 矩阵消费者因此不会把它当通过），
 且 `session_domain.py --suite calibrate` 返回 exit 2（与 `BLOCKED` 同约定），只看退出码的
 CI/shell 调用方也不会把它当通过。
 `controls/session_domain.py` 同批增加 `cleanup-empty-group`、
-`cleanup-leftover-grandchild`、`cleanup-probe-blocked` 三个行为控制，cleanup 结果计入
+`cleanup-leftover-grandchild`、`cleanup-probe-blocked`、`cleanup-eperm-live-member`、
+`cleanup-identity-lost` 五个行为控制，cleanup 结果计入
 `results.json:cleanup`，任一失败即整批 FAIL。行为 fixture
 `src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/` 的 `ignore` 孙进程先装好
 `SIG_IGN` 并写就绪标记，launcher 有界等待后才退出；源码变异负控按变异绑定期望字段，
-环境/启动失败判 INVALID 且全部跑完再汇总。
+未声明的 `signalError`/`probeError` 判 INVALID（环境/启动失败也一样）且全部跑完再汇总。
 A5.3 的白名单变更须由协调者完成双评审、哈希登记后再合并。

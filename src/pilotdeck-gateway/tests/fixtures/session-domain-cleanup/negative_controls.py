@@ -67,7 +67,9 @@ def match(rows, mode, expected):
             return False, f'{path}={observed[path]!r}, want {want!r}'
     if row.get('passed') is not False:
         return False, f"passed={row.get('passed')!r}, want False"
-    return True, ''
+    return True, (f"{mode}: "
+                  + ', '.join(f'{path}={observed[path]!r}' for path in expected)
+                  + ', passed=False')
 
 
 def status_mapping(rows):
@@ -82,7 +84,7 @@ def status_mapping(rows):
             return False, f'{state}: observed={row.get("observed")!r}, want PASS'
         if row.get('passed') is not False:
             return False, f'{state}: passed={row.get("passed")!r}, want False'
-    return True, ''
+    return True, 'status: GROUP_NOT_EMPTY/BLOCKED -> observed=PASS, passed=False'
 
 
 def blocked_branch_removed(rows):
@@ -99,7 +101,7 @@ def blocked_branch_removed(rows):
         return False, f"cases={[case.get('case') for case in cases]!r}, want ['permission-denied']"
     if row.get('passed') is not False:
         return False, f"passed={row.get('passed')!r}, want False"
-    return True, ''
+    return True, f'blocked: error={error!r}, cases=[permission-denied], passed=False'
 
 
 def wiring_relaxed(rows):
@@ -112,10 +114,14 @@ def wiring_relaxed(rows):
     })
 
 
-# (name, old, new, mode, judge, uses_launcher).  Every old block must occur once.
+# (name, old, new, mode, judge, uses_launcher, allowed_probe_errors).  Every old
+# block must occur once.  ``allowed_probe_errors`` names the probe result fields
+# (``signalError`` / ``probeError``) this mutation's own fault is allowed to
+# produce; any other mutation that sees one is INVALID, never KILLED.
 MUTATIONS = (
     ('empty-group-probe-removed',
-     "        return 'empty', f'killpg0=EPERM with the unreaped zombie leader still present: {error}'",
+     "        return 'empty', (f'killpg0=EPERM with the unreaped zombie leader present '\n"
+     "                         f'and an empty live-member census: {error}')",
      "        return 'alive', 'mutant: empty-group probe removed'",
      'clean',
      lambda rows: match(rows, 'clean', {
@@ -123,7 +129,8 @@ MUTATIONS = (
          'probe.emptyAfterSignal': False,
          'probe.signal': 'SIGKILL',
      }),
-     True),
+     True,
+     ('signalError', 'probeError')),
     ('cleanup-status-write-removed',
      "            audit['processTreeCleanup'] = audit['processGroupProbe']['status']",
      "            audit['processTreeCleanup'] = CLEANUP_VERIFIED",
@@ -132,12 +139,13 @@ MUTATIONS = (
          'processTreeCleanup': 'VERIFIED',
          'probe.status': 'GROUP_NOT_EMPTY',
      }),
-     True),
+     True,
+     ()),
     ('top-level-mapping-relaxed',
      "    return ('PASS' if audit.get('processTreeCleanup') == CLEANUP_VERIFIED\n"
      "            else CLEANUP_UNVERIFIED_STATUS)",
      "    return 'PASS'",
-     'status', status_mapping, False),
+     'status', status_mapping, False, ()),
     ('sigterm-removed',
      "    for sig in (signal.SIGTERM, signal.SIGKILL):",
      "    for sig in (signal.SIGKILL,):",
@@ -146,11 +154,12 @@ MUTATIONS = (
          'processTreeCleanup': 'GROUP_NOT_EMPTY',
          'probe.signal': 'SIGKILL',
      }),
-     True),
+     True,
+     ()),
     ('blocked-branch-removed',
      "    except OSError as error:\n        return 'blocked', str(error)",
      "    except OSError:\n        raise",
-     'blocked', blocked_branch_removed, False),
+     'blocked', blocked_branch_removed, False, ()),
     ('sigkill-escalation-removed',
      "    for sig in (signal.SIGTERM, signal.SIGKILL):",
      "    for sig in (signal.SIGTERM,):",
@@ -160,11 +169,39 @@ MUTATIONS = (
          'probe.signal': 'SIGTERM',
          'probe.emptyAfterSignal': False,
      }),
-     True),
+     True,
+     ()),
     ('top-level-wiring-relaxed',
      "                overall = cleanup_status(audit)",
      "                overall = 'PASS'",
-     'wiring', wiring_relaxed, False),
+     'wiring', wiring_relaxed, False, ()),
+    ('eperm-census-ignored',
+     "        live = live_group_members(pgid)",
+     "        live = set()  # mutant: ignore the independent live-member census",
+     'eperm-live-member',
+     lambda rows: match(rows, 'eperm-live-member', {
+         'processTreeCleanup': 'VERIFIED',
+         'topLevel': 'PASS',
+     }),
+     False,
+     ()),
+    ('unavailable-census-as-empty',
+     "            return 'blocked', f'killpg0=EPERM; independent group census unavailable: {error}'",
+     "            live = set()  # mutant: treat an unavailable census as empty",
+     'census-unavailable',
+     lambda rows: match(rows, 'census-unavailable', {
+         'processTreeCleanup': 'VERIFIED',
+         'topLevel': 'PASS',
+     }),
+     False,
+     ()),
+    ('reap-guard-removed',
+     "                if child.returncode is None and leader_state == 'RUNNING':",
+     "                if child.returncode is None:  # mutant: signal after REAPED",
+     'reap-state',
+     lambda rows: match(rows, 'reap-state', {'killCalls': 1}),
+     False,
+     ()),
 )
 
 
@@ -194,8 +231,14 @@ def run_check(case, mode, timeout=180):
 
 
 def classify(mutation, result, case):
-    """KILLED only for the mutation's own expected failure fields."""
+    """KILLED only for the mutation's own expected failure fields.
+
+    A probe/environment error that the mutation did not declare is INVALID:
+    otherwise an unmutated implementation whose group signal is denied can
+    satisfy the expected fields and be mis-counted as a kill.
+    """
     name, mode, judge, uses_launcher = mutation[0], mutation[3], mutation[4], mutation[5]
+    allowed_errors = mutation[6]
     if isinstance(result, subprocess.TimeoutExpired):
         return 'INVALID', f'check timed out: {result}'
     if isinstance(result, BaseException):
@@ -211,6 +254,11 @@ def classify(mutation, result, case):
         if launcher[0].get('launcherExitCode') != 0:
             return 'INVALID', (f"launcher startup failed: exit={launcher[0].get('launcherExitCode')!r} "
                                f"status={launcher[0].get('launcherStatus')!r}")
+        probe = launcher[0].get('probe') or {}
+        for field in ('signalError', 'probeError'):
+            value = probe.get(field)
+            if value and field not in allowed_errors:
+                return 'INVALID', f'undeclared probe environment error {field}={value!r}'
     ok, detail = judge(rows)
     if ok:
         if result.returncode == 0:

@@ -5,7 +5,6 @@ import copy
 import json
 import os
 from pathlib import Path
-import signal
 import subprocess
 import sys
 import tempfile
@@ -67,6 +66,7 @@ cleanup_status = session_domain_module.cleanup_status
 CLEANUP_VERIFIED = session_domain_module.CLEANUP_VERIFIED
 CLEANUP_GROUP_NOT_EMPTY = session_domain_module.CLEANUP_GROUP_NOT_EMPTY
 CLEANUP_BLOCKED = session_domain_module.CLEANUP_BLOCKED
+CLEANUP_NOT_VERIFIED = session_domain_module.CLEANUP_NOT_VERIFIED
 CLEANUP_UNVERIFIED_STATUS = session_domain_module.CLEANUP_UNVERIFIED_STATUS
 
 CALIBRATION_CASES = {
@@ -356,16 +356,15 @@ def cleanup_controls(output):
         except OSError:
             return False
 
-    def force_known_member(pgid, pid):
-        """Last resort: only a known live pid proven to still be in the group."""
-        if pid is None:
-            return
-        try:
-            if os.getpgid(pid) != pgid:
-                return
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
+    def wait_group_empty(pgid, timeout=5):
+        """Observe only.  The probe reaped the leader last, so after it returns
+        there is no owned pid left to signal; a residual group is a finding."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if group_empty(pgid):
+                return True
+            time.sleep(.05)
+        return group_empty(pgid)
 
     # 1. Leader exits as an unreaped zombie; empty group -> VERIFIED.
     child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
@@ -389,7 +388,7 @@ def cleanup_controls(output):
     # parent capture pipe cannot stay open if cleanup fails.
     marker = output / 'leaky-grandchild.pid'
     code = ("import subprocess,sys;"
-            "p=subprocess.Popen(['sleep','60'],stdout=subprocess.DEVNULL,"
+            "p=subprocess.Popen(['sleep','20'],stdout=subprocess.DEVNULL,"
             "stderr=subprocess.DEVNULL);"
             "open(sys.argv[1],'w').write(str(p.pid))")
     child = subprocess.Popen([sys.executable, '-I', '-c', code, str(marker)],
@@ -398,16 +397,12 @@ def cleanup_controls(output):
     top = cleanup_status({'processTreeCleanup': probe['status']})
     grandchild = int(marker.read_text()) if marker.is_file() else None
     grandchild_gone = grandchild is not None and not _pid_alive(grandchild)
-    if not group_empty(child.pid):
-        force_known_member(child.pid, grandchild)
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not group_empty(child.pid):
-            time.sleep(.05)
+    group_empty_after = wait_group_empty(child.pid)
     check('cleanup-leftover-grandchild',
           probe['status'] == CLEANUP_GROUP_NOT_EMPTY and top == CLEANUP_UNVERIFIED_STATUS
-          and grandchild_gone and group_empty(child.pid),
+          and grandchild_gone and group_empty_after,
           f"status={probe['status']} top={top} grandchildGone={grandchild_gone} "
-          f"groupEmpty={group_empty(child.pid)}", probe=probe)
+          f"groupEmpty={group_empty_after}", probe=probe)
 
     # 3. An inaccessible probe is BLOCKED and never a PASS.  Both killpg and
     # the leader kill(pid, 0) are denied, so the probe cannot mistake a sandbox
@@ -435,6 +430,73 @@ def cleanup_controls(output):
           blocked.get('status') == CLEANUP_BLOCKED and blocked_top == CLEANUP_UNVERIFIED_STATUS
           and error is None,
           f"status={blocked.get('status')} top={blocked_top} error={error}", probe=blocked)
+
+    # 4. EPERM alone is not "only the zombie leader remains": deny just the
+    # group probe while a real live grandchild is in the group.  The independent
+    # live-member census must find it, so the probe reports GROUP_NOT_EMPTY and
+    # the top level is non-PASS, never VERIFIED.
+    folder = output / 'eperm-live-member'
+    folder.mkdir(parents=True, exist_ok=False)
+    marker = folder / 'grandchild.pid'
+    code = ("import subprocess,sys;"
+            "p=subprocess.Popen(['sleep','12'],stdout=subprocess.DEVNULL,"
+            "stderr=subprocess.DEVNULL);"
+            "open(sys.argv[1],'w').write(str(p.pid))")
+    child = subprocess.Popen([sys.executable, '-I', '-c', code, str(marker)],
+                             start_new_session=True)
+    state = wait_exit_unreaped(child.pid, 10)
+    eperm = {'status': None}
+    error = None
+    if state == 'EXITED':
+        try:
+            with patch.object(os, 'killpg', side_effect=PermissionError('denied')):
+                eperm = probe_process_group(child)
+        except Exception as exc:
+            error = f'{type(exc).__name__}: {exc}'
+    else:
+        error = f'leader state {state}'
+    if child.returncode is None:
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    eperm_empty = wait_group_empty(child.pid, timeout=15)
+    eperm_top = cleanup_status({'processTreeCleanup': eperm.get('status')})
+    check('cleanup-eperm-live-member',
+          eperm.get('status') == CLEANUP_GROUP_NOT_EMPTY
+          and eperm_top == CLEANUP_UNVERIFIED_STATUS and eperm_empty and error is None,
+          f"status={eperm.get('status')} top={eperm_top} groupEmpty={eperm_empty} "
+          f"error={error}", probe=eperm)
+
+    # 5. An already-reaped leader gives NOT_VERIFIED and provably no signal.
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
+    state = wait_exit_unreaped(child.pid, 10)
+    signals = []
+
+    def deny(*args, **_kwargs):
+        signals.append(args)
+        raise AssertionError('no signal may be sent after the leader was reaped')
+
+    lost = {'status': None}
+    error = None
+    if state == 'EXITED':
+        try:
+            with patch.object(session_domain_module, 'wait_exit_unreaped',
+                              return_value='REAPED'), \
+                    patch.object(os, 'killpg', side_effect=deny):
+                lost = probe_process_group(child)
+        except Exception as exc:
+            error = f'{type(exc).__name__}: {exc}'
+    else:
+        error = f'leader state {state}'
+    if child.returncode is None:
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    check('cleanup-identity-lost',
+          lost.get('status') == CLEANUP_NOT_VERIFIED and not signals and error is None,
+          f"status={lost.get('status')} signalCalls={len(signals)} error={error}", probe=lost)
 
     report = {'status': 'PASS' if all(row['passed'] for row in results) else 'FAIL',
               'scope': 'cleanup probe behavior controls; not native evidence', 'cases': results}
