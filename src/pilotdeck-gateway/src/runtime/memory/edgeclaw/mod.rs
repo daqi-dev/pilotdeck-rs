@@ -18,6 +18,8 @@
 pub mod file_memory;
 pub mod messages;
 mod node_fs;
+#[path = "retrieval/helpers.rs"]
+pub mod retrieval;
 pub mod storage;
 pub mod text;
 

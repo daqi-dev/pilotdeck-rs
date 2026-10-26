@@ -1,0 +1,3325 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/file-memory.ts": "c64b368fa7fa329cbecb475b22972860bbc133444606017132c6edbf27ed3ad6",
+    "src/context/memory/edgeclaw-memory-core/src/core/general-projects.ts": "3a5512939027cc32efde9cd218e4bb400300a28fda6f9ac07391d75b56244e40",
+    "src/context/memory/edgeclaw-memory-core/src/core/retrieval/reasoning-loop.ts": "26d38e3c96b877e038a9cf4d15f9d9174f3b64ea23117ed5ca8d56db811ba6a7",
+    "src/context/memory/edgeclaw-memory-core/src/core/skills/llm-extraction.ts": "6cde29bc33b1d2fccfcfa5ee507941b2280c6960254da28794ac18845224372e",
+    "src/context/memory/edgeclaw-memory-core/src/core/storage/sqlite.ts": "92ee83f07aaefc070850a6ac366fbc75924b2efdaa45f9f9999ed0d3d25e5093",
+    "src/context/memory/edgeclaw-memory-core/src/core/trace-i18n.ts": "2d4a4e6d1d86539ff294b5d016e51ef3a131575e2d5be4da14aeca24b8dc4f0c",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/id.ts": "5d8f83f1a5d56b696829ffe8a26dff2505b6bb6317acd4e4ca9772219e0bd1f9",
+    "src/context/memory/edgeclaw-memory-core/src/core/utils/text.ts": "c582cc42b3acae4bc5b8502f2ad6abd6577e2eb03e7ae41b966e0cceba5f654e"
+  },
+  "nodeVersion": "v22.22.0",
+  "locale": "en-US",
+  "clockMs": 1792627200000,
+  "cases": [
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        ""
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "  A  B  "
+      ],
+      "expected": "a b"
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "A\tB\nC"
+      ],
+      "expected": "a b c"
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        " 　﻿ x   y"
+      ],
+      "expected": "x y"
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "STRASSE Straße"
+      ],
+      "expected": "strasse straße"
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "İSTANBUL"
+      ],
+      "expected": "i̇stanbul"
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "产品  项目"
+      ],
+      "expected": "产品 项目"
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "\ud800  x  \ud801"
+      ],
+      "expected": "\ud800 x \ud801"
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "\r\n"
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "a\rb"
+      ],
+      "expected": "a b"
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "  "
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "normalizeQueryKey",
+      "args": [
+        "  "
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "buildTraceId",
+      "args": [
+        "trace",
+        "seed",
+        "4fzzzxjy"
+      ],
+      "expected": "trace_25de9c5a01"
+    },
+    {
+      "fn": "buildTraceId",
+      "args": [
+        "",
+        "",
+        "i"
+      ],
+      "expected": "_b3663ea63f"
+    },
+    {
+      "fn": "buildTraceId",
+      "args": [
+        "产品",
+        "会话\ud800",
+        "0001ogs5"
+      ],
+      "expected": "产品_7146292bda"
+    },
+    {
+      "fn": "buildTraceId",
+      "args": [
+        "trace",
+        "",
+        ""
+      ],
+      "expected": "trace_d1c86cdf1b"
+    },
+    {
+      "fn": "buildTraceId",
+      "args": [
+        "l1",
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "zzzzzxtm"
+      ],
+      "expected": "l1_0b7c69d28f"
+    },
+    {
+      "fn": "renderUserSummaryBlock",
+      "args": [
+        {
+          "identityBackground": [],
+          "files": []
+        }
+      ],
+      "expected": []
+    },
+    {
+      "fn": "renderUserSummaryBlock",
+      "args": [
+        {
+          "identityBackground": [
+            "one"
+          ],
+          "files": [
+            {
+              "relativePath": "global/UserIdentity/user-profile.md",
+              "type": "user",
+              "updatedAt": "2026-02-01T00:00:00.000Z",
+              "content": "profile body"
+            }
+          ]
+        }
+      ],
+      "expected": [
+        "### [user] global/UserIdentity/user-profile.md (2026-02-01T00:00:00.000Z)",
+        "## 身份背景",
+        "- one",
+        ""
+      ]
+    },
+    {
+      "fn": "renderUserSummaryBlock",
+      "args": [
+        {
+          "identityBackground": [
+            "one",
+            "two"
+          ],
+          "files": [
+            {
+              "relativePath": "custom/profile.md",
+              "type": "user",
+              "updatedAt": "",
+              "content": "profile body"
+            }
+          ]
+        }
+      ],
+      "expected": [
+        "### [user] custom/profile.md",
+        "## 身份背景",
+        "- one",
+        "- two",
+        ""
+      ]
+    },
+    {
+      "fn": "renderUserSummaryBlock",
+      "args": [
+        {
+          "identityBackground": [
+            "\\u4e2d\\u6587"
+          ],
+          "files": []
+        }
+      ],
+      "expected": [
+        "### [user] global/UserIdentity/user-profile.md",
+        "## 身份背景",
+        "- \\u4e2d\\u6587",
+        ""
+      ]
+    },
+    {
+      "fn": "renderProjectMetaBlock",
+      "args": [
+        null
+      ],
+      "expected": []
+    },
+    {
+      "fn": "renderProjectMetaBlock",
+      "args": [
+        {
+          "projectId": "p1",
+          "projectName": "Alpha",
+          "description": "Alpha description",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-02-01T00:00:00.000Z",
+          "relativePath": "GeneralProjects/p1/project.md",
+          "absolutePath": "/fixture/home/GeneralProjects/p1/project.md"
+        }
+      ],
+      "expected": [
+        "### [project_meta] GeneralProjects/p1/project.md (2026-02-01T00:00:00.000Z)",
+        "## Project Name",
+        "Alpha",
+        "",
+        "## Description",
+        "Alpha description",
+        "",
+        "## Status",
+        "active",
+        ""
+      ]
+    },
+    {
+      "fn": "renderProjectMetaBlock",
+      "args": [
+        {
+          "projectId": "p1",
+          "projectName": "产品",
+          "description": "",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "t",
+          "relativePath": "r/p.md",
+          "absolutePath": "/fixture/home/GeneralProjects/p1/project.md"
+        }
+      ],
+      "expected": [
+        "### [project_meta] r/p.md (t)",
+        "## Project Name",
+        "产品",
+        "",
+        "## Description",
+        "No project description yet.",
+        "",
+        "## Status",
+        "active",
+        ""
+      ]
+    },
+    {
+      "fn": "renderSelectedRecordsBlock",
+      "args": [
+        []
+      ],
+      "expected": []
+    },
+    {
+      "fn": "renderSelectedRecordsBlock",
+      "args": [
+        [
+          {
+            "relativePath": "a.md",
+            "type": "user",
+            "updatedAt": "u1",
+            "content": "  body  "
+          },
+          {
+            "relativePath": "b.md",
+            "type": "project",
+            "updatedAt": "u2",
+            "content": "\nline\n\n"
+          }
+        ]
+      ],
+      "expected": [
+        "### [user] a.md (u1)",
+        "body",
+        "",
+        "### [project] b.md (u2)",
+        "line",
+        ""
+      ]
+    },
+    {
+      "fn": "renderSelectedRecordsBlock",
+      "args": [
+        [
+          {
+            "relativePath": "c.md",
+            "type": "feedback",
+            "updatedAt": "u3",
+            "content": ""
+          }
+        ]
+      ],
+      "expected": [
+        "### [feedback] c.md (u3)",
+        "",
+        ""
+      ]
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "user",
+        {
+          "identityBackground": [
+            "background"
+          ],
+          "files": [
+            {
+              "relativePath": "global/UserIdentity/user-profile.md",
+              "type": "user",
+              "updatedAt": "2026-02-01T00:00:00.000Z",
+              "content": "profile body"
+            }
+          ]
+        },
+        {
+          "projectId": "p1",
+          "projectName": "Alpha",
+          "description": "Alpha description",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-02-01T00:00:00.000Z",
+          "relativePath": "GeneralProjects/p1/project.md",
+          "absolutePath": "/fixture/home/GeneralProjects/p1/project.md"
+        },
+        [
+          {
+            "relativePath": "global/UserIdentity/user-profile.md",
+            "type": "user",
+            "updatedAt": "2026-02-01T00:00:00.000Z",
+            "content": "personal"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/project.md",
+            "type": "project",
+            "updatedAt": "2026-02-02T00:00:00.000Z",
+            "content": "project body"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/feedback.md",
+            "type": "feedback",
+            "updatedAt": "2026-02-03T00:00:00.000Z",
+            "content": "feedback"
+          }
+        ]
+      ],
+      "expected": "## ClawXMemory Recall\nroute=user\n\n### [user] global/UserIdentity/user-profile.md (2026-02-01T00:00:00.000Z)\n## 身份背景\n- background\n\nTreat these file memories as the authoritative long-term memory for this turn when relevant."
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "user",
+        {
+          "identityBackground": [],
+          "files": []
+        },
+        {
+          "projectId": "p1",
+          "projectName": "Alpha",
+          "description": "Alpha description",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-02-01T00:00:00.000Z",
+          "relativePath": "GeneralProjects/p1/project.md",
+          "absolutePath": "/fixture/home/GeneralProjects/p1/project.md"
+        },
+        [
+          {
+            "relativePath": "global/UserIdentity/user-profile.md",
+            "type": "user",
+            "updatedAt": "2026-02-01T00:00:00.000Z",
+            "content": "personal"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/project.md",
+            "type": "project",
+            "updatedAt": "2026-02-02T00:00:00.000Z",
+            "content": "project body"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/feedback.md",
+            "type": "feedback",
+            "updatedAt": "2026-02-03T00:00:00.000Z",
+            "content": "feedback"
+          }
+        ]
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "project",
+        {
+          "identityBackground": [],
+          "files": []
+        },
+        {
+          "projectId": "p1",
+          "projectName": "Alpha",
+          "description": "Alpha description",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-02-01T00:00:00.000Z",
+          "relativePath": "GeneralProjects/p1/project.md",
+          "absolutePath": "/fixture/home/GeneralProjects/p1/project.md"
+        },
+        [
+          {
+            "relativePath": "global/UserIdentity/user-profile.md",
+            "type": "user",
+            "updatedAt": "2026-02-01T00:00:00.000Z",
+            "content": "personal"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/project.md",
+            "type": "project",
+            "updatedAt": "2026-02-02T00:00:00.000Z",
+            "content": "project body"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/feedback.md",
+            "type": "feedback",
+            "updatedAt": "2026-02-03T00:00:00.000Z",
+            "content": "feedback"
+          }
+        ]
+      ],
+      "expected": "## ClawXMemory Recall\nroute=project\n\n### [project_meta] GeneralProjects/p1/project.md (2026-02-01T00:00:00.000Z)\n## Project Name\nAlpha\n\n## Description\nAlpha description\n\n## Status\nactive\n\n### [user] global/UserIdentity/user-profile.md (2026-02-01T00:00:00.000Z)\npersonal\n\n### [project] GeneralProjects/p1/project.md (2026-02-02T00:00:00.000Z)\nproject body\n\n### [feedback] GeneralProjects/p1/feedback.md (2026-02-03T00:00:00.000Z)\nfeedback\n\nTreat these file memories as the authoritative long-term memory for this turn when relevant."
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "project",
+        {
+          "identityBackground": [],
+          "files": []
+        },
+        null,
+        []
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "project",
+        {
+          "identityBackground": [],
+          "files": []
+        },
+        null,
+        [
+          {
+            "relativePath": "GeneralProjects/p1/project.md",
+            "type": "project",
+            "updatedAt": "2026-02-02T00:00:00.000Z",
+            "content": "project body"
+          }
+        ]
+      ],
+      "expected": "## ClawXMemory Recall\nroute=project\n\n### [project] GeneralProjects/p1/project.md (2026-02-02T00:00:00.000Z)\nproject body\n\nTreat these file memories as the authoritative long-term memory for this turn when relevant."
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "mix",
+        {
+          "identityBackground": [
+            "background"
+          ],
+          "files": [
+            {
+              "relativePath": "global/UserIdentity/user-profile.md",
+              "type": "user",
+              "updatedAt": "2026-02-01T00:00:00.000Z",
+              "content": "profile body"
+            }
+          ]
+        },
+        {
+          "projectId": "p1",
+          "projectName": "Alpha",
+          "description": "Alpha description",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-02-01T00:00:00.000Z",
+          "relativePath": "GeneralProjects/p1/project.md",
+          "absolutePath": "/fixture/home/GeneralProjects/p1/project.md"
+        },
+        [
+          {
+            "relativePath": "global/UserIdentity/user-profile.md",
+            "type": "user",
+            "updatedAt": "2026-02-01T00:00:00.000Z",
+            "content": "personal"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/project.md",
+            "type": "project",
+            "updatedAt": "2026-02-02T00:00:00.000Z",
+            "content": "project body"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/feedback.md",
+            "type": "feedback",
+            "updatedAt": "2026-02-03T00:00:00.000Z",
+            "content": "feedback"
+          }
+        ]
+      ],
+      "expected": "## ClawXMemory Recall\nroute=mix\n\n### [user] global/UserIdentity/user-profile.md (2026-02-01T00:00:00.000Z)\n## 身份背景\n- background\n\n### [project_meta] GeneralProjects/p1/project.md (2026-02-01T00:00:00.000Z)\n## Project Name\nAlpha\n\n## Description\nAlpha description\n\n## Status\nactive\n\n### [project] GeneralProjects/p1/project.md (2026-02-02T00:00:00.000Z)\nproject body\n\n### [feedback] GeneralProjects/p1/feedback.md (2026-02-03T00:00:00.000Z)\nfeedback\n\nTreat these file memories as the authoritative long-term memory for this turn when relevant."
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "mix",
+        {
+          "identityBackground": [],
+          "files": []
+        },
+        null,
+        []
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "mix",
+        {
+          "identityBackground": [],
+          "files": []
+        },
+        null,
+        [
+          {
+            "relativePath": "GeneralProjects/p1/project.md",
+            "type": "project",
+            "updatedAt": "2026-02-02T00:00:00.000Z",
+            "content": "project body"
+          }
+        ]
+      ],
+      "expected": "## ClawXMemory Recall\nroute=mix\n\n### [project] GeneralProjects/p1/project.md (2026-02-02T00:00:00.000Z)\nproject body\n\nTreat these file memories as the authoritative long-term memory for this turn when relevant."
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "none",
+        {
+          "identityBackground": [
+            "background"
+          ],
+          "files": [
+            {
+              "relativePath": "global/UserIdentity/user-profile.md",
+              "type": "user",
+              "updatedAt": "2026-02-01T00:00:00.000Z",
+              "content": "profile body"
+            }
+          ]
+        },
+        {
+          "projectId": "p1",
+          "projectName": "Alpha",
+          "description": "Alpha description",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-02-01T00:00:00.000Z",
+          "relativePath": "GeneralProjects/p1/project.md",
+          "absolutePath": "/fixture/home/GeneralProjects/p1/project.md"
+        },
+        [
+          {
+            "relativePath": "global/UserIdentity/user-profile.md",
+            "type": "user",
+            "updatedAt": "2026-02-01T00:00:00.000Z",
+            "content": "personal"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/project.md",
+            "type": "project",
+            "updatedAt": "2026-02-02T00:00:00.000Z",
+            "content": "project body"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/feedback.md",
+            "type": "feedback",
+            "updatedAt": "2026-02-03T00:00:00.000Z",
+            "content": "feedback"
+          }
+        ]
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "auto",
+        {
+          "identityBackground": [
+            "background"
+          ],
+          "files": [
+            {
+              "relativePath": "global/UserIdentity/user-profile.md",
+              "type": "user",
+              "updatedAt": "2026-02-01T00:00:00.000Z",
+              "content": "profile body"
+            }
+          ]
+        },
+        {
+          "projectId": "p1",
+          "projectName": "Alpha",
+          "description": "Alpha description",
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-02-01T00:00:00.000Z",
+          "relativePath": "GeneralProjects/p1/project.md",
+          "absolutePath": "/fixture/home/GeneralProjects/p1/project.md"
+        },
+        [
+          {
+            "relativePath": "global/UserIdentity/user-profile.md",
+            "type": "user",
+            "updatedAt": "2026-02-01T00:00:00.000Z",
+            "content": "personal"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/project.md",
+            "type": "project",
+            "updatedAt": "2026-02-02T00:00:00.000Z",
+            "content": "project body"
+          },
+          {
+            "relativePath": "GeneralProjects/p1/feedback.md",
+            "type": "feedback",
+            "updatedAt": "2026-02-03T00:00:00.000Z",
+            "content": "feedback"
+          }
+        ]
+      ],
+      "expected": ""
+    },
+    {
+      "fn": "renderContext",
+      "args": [
+        "user",
+        {
+          "identityBackground": [
+            "\\u4e2d"
+          ],
+          "files": [
+            {
+              "relativePath": "x.md",
+              "type": "user",
+              "updatedAt": "t",
+              "content": "profile body"
+            }
+          ]
+        },
+        null,
+        [
+          {
+            "relativePath": "x.md",
+            "type": "user",
+            "updatedAt": "t",
+            "content": "dup"
+          }
+        ]
+      ],
+      "expected": "## ClawXMemory Recall\nroute=user\n\n### [user] x.md (t)\n## 身份背景\n- \\u4e2d\n\nTreat these file memories as the authoritative long-term memory for this turn when relevant."
+    },
+    {
+      "fn": "recentUserMessages",
+      "args": [
+        {
+          "$undefined": true
+        }
+      ],
+      "expected": []
+    },
+    {
+      "fn": "recentUserMessages",
+      "args": [
+        []
+      ],
+      "expected": []
+    },
+    {
+      "fn": "recentUserMessages",
+      "args": [
+        [
+          {
+            "role": "user",
+            "content": "u1"
+          },
+          {
+            "role": "assistant",
+            "content": "a1"
+          },
+          {
+            "role": "user",
+            "content": "u2"
+          },
+          {
+            "role": "system",
+            "content": "s1"
+          },
+          {
+            "role": "user",
+            "content": "u3"
+          },
+          {
+            "role": "user",
+            "content": "u4"
+          },
+          {
+            "role": "user",
+            "content": "u5"
+          },
+          {
+            "role": "other",
+            "content": "o1"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "content": "u2"
+        },
+        {
+          "role": "user",
+          "content": "u3"
+        },
+        {
+          "role": "user",
+          "content": "u4"
+        },
+        {
+          "role": "user",
+          "content": "u5"
+        }
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        ""
+      ],
+      "expected": [
+        ""
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "abc"
+      ],
+      "expected": [
+        "abc"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "项目"
+      ],
+      "expected": [
+        "项目",
+        "项目"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "项目进展"
+      ],
+      "expected": [
+        "项目进展",
+        "项目",
+        "目进",
+        "进展",
+        "项目进",
+        "目进展"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "中文English混合"
+      ],
+      "expected": [
+        "中文",
+        "中文",
+        "English",
+        "混合",
+        "混合"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "𠀀𠀁项目"
+      ],
+      "expected": [
+        "𠀀𠀁项目",
+        "𠀀",
+        "\udc00\ud840",
+        "𠀁",
+        "\udc01项",
+        "项目",
+        "𠀀\ud840",
+        "\udc00𠀁",
+        "𠀁项",
+        "\udc01项目"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "a项目b"
+      ],
+      "expected": [
+        "a",
+        "项目",
+        "项目",
+        "b"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "😀项目"
+      ],
+      "expected": [
+        "😀",
+        "项目",
+        "项目"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "\ud800项目\ud801"
+      ],
+      "expected": [
+        "\ud800",
+        "项目",
+        "项目",
+        "\ud801"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "カタカナ"
+      ],
+      "expected": [
+        "カタカナ"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "C++"
+      ],
+      "expected": [
+        "C++"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "12345"
+      ],
+      "expected": [
+        "12345"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "項目"
+      ],
+      "expected": [
+        "項目",
+        "項目"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "中文"
+      ],
+      "expected": [
+        "中文",
+        "中文"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "中华人民共和国人"
+      ],
+      "expected": [
+        "中华人民共和国人",
+        "中华",
+        "华人",
+        "人民",
+        "民共",
+        "共和",
+        "和国",
+        "国人",
+        "中华人",
+        "华人民",
+        "人民共",
+        "民共和",
+        "共和国",
+        "和国人"
+      ]
+    },
+    {
+      "fn": "expandCjkSearchToken",
+      "args": [
+        "中华人民共和国人人"
+      ],
+      "expected": [
+        "中华",
+        "华人",
+        "人民",
+        "民共",
+        "共和",
+        "和国",
+        "国人",
+        "人人",
+        "中华人",
+        "华人民",
+        "人民共",
+        "民共和",
+        "共和国",
+        "和国人",
+        "国人人"
+      ]
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        ""
+      ],
+      "expected": []
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "项目进展如何"
+      ],
+      "expected": [
+        "项目进展如何",
+        "目进",
+        "展如",
+        "项目进",
+        "目进展",
+        "进展如",
+        "展如何"
+      ]
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "当前项目"
+      ],
+      "expected": [
+        "当前项目",
+        "前项",
+        "当前项",
+        "前项目"
+      ]
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "中文English混合"
+      ],
+      "expected": [
+        "中文",
+        "english",
+        "混合"
+      ]
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "𠀀𠀁项目"
+      ],
+      "expected": [
+        "𠀀𠀁项目",
+        "𠀀",
+        "\udc00\ud840",
+        "𠀁",
+        "\udc01项",
+        "𠀀\ud840",
+        "\udc00𠀁",
+        "𠀁项",
+        "\udc01项目"
+      ]
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "a项目b 项目"
+      ],
+      "expected": []
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "C++ 项目"
+      ],
+      "expected": []
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "GENERAL general GENERAL"
+      ],
+      "expected": []
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "产品🚀x"
+      ],
+      "expected": [
+        "产品"
+      ]
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "\ud800项目\ud801"
+      ],
+      "expected": []
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "カタカナ 项目"
+      ],
+      "expected": [
+        "カタカナ"
+      ]
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "12345 67"
+      ],
+      "expected": [
+        "12345",
+        "67"
+      ]
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "项目，进展！情况？"
+      ],
+      "expected": []
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "  \t\n  "
+      ],
+      "expected": []
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "中华人民共和国人"
+      ],
+      "expected": [
+        "中华人民共和国人",
+        "中华",
+        "华人",
+        "人民",
+        "民共",
+        "共和",
+        "和国",
+        "国人",
+        "中华人",
+        "华人民",
+        "人民共",
+        "民共和",
+        "共和国",
+        "和国人"
+      ]
+    },
+    {
+      "fn": "tokenizeSearchText",
+      "args": [
+        "中华人民共和国人人 项目"
+      ],
+      "expected": [
+        "中华",
+        "华人",
+        "人民",
+        "民共",
+        "共和",
+        "和国",
+        "国人",
+        "人人",
+        "中华人",
+        "华人民",
+        "人民共",
+        "民共和",
+        "共和国",
+        "和国人",
+        "国人人"
+      ]
+    },
+    {
+      "fn": "buildProjectShortlist",
+      "args": [
+        [],
+        "anything",
+        []
+      ],
+      "expected": []
+    },
+    {
+      "fn": "buildProjectShortlist",
+      "args": [
+        [
+          {
+            "projectId": "p1",
+            "projectName": "Alpha",
+            "description": "alpha project",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-02-01T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p1",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0,
+              "latestMemoryAt": "2026-03-01T00:00:00.000Z"
+            }
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Beta",
+            "description": "beta project",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2025-01-01T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p2",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 2,
+              "projectEntries": 2,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p3",
+            "projectName": "Gamma",
+            "description": "",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-02-01T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "workspace_external",
+            "logicalProjectId": "local:p3",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 0,
+              "projectEntries": 0,
+              "feedbackEntries": 0,
+              "latestMemoryAt": ""
+            }
+          }
+        ],
+        "alpha",
+        [
+          {
+            "role": "assistant",
+            "content": "beta gamma"
+          },
+          {
+            "role": "user",
+            "content": "alpha"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "projectId": "local:p1",
+          "projectName": "Alpha",
+          "description": "alpha project",
+          "status": "active",
+          "updatedAt": "2026-03-01T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 21,
+          "exact": 2,
+          "source": "query",
+          "matchedText": "alpha"
+        },
+        {
+          "projectId": "local:p3",
+          "projectName": "Gamma",
+          "description": "",
+          "status": "active",
+          "updatedAt": "2026-02-01T00:00:00.000Z",
+          "sourceType": "workspace_external",
+          "score": 1,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "gamma"
+        },
+        {
+          "projectId": "local:p2",
+          "projectName": "Beta",
+          "description": "beta project",
+          "status": "active",
+          "updatedAt": "2025-01-01T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 1,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "beta"
+        }
+      ]
+    },
+    {
+      "fn": "buildProjectShortlist",
+      "args": [
+        [
+          {
+            "projectId": "p1",
+            "projectName": "One",
+            "description": "x",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "a",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p1",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 0,
+              "projectEntries": 0,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Two",
+            "description": "x",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "B",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p2",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 0,
+              "projectEntries": 0,
+              "feedbackEntries": 0
+            }
+          }
+        ],
+        "zzz",
+        []
+      ],
+      "expected": [
+        {
+          "projectId": "local:p2",
+          "projectName": "Two",
+          "description": "x",
+          "status": "active",
+          "updatedAt": "B",
+          "sourceType": "general_local",
+          "score": 0,
+          "exact": 0,
+          "source": "recent",
+          "matchedText": ""
+        },
+        {
+          "projectId": "local:p1",
+          "projectName": "One",
+          "description": "x",
+          "status": "active",
+          "updatedAt": "a",
+          "sourceType": "general_local",
+          "score": 0,
+          "exact": 0,
+          "source": "recent",
+          "matchedText": ""
+        }
+      ]
+    },
+    {
+      "fn": "buildProjectShortlist",
+      "args": [
+        [
+          {
+            "projectId": "p1",
+            "projectName": "Same",
+            "description": "x",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "same",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p1",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 0,
+              "projectEntries": 0,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Same2",
+            "description": "x",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "same",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p2",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 0,
+              "projectEntries": 0,
+              "feedbackEntries": 0
+            }
+          }
+        ],
+        "项目",
+        [
+          {
+            "role": "user",
+            "content": "当前项目"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "projectId": "local:p1",
+          "projectName": "Same",
+          "description": "x",
+          "status": "active",
+          "updatedAt": "same",
+          "sourceType": "general_local",
+          "score": 0,
+          "exact": 0,
+          "source": "recent",
+          "matchedText": ""
+        },
+        {
+          "projectId": "local:p2",
+          "projectName": "Same2",
+          "description": "x",
+          "status": "active",
+          "updatedAt": "same",
+          "sourceType": "general_local",
+          "score": 0,
+          "exact": 0,
+          "source": "recent",
+          "matchedText": ""
+        }
+      ]
+    },
+    {
+      "fn": "buildProjectShortlist",
+      "args": [
+        [
+          {
+            "projectId": "p1",
+            "projectName": "Accent",
+            "description": "x",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "ä",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p1",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 0,
+              "projectEntries": 0,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Ascii",
+            "description": "x",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p2",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 0,
+              "projectEntries": 0,
+              "feedbackEntries": 0
+            }
+          }
+        ],
+        "zzz",
+        []
+      ],
+      "expected": [
+        {
+          "projectId": "local:p2",
+          "projectName": "Ascii",
+          "description": "x",
+          "status": "active",
+          "updatedAt": "z",
+          "sourceType": "general_local",
+          "score": 0,
+          "exact": 0,
+          "source": "recent",
+          "matchedText": ""
+        },
+        {
+          "projectId": "local:p1",
+          "projectName": "Accent",
+          "description": "x",
+          "status": "active",
+          "updatedAt": "ä",
+          "sourceType": "general_local",
+          "score": 0,
+          "exact": 0,
+          "source": "recent",
+          "matchedText": ""
+        }
+      ]
+    },
+    {
+      "fn": "buildProjectShortlist",
+      "args": [
+        [
+          {
+            "projectId": "p0",
+            "projectName": "Project0",
+            "description": "description 0",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p0",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p1",
+            "projectName": "Project1",
+            "description": "description 1",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-02T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p1",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p2",
+            "projectName": "Project2",
+            "description": "description 2",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-03T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p2",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p3",
+            "projectName": "Project3",
+            "description": "description 3",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-04T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p3",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p4",
+            "projectName": "Project4",
+            "description": "description 4",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-05T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p4",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p5",
+            "projectName": "Project5",
+            "description": "description 5",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-06T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p5",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p6",
+            "projectName": "Project6",
+            "description": "description 6",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-07T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p6",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p7",
+            "projectName": "Project7",
+            "description": "description 7",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-08T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p7",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p8",
+            "projectName": "Project8",
+            "description": "description 8",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-09T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p8",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p9",
+            "projectName": "Project9",
+            "description": "description 9",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-10T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p9",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p10",
+            "projectName": "Project10",
+            "description": "description 10",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-11T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p10",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p11",
+            "projectName": "Project11",
+            "description": "description 11",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-12T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p11",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p12",
+            "projectName": "Project12",
+            "description": "description 12",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-13T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p12",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p13",
+            "projectName": "Project13",
+            "description": "description 13",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-14T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p13",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p14",
+            "projectName": "Project14",
+            "description": "description 14",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-15T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p14",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p15",
+            "projectName": "Project15",
+            "description": "description 15",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-16T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p15",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p16",
+            "projectName": "Project16",
+            "description": "description 16",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-17T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p16",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p17",
+            "projectName": "Project17",
+            "description": "description 17",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-18T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p17",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p18",
+            "projectName": "Project18",
+            "description": "description 18",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-19T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p18",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p19",
+            "projectName": "Project19",
+            "description": "description 19",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-20T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p19",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p20",
+            "projectName": "Project20",
+            "description": "description 20",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-21T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p20",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p21",
+            "projectName": "Project21",
+            "description": "description 21",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-22T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p21",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p22",
+            "projectName": "Project22",
+            "description": "description 22",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-23T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p22",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p23",
+            "projectName": "Project23",
+            "description": "description 23",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-24T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p23",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p24",
+            "projectName": "Project24",
+            "description": "description 24",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-25T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p24",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p25",
+            "projectName": "Project25",
+            "description": "description 25",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-26T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p25",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p26",
+            "projectName": "Project26",
+            "description": "description 26",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-27T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p26",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p27",
+            "projectName": "Project27",
+            "description": "description 27",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-28T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p27",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p28",
+            "projectName": "Project28",
+            "description": "description 28",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-29T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p28",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p29",
+            "projectName": "Project29",
+            "description": "description 29",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-30T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p29",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p30",
+            "projectName": "Project30",
+            "description": "description 30",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-31T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p30",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p31",
+            "projectName": "Project31",
+            "description": "description 31",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-32T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p31",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p32",
+            "projectName": "Project32",
+            "description": "description 32",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-33T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p32",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p33",
+            "projectName": "Project33",
+            "description": "description 33",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-34T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p33",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          },
+          {
+            "projectId": "p34",
+            "projectName": "Project34",
+            "description": "description 34",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-35T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p34",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 1,
+              "projectEntries": 1,
+              "feedbackEntries": 0
+            }
+          }
+        ],
+        "project",
+        [
+          {
+            "role": "user",
+            "content": "description"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "projectId": "local:p34",
+          "projectName": "Project34",
+          "description": "description 34",
+          "status": "active",
+          "updatedAt": "2026-01-35T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p33",
+          "projectName": "Project33",
+          "description": "description 33",
+          "status": "active",
+          "updatedAt": "2026-01-34T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p32",
+          "projectName": "Project32",
+          "description": "description 32",
+          "status": "active",
+          "updatedAt": "2026-01-33T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p31",
+          "projectName": "Project31",
+          "description": "description 31",
+          "status": "active",
+          "updatedAt": "2026-01-32T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p30",
+          "projectName": "Project30",
+          "description": "description 30",
+          "status": "active",
+          "updatedAt": "2026-01-31T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p29",
+          "projectName": "Project29",
+          "description": "description 29",
+          "status": "active",
+          "updatedAt": "2026-01-30T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p28",
+          "projectName": "Project28",
+          "description": "description 28",
+          "status": "active",
+          "updatedAt": "2026-01-29T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p27",
+          "projectName": "Project27",
+          "description": "description 27",
+          "status": "active",
+          "updatedAt": "2026-01-28T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p26",
+          "projectName": "Project26",
+          "description": "description 26",
+          "status": "active",
+          "updatedAt": "2026-01-27T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p25",
+          "projectName": "Project25",
+          "description": "description 25",
+          "status": "active",
+          "updatedAt": "2026-01-26T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p24",
+          "projectName": "Project24",
+          "description": "description 24",
+          "status": "active",
+          "updatedAt": "2026-01-25T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p23",
+          "projectName": "Project23",
+          "description": "description 23",
+          "status": "active",
+          "updatedAt": "2026-01-24T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p22",
+          "projectName": "Project22",
+          "description": "description 22",
+          "status": "active",
+          "updatedAt": "2026-01-23T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p21",
+          "projectName": "Project21",
+          "description": "description 21",
+          "status": "active",
+          "updatedAt": "2026-01-22T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p20",
+          "projectName": "Project20",
+          "description": "description 20",
+          "status": "active",
+          "updatedAt": "2026-01-21T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p19",
+          "projectName": "Project19",
+          "description": "description 19",
+          "status": "active",
+          "updatedAt": "2026-01-20T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p18",
+          "projectName": "Project18",
+          "description": "description 18",
+          "status": "active",
+          "updatedAt": "2026-01-19T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p17",
+          "projectName": "Project17",
+          "description": "description 17",
+          "status": "active",
+          "updatedAt": "2026-01-18T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p16",
+          "projectName": "Project16",
+          "description": "description 16",
+          "status": "active",
+          "updatedAt": "2026-01-17T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p15",
+          "projectName": "Project15",
+          "description": "description 15",
+          "status": "active",
+          "updatedAt": "2026-01-16T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p14",
+          "projectName": "Project14",
+          "description": "description 14",
+          "status": "active",
+          "updatedAt": "2026-01-15T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p13",
+          "projectName": "Project13",
+          "description": "description 13",
+          "status": "active",
+          "updatedAt": "2026-01-14T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p12",
+          "projectName": "Project12",
+          "description": "description 12",
+          "status": "active",
+          "updatedAt": "2026-01-13T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p11",
+          "projectName": "Project11",
+          "description": "description 11",
+          "status": "active",
+          "updatedAt": "2026-01-12T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p10",
+          "projectName": "Project10",
+          "description": "description 10",
+          "status": "active",
+          "updatedAt": "2026-01-11T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p9",
+          "projectName": "Project9",
+          "description": "description 9",
+          "status": "active",
+          "updatedAt": "2026-01-10T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p8",
+          "projectName": "Project8",
+          "description": "description 8",
+          "status": "active",
+          "updatedAt": "2026-01-09T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p7",
+          "projectName": "Project7",
+          "description": "description 7",
+          "status": "active",
+          "updatedAt": "2026-01-08T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p6",
+          "projectName": "Project6",
+          "description": "description 6",
+          "status": "active",
+          "updatedAt": "2026-01-07T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        },
+        {
+          "projectId": "local:p5",
+          "projectName": "Project5",
+          "description": "description 5",
+          "status": "active",
+          "updatedAt": "2026-01-06T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 2,
+          "exact": 0,
+          "source": "query",
+          "matchedText": "project, description"
+        }
+      ]
+    },
+    {
+      "fn": "buildProjectShortlist",
+      "args": [
+        [
+          {
+            "projectId": "p1",
+            "projectName": "产品",
+            "description": "中文 项目",
+            "status": "active",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-02-01T00:00:00.000Z",
+            "relativePath": "GeneralProjects/p1/project.md",
+            "absolutePath": "/abs/project.md",
+            "workspaceMode": "general",
+            "workspacePath": "/ws",
+            "workspaceName": "ws",
+            "sourceType": "general_local",
+            "logicalProjectId": "local:p1",
+            "readOnly": false,
+            "hasLocalMirror": true,
+            "summary": {
+              "totalEntries": 0,
+              "projectEntries": 0,
+              "feedbackEntries": 0
+            }
+          }
+        ],
+        "产品 项目",
+        []
+      ],
+      "expected": [
+        {
+          "projectId": "local:p1",
+          "projectName": "产品",
+          "description": "中文 项目",
+          "status": "active",
+          "updatedAt": "2026-02-01T00:00:00.000Z",
+          "sourceType": "general_local",
+          "score": 21,
+          "exact": 2,
+          "source": "query",
+          "matchedText": "产品"
+        }
+      ]
+    },
+    {
+      "fn": "createTrace",
+      "args": [
+        "q",
+        "auto",
+        "4fzzzxjy"
+      ],
+      "expected": {
+        "traceId": "trace_e910929123",
+        "query": "q",
+        "mode": "auto",
+        "startedAt": "2026-10-22T00:00:00.000Z",
+        "finishedAt": "2026-10-22T00:00:00.000Z",
+        "steps": []
+      }
+    },
+    {
+      "fn": "traceScenario",
+      "args": [
+        {
+          "query": "q",
+          "mode": "auto",
+          "token": "4fzzzxjy",
+          "steps": [
+            {
+              "kind": "recall",
+              "title": "Recall",
+              "status": "info",
+              "inputSummary": "in",
+              "outputSummary": "out",
+              "options": {}
+            },
+            {
+              "kind": "select",
+              "title": "Select",
+              "status": "success",
+              "inputSummary": "in2",
+              "outputSummary": "out2",
+              "options": {
+                "refs": {
+                  "a": 1,
+                  "b": "\\u4e2d"
+                },
+                "metrics": {
+                  "ms": 2.5
+                },
+                "details": [
+                  {
+                    "key": "d1",
+                    "label": "L1",
+                    "kind": "list",
+                    "items": [
+                      "\\u4e2d"
+                    ]
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "r",
+                  "systemPrompt": "s",
+                  "userPrompt": "u",
+                  "rawResponse": "raw"
+                },
+                "titleI18n": {
+                  "key": "t",
+                  "fallback": "T"
+                },
+                "inputSummaryI18n": {
+                  "key": "i",
+                  "fallback": "I",
+                  "args": [
+                    "a"
+                  ]
+                },
+                "outputSummaryI18n": {
+                  "key": "o",
+                  "fallback": "O"
+                }
+              }
+            },
+            {
+              "kind": "render",
+              "title": "Render",
+              "status": "skipped",
+              "inputSummary": "",
+              "outputSummary": "\\n",
+              "options": {
+                "refs": {}
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "traceId": "trace_e910929123",
+        "query": "q",
+        "mode": "auto",
+        "startedAt": "2026-10-22T00:00:00.000Z",
+        "finishedAt": "2026-10-22T00:00:00.000Z",
+        "steps": [
+          {
+            "stepId": "trace_e910929123:step:1",
+            "kind": "recall",
+            "title": "Recall",
+            "status": "info",
+            "inputSummary": "in",
+            "outputSummary": "out"
+          },
+          {
+            "stepId": "trace_e910929123:step:2",
+            "kind": "select",
+            "title": "Select",
+            "status": "success",
+            "inputSummary": "in2",
+            "outputSummary": "out2",
+            "refs": {
+              "a": 1,
+              "b": "\\u4e2d"
+            },
+            "metrics": {
+              "ms": 2.5
+            },
+            "details": [
+              {
+                "key": "d1",
+                "label": "L1",
+                "kind": "list",
+                "items": [
+                  "\\u4e2d"
+                ]
+              }
+            ],
+            "promptDebug": {
+              "requestLabel": "r",
+              "systemPrompt": "s",
+              "userPrompt": "u",
+              "rawResponse": "raw"
+            },
+            "titleI18n": {
+              "key": "t",
+              "fallback": "T"
+            },
+            "inputSummaryI18n": {
+              "key": "i",
+              "fallback": "I",
+              "args": [
+                "a"
+              ]
+            },
+            "outputSummaryI18n": {
+              "key": "o",
+              "fallback": "O"
+            }
+          },
+          {
+            "stepId": "trace_e910929123:step:3",
+            "kind": "render",
+            "title": "Render",
+            "status": "skipped",
+            "inputSummary": "",
+            "outputSummary": "\\n",
+            "refs": {}
+          }
+        ]
+      }
+    },
+    {
+      "fn": "createTrace",
+      "args": [
+        "",
+        "explicit",
+        "i"
+      ],
+      "expected": {
+        "traceId": "trace_b3663ea63f",
+        "query": "",
+        "mode": "explicit",
+        "startedAt": "2026-10-22T00:00:00.000Z",
+        "finishedAt": "2026-10-22T00:00:00.000Z",
+        "steps": []
+      }
+    },
+    {
+      "fn": "traceScenario",
+      "args": [
+        {
+          "query": "",
+          "mode": "explicit",
+          "token": "i",
+          "steps": [
+            {
+              "kind": "recall",
+              "title": "Recall",
+              "status": "info",
+              "inputSummary": "in",
+              "outputSummary": "out",
+              "options": {}
+            },
+            {
+              "kind": "select",
+              "title": "Select",
+              "status": "success",
+              "inputSummary": "in2",
+              "outputSummary": "out2",
+              "options": {
+                "refs": {
+                  "a": 1,
+                  "b": "\\u4e2d"
+                },
+                "metrics": {
+                  "ms": 2.5
+                },
+                "details": [
+                  {
+                    "key": "d1",
+                    "label": "L1",
+                    "kind": "list",
+                    "items": [
+                      "\\u4e2d"
+                    ]
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "r",
+                  "systemPrompt": "s",
+                  "userPrompt": "u",
+                  "rawResponse": "raw"
+                },
+                "titleI18n": {
+                  "key": "t",
+                  "fallback": "T"
+                },
+                "inputSummaryI18n": {
+                  "key": "i",
+                  "fallback": "I",
+                  "args": [
+                    "a"
+                  ]
+                },
+                "outputSummaryI18n": {
+                  "key": "o",
+                  "fallback": "O"
+                }
+              }
+            },
+            {
+              "kind": "render",
+              "title": "Render",
+              "status": "skipped",
+              "inputSummary": "",
+              "outputSummary": "\\n",
+              "options": {
+                "refs": {}
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "traceId": "trace_b3663ea63f",
+        "query": "",
+        "mode": "explicit",
+        "startedAt": "2026-10-22T00:00:00.000Z",
+        "finishedAt": "2026-10-22T00:00:00.000Z",
+        "steps": [
+          {
+            "stepId": "trace_b3663ea63f:step:1",
+            "kind": "recall",
+            "title": "Recall",
+            "status": "info",
+            "inputSummary": "in",
+            "outputSummary": "out"
+          },
+          {
+            "stepId": "trace_b3663ea63f:step:2",
+            "kind": "select",
+            "title": "Select",
+            "status": "success",
+            "inputSummary": "in2",
+            "outputSummary": "out2",
+            "refs": {
+              "a": 1,
+              "b": "\\u4e2d"
+            },
+            "metrics": {
+              "ms": 2.5
+            },
+            "details": [
+              {
+                "key": "d1",
+                "label": "L1",
+                "kind": "list",
+                "items": [
+                  "\\u4e2d"
+                ]
+              }
+            ],
+            "promptDebug": {
+              "requestLabel": "r",
+              "systemPrompt": "s",
+              "userPrompt": "u",
+              "rawResponse": "raw"
+            },
+            "titleI18n": {
+              "key": "t",
+              "fallback": "T"
+            },
+            "inputSummaryI18n": {
+              "key": "i",
+              "fallback": "I",
+              "args": [
+                "a"
+              ]
+            },
+            "outputSummaryI18n": {
+              "key": "o",
+              "fallback": "O"
+            }
+          },
+          {
+            "stepId": "trace_b3663ea63f:step:3",
+            "kind": "render",
+            "title": "Render",
+            "status": "skipped",
+            "inputSummary": "",
+            "outputSummary": "\\n",
+            "refs": {}
+          }
+        ]
+      }
+    },
+    {
+      "fn": "createTrace",
+      "args": [
+        "产品",
+        "auto",
+        "0001ogs5"
+      ],
+      "expected": {
+        "traceId": "trace_01e57d22eb",
+        "query": "产品",
+        "mode": "auto",
+        "startedAt": "2026-10-22T00:00:00.000Z",
+        "finishedAt": "2026-10-22T00:00:00.000Z",
+        "steps": []
+      }
+    },
+    {
+      "fn": "traceScenario",
+      "args": [
+        {
+          "query": "产品",
+          "mode": "auto",
+          "token": "0001ogs5",
+          "steps": [
+            {
+              "kind": "recall",
+              "title": "Recall",
+              "status": "info",
+              "inputSummary": "in",
+              "outputSummary": "out",
+              "options": {}
+            },
+            {
+              "kind": "select",
+              "title": "Select",
+              "status": "success",
+              "inputSummary": "in2",
+              "outputSummary": "out2",
+              "options": {
+                "refs": {
+                  "a": 1,
+                  "b": "\\u4e2d"
+                },
+                "metrics": {
+                  "ms": 2.5
+                },
+                "details": [
+                  {
+                    "key": "d1",
+                    "label": "L1",
+                    "kind": "list",
+                    "items": [
+                      "\\u4e2d"
+                    ]
+                  }
+                ],
+                "promptDebug": {
+                  "requestLabel": "r",
+                  "systemPrompt": "s",
+                  "userPrompt": "u",
+                  "rawResponse": "raw"
+                },
+                "titleI18n": {
+                  "key": "t",
+                  "fallback": "T"
+                },
+                "inputSummaryI18n": {
+                  "key": "i",
+                  "fallback": "I",
+                  "args": [
+                    "a"
+                  ]
+                },
+                "outputSummaryI18n": {
+                  "key": "o",
+                  "fallback": "O"
+                }
+              }
+            },
+            {
+              "kind": "render",
+              "title": "Render",
+              "status": "skipped",
+              "inputSummary": "",
+              "outputSummary": "\\n",
+              "options": {
+                "refs": {}
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "traceId": "trace_01e57d22eb",
+        "query": "产品",
+        "mode": "auto",
+        "startedAt": "2026-10-22T00:00:00.000Z",
+        "finishedAt": "2026-10-22T00:00:00.000Z",
+        "steps": [
+          {
+            "stepId": "trace_01e57d22eb:step:1",
+            "kind": "recall",
+            "title": "Recall",
+            "status": "info",
+            "inputSummary": "in",
+            "outputSummary": "out"
+          },
+          {
+            "stepId": "trace_01e57d22eb:step:2",
+            "kind": "select",
+            "title": "Select",
+            "status": "success",
+            "inputSummary": "in2",
+            "outputSummary": "out2",
+            "refs": {
+              "a": 1,
+              "b": "\\u4e2d"
+            },
+            "metrics": {
+              "ms": 2.5
+            },
+            "details": [
+              {
+                "key": "d1",
+                "label": "L1",
+                "kind": "list",
+                "items": [
+                  "\\u4e2d"
+                ]
+              }
+            ],
+            "promptDebug": {
+              "requestLabel": "r",
+              "systemPrompt": "s",
+              "userPrompt": "u",
+              "rawResponse": "raw"
+            },
+            "titleI18n": {
+              "key": "t",
+              "fallback": "T"
+            },
+            "inputSummaryI18n": {
+              "key": "i",
+              "fallback": "I",
+              "args": [
+                "a"
+              ]
+            },
+            "outputSummaryI18n": {
+              "key": "o",
+              "fallback": "O"
+            }
+          },
+          {
+            "stepId": "trace_01e57d22eb:step:3",
+            "kind": "render",
+            "title": "Render",
+            "status": "skipped",
+            "inputSummary": "",
+            "outputSummary": "\\n",
+            "refs": {}
+          }
+        ]
+      }
+    },
+    {
+      "fn": "fallbackSelection",
+      "args": [
+        "user",
+        []
+      ],
+      "expected": []
+    },
+    {
+      "fn": "fallbackSelection",
+      "args": [
+        "user",
+        [
+          {
+            "relativePath": "a.md"
+          },
+          {
+            "relativePath": "b.md"
+          },
+          {
+            "relativePath": "c.md"
+          },
+          {
+            "relativePath": "d.md"
+          }
+        ]
+      ],
+      "expected": [
+        "a.md"
+      ]
+    },
+    {
+      "fn": "fallbackSelection",
+      "args": [
+        "project",
+        [
+          {
+            "relativePath": "a.md"
+          },
+          {
+            "relativePath": "b.md"
+          },
+          {
+            "relativePath": "c.md"
+          },
+          {
+            "relativePath": "d.md"
+          }
+        ]
+      ],
+      "expected": [
+        "a.md",
+        "b.md",
+        "c.md"
+      ]
+    },
+    {
+      "fn": "fallbackSelection",
+      "args": [
+        "mix",
+        [
+          {
+            "relativePath": "a.md"
+          },
+          {
+            "relativePath": "b.md"
+          }
+        ]
+      ],
+      "expected": [
+        "a.md",
+        "b.md"
+      ]
+    },
+    {
+      "fn": "fallbackSelection",
+      "args": [
+        "none",
+        [
+          {
+            "relativePath": "a.md"
+          },
+          {
+            "relativePath": "b.md"
+          },
+          {
+            "relativePath": "c.md"
+          },
+          {
+            "relativePath": "d.md"
+          }
+        ]
+      ],
+      "expected": [
+        "a.md",
+        "b.md",
+        "c.md"
+      ]
+    }
+  ]
+}
