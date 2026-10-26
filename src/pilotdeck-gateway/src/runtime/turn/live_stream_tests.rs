@@ -19,8 +19,8 @@ struct Handler {
     events: Mutex<Vec<JsValue>>,
     calls: AtomicUsize,
     /// Every payload-less forward() entry drains once, so this counts pump
-    /// ticks and module callbacks alike: the "the pump ran" observable for
-    /// the #855 gate-order test.
+    /// ticks and module callbacks alike: one "the pump ran" observable for
+    /// the #855 gate-order test (with_pump entry itself is the other).
     drain_calls: AtomicUsize,
     block_module: AtomicBool,
     disposed: AtomicUsize,

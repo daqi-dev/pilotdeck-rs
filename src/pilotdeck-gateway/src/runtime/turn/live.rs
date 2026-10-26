@@ -860,12 +860,36 @@ impl Forwarding {
         }
     }
 }
+#[cfg(test)]
+thread_local! {
+    /// #855 test hook: with_pump entries on this thread. Entry is the
+    /// observable "the pump started": entering synchronously sets the
+    /// activity timestamp and the first poll arms the 500 ms timer. A gate
+    /// that rejects or is cancelled must never reach it, which no drain
+    /// counter can prove — a parked or dropped pump never drains. The
+    /// execution future is only ever polled by the consumer's next(), so
+    /// under per-test threads (current_thread runtimes) this is race-free.
+    static PUMP_STARTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn pump_starts_for_test() -> usize {
+    PUMP_STARTS.with(|starts| starts.get())
+}
+
+#[cfg(test)]
+fn reset_pump_starts_for_test() {
+    PUMP_STARTS.with(|starts| starts.set(0));
+}
+
 impl StreamHandler {
     async fn with_pump(
         &self,
         execution: impl std::future::Future<Output = Result<ExecuteResult, HostError>>,
         identity: ExecutionIdentity,
     ) -> Result<ExecuteResult, HostError> {
+        #[cfg(test)]
+        PUMP_STARTS.with(|starts| starts.set(starts.get() + 1));
         {
             let mut state = self.forwarding.lock().unwrap();
             state.parent = Some(identity);
