@@ -3663,6 +3663,39 @@
       "errorText": "data must match format \"url\""
     },
     {
+      "id": "url/userinfo-slash-bom",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://example.com/bar@exa﻿mple.com/"
+    },
+    {
+      "id": "url/userinfo-slash-nel",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://example.com/bar@example.com/"
+    },
+    {
+      "id": "url/userinfo-slash",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://user/x@host.com/"
+    },
+    {
+      "id": "url/userinfo-slash-path-bom",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://example.com/bar@host.com/﻿",
+      "errorText": "data must match format \"url\""
+    },
+    {
       "id": "byte/cr-tail",
       "schema": {
         "type": "string",

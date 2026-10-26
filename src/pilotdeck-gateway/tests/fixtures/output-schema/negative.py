@@ -3,8 +3,9 @@
 
 Every mutant changes one production behavior in output_schema.rs (the ASCII
 fold mask, the `(?i)` the port now adds where ajv-formats compiles with
-`/i`, the #834 `url` `/iu` fold, the `byte` `/gm` line split, or the #848
-JS `\\s` replacement for Rust's `char::is_whitespace`). While a mutant is
+`/i`, the #834 `url` `/iu` fold, the `byte` `/gm` line split, the #848
+JS `\\s` replacement for Rust's `char::is_whitespace`, or the #848 fix-r1
+`url` userinfo/`/` boundary). While a mutant is
 live, `formats_follow_ajv_formats` and — for the oracle mutants —
 `replays_the_ajv_oracle` must FAIL on the pinned rows; after
 `mutating_sources` restores the bytes, the same command must pass (the caller
@@ -131,26 +132,65 @@ MUTANTS = [
     # #848: the helper calls must use the repo's canonical JS `\s` predicate
     # (`metadata::js_space`), not Rust's `char::is_whitespace`. Each call site
     # gets its own mutant so a single reverted line cannot hide behind the
-    # others. `url` path is `[^\s]*`.
+    # others. `url` path is `[^\s]*`; `last_space` is only read by the path
+    # test, so reverting it is the path control.
     ('url-path-space-reverted',
-     b'    if let Some(path) = path\n        && path.chars().any(js_space)',
-     b'    if let Some(path) = path\n        && path.chars().any(char::is_whitespace)',
+     b'    let last_space = rest\n'
+     b'        .char_indices()\n'
+     b'        .rev()\n'
+     b'        .find(|(_, c)| js_space(*c))\n'
+     b'        .map(|(index, _)| index);',
+     b'    let last_space = rest\n'
+     b'        .char_indices()\n'
+     b'        .rev()\n'
+     b'        .find(|(_, c)| c.is_whitespace())\n'
+     b'        .map(|(index, _)| index);',
      True),
-    # #848: userinfo is `\S+`; reverting only this line lets BOM through while
-    # the path and date-time helpers stay correct.
+    # #848: userinfo is `\S+`; `first_space` is only read by the userinfo test.
+    # Reverting only this line lets BOM through while the path and date-time
+    # helpers stay correct.
     ('url-userinfo-space-reverted',
-     b'            if user.is_empty() || user.chars().any(js_space) {',
-     b'            if user.is_empty() || user.chars().any(char::is_whitespace) {',
+     b'    let first_space = rest\n'
+     b'        .char_indices()\n'
+     b'        .find(|(_, c)| js_space(*c))\n'
+     b'        .map(|(index, _)| index);',
+     b'    let first_space = rest\n'
+     b'        .char_indices()\n'
+     b'        .find(|(_, c)| c.is_whitespace())\n'
+     b'        .map(|(index, _)| index);',
      False),
-    # #848: a blanket authority check is not what the regex says — the host
-    # classes include U+00A1..U+FFFF, so BOM and U+2000 hosts are valid.
-    ('url-authority-blanket',
-     b'    if let Some(path) = path\n        && path.chars().any(js_space)',
-     b'    if authority.chars().any(js_space) {\n'
-     b'        return false;\n'
-     b'    }\n'
-     b'    if let Some(path) = path\n        && path.chars().any(js_space)',
+    # #848: the host classes are `[a-z0-9\u{00a1}-\u{ffff}]`, so JS whitespace
+    # such as BOM/U+2000 must stay valid in the host. Stopping the host run at
+    # any JS space reproduces the removed blanket authority rejection.
+    ('url-host-space-filtered',
+     b'            if !(is_uri_host_char(c) || c == \'-\' || c == \'.\') {\n'
+     b'                break;\n'
+     b'            }',
+     b'            if !(is_uri_host_char(c) || c == \'-\' || c == \'.\') || js_space(c) {\n'
+     b'                break;\n'
+     b'            }',
      False),
+    # #848 fix-r1: the authority walk now owns `(?::\d{2,5})?`; dropping the
+    # upper bound accepts a 6-digit port that the SDK rejects. The reject-side
+    # unit rows above are this mutant's control.
+    ('url-port-too-long',
+     b'                    if !(2..=5).contains(&(port_end - digits)) {',
+     b'                    if port_end - digits < 2 {',
+     False),
+    # #848 fix-r1 (review P1): the regression is treating the FIRST `/` as the
+    # authority boundary. The regex's userinfo `\S+` may contain `/`, so an
+    # `@` after the first `/` can still start the host. Only honouring `@`
+    # before the first `/` restores HEAD's wrong split: the review
+    # counterexample then reads the BOM as a path character and must go red.
+    ('url-first-slash-boundary',
+     b'    accept(0) || rest.match_indices(\'@\').any(|(index, _)| accept(index + 1))',
+     b'    let first_slash = rest.find(\'/\').unwrap_or(rest.len());\n'
+     b'    accept(0)\n'
+     b'        || rest\n'
+     b'            .match_indices(\'@\')\n'
+     b'            .filter(|(index, _)| *index < first_slash)\n'
+     b'            .any(|(index, _)| accept(index + 1))',
+     True),
     # #848: date-time has its own `/t|\s/i` split. Reverting only it keeps the
     # url helpers fixed, so the date-time rows are proven to be its own
     # control rather than riding on the url rows.

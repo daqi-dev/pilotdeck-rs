@@ -2457,59 +2457,83 @@ fn url_valid(text: &str) -> bool {
     let Some(rest) = rest else {
         return false;
     };
-    let (authority, path) = match rest.split_once('/') {
-        Some((authority, path)) => (authority, Some(path)),
-        None => (rest, None),
-    };
-    // The regex applies `\S` only to the optional userinfo and `[^\s]` to the
-    // path. Host characters come from explicit classes that include
-    // U+00A1..U+FFFF, so a high JS whitespace such as U+2000 — and BOM, which
-    // those classes also contain — is a valid host character in
-    // ajv-formats' regex; a blanket authority check would falsely reject it.
-    if let Some(path) = path
-        && path.chars().any(js_space)
-    {
-        return false;
-    }
-    let host_port = match authority.rsplit_once('@') {
-        Some((user, host)) => {
-            if user.is_empty() || user.chars().any(js_space) {
-                return false;
-            }
-            host
+    url_rest_valid(rest)
+}
+
+/// `rest` is everything after `scheme://`, which ajv-formats matches as
+/// `(?:userinfo@)?host(:port)?(/path)?`.
+///
+/// #848 fix-r1: the optional userinfo is `\S+(?::\S*)?@`, one `\S` run that
+/// may itself contain `/` and `@`, so the **first** `/` is not necessarily the
+/// path start. `http://example.com/bar@exa<BOM>mple.com/` is valid in the SDK:
+/// userinfo is `example.com/bar@` and the host is `exa<BOM>mple.com` (the host
+/// classes include U+00A1..U+FFFF). Splitting at the first `/` instead reads
+/// the BOM as a path character and, with JS `\s` in `[^\s]*`, falsely rejects
+/// it. Host and port use only host characters, digits and `:`, so walk the
+/// candidate userinfo ends (`@` positions) and let the host run decide where
+/// the authority stops. The segments between `@`s are disjoint and each host
+/// run ends at the next `@`, so this stays linear even for many `/` or `@`.
+fn url_rest_valid(rest: &str) -> bool {
+    // One O(n) pass; each candidate then checks its userinfo and path in O(1).
+    let first_space = rest
+        .char_indices()
+        .find(|(_, c)| js_space(*c))
+        .map(|(index, _)| index);
+    let last_space = rest
+        .char_indices()
+        .rev()
+        .find(|(_, c)| js_space(*c))
+        .map(|(index, _)| index);
+    let accept = |host_start: usize| -> bool {
+        // `\S+` needs at least one character before the `@`; `\S` excludes
+        // every JS `\s`, BOM included. A space before the `@` sits inside the
+        // userinfo, so that candidate cannot match.
+        if host_start > 0 && (host_start == 1 || first_space.is_some_and(|s| s < host_start - 1)) {
+            return false;
         }
-        None => authority,
-    };
-    let (host, port) = match host_port.rsplit_once(':') {
-        Some((host, port)) if !host.is_empty() && !port.is_empty() => (host, Some(port)),
-        _ => (host_port, None),
-    };
-    if host.contains(':') {
-        return false;
-    }
-    if let Some(port) = port
-        && (!(2..=5).contains(&port.len()) || !port.bytes().all(|b| b.is_ascii_digit()))
-    {
-        return false;
-    }
-    if public_ipv4(host) {
-        return true;
-    }
-    let labels: Vec<&str> = host.split('.').collect();
-    if labels.len() < 2 {
-        return false;
-    }
-    for label in &labels {
-        if label.is_empty()
-            || label.starts_with('-')
-            || label.ends_with('-')
-            || !label.chars().all(|c| is_uri_host_char(c) || c == '-')
+        let mut end = host_start;
+        while let Some(c) = rest[end..].chars().next() {
+            if !(is_uri_host_char(c) || c == '-' || c == '.') {
+                break;
+            }
+            end += c.len_utf8();
+        }
+        if end == host_start {
+            return false;
+        }
+        let mut path_start = None;
+        if end < rest.len() {
+            match rest.as_bytes()[end] {
+                b'/' => path_start = Some(end + 1),
+                b':' => {
+                    // `(?::\d{2,5})?`
+                    let digits = end + 1;
+                    let mut port_end = digits;
+                    while port_end < rest.len() && rest.as_bytes()[port_end].is_ascii_digit() {
+                        port_end += 1;
+                    }
+                    if !(2..=5).contains(&(port_end - digits)) {
+                        return false;
+                    }
+                    if port_end < rest.len() {
+                        if rest.as_bytes()[port_end] != b'/' {
+                            return false;
+                        }
+                        path_start = Some(port_end + 1);
+                    }
+                }
+                _ => return false,
+            }
+        }
+        // `[^\s]*` runs to the end, so any JS whitespace after the `/` fails.
+        if let Some(start) = path_start
+            && last_space.is_some_and(|space| space >= start)
         {
             return false;
         }
-    }
-    let tld = labels.last().unwrap();
-    tld.chars().count() >= 2 && tld.chars().all(is_tld_char)
+        uri_host_valid(&rest[host_start..end])
+    };
+    accept(0) || rest.match_indices('@').any(|(index, _)| accept(index + 1))
 }
 
 fn public_ipv4(host: &str) -> bool {
@@ -2554,6 +2578,30 @@ fn public_ipv4(host: &str) -> bool {
         return false;
     }
     true
+}
+
+/// The host half of `url`: a public IPv4 or a domain with a 2+ character
+/// alphabetic TLD. Shared by the scheme/authority parser so the host rules
+/// live in exactly one place.
+fn uri_host_valid(host: &str) -> bool {
+    if public_ipv4(host) {
+        return true;
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    for label in &labels {
+        if label.is_empty()
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label.chars().all(|c| is_uri_host_char(c) || c == '-')
+        {
+            return false;
+        }
+    }
+    let tld = labels.last().unwrap();
+    tld.chars().count() >= 2 && tld.chars().all(is_tld_char)
 }
 
 impl<'a> Validator<'a> {
@@ -3998,6 +4046,33 @@ mod tests {
             ("url", "HTTP\u{17f}://192.168.1.1/x", Some(false)),
             ("url", "\u{17f}http://example.com/", Some(false)),
             ("url", "http\u{fb06}://example.com/a", Some(false)),
+            // #848 fix-r1: userinfo is one `\S` run that may contain `/`, so
+            // the first `/` is not necessarily the path start. The review's
+            // counterexample is valid because userinfo is
+            // `example.com/bar@` and the host class keeps BOM. A real path
+            // BOM stays rejected however many `@`/`/` precede it, and the
+            // userinfo-less split of `user/x@host.com` must not win either.
+            (
+                "url",
+                "http://example.com/bar@exa\u{feff}mple.com/",
+                Some(true),
+            ),
+            (
+                "url",
+                "http://example.com/bar@host.com/\u{feff}",
+                Some(false),
+            ),
+            (
+                "url",
+                "http://example.com/bar@exa\u{85}mple.com/",
+                Some(true),
+            ),
+            ("url", "http://user/x@host.com/", Some(true)),
+            // The authority walk also owns `(?::\d{2,5})?`; pin its accept and
+            // reject edges (Node v22.22.0 + real SDK measured).
+            ("url", "http://example.com:80/a", Some(true)),
+            ("url", "http://example.com:1/a", Some(false)),
+            ("url", "http://example.com:123456/a", Some(false)),
             // #848: the path is `[^\s]*` and userinfo is `\S+`, using JS
             // `\s` (BOM in, NEL out). The host class is
             // `[a-z0-9\u{00a1}-\u{ffff}]`, so BOM and U+2000 are valid host
@@ -4255,7 +4330,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 948);
+        assert_eq!(cases.len(), 952);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),

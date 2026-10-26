@@ -13,8 +13,8 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **948** cases (the #829 rounds added 26 of them, #834 another 23
-and #848 another 12; the unit test `formats_follow_ajv_formats` rows are
+count of **952** cases (the #829 rounds added 26 of them, #834 another 23
+and #848 another 16; the unit test `formats_follow_ajv_formats` rows are
 counted separately). Each
 case is
 either:
@@ -118,8 +118,16 @@ canonical `metadata::js_space` predicate (the char twin of
 U+2000 are valid host characters even though JS `\s` matches them (the regex
 never applies `\s` to the host); NEL and NBSP are below U+00A1 and stay
 invalid. The former blanket authority check wrongly rejected every such host,
-so the port now checks only userinfo (where the regex uses `\S`). Measured on
-Node v22.22.0.
+so the port now checks only userinfo (where the regex uses `\S`). `url`'s
+userinfo is one `\S` run and may itself contain `/` and `@`, so the first `/`
+is not necessarily the path start: `http://example.com/bar@exa\uFEFFmple.com/`
+is valid (userinfo `example.com/bar@`, host `exa\uFEFFmple.com`), and
+`http://user/x@host.com/` is valid too, while
+`http://example.com/bar@host.com/\uFEFF` still fails on the path. The parser
+therefore walks the candidate userinfo ends (string start and every `@`) and
+lets the host run end at `:port`, `/path` or the string end, instead of
+splitting at the first `/`; the `url/userinfo-slash*` rows pin this (#848
+fix-r1 review P1). Measured on Node v22.22.0.
 
 `deep-pattern/*`, `deep-pattern-properties/*`, and `deep-format-regex/*`
 cover 10000 / 100000 nested capturing, noncapturing, and lookahead groups,
