@@ -2,9 +2,13 @@
 """Reversible product mutations for edgeclaw-heartbeat.
 
 Every case compiles and must fail a runtime oracle assertion; a compile error
-never counts as a kill. The script runs the unmutated suite first, then every
-mutant, prints KILLED/SURVIVED and exits 1 when any mutant survives. The
-original bytes are restored in ``finally`` by ``mutating_sources``.
+never counts as a kill. Every anchor is checked against the baseline bytes
+before the unmutated suite runs: a stale anchor is a harness defect, not a
+surviving mutant, so it prints ``STALE ANCHOR`` and exits 2 (same rule as
+#772 fix-r2). The script then runs the unmutated suite, every mutant, and one
+final unmutated suite after restoration; it prints KILLED/SURVIVED and exits 1
+when any mutant survives. The original bytes are restored in ``finally`` by
+``mutating_sources``.
 
 New product files are not in HEAD before the coordinator commits them, so this
 script is normally run after that commit. For a pre-commit sample, point
@@ -112,6 +116,82 @@ cases = [
             .cmp(&right.encode_utf16().collect::<Vec<_>>())
     });''',
      '', 'batch/createBatchTrace'),
+    # 23. commonPrefixLength stops one message before the shared prefix ends.
+    ('common-prefix-off-by-one',
+     'while index < limit && same_message(previous.get(index), incoming.get(index)) {',
+     'while index + 1 < limit && same_message(previous.get(index), incoming.get(index)) {',
+     'merge/commonPrefixLength'),
+    # 24. normalizeTrigger stops folding the reason to lowercase.
+    ('normalize-trigger-case',
+     'let normalized = text::lowercase(&text::trim_js(reason.unwrap_or(&JsString::default())));',
+     'let normalized = text::trim_js(reason.unwrap_or(&JsString::default()));',
+     'trace/normalizeTrigger'),
+    # 25. buildIndexTraceId joins the l0 ids with ';' instead of ','.
+    ('trace-id-separator',
+     'join_value_refs(&l0_ids.iter().collect::<Vec<_>>(), ",")',
+     'join_value_refs(&l0_ids.iter().collect::<Vec<_>>(), ";")',
+     'trace/buildIndexTraceId'),
+    # 26. Global relative paths lose the "global/" directory prefix.
+    ('expose-global-prefix',
+     'concat(&[&JsString::from("global/"), relative_path])',
+     'concat(&[&JsString::from("global"), relative_path])',
+     'trace/exposeStoredRelativePath'),
+    # 27. textDetail returns the raw escaped text instead of decoding it.
+    ('detail-text-decode',
+     '''    detail(
+        "text",
+        key,
+        label,
+        label_i18n,
+        vec![(
+            "text",
+            JsValue::String(text::decode_escaped_unicode_text(text, true)),
+        )],
+    )''',
+     '''    detail(
+        "text",
+        key,
+        label,
+        label_i18n,
+        vec![(
+            "text",
+            JsValue::String(text.clone()),
+        )],
+    )''',
+     'detail/textDetail'),
+    # 28. noteDetail returns the raw escaped text instead of decoding it.
+    ('detail-note-decode',
+     '''    detail(
+        "note",
+        key,
+        label,
+        label_i18n,
+        vec![(
+            "text",
+            JsValue::String(text::decode_escaped_unicode_text(text, true)),
+        )],
+    )''',
+     '''    detail(
+        "note",
+        key,
+        label,
+        label_i18n,
+        vec![(
+            "text",
+            JsValue::String(text.clone()),
+        )],
+    )''',
+     'detail/noteDetail'),
+    # 29. listDetail returns raw escaped items instead of decoding them.
+    ('detail-list-decode',
+     '        .map(|item| JsValue::String(text::decode_escaped_unicode_text(item, true)))',
+     '        .map(|item| JsValue::String(item.clone()))',
+     'detail/listDetail'),
+    # 30. jsonDetail returns the raw JSON value without decoding strings.
+    ('detail-json-decode',
+     'vec![("json", text::decode_escaped_unicode_value(json, true))],',
+     'vec![("json", json.clone())],',
+     'detail/jsonDetail'),
 ]
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
@@ -130,6 +210,24 @@ def assertion_failure(log):
 
 killed, survived = [], []
 with mutating_sources(root, [helpers], baseline=baseline) as originals:
+    # A product line that this list did not follow used to be reported as
+    # SURVIVED (`AssertionError: (name, 0)`), hiding a broken control behind
+    # the same label as a real surviving mutant. Refuse before compiling.
+    source = originals[helpers].decode()
+    stale = []
+    for name, before, _after, _anchor in cases:
+        count = source.count(before)
+        if count != 1:
+            stale.append((name, count))
+    if stale:
+        report = '\n'.join(
+            f'STALE ANCHOR {name}: {count} matches in helpers.rs'
+            for name, count in stale) + '\n'
+        (out / 'stale-anchors.log').write_text(report)
+        print(report, end='', flush=True)
+        print('STALE ANCHORS: negative.py is out of sync with helpers.rs; refusing to run',
+              flush=True)
+        sys.exit(2)
     base_cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                 '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_heartbeat']
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
@@ -145,7 +243,6 @@ with mutating_sources(root, [helpers], baseline=baseline) as originals:
         reason = None
         try:
             source = originals[helpers].decode()
-            assert source.count(before) == 1, (name, source.count(before))
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             helpers.write_text(source.replace(before, after))
             try:
@@ -172,6 +269,18 @@ with mutating_sources(root, [helpers], baseline=baseline) as originals:
     for path, data in originals.items():
         path.write_bytes(data)
         assert path.read_bytes() == data, 'restoration failed: ' + str(path)
+
+    # The mutation loop restores after every case; run the suite once more
+    # under the same tree lock so the green-after-restore half of the red/green
+    # pair has its own raw log and no other runner can mutate in between.
+    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+    run = run_owned(base_cmd, cwd=root, env=env, timeout=600)
+    restored_log = slots.stdout + slots.stderr + run.stdout + run.stderr
+    (out / 'restored.log').write_text(restored_log)
+    if run.returncode != 0 or 'test result: ok.' not in restored_log:
+        print('RESTORED FAILED: the suite does not pass after restoring the original bytes',
+              flush=True)
+        sys.exit(1)
 print(f'KILLED   {len(killed)}: ' + ', '.join(killed))
 print(f'SURVIVED {len(survived)}: ' + ', '.join(name for name, _ in survived))
 if survived:
