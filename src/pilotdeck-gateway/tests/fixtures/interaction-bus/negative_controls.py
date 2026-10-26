@@ -16,6 +16,8 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned
 
+ANCHOR_COUNTS = {'reject-live-reentry': 2, 'deny-dispose-detached': 2}
+
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)

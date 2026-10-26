@@ -521,11 +521,8 @@ fn failed(error: ReplacementError) -> BoxFuture<ReplacementResult> {
 // payloads and run the ordinary error cleanup below.
 fn port_call<T>(call: impl FnOnce() -> T) -> Result<T, ReplacementError> {
     catch_unwind(AssertUnwindSafe(call)).map_err(|payload| {
-        let message = payload
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-            .unwrap_or_else(|| "replacement port panicked".to_owned());
+        let message = crate::runtime::cleanup_task::panic_message(payload.as_ref())
+            .unwrap_or("replacement port panicked");
         ReplacementError::new(message)
     })
 }

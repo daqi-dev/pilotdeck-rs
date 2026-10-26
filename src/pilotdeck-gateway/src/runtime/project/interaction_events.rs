@@ -6,9 +6,10 @@ use super::interaction_notice::DiscardNotice;
 use super::{DisposeFuture, RuntimeError, RuntimeResult};
 use crate::host::modules::{ModuleRouter, event};
 use crate::host::{HostError, ModuleError};
+use crate::runtime::cleanup_task::lock;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
 struct State {
@@ -205,11 +206,6 @@ fn check(generation: &State, turn: &TurnState) -> Result<(), HostError> {
 }
 fn closed() -> HostError {
     ModuleError::new("Interaction event generation is closed.").into()
-}
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Close the concrete event resource as part of factory rollback/drain. An

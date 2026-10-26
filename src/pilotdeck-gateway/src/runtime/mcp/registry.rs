@@ -22,17 +22,14 @@ use super::protocol::{
     load_mcp_server_config,
 };
 use super::runtime::{McpRuntimeFactory, McpRuntimePort, SessionMcpRuntime};
+use crate::runtime::cleanup_task::lock;
 use crate::{js_value, runtime::model::http::ProxySettings, runtime::project::RuntimeError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     path::Path,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
 };
 use tokio::sync::watch;
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|error| error.into_inner())
-}
 
 /// `{ state: "active" | "draining" | "disposed" }` of both owners.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -428,13 +425,8 @@ where
         let outcome = task.await.unwrap_or_else(|error| {
             let payload = error.try_into_panic().ok();
             let message = payload
-                .as_ref()
-                .and_then(|payload| {
-                    payload
-                        .downcast_ref::<&str>()
-                        .copied()
-                        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                })
+                .as_deref()
+                .and_then(crate::runtime::cleanup_task::panic_message)
                 .unwrap_or("MCP lifecycle task ended unexpectedly");
             Err(RuntimeError::new(message))
         });
