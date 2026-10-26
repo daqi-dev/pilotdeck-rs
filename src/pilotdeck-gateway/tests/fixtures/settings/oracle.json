@@ -1,0 +1,1289 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "sources": {
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "src/cli/LocalGatewayBootConfig.ts": "50868660983195f433ec076abc14a42f00d9673ed7ba769468b151f81af5dd8a",
+    "src/pilot/config/loadPilotConfig.ts": "0d666bd5dec52b805be7066b7538d54919bd601b43286bdf9acf4a1354581d6e",
+    "src/pilot/config/redact.ts": "608a8ba3346f414c55d08f23c2c4aae6b09c0219403e8777e9a0c175b1b580f3",
+    "src/pilot/config/PilotConfigStore.ts": "4b89879d9be8afa09e082b0e4038ebd2b1e9fe811d34b7edee2fc9edb88c94f8",
+    "src/pilot/config/types.ts": "9e3d0c7e5eaf8e0174d8ae0dd18389bc4f99064503175aefd29b68e9cbe8cb3c"
+  },
+  "count": 12,
+  "cases": [
+    {
+      "id": "minimal",
+      "yaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "env": {},
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "9cc4329937b166b2a8eaf9d6186d58355c7fbe8e07fd7317e92e3b69d17529fa",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": {
+                      "$": "undefined"
+                    },
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "a2e575ecd4029ae89f17d91feeaea2e3fc61ebb2294c501adf9a94c50c2be5f1"
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "full-sections",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\n  sandboxMode: read-only\n  runtimeContextSurface: user_message\n  interactionProfile: headless\n  maxContextTokens: 1234\n  maxOutputTokens: 567\n  thinking: {enabled: true, budgetTokens: 99}\n  subagents: {default: parity/deterministic, timeoutMs: 100, maxDepth: 2}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nextension: {builtinPluginsEnabled: {a: true, b: false, c: 7}, includeHookEvents: true}\nmemory: {enabled: true, captureStrategy: full_session, includeAssistant: true, maxMessageChars: 10}\ngateway: {port: 1234, idleSessionTimeoutMinutes: 5}\nadapters: {telegram: {enabled: true, token: t, apiKey: k, webhookUrl: w, extra: {x: 1, nestedSecret: s, password: p}}, cli: {autoConnectServer: false}, feishu: {enabled: true, appId: a, appSecret: sec, encryptKey: ek, verifyToken: vt, defaultSessionLabel: x, connectionMode: stream}}\nrouter: {enabled: true, fallback: {default: [parity/deterministic], maxFallbacks: 3}, tokenSaver: {enabled: true, judge: parity/deterministic, tiers: {medium: {model: parity/deterministic}}}}\nalwaysOn: {language: zh-CN}\ncron: {enabled: false, timezone: Asia/Shanghai, maxConcurrentRuns: 2, runTimeoutMinutes: 30}\ntools: {webSearch: {enabled: true, provider: tavily, apiKey: k, endpoint: 'https://example.com/search'}}\ntelemetry: {enabled: true}\nproxy: {url: 'http://p', noProxy: localhost}\nrunPolicy: {failureGuard: {enabled: true, modelFailureLimit: 3, toolFailureLimits: {bash: 2}, toolLabels: {bash: Bash}}}\n",
+      "env": {},
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "0a0c5d4f9cae29fed39369e9d074d5c7ad0c397c8bfcb5964a345bc3bf29a6a3",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "read-only",
+            "runtimeContextSurface": "user_message",
+            "interactionProfile": "headless",
+            "maxContextTokens": "<redacted>",
+            "maxOutputTokens": "<redacted>",
+            "thinking": {
+              "enabled": true,
+              "budgetTokens": "<redacted>"
+            },
+            "subagents": {
+              "default": {
+                "id": "parity/deterministic",
+                "provider": "parity",
+                "model": "deterministic"
+              },
+              "timeoutMs": 100,
+              "maxDepth": 2
+            }
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": {
+                      "$": "undefined"
+                    },
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {
+              "a": true,
+              "b": false
+            },
+            "includeHookEvents": true
+          },
+          "memory": {
+            "enabled": true,
+            "provider": "edgeclaw",
+            "rootDir": "<ROOT>/home/memory",
+            "captureStrategy": "full_session",
+            "includeAssistant": true,
+            "maxMessageChars": 10,
+            "retrievalTimeoutMs": {
+              "$": "undefined"
+            },
+            "model": {
+              "$": "undefined"
+            },
+            "apiType": {
+              "$": "undefined"
+            },
+            "schedule": {
+              "$": "undefined"
+            },
+            "heartbeatBatchSize": {
+              "$": "undefined"
+            }
+          },
+          "gateway": {
+            "port": 1234,
+            "bindAddress": "127.0.0.1",
+            "idleSessionTimeoutMinutes": 5,
+            "idleSweepIntervalSeconds": 60,
+            "memoryDiagnostics": false,
+            "staticAssetsPath": {
+              "$": "undefined"
+            },
+            "maxPerSessionMcpInstances": 5
+          },
+          "adapters": {
+            "cli": {
+              "autoConnectServer": false
+            },
+            "tui": {
+              "$": "undefined"
+            },
+            "feishu": {
+              "enabled": true,
+              "appId": "a",
+              "appSecret": "<redacted>",
+              "encryptKey": "ek",
+              "verifyToken": "<redacted>",
+              "defaultSessionLabel": "x",
+              "connectionMode": "stream",
+              "domainName": {
+                "$": "undefined"
+              },
+              "permissionMode": {
+                "$": "undefined"
+              }
+            },
+            "weixin": {
+              "$": "undefined"
+            },
+            "qq": {
+              "$": "undefined"
+            },
+            "telegram": {
+              "enabled": true,
+              "token": "<redacted>",
+              "apiKey": "<redacted>",
+              "webhookUrl": "w",
+              "extra": {
+                "x": 1,
+                "nestedSecret": "<redacted>",
+                "password": "<redacted>"
+              }
+            }
+          },
+          "router": {
+            "enabled": true,
+            "fallback": {
+              "default": [
+                {
+                  "id": "parity/deterministic",
+                  "provider": "parity",
+                  "model": "deterministic"
+                }
+              ],
+              "maxFallbacks": 3
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "transientRetry": {
+              "$": "undefined"
+            },
+            "tokenSaver": "<redacted>",
+            "autoOrchestrate": {
+              "$": "undefined"
+            },
+            "stats": {
+              "$": "undefined"
+            },
+            "customRouter": {
+              "$": "undefined"
+            }
+          },
+          "alwaysOn": {
+            "trigger": {
+              "tickIntervalMinutes": 5,
+              "cooldownMinutes": 60,
+              "dailyBudget": 4,
+              "heartbeatStaleSeconds": 90,
+              "recentUserMsgMinutes": 5,
+              "preferChannel": "web"
+            },
+            "projects": {},
+            "language": "zh-CN"
+          },
+          "cron": {
+            "enabled": false,
+            "timezone": "Asia/Shanghai",
+            "maxConcurrentRuns": 2,
+            "runTimeoutMinutes": 30
+          },
+          "tools": {
+            "webSearch": {
+              "enabled": true,
+              "provider": "tavily",
+              "apiKey": "<redacted>",
+              "endpoint": "https://example.com/search"
+            }
+          },
+          "telemetry": {
+            "enabled": true
+          },
+          "proxy": {
+            "url": "http://p",
+            "noProxy": "localhost"
+          },
+          "runPolicy": {
+            "failureGuard": {
+              "enabled": true,
+              "modelFailureLimit": 3,
+              "toolFailureLimits": {
+                "bash": 2
+              },
+              "toolLabels": {
+                "bash": "Bash"
+              }
+            }
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "ebef35ff7a8d887ce9100e6a8f4561f23f832b544c079e4913431743b4760686"
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "unknown-field-warning",
+      "yaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nextra: 1\n",
+      "env": {},
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "9cc4329937b166b2a8eaf9d6186d58355c7fbe8e07fd7317e92e3b69d17529fa",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": {
+                      "$": "undefined"
+                    },
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "412b256af1cd2dbc67f65eaf8e2e55b20da0fc61bf83476141f479d088a5f1ff"
+          }
+        ],
+        "diagnostics": [
+          {
+            "code": "CONFIG_UNKNOWN_FIELD",
+            "severity": "warning",
+            "message": "Unknown top-level config field extra.",
+            "path": "extra",
+            "recoverable": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "provider-excluded-hint",
+      "yaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n    broken:\n      protocol: openai\n      url: '::not a url::'\n      apiKey: mock-only\n      models:\n        m: {}\n",
+      "env": {},
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "9cc4329937b166b2a8eaf9d6186d58355c7fbe8e07fd7317e92e3b69d17529fa",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": {
+                      "$": "undefined"
+                    },
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "a435477d3651c155ec375ba84b4261faeb29f832089c246f75cc7981ce61c306"
+          }
+        ],
+        "diagnostics": [
+          {
+            "code": "MODEL_INVALID_URL",
+            "severity": "warning",
+            "message": "Provider broken url is invalid.",
+            "path": "model.providers.broken",
+            "hint": "This provider was excluded from the runtime. Correct its settings to enable it.",
+            "recoverable": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "router-unknown-fallback",
+      "yaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nrouter: {fallback: {unknown: [parity/deterministic]}}\n",
+      "env": {},
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "c4ed56385f64fd1e3f235263f9c326c06020b7fb545b6ef4cd09bba8941e45ae",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": {
+                      "$": "undefined"
+                    },
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "router": {
+            "enabled": true,
+            "fallback": {
+              "maxFallbacks": 5
+            },
+            "zeroUsageRetry": {
+              "enabled": true,
+              "maxAttempts": 2
+            },
+            "transientRetry": {
+              "$": "undefined"
+            },
+            "tokenSaver": "<redacted>",
+            "autoOrchestrate": {
+              "$": "undefined"
+            },
+            "stats": {
+              "$": "undefined"
+            },
+            "customRouter": {
+              "$": "undefined"
+            }
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "6f3e3adb4bfaafde4641dd721c1767a3bd47b4b58800c5ee6a237e5d238b7727"
+          }
+        ],
+        "diagnostics": [
+          {
+            "code": "ROUTER_FALLBACK_UNKNOWN_SCENARIO",
+            "severity": "warning",
+            "message": "Unknown scenario type unknown in router.fallback.",
+            "path": "router.fallback.unknown",
+            "recoverable": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "env-merge-source",
+      "yaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "env": {
+        "PILOT_AGENT_MODEL": "parity/deterministic"
+      },
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "9cc4329937b166b2a8eaf9d6186d58355c7fbe8e07fd7317e92e3b69d17529fa",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": {
+                      "$": "undefined"
+                    },
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "a2e575ecd4029ae89f17d91feeaea2e3fc61ebb2294c501adf9a94c50c2be5f1"
+          },
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "20a39343177bbda1c58da2daaa59119c75926e3e861ad7ac8d87c944f0b8f78f",
+            "phase": "merge"
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "project-config",
+      "yaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "projectYaml": "schemaVersion: 1\nagent: {model: parity/deterministic, sandboxMode: workspace-write}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28795/v1\n      apiKey: project-key\n      models:\n        deterministic: {displayName: Project}\n",
+      "project": "project",
+      "env": {},
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "32c7475a45bd6b177bfb5b474b58ce61fe4e06bfd6e949f395a50117bff15d6c",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "workspace-write",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28795/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": "Project",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "a2e575ecd4029ae89f17d91feeaea2e3fc61ebb2294c501adf9a94c50c2be5f1"
+          },
+          {
+            "kind": "project",
+            "priority": 20,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/project/.pilotdeck/pilotdeck.yaml",
+            "contentHash": "17570f43c654739c1591393d20a908b5edade3f024f692aa2881c6c71a18c56a"
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "project-only",
+      "yaml": "\n",
+      "projectYaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: project-key\n      models:\n        deterministic: {}\n",
+      "project": "project",
+      "noGlobal": true,
+      "env": {},
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "9cc4329937b166b2a8eaf9d6186d58355c7fbe8e07fd7317e92e3b69d17529fa",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": {
+                      "$": "undefined"
+                    },
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "project",
+            "priority": 20,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/project/.pilotdeck/pilotdeck.yaml",
+            "contentHash": "dabcc7b17263627b9b573df24335b0e5163c1951bc859459dd0ce4e9429f50b9"
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "external-provider-env-ref",
+      "yaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: ${PARITY_KEY}\n      models:\n        deterministic: {}\n",
+      "env": {
+        "PARITY_KEY": " resolved-env-key "
+      },
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "9cc4329937b166b2a8eaf9d6186d58355c7fbe8e07fd7317e92e3b69d17529fa",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": {
+                      "$": "undefined"
+                    },
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "7d00b88a5641da6877d916b829e3e1f2ce6ec3deb0f03d87b3b33b6d7f481244"
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "external-provider-catalog",
+      "yaml": "schemaVersion: 1\nagent: {model: openai/gpt-4.1}\nmodel:\n  providers:\n    openai:\n      models:\n        gpt-4.1: {}\n",
+      "env": {
+        "OPENAI_API_KEY": " catalog-env-key "
+      },
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "4e92c026ebdf37d791c096c42225e462f3bff603d25bdc325901372c2480ed12",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "openai/gpt-4.1",
+              "provider": "openai",
+              "model": "gpt-4.1"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "openai": {
+                "id": "openai",
+                "protocol": "openai",
+                "url": "https://api.openai.com/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "$": "undefined"
+                },
+                "speedMapping": "openai_service_tier",
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "gpt-4.1": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "gpt-4.1",
+                    "displayName": "GPT-4.1",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": false,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>",
+                      "supportsSpeed": true
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text",
+                        "image"
+                      ],
+                      "maxImagesPerRequest": 20,
+                      "supportedImageMimeTypes": [
+                        "image/jpeg",
+                        "image/png",
+                        "image/gif",
+                        "image/webp"
+                      ],
+                      "imageDetail": "auto"
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "eb84d421a74b2ebb32cf9feacd5be161f6e2e818c3305fdc0184c511f0154d34"
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "unconfigured",
+      "yaml": "\n",
+      "noGlobal": true,
+      "env": {},
+      "error": {
+        "name": "PilotConfigError",
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section.",
+        "diagnosticCode": "CONFIG_SCHEMA_VERSION_MISSING"
+      }
+    },
+    {
+      "id": "invalid-missing-model",
+      "yaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\n",
+      "env": {},
+      "error": {
+        "name": "PilotConfigError",
+        "code": "CONFIG_MODEL_MISSING",
+        "message": "Config must contain a model section.",
+        "diagnosticCode": "CONFIG_MODEL_MISSING"
+      }
+    }
+  ]
+}

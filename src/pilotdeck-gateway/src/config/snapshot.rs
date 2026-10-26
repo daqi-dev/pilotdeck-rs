@@ -293,8 +293,10 @@ fn sha256_content(value: &JsString) -> String {
 }
 
 /// `redactConfig` from the baseline: secret-looking keys are replaced before
-/// hashing, including the `credentialSource` metadata field.
-fn redact(value: &JsValue) -> JsValue {
+/// hashing, including the `credentialSource` metadata field. Shared with the
+/// `resolve_settings` response projection, which redacts `snapshot.config`
+/// with the same function the baseline uses there.
+pub(super) fn redact(value: &JsValue) -> JsValue {
     fn secret(key: &JsString) -> bool {
         let lower = String::from_utf16_lossy(key.units()).to_lowercase();
         [
