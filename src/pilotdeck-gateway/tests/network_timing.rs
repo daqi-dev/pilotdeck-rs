@@ -5,6 +5,8 @@ mod baseline;
 #[allow(dead_code)]
 #[path = "../src/runtime/network.rs"]
 pub(crate) mod network_source;
+#[path = "common/network_timing_registry.rs"]
+mod registry;
 mod runtime {
     pub(crate) use super::network_source as network;
 }
@@ -515,87 +517,22 @@ async fn check_mode(id: &str, overdue: bool) {
 // must match it exactly; a difference resolving (or changing) makes this red.
 #[tokio::test(start_paused = true)]
 async fn known_differences_remain_exact_and_ignored() {
-    use std::collections::{BTreeMap, BTreeSet};
     baseline::oracle(RAW);
     let oracle: Value = serde_json::from_str(RAW).unwrap();
-    let table: Value = serde_json::from_str(include_str!(
-        "fixtures/network-timing/known_differences.json"
-    ))
-    .unwrap();
-    let mut rows = BTreeMap::new();
-    for row in oracle["cases"].as_array().unwrap() {
-        assert!(
-            rows.insert(row["id"].as_str().unwrap(), row).is_none(),
-            "duplicate oracle id"
-        );
-    }
-    let source = include_str!("network_timing.rs");
-    let mut ignored = BTreeMap::new();
-    let mut reason = None;
-    for line in source.lines().map(str::trim) {
-        if line.starts_with("#[ignore") {
-            assert!(reason.is_none(), "duplicate ignore attribute");
-            reason = Some(
-                line.strip_prefix("#[ignore = \"")
-                    .and_then(|s| s.strip_suffix("\"]"))
-                    .expect("literal ignore reason"),
-            );
-        }
-        if (line.starts_with("fn ") || line.starts_with("async fn "))
-            && let Some(reason) = reason.take()
-        {
-            let name = line
-                .trim_start_matches("async ")
-                .strip_prefix("fn ")
-                .unwrap()
-                .split('(')
-                .next()
-                .unwrap();
-            if name == "network_timing_regenerates_identically" {
-                assert_eq!(reason, "requires fixed TS baseline and Node v22.22.0");
-            } else {
-                assert!(
-                    ignored.insert(name, reason).is_none(),
-                    "duplicate ignored test"
-                );
-            }
-        }
-    }
-    assert!(reason.is_none(), "unbound ignore attribute");
-    let mut registered = BTreeMap::new();
-    let mut ids = BTreeSet::new();
-    for entry in table["cells"].as_array().unwrap() {
+    for entry in registry::validate(&oracle) {
         let id = entry["id"].as_str().unwrap();
-        let name = entry["test"].as_str().unwrap();
-        assert!(ids.insert(id), "duplicate difference id");
-        assert_eq!(name, id.replace(['/', '-'], "_"), "test/id binding");
-        let body = source
-            .split(&format!("async fn {name}() {{"))
-            .nth(1)
-            .expect("registered test exists")
-            .split("\n}")
-            .next()
+        let row = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
             .unwrap();
-        assert_eq!(
-            body.trim(),
-            format!("check(\"{id}\").await;"),
-            "ignored cell must assert TS oracle"
-        );
-        let category = &table["categories"][entry["category"].as_str().unwrap()];
-        let reason = category["ignoreReason"].as_str().expect("known category");
-        assert!(
-            registered.insert(name, reason).is_none(),
-            "duplicate difference test"
-        );
-        let row = rows[id];
-        assert_eq!(
-            entry["ts"], row["observable"],
-            "recorded TS observation: {id}"
-        );
-        assert_ne!(
-            entry["ts"], entry["rust"],
-            "resolved difference must be unignored: {id}"
-        );
+        if !matches!(
+            row["path"].as_str(),
+            Some("web_fetch" | "fetch_redirect" | "background")
+        ) {
+            continue;
+        }
         let real_io = row["phase"] == "io-headers";
         if real_io {
             tokio::time::resume();
@@ -606,10 +543,6 @@ async fn known_differences_remain_exact_and_ignored() {
         }
         assert_eq!(actual, entry["rust"], "known difference changed: {id}");
     }
-    assert_eq!(
-        ignored, registered,
-        "ignored cells and difference table must match exactly"
-    );
 }
 
 #[test]
@@ -1627,4 +1560,9 @@ async fn background_io_headers_idle_tie_parent_first() {
 #[tokio::test]
 async fn background_io_headers_idle_tie_parent_last() {
     check("background/io-headers/idle/tie-parent-last").await;
+}
+
+#[test]
+fn registry_negative_controls_reject_unwired_or_relabelled_cells() {
+    registry::negative_controls(&serde_json::from_str(RAW).unwrap());
 }

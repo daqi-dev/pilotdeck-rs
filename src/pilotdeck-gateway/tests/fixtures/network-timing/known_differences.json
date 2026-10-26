@@ -15,6 +15,10 @@
     "RETRY-TIE": {
       "ignoreReason": "#456 差异：同刻父先注册时 Rust 仍推进下一次重试",
       "ledger": "specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-RETRY-TIE-001.md"
+    },
+    "MCP-BODY-ERROR": {
+      "ignoreReason": "#456 差异：MCP body 失败映射为 NetworkFetchError，TS 为 TypeError",
+      "ledger": "specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-ERROR-CLASS-003.md"
     }
   },
   "cells": [
@@ -1242,6 +1246,981 @@
         "delivery": "throw",
         "message": "Network request aborted by parent signal.",
         "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "hooks/body/idle/tie-parent-first",
+      "test": "hooks_body_idle_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "This operation was aborted",
+          "stdout": ""
+        },
+        "message": "This operation was aborted",
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "terminated",
+          "stdout": ""
+        },
+        "message": "terminated",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "hooks/headers/fulfilled/tie-parent-first",
+      "test": "hooks_headers_fulfilled_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "This operation was aborted",
+          "stdout": ""
+        },
+        "message": "This operation was aborted",
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": "FIRST",
+        "delivery": "return",
+        "hook": {
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "",
+          "stdout": "FIRST"
+        },
+        "message": null,
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "hooks/headers/idle/tie-parent-first",
+      "test": "hooks_headers_idle_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "This operation was aborted",
+          "stdout": ""
+        },
+        "message": "This operation was aborted",
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "fetch failed",
+          "stdout": ""
+        },
+        "message": "fetch failed",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "hooks/headers/rejected/tie-parent-first",
+      "test": "hooks_headers_rejected_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "This operation was aborted",
+          "stdout": ""
+        },
+        "message": "This operation was aborted",
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "fetch failed",
+          "stdout": ""
+        },
+        "message": "fetch failed",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "hooks/redirect-hop/fulfilled/tie-parent-first",
+      "test": "hooks_redirect_hop_fulfilled_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 2,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "This operation was aborted",
+          "stdout": ""
+        },
+        "message": "This operation was aborted",
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": "FIRST",
+        "delivery": "return",
+        "hook": {
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "",
+          "stdout": "FIRST"
+        },
+        "message": null,
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "hooks/redirect-hop/idle/tie-parent-first",
+      "test": "hooks_redirect_hop_idle_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 2,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "This operation was aborted",
+          "stdout": ""
+        },
+        "message": "This operation was aborted",
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "fetch failed",
+          "stdout": ""
+        },
+        "message": "fetch failed",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "hooks/redirect-hop/rejected/tie-parent-first",
+      "test": "hooks_redirect_hop_rejected_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 2,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "This operation was aborted",
+          "stdout": ""
+        },
+        "message": "This operation was aborted",
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": "",
+        "delivery": "return",
+        "hook": {
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          },
+          "stderr": "fetch failed",
+          "stdout": ""
+        },
+        "message": "fetch failed",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/fulfilled/parent-first",
+      "test": "mcp_get_body_fulfilled_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/fulfilled/tie-parent-first",
+      "test": "mcp_get_body_fulfilled_tie_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/idle/continuation-first",
+      "test": "mcp_get_body_idle_continuation_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/idle/parent-first",
+      "test": "mcp_get_body_idle_parent_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/idle/tie-parent-first",
+      "test": "mcp_get_body_idle_tie_parent_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/idle/tie-parent-last",
+      "test": "mcp_get_body_idle_tie_parent_last",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/rejected/continuation-first",
+      "test": "mcp_get_body_rejected_continuation_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/rejected/parent-first",
+      "test": "mcp_get_body_rejected_parent_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/rejected/tie-parent-first",
+      "test": "mcp_get_body_rejected_tie_parent_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/body/rejected/tie-parent-last",
+      "test": "mcp_get_body_rejected_tie_parent_last",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/headers/fulfilled/tie-parent-first",
+      "test": "mcp_get_headers_fulfilled_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/headers/idle/tie-parent-first",
+      "test": "mcp_get_headers_idle_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network retry aborted.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/headers/rejected/tie-parent-first",
+      "test": "mcp_get_headers_rejected_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network retry aborted.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/redirect-hop/fulfilled/tie-parent-first",
+      "test": "mcp_get_redirect_hop_fulfilled_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/redirect-hop/idle/tie-parent-first",
+      "test": "mcp_get_redirect_hop_idle_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network retry aborted.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/redirect-hop/rejected/tie-parent-first",
+      "test": "mcp_get_redirect_hop_rejected_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network retry aborted.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_get/retry-error/fulfilled/tie-parent-first",
+      "test": "mcp_get_retry_error_fulfilled_tie_parent_first",
+      "category": "RETRY-TIE",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network retry aborted.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 1
+      }
+    },
+    {
+      "id": "mcp_get/retry-status/fulfilled/tie-parent-first",
+      "test": "mcp_get_retry_status_fulfilled_tie_parent_first",
+      "category": "RETRY-TIE",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network retry aborted.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 1
+      }
+    },
+    {
+      "id": "mcp_post/body/fulfilled/parent-first",
+      "test": "mcp_post_body_fulfilled_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/body/fulfilled/tie-parent-first",
+      "test": "mcp_post_body_fulfilled_tie_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/body/idle/continuation-first",
+      "test": "mcp_post_body_idle_continuation_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/body/idle/parent-first",
+      "test": "mcp_post_body_idle_parent_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/body/idle/tie-parent-first",
+      "test": "mcp_post_body_idle_tie_parent_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/body/idle/tie-parent-last",
+      "test": "mcp_post_body_idle_tie_parent_last",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/body/rejected/continuation-first",
+      "test": "mcp_post_body_rejected_continuation_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/body/rejected/parent-first",
+      "test": "mcp_post_body_rejected_parent_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/body/rejected/tie-parent-first",
+      "test": "mcp_post_body_rejected_tie_parent_first",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/body/rejected/tie-parent-last",
+      "test": "mcp_post_body_rejected_tie_parent_last",
+      "category": "MCP-BODY-ERROR",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/headers/fulfilled/tie-parent-first",
+      "test": "mcp_post_headers_fulfilled_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/headers/idle/tie-parent-first",
+      "test": "mcp_post_headers_idle_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request timed out after 60000ms.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/headers/rejected/tie-parent-first",
+      "test": "mcp_post_headers_rejected_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "fetch failed",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/redirect-hop/fulfilled/tie-parent-first",
+      "test": "mcp_post_redirect_hop_fulfilled_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/redirect-hop/idle/tie-parent-first",
+      "test": "mcp_post_redirect_hop_idle_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request timed out after 60000ms.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      }
+    },
+    {
+      "id": "mcp_post/redirect-hop/rejected/tie-parent-first",
+      "test": "mcp_post_redirect_hop_rejected_tie_parent_first",
+      "category": "PARENT-TIE",
+      "ts": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 2,
+        "content": null,
+        "delivery": "throw",
+        "message": "fetch failed",
+        "name": "NetworkFetchError",
         "retries": 0
       }
     }

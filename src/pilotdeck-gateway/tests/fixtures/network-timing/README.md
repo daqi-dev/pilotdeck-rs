@@ -1,16 +1,16 @@
 # Network cancellation timing fixture (#456 pr1 / pr2)
 
 固定 TS cc7c4e6 + Node v22.22.0 的真实执行共336格，沿用同一个生成器、金样、差异表和反向守卫。
-当前Rust接线184格：129对齐、55差异；MCP GET/POST及hooks的152格已有TS金样，Rust私有入口未接线，**本包尚未完成**。
-产品源码、公开接口和行为不变，产品修复归#752。原始证据与逐格状态见本树 `_tmp/20261026-issue-456b/RESULT.md`。
+当前Rust接线336格：240对齐、96差异。pr2b补上MCP GET56、POST48、hooks48，新增111对齐、41差异；差异不等于已接受或阶段完成。
+非test产品代码、公开接口和行为不变，仅在两个私有模块追加cfg(test)接线。产品修复归#752。pr2b原始证据与逐格状态见本树 `_tmp/20261026-issue-456c/RESULT.md`；pr2a记录仍在原目录。
 
 | 路径 | timer headers/body/redirect | timer retry-status/error | io-headers | lifecycle | TS合计 | Rust已接线 |
 |---|---:|---:|---:|---:|---:|---:|
 | web_fetch | 36 | 8 | 12 | 0 | 56 | 56 |
 | fetch_redirect（另含text-body） | 48 | 8 | 12 | 0 | 68 | 68 |
-| mcp_get | 36 | 8 | 12 | 0 | 56 | 0 |
-| mcp_post | 36 | 0 | 12 | 0 | 48 | 0 |
-| hooks | 36 | 0 | 12 | 0 | 48 | 0 |
+| mcp_get | 36 | 8 | 12 | 0 | 56 | 56 |
+| mcp_post | 36 | 0 | 12 | 0 | 48 | 48 |
+| hooks | 36 | 0 | 12 | 0 | 48 | 48 |
 | background | 36 | 8 | 12 | 4 | 60 | 60 |
 
 普通阶段各为fulfilled/rejected/idle × continuation-first/parent-first/tie-parent-first/tie-parent-last。
@@ -29,7 +29,9 @@ TS路径和行号相对固定基线根：
 
 Rust web/background调用公开真实实现；私有fetch_redirect/network经`#[path]`编译原文件。
 background timer的redirect首跳ready、末跳after元数据保留；断言禁止将timer隐藏于io/microtask。
-MCP `network_fetch_continuing_with`、hooks `execute_with`是private；本包未增加产品文件测试接线，不能用共享helper冒充caller已回放。
+MCP通过cfg(test)模块调用真实 `network_fetch_continuing_with` + `fetch_with/follow` + `streamable_text`；hooks调用真实 `execute_with` + 既有 `ExecutionResult::failure(false)` + `to_value`，完整保留返回对象。测试不声称私有seam覆盖public catch调用位；既有hooks_runtime真实execute回归另验。
+MCP timer traversal仅把已经同步走过的真实follow结果连同唯一末跳timer元数据交给caller；不会把timer藏在microtask里。真实I/O另走socket路径。每跳检查请求路径，次数/重试仍严格比较完整observable。
+MCP retry真实带500..624ms随机jitter；TS probe固定Math.random=0。测试以独立Wake观察caller真实timer，同起点直接await500ms校准Sleep，只接受同tick唤醒的候选，最多4096次，未选候选drop且不发第二次请求。保留随机策略，不注入Retry-After；采样证据为RETRY_SAMPLE行。
 
 ## timer、真实I/O、生命周期
 
@@ -73,13 +75,14 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test 
 ```
 
 既有默认ignore的重生成守卫复用同一network-timing fixture，重新调用生成器并逐字节比较全部336格。
-默认136通过=129对齐+6overdue+1差异守卫；56忽略=55已知差异+1重生成守卫。忽略不等于已批准或阶段通过。
+integration默认137通过=129对齐+6overdue+1差异守卫+1registry负控，56忽略=55差异+1重生成；两个private lib模块默认114通过=111对齐+2差异守卫+1metadata/trace负控，41忽略=41差异。忽略不等于已批准或阶段通过。
+同样先核cargo槽位：`cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib network_timing_tests`。
 
 ## 差异与负控
 
-known_differences.json是TS原值/Rust当前原值/category/test的单一维护表。现55格=pr1的38+background body6+web io错误类型11。
-四个原001账本字节不变；只新增POST-HEADERS-PARENT-002、ERROR-CLASS-002未批准条目。
-每格严格TS断言并独立ignore；默认反向守卫逐格重放Rust并核TS原值、TS≠Rust、ignore集合/理由和函数格ID绑定。
+known_differences.json是TS原值/Rust当前原值/category/test的单一维护表。现96格=pr1的38+pr2a的17+pr2b的41。
+历史账本字节不变；pr2b按根因新增PARENT-TIE-002、RETRY-TIE-002、POST-HEADERS-PARENT-003、ERROR-CLASS-003未批准条目。
+每格严格TS断言并独立ignore；共享registry核三处源码的全部336格集合、测试属性、两个cfg(test)模块接线、TS原值、TS≠Rust、ignore集合/理由和函数格ID绑定。三个默认反向守卫按所属路径逐格重放Rust，未将缺失格过滤成通过。
 改变差异表现或修复后仍保留ignore都会失败；不改产品来迁就期望。
 
 `negative_controls.py /fresh/evidence [control...]`临时变异产品源码，要求独占树；使用mutating_sources验证HEAD、锁和恢复，
@@ -89,3 +92,9 @@ cargo均经wait_for_slot/run_owned，正控→预期测试断言失败→恢复�
 
 `negative_observations.mts <raw.ndjson>`只改内存中的原始记录，每条新增守卫、新源码/依赖项和每个新增矩阵项均有负控；
 每次拒绝变异后重新验证原始完整336格。原始TS文件、金样和记录不被该脚本改写。
+
+
+`negative_private.py --catalog`列出pr2b的源码变异、具体测试名及断言锚点；运行方式为
+`negative_private.py /fresh/evidence [control...]`，必须由调用方设置CARGO_TARGET_DIR，不另建仓库或target。
+本包未提交时mutating_sources会因cfg(test)接线不匹配HEAD而拒绝全部产品变异；提交后由协调者在宿主执行，不能把拒绝算负控通过。
+内存负控不改源码/金样：registry的194项覆盖新41条差异的TS值/反向值/test/category绑定、三个测试文件属性、三处反向回放守卫及两模块接线；private metadata/trace的848项覆盖所有116个timer格的6个字段、全部152个请求路径。每次必须在绑定断言失败且恢复原值后通过。

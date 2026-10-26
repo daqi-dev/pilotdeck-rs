@@ -2116,3 +2116,7 @@ fn hook_timeout_conversion_matches_node_timer_lists() {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/common/network_timing_hooks.rs"]
+mod network_timing_tests;
