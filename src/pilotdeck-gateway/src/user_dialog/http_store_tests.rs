@@ -2926,9 +2926,20 @@ async fn close_waits_for_in_flight_requests() {
 // #702: shutdown vs keep-alive advertisement, and early-close RST
 // ---------------------------------------------------------------------------
 
+/// One response phase may legitimately take seconds on a loaded host: the list
+/// handler serializes ~18 MiB before hyper can write the response head. Four
+/// concurrent runs measured 3.5 s head waits, and a saturated host exceeded the
+/// old 5 s per-read bound (4/4 negative-control runs failed at iteration 11).
+/// This is a bounded **failure** budget, not a protocol semantic: Node has no
+/// response-generation deadline (`headersTimeout` only covers the request
+/// head), so a slow handler must not be mistaken for a product hang. A genuine
+/// stall still terminates the test with the stage and bytes read.
+const RESPONSE_PHASE_BUDGET: Duration = Duration::from_secs(60);
+
 /// Read the response head (through the blank line) plus any body bytes that
 /// arrived with it.
 async fn read_response_head(stream: &mut TcpStream, note: &str) -> (Vec<u8>, Vec<u8>) {
+    let deadline = tokio::time::Instant::now() + RESPONSE_PHASE_BUDGET;
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
@@ -2938,10 +2949,15 @@ async fn read_response_head(stream: &mut TcpStream, note: &str) -> (Vec<u8>, Vec
                 buffer[position + 4..].to_vec(),
             );
         }
-        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk))
-            .await
-            .unwrap_or_else(|_| panic!("{note}: response head never arrived"))
-            .unwrap_or_else(|error| panic!("{note}: response head read failed: {error}"));
+        let read = match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
+            Ok(Ok(read)) => read,
+            Ok(Err(error)) => panic!("{note}: response head read failed: {error}"),
+            Err(_) => panic!(
+                "{note}: response head never arrived within {RESPONSE_PHASE_BUDGET:?} \
+                 (read {} bytes so far)",
+                buffer.len()
+            ),
+        };
         assert!(
             read > 0,
             "{note}: EOF before the response head: {:?}",
@@ -2970,12 +2986,17 @@ async fn read_exact_body(
     length: usize,
     note: &str,
 ) -> Vec<u8> {
+    let deadline = tokio::time::Instant::now() + RESPONSE_PHASE_BUDGET;
     let mut chunk = [0u8; 8192];
     while body.len() < length {
-        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk))
-            .await
-            .unwrap_or_else(|_| panic!("{note}: response body stalled at {}/{length}", body.len()))
-            .unwrap_or_else(|error| panic!("{note}: response body read failed: {error}"));
+        let read = match tokio::time::timeout_at(deadline, stream.read(&mut chunk)).await {
+            Ok(Ok(read)) => read,
+            Ok(Err(error)) => panic!("{note}: response body read failed: {error}"),
+            Err(_) => panic!(
+                "{note}: response body stalled at {}/{length} within {RESPONSE_PHASE_BUDGET:?}",
+                body.len()
+            ),
+        };
         assert!(
             read > 0,
             "{note}: EOF before the response body completed: {}/{length}",
