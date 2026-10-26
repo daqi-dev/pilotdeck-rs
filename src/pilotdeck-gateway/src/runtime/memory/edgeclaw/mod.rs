@@ -15,6 +15,7 @@
 //! and file export APIs, plus workspace/global file-store wiring. Repository
 //! snapshot capture, dream rollback and root swaps live in [`storage::snapshots`].
 //! Retrieval, extraction and heartbeat belong to the remaining work packages.
+pub mod dream;
 pub mod file_memory;
 pub mod heartbeat;
 pub mod llm;
