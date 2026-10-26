@@ -18,6 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import run_owned, wait_for_slot
 
 
+ANCHOR_COUNTS = {'run-id-is-identity': 2, 'discard-is-completion': 2}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
@@ -106,7 +109,7 @@ def main():
             for file, content in originals.items():
                 if file == filename:
                     count = content.count(before)
-                    assert count == (2 if name in ("run-id-is-identity", "discard-is-completion") else 1), (name, count)
+                    assert count == ANCHOR_COUNTS.get(name, 1), (name, count)
                     content = content.replace(before, after)
                 destination = (fixture_copy if file == "oracle.json" else source_copy)
                 (destination / file).write_text(content)
