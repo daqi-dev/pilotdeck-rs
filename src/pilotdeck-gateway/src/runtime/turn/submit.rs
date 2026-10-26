@@ -943,11 +943,7 @@ impl TurnSubmitter {
         let selection = field(&prepared.model_selection, "selection");
         let mut last_model = None;
         if truthy(selection) {
-            let mut event = model_event(selection, &source, run);
-            for key in ["reasoning", "temperature", "speed"] {
-                set(&mut event, key, field(selection, key).clone());
-            }
-            publisher.gateway_event(event);
+            publisher.gateway_event(model_event(selection, &source, run));
             last_model = Some((
                 field(selection, "provider").clone(),
                 field(selection, "model").clone(),
@@ -1212,13 +1208,19 @@ fn busy_message(session: &JsString) -> JsValue {
 }
 
 fn model_event(selection: &JsValue, source: &JsValue, run: &RunRef) -> JsValue {
-    object([
+    // InProcessGateway.ts:1522-1529 and :1661-1667: reasoning/temperature/
+    // speed precede runId when the selection carries them.
+    let mut event = object([
         ("type", "model_selection_changed".into()),
         ("provider", field(selection, "provider").clone()),
         ("model", field(selection, "model").clone()),
         ("source", source.clone()),
-        ("runId", JsValue::String(run.run_id.clone())),
-    ])
+    ]);
+    for key in ["reasoning", "temperature", "speed"] {
+        set(&mut event, key, field(selection, key).clone());
+    }
+    set(&mut event, "runId", JsValue::String(run.run_id.clone()));
+    event
 }
 pub(super) fn aborted(run: &RunRef) -> JsValue {
     object([

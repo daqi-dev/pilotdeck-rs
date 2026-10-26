@@ -87,8 +87,13 @@ pub trait SubmitCompactionRouter: Send + Sync {
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>>;
 }
 
-/// `options.setSdkSessionConfig` (InProcessGateway.ts:1085-1115).
+/// `options.setSdkSessionConfig` (InProcessGateway.ts:1085-1115). The
+/// gateway's own `validateSdkSessionConfig` (:3210) runs in the preflight
+/// window (:1027) before beginTurn and before `set`; the port mirrors that
+/// split so a wired port validates at admission time instead of failing at
+/// set time (7b wires the native validator behind `validate`).
 pub trait SubmitSdkSessionConfig: Send + Sync {
+    fn validate(&self, config: &JsValue) -> Result<(), SubmitError>;
     fn set<'a>(
         &'a self,
         session: &'a JsString,
@@ -210,20 +215,22 @@ impl GatewaySubmitAdmission {
             .as_number()
             .filter(|ms| ms.is_finite() && *ms > 0.0);
         let abort = CompactionAbort::default();
+        // The guard keeps `finally { clearTimeout(timeoutHandle) }` true on
+        // every exit: not only after the router settles, but also when this
+        // future itself is dropped mid-await (a cancelled turn), so the
+        // spawned timer can never outlive the compaction await.
         let timer = timeout.map(|ms| {
             let abort = abort.clone();
             let mut reason: Vec<u16> = "timeout:".encode_utf16().collect();
             reason.extend_from_slice(run.units());
             let reason = JsString::from_utf16(reason);
-            tokio::spawn(async move {
+            TimerGuard(Some(tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(ms as u64)).await;
                 abort.abort(reason);
-            })
+            })))
         });
         let result = router.compact(&session, &run, &abort).await;
-        if let Some(timer) = timer {
-            timer.abort(); // finally { clearTimeout(timeoutHandle) }
-        }
+        drop(timer);
         let result = match result {
             Ok(result) => result,
             Err(error) => {
@@ -690,10 +697,16 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
     fn has_sdk_config(&self) -> bool {
         self.options.sdk_config.is_some()
     }
-    fn validate_sdk_config(&self, _: &JsValue) -> Result<(), SubmitError> {
-        // The submitter only asks after has_sdk_config(); a wired port owns
-        // its validation (7b wires the native validator).
-        Ok(())
+    fn validate_sdk_config(&self, config: &JsValue) -> Result<(), SubmitError> {
+        // InProcessGateway.ts:1027-1034: with the option wired, the config is
+        // validated in the preflight window, before beginTurn and before the
+        // set port runs (probe: a wired port plus an invalid config never
+        // reaches set). The submitter only asks after has_sdk_config(), so
+        // the None arm mirrors the unwired refusal it already emitted.
+        match self.options.sdk_config.as_ref() {
+            Some(port) => port.validate(config),
+            None => Ok(()),
+        }
     }
     fn set_sdk_config<'a>(
         &'a self,
@@ -729,6 +742,17 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
 fn with_hint(mut event: JsValue, hint: &str) -> JsValue {
     set(&mut event, "userHint", hint.into());
     event
+}
+/// `clearTimeout` bound to the compaction await's lifetime: dropping the
+/// guard cancels the spawned timeout task, so the timer never fires after
+/// the turn that started it has settled or been dropped.
+struct TimerGuard(Option<tokio::task::JoinHandle<()>>);
+impl Drop for TimerGuard {
+    fn drop(&mut self) {
+        if let Some(timer) = self.0.take() {
+            timer.abort();
+        }
+    }
 }
 fn starts_with16(units: &[u16], text: &str) -> bool {
     let bytes = text.as_bytes();

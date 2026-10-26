@@ -124,7 +124,7 @@ async function run(name: string, setup: any = {}, steps = ['observe']) {
   const root = await mkdtemp(join(tmpdir(), 'pdrs-submit-admission-'));
   const file = new registryModule.FileRunRegistry(join(root, 'registry.json'));
   const hostCalls: any[] = [], durableCalls: any[] = [], registryCalls: any[] = [], native: any[] = [], visible: any[] = [], results: any[] = [];
-  const submits: any[] = [], storageCalls: any[] = [], compactCalls: any[] = [], compactAborts: any[] = [], authorizerCalls: any[] = [];
+  const submits: any[] = [], storageCalls: any[] = [], compactCalls: any[] = [], compactAborts: any[] = [], authorizerCalls: any[] = [], sdkSetCalls: any[] = [];
   const runRef = { sessionKey: 's', projectKey: 'p', runId: 'r' };
   const input = { ...runRef, message: 'hello', channelKey: 'test', ...setup.input };
   const pendingRegistry: Promise<any>[] = [];
@@ -199,6 +199,12 @@ async function run(name: string, setup: any = {}, steps = ['observe']) {
   Object.assign(gateway, {
     options: {
       runRegistry: port,
+      // fix-r1 P1: with the setSdkSessionConfig port wired, where does an
+      // invalid sdkSessionConfig get rejected, and does set ever run?
+      ...(setup.wireSdkConfig ? { setSdkSessionConfig: async (sessionKey: string, config: any, projectKey: any, signal: any) => {
+        sdkSetCalls.push({ sessionKey, config: clone(config), projectKey, aborted: signal.aborted });
+        return { changed: true };
+      } } : {}),
       ...(setup.authorizer ? { trustedContextAuthorizer: {
         authorize: async (request: any) => { authorizerCalls.push(clone(request)); return setup.authorizer(request); },
       } } : {}),
@@ -226,7 +232,7 @@ async function run(name: string, setup: any = {}, steps = ['observe']) {
     await file.ready;
     for (let i = 0; i < 3; ++i) { await settle(); await Promise.all(pendingRegistry); await file.mutationChain; }
     results.push({ visible: clone(visible), wire: visible.map(e => JSON.stringify(e)), hostCalls: clone(hostCalls),
-      submits: clone(submits), registryCalls: clone(registryCalls), storageCalls: clone(storageCalls),
+      submits: clone(submits), registryCalls: clone(registryCalls), storageCalls: clone(storageCalls), sdkSetCalls: clone(sdkSetCalls),
       interactionCalls: clone(interactionCalls), compactCalls: clone(compactCalls), compactAborts: clone(compactAborts),
       authorizerCalls: clone(authorizerCalls), active: router.hasActiveTurn('s'), ended, thrown });
   }
@@ -273,6 +279,14 @@ await run('trusted-invalid-decision', { authorizer: async () => ({ source: 'src'
 await run('trusted-throws', { authorizer: async () => { throw Error('no way'); }, input: { trustedContext: [trusted('t')] } });
 await run('trusted-authorized', { authorizer: async () => ({ principal: 'p1', source: 'authorized' }), input: { trustedContext: [trusted('t1'), trusted('t2')] }, reachesRegistry: true });
 await run('model-selection-normalized', { input: { modelSelection: { mode: 'model', provider: 'pv', model: 'mv', reasoning: 0.8, speed: 0.5, temperature: 0.7, retired: 'drop-me' }, modelOverride: { mode: 'model', provider: 'ov', model: 'om', retired: 'drop-me-too' } }, reachesRegistry: true });
+// fix-r1 P2: equal connectionId with a non-numeric generation must be a
+// reconnect-port validation throw, not an interaction_reconnect_required.
+await run('reconnect-equal-id-bad-generation', { seed: { connectionId: 'c1', generation: 2 }, input: { interactionBinding: { connectionId: 'c1', generation: 'x' } } });
+// fix-r1 P1: the sdkSessionConfig validation window with the port wired.
+await run('sdk-config-valid-wired', { wireSdkConfig: true, input: { sdkSessionConfig: { systemPrompt: 'p1' } }, reachesRegistry: true });
+await run('sdk-config-invalid-wired', { wireSdkConfig: true, input: { sdkSessionConfig: { systemPrompt: 42 } }, reachesRegistry: true });
+await run('sdk-config-managed-invalid-wired', { wireSdkConfig: true, input: { sdkSessionConfig: { managedPermissions: { deny: [''], ask: [] } } }, reachesRegistry: true });
+await run('sdk-config-invalid-unwired', { input: { sdkSessionConfig: { systemPrompt: 42 } }, reachesRegistry: true });
 assert.deepEqual(unexpectedImports, [], 'every exercised import must be real or explicitly controlled');
 const out = resolve(process.argv[2]); await mkdir(out, { recursive: true });
 await writeFile(join(out, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, cases }, null, 2) + '\n');

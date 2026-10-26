@@ -26,6 +26,19 @@ root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/turn/admission.rs'
+
+
+def panic_evidence(log):
+    """fix-r1 P2: the failing test must be an admission test.
+
+    libtest prints ``thread '<test>' panicked at``; only a panic from a test
+    under ``runtime::turn::admission`` counts, so a mutant killed by another
+    module's assertion can never satisfy the anchor.
+    """
+    return any(segment.split("'", 1)[0].startswith('runtime::turn::admission')
+               for segment in log.split("thread '")[1:])
+
+
 mutations = [
     ('stale-outcome', source, 'if !is(&reconnect, "outcome", "stale_binding") {\n                        return Ok(vec![]);\n                    }', 'if true {\n                        return Ok(vec![]);\n                    }'),
     ('claim-conflict', source, '== SubmitClaim::Conflict', '== SubmitClaim::None'),
@@ -42,6 +55,14 @@ mutations = [
     ('compact-prefix', source, 'js_whitespace(trimmed[8])', 'js_whitespace(trimmed[7])'),
     ('plan-prefix', source, 'if !starts_with16(trimmed, "/plan") {', 'if !starts_with16(trimmed, "/planx") {'),
     ('sdk-copy', source, '"sdk_session_config is unavailable."', '"changed."'),
+    # fix-r1: the sdkSessionConfig validation window must surface the wired
+    # port's refusal at admission time (probe sdk-config-invalid-wired).
+    ('sdk-validate-ignored', source, 'Some(port) => port.validate(config),', 'Some(_port) => Ok(()),'),
+    # fix-r1: a turn dropped mid-compaction must cancel its timeout timer.
+    ('compact-timer-orphan', source, 'if let Some(timer) = self.0.take() {\n            timer.abort();\n        }', 'if let Some(timer) = self.0.take() {\n            let _ = timer;\n        }'),
+    # fix-r1: the raw connectionId mismatch gate must treat a differently
+    # bound id as stale, not as a validation candidate.
+    ('reconnect-mismatch', source, '!matches!(binding.get("connectionId"),', 'matches!(binding.get("connectionId"),'),
 ]
 selected = set(sys.argv[2:])
 mutations = [mutation for mutation in mutations
@@ -70,7 +91,8 @@ with mutating_sources(root, paths) as snapshots:
             result = run_owned(command, cwd=root, env=env, timeout=600)
             log = result.stdout + result.stderr
             (out / (name + '.log')).write_text(log)
-            assert result.returncode == 101 and 'test result: FAILED.' in log and 'panicked at' in log, name
+            assert (result.returncode == 101 and 'test result: FAILED.' in log
+                    and panic_evidence(log)), name
             print(name + ': KILLED (assertion killed)', flush=True)
         finally:
             path.write_bytes(original)

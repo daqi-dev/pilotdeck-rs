@@ -69,6 +69,55 @@ impl SubmitTrustedAuthorizer for RecordingAuthorizer {
     }
 }
 
+/// The probe's controlled SDK session config port (generate.mts
+/// `setSdkSessionConfig`): validation mirrors the TS gateway's own
+/// `validateSdkSessionConfig` checks exercised by the oracle cases
+/// (InProcessGateway.ts:3216-3218, 3243-3249); the native validator is 7b.
+struct RecordingSdkConfig {
+    calls: Mutex<Vec<Value>>,
+}
+impl SubmitSdkSessionConfig for RecordingSdkConfig {
+    fn validate(&self, config: &JsValue) -> Result<(), SubmitError> {
+        if !matches!(
+            field(config, "systemPrompt"),
+            JsValue::Undefined | JsValue::String(_)
+        ) {
+            return Err(SubmitError::new(
+                "INVALID_SDK_SESSION_CONFIG",
+                "systemPrompt must be a string.",
+            ));
+        }
+        // InProcessGateway.ts:3243-3249: a deny entry must be a non-empty
+        // string; the oracle's invalid case uses [""].
+        if matches!(field(config, "managedPermissions"), JsValue::Object(_))
+            && matches!(field(config, "managedPermissions").get("deny"), Some(JsValue::Array(deny))
+                if deny.iter().any(|entry| matches!(entry, JsValue::String(text) if trim16(text.units()).is_empty())))
+        {
+            return Err(SubmitError::new(
+                "UNSUPPORTED_SDK_MANAGED_SETTING",
+                "managedPermissions may contain deny/ask entries, defaultMode=plan, and canPrompt=false only.",
+            ));
+        }
+        Ok(())
+    }
+    fn set<'a>(
+        &'a self,
+        session: &'a JsString,
+        config: &'a JsValue,
+        project: Option<&'a JsString>,
+        _: &'a TurnCompletionHandle,
+    ) -> SubmitFuture<'a, Result<bool, SubmitError>> {
+        let call = json!({
+            "sessionKey": text(session),
+            "config": json(config),
+            "projectKey": project.map(text),
+            "aborted": false,
+        });
+        self.calls.lock().unwrap().push(call);
+        Box::pin(async { Ok(true) })
+    }
+}
+
 struct ScriptedRouter {
     setup: Value,
     calls: Mutex<Vec<Value>>,
@@ -233,6 +282,11 @@ async fn build(name: &str, setup: &Value) -> Driven {
         authorizer = Some(port.clone());
         options.trusted_authorizer = Some(port);
     }
+    if setup["wireSdkConfig"] == true {
+        options.sdk_config = Some(Arc::new(RecordingSdkConfig {
+            calls: Mutex::default(),
+        }));
+    }
     Driven {
         admission: Arc::new(GatewaySubmitAdmission::new(options)),
         router,
@@ -241,8 +295,9 @@ async fn build(name: &str, setup: &Value) -> Driven {
 }
 
 /// Drives the admission windows in the submitter's order (submit.rs run():
-/// normalize → validate → route_input → preflight); validation itself is
-/// pinned by the turn-submit fixture.
+/// normalize → validate → route_input → preflight → sdkSessionConfig
+/// capability/validation); input validation itself is pinned by the
+/// turn-submit fixture.
 async fn drive(case: &Value) -> (Driven, Vec<JsValue>, Option<String>, JsValue) {
     let driven = build(case["name"].as_str().unwrap(), &case["setup"]).await;
     let mut input = {
@@ -268,7 +323,30 @@ async fn drive(case: &Value) -> (Driven, Vec<JsValue>, Option<String>, JsValue) 
         if !routed.is_empty() {
             return Ok(routed);
         }
-        driven.admission.preflight(&input, &run).await
+        let early = driven.admission.preflight(&input, &run).await?;
+        if !early.is_empty() {
+            return Ok(early);
+        }
+        // submit.rs:370-392: the sdkSessionConfig window sits between the
+        // replacement preflight and begin_turn — capability first, then the
+        // port's validation (InProcessGateway.ts:1014-1034).
+        if truthy(field(&input, "sdkSessionConfig")) {
+            let error = if !driven.admission.has_sdk_config() {
+                Some(SubmitError::new(
+                    "CAPABILITY_UNAVAILABLE",
+                    "sdk_session_config is unavailable.",
+                ))
+            } else {
+                driven
+                    .admission
+                    .validate_sdk_config(field(&input, "sdkSessionConfig"))
+                    .err()
+            };
+            if let Some(error) = error {
+                return Ok(vec![error_event(&run, &error.code, &error.message, true)]);
+            }
+        }
+        Ok::<_, SubmitError>(Vec::new())
     }
     .await;
     let (events, thrown) = match outcome {
@@ -506,9 +584,19 @@ impl SubmitHostServices for Services {
     }
     fn resolve_model_selection<'a>(
         &'a self,
-        _: &'a JsValue,
+        input: &'a JsValue,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
-        Box::pin(async { Ok(object([("source", "default".into())])) })
+        // createLocalGateway wires the real sessionModels resolver
+        // (GatewaySessionModelBundle.ts:92-100): a submitted model-mode
+        // selection resolves as {selection, source: "turn"} after normalize's
+        // folding; anything else keeps the default source.
+        let selection = field(input, "modelSelection");
+        let resolved = if is(selection, "mode", "model") {
+            object([("source", "turn".into()), ("selection", selection.clone())])
+        } else {
+            object([("source", "default".into())])
+        };
+        Box::pin(async move { Ok(resolved) })
     }
     fn record_failure<'a>(
         &'a self,
@@ -531,7 +619,24 @@ impl SubmitHostServices for Services {
 #[tokio::test]
 async fn real_ts_admission_full_turn_scenarios() {
     let oracle = json(&crate::test_baseline::oracle(ORACLE));
-    for name in ["reconnect-fresh-turn", "replacement-claim-committed"] {
+    // fix-r1: the whole-submission scenarios on the real submitter/host pair,
+    // covering every admission window that a native component observes: the
+    // replacement claim outcomes, the compaction command (including the
+    // timeout abort), trusted-context authorization, the plan rewrite, the
+    // model-selection fold and the sdkSessionConfig validation window.
+    for name in [
+        "reconnect-fresh-turn",
+        "replacement-claim-committed",
+        "replacement-claim-conflict",
+        "replacement-write-reservation",
+        "compact-busy",
+        "compact-timeout-abort",
+        "trusted-authorized",
+        "plan-rewritten",
+        "model-selection-normalized",
+        "sdk-config-valid-wired",
+        "sdk-config-invalid-wired",
+    ] {
         let case = oracle["cases"]
             .as_array()
             .unwrap()
@@ -562,6 +667,11 @@ async fn replay_full_turn(case: &Value) {
             .await
             .unwrap();
     }
+    if setup["writeReservation"] == true {
+        replacement
+            .reserve_transcript_write(&"s".into(), "session_update")
+            .unwrap();
+    }
     if let Some(seed) = setup["seed"].as_object() {
         interactions
             .reconnect_port()
@@ -577,6 +687,38 @@ async fn replay_full_turn(case: &Value) {
     }
     let mut options = SubmitAdmissionOptions::new(replacement.clone());
     options.interactions = interactions;
+    // The probe's controlled ports, wired exactly as the oracle's setup
+    // describes (compaction router, trusted authorizer, SDK session config).
+    let mut router = None;
+    if setup["compactResult"].is_object()
+        || setup["compactError"].is_string()
+        || setup["compactHang"] == true
+    {
+        let port = Arc::new(ScriptedRouter {
+            setup: setup.clone(),
+            calls: Mutex::default(),
+            aborts: Mutex::default(),
+        });
+        router = Some(port.clone());
+        options.compaction = Some(port);
+    }
+    let mut authorizer = None;
+    if name == "trusted-authorized" {
+        let port = Arc::new(RecordingAuthorizer {
+            mode: AuthorizerMode::Authorized,
+            calls: Mutex::default(),
+        });
+        authorizer = Some(port.clone());
+        options.trusted_authorizer = Some(port);
+    }
+    let mut sdk = None;
+    if setup["wireSdkConfig"] == true {
+        let port = Arc::new(RecordingSdkConfig {
+            calls: Mutex::default(),
+        });
+        sdk = Some(port.clone());
+        options.sdk_config = Some(port);
+    }
     let admission = Arc::new(GatewaySubmitAdmission::new(options));
     let coordinator = Arc::new(TurnEventCoordinator::new());
     let session = Arc::new(ScriptedSession {
@@ -636,13 +778,52 @@ async fn replay_full_turn(case: &Value) {
         result["storageCalls"].as_array().unwrap().clone(),
         "{name}: storage calls"
     );
+    if let Some(router) = &router {
+        assert_eq!(
+            *router.calls.lock().unwrap(),
+            result["compactCalls"].as_array().unwrap().clone(),
+            "{name}: router calls"
+        );
+        assert_eq!(
+            *router.aborts.lock().unwrap(),
+            result["compactAborts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap().to_string())
+                .collect::<Vec<_>>(),
+            "{name}: abort reasons"
+        );
+    }
+    if let Some(authorizer) = &authorizer {
+        assert_eq!(
+            *authorizer.calls.lock().unwrap(),
+            result["authorizerCalls"].as_array().unwrap().clone(),
+            "{name}: authorizer requests"
+        );
+    }
+    if let Some(sdk) = &sdk {
+        assert_eq!(
+            *sdk.calls.lock().unwrap(),
+            result["sdkSetCalls"].as_array().unwrap().clone(),
+            "{name}: sdk config set calls"
+        );
+    }
     assert!(
         !owner.has_active_turn(&"s".into()),
         "{name}: admission released"
     );
+    // A refused submit never claims: its own claim stays settled, while a
+    // conflicting pending replacement (a different runId, oracle setup
+    // 'rx') keeps gating the session exactly as the TS releasePreflight
+    // no-op leaves it.
+    let expected_claim = match setup["pendingReplacement"].as_str() {
+        Some(pending) if pending != "r" => SubmitClaim::Conflict,
+        _ => SubmitClaim::None,
+    };
     assert_eq!(
         replacement.claim_for_submit(&"s".into(), &"r".into()),
-        SubmitClaim::None,
+        expected_claim,
         "{name}: claim settled"
     );
     drop(submitter);
@@ -656,6 +837,12 @@ async fn replay_full_turn(case: &Value) {
         project_key: Some("p".into()),
         run_id: "r".into(),
     };
+    // Command turns (compact/plan usage) never reach run acceptance, so the
+    // oracle carries no durable expectations for them: the run stays absent.
+    let expected_events = case["registryEvents"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(
         reopened
             .events(&run, None, None)
@@ -663,7 +850,7 @@ async fn replay_full_turn(case: &Value) {
             .iter()
             .map(json)
             .collect::<Vec<_>>(),
-        case["registryEvents"].as_array().unwrap().clone(),
+        expected_events,
         "{name}: durable events"
     );
     let record = reopened.get(&run).unwrap();
@@ -718,6 +905,92 @@ async fn absent_ports_reproduce_unwired_option_behavior() {
     assert_eq!(error.code, "CAPABILITY_UNAVAILABLE");
     assert_eq!(error.message, "sdk_session_config is unavailable.");
 }
+/// fix-r1 P1: a wired port owns the sdkSessionConfig validation in the
+/// preflight window (probe sdk-config-invalid-wired: the TS gateway rejects
+/// INVALID_SDK_SESSION_CONFIG before beginTurn and before the set port).
+/// The admission surface must surface the port's refusal, not defer it to
+/// set_sdk_config.
+#[test]
+fn wired_sdk_config_rejects_invalid_config_at_validation() {
+    let mut options =
+        SubmitAdmissionOptions::new(replacement_coordinator(&RecordingStorage::default()));
+    options.sdk_config = Some(Arc::new(RecordingSdkConfig {
+        calls: Mutex::default(),
+    }));
+    let admission = Arc::new(GatewaySubmitAdmission::new(options));
+    assert!(admission.has_sdk_config());
+    let error = admission
+        .validate_sdk_config(&js(&json!({"systemPrompt": 42})))
+        .unwrap_err();
+    assert_eq!(error.code, "INVALID_SDK_SESSION_CONFIG");
+    assert_eq!(error.message, "systemPrompt must be a string.");
+    assert!(
+        admission
+            .validate_sdk_config(&js(&json!({"systemPrompt": "ok"})))
+            .is_ok()
+    );
+    let managed = admission
+        .validate_sdk_config(&js(
+            &json!({"managedPermissions": {"deny": [""], "ask": []}}),
+        ))
+        .unwrap_err();
+    assert_eq!(managed.code, "UNSUPPORTED_SDK_MANAGED_SETTING");
+    assert_eq!(
+        managed.message,
+        "managedPermissions may contain deny/ask entries, defaultMode=plan, and canPrompt=false only."
+    );
+}
+
+/// fix-r1 P2: a turn dropped while /compact still awaits the router must
+/// cancel the timeout timer with it (GatewayManualCompactionCoordinator's
+/// clearTimeout finally extended to the dropped-future path): no orphaned
+/// task survives to fire the abort after the turn is gone.
+#[tokio::test]
+async fn compact_timer_dies_with_dropped_turn() {
+    struct HangingRouter {
+        aborts: Mutex<Vec<CompactionAbort>>,
+    }
+    impl SubmitCompactionRouter for HangingRouter {
+        fn compact<'a>(
+            &'a self,
+            _: &'a JsString,
+            _: &'a JsString,
+            abort: &'a CompactionAbort,
+        ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+            let abort = abort.clone();
+            self.aborts.lock().unwrap().push(abort.clone());
+            Box::pin(async move {
+                let _ = abort.aborted().await;
+                Ok(js(&json!({"type": "aborted", "usage": {}})))
+            })
+        }
+    }
+    let router = Arc::new(HangingRouter {
+        aborts: Mutex::default(),
+    });
+    let mut options =
+        SubmitAdmissionOptions::new(replacement_coordinator(&RecordingStorage::default()));
+    options.compaction = Some(router.clone());
+    let admission = GatewaySubmitAdmission::new(options);
+    let mut input = js(&json!({
+        "sessionKey": "s", "projectKey": "p", "runId": "r", "channelKey": "test",
+        "message": "/compact", "timeoutMs": 150
+    }));
+    // The turn is cancelled while the router still hangs.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), admission.route_input(&mut input))
+            .await
+            .is_err(),
+        "the router must still be hanging"
+    );
+    // Well past the original timeoutMs: an orphaned timer would have fired.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(
+        router.aborts.lock().unwrap()[0].reason().is_none(),
+        "the dropped turn's timeout timer must not outlive it"
+    );
+}
+
 fn stub_completion() -> TurnCompletionHandle {
     struct NoopFactory;
     impl SessionFactory for NoopFactory {
