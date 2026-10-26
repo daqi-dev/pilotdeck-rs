@@ -96,7 +96,11 @@ fn options() -> JsValue {
 }
 
 fn input() -> JsValue {
-    parse_json(r#"{"messages":[{"role":"user","content":[{"type":"text","text":"original\ud800"}],"custom":7}]}"#).unwrap()
+    parse_json(r#"{"type":"text","text":"original\ud800"}"#).unwrap()
+}
+
+fn input_messages() -> JsValue {
+    parse_json(r#"[{"role":"user","content":[{"type":"text","text":"original\ud800"}]}]"#).unwrap()
 }
 
 fn wire(payload: &JsValue, final_event: bool) -> JsValue {
@@ -118,10 +122,13 @@ fn stream(
         execution: Some(execution),
         result: None,
         events,
-        identity: parse_execute_request(&input(), &options())
+        identity: parse_execute_request(&input(), &options(), vec![])
             .unwrap()
+            .0
             .identity,
-        input: input(),
+        input: parse_execute_request(&input(), &options(), vec![])
+            .unwrap()
+            .1,
         integrity,
         delivered: StreamIntegrity::new(),
         active: None,
@@ -215,7 +222,7 @@ fn assert_aborted(event: &JsValue) {
     assert_eq!(event.get("type"), Some(&"turn_completed".into()));
     assert_eq!(event.get("sessionId"), Some(&"session".into()));
     assert_eq!(event.get("turnId"), Some(&"turn".into()));
-    assert_eq!(event.get("messages"), input().get("messages"));
+    assert_eq!(event.get("messages"), Some(&input_messages()));
     let result = event.get("result").unwrap();
     for (key, expected) in [
         ("type", "aborted".into()),
@@ -494,7 +501,7 @@ async fn session_with_final(
     let final_received = client.final_received();
     let initial = Mutex::new(Some(client));
     let mode = mode.to_owned();
-    let session = LiveSessionAdapter::new(move || {
+    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
         let initial = initial.lock().unwrap().take();
         let mode = mode.clone();
         // This test double only records lifecycle calls; it owns no modules.
@@ -519,7 +526,7 @@ async fn session_tracking_children(
     let children = Arc::new(Mutex::new(Vec::new()));
     let tracked = children.clone();
     let mode = mode.to_owned();
-    let adapter = LiveSessionAdapter::new(move || {
+    let adapter = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
         let tracked = tracked.clone();
         let mode = mode.clone();
         let handler = handler.clone();
@@ -577,7 +584,7 @@ async fn host_normal_lifecycle_streams_events_and_projects_authoritative_final_o
     assert_eq!(result.get("stopReason"), Some(&"completed".into()));
     assert_eq!(
         completed.get("messages"),
-        input().get("messages"),
+        Some(&input_messages()),
         "the final must retain the echoed turn messages"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -607,7 +614,7 @@ async fn host_early_failure_completes_before_input_accepted() {
     assert_eq!(result.get("stopReason"), Some(&"error".into()));
     assert_eq!(
         completed.get("messages"),
-        input().get("messages"),
+        Some(&input_messages()),
         "the error terminal still retains the turn messages"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -640,7 +647,7 @@ async fn host_second_turn_failed_from_finalization_failure_is_accepted() {
     assert_eq!(result.get("stopReason"), Some(&"model_error".into()));
     assert_eq!(
         completed.get("messages"),
-        input().get("messages"),
+        Some(&input_messages()),
         "the error terminal still retains the turn messages"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -1320,7 +1327,7 @@ async fn cancel_with_a_full_aborted_result_projects_the_peer_terminal_once() {
     assert_ne!(result.get("startedAt"), result.get("completedAt"));
     assert_eq!(
         completed.get("messages"),
-        input().get("messages"),
+        Some(&input_messages()),
         "the aborted terminal still retains the turn messages"
     );
     // The authoritative terminal is projected exactly once, then closed.
@@ -1406,17 +1413,35 @@ async fn dropping_an_active_stream_disposes_its_host_handler() {
 }
 
 #[test]
-fn execute_request_preserves_input_fields_and_option_identity() {
-    let mut payload = input().as_object().unwrap().clone();
-    payload.insert("provider".into(), "custom-provider".into());
-    payload.insert("model".into(), "custom-model".into());
-    payload.insert("turnId".into(), "payload-turn".into());
-    payload.insert(
-        "contextOverride".into(),
-        parse_json(r#"{"messages":[],"custom":{"enabled":true}}"#).unwrap(),
+fn execute_request_preserves_host_options_and_original_input() {
+    let raw =
+        parse_json(r#"{"type":"text","text":"raw\ud800","messages":["forged"],"model":"forged"}"#)
+            .unwrap();
+    let mut options = options().as_object().unwrap().clone();
+    options.insert("model".into(), "host-model".into());
+    options.insert(
+        "messages".into(),
+        JsValue::Array(vec!["also forged".into()]),
     );
-    let request = parse_execute_request(&JsValue::Object(payload.clone()), &options()).unwrap();
-    assert_eq!(request.payload, payload);
+    let (request, prepared) =
+        parse_execute_request(&raw, &JsValue::Object(options), vec![]).unwrap();
+    assert_eq!(
+        request.payload.get("model"),
+        Some(&"host-model".into()),
+        "host config wins"
+    );
+    assert_eq!(
+        request.payload.get("messages"),
+        Some(
+            &parse_json(r#"[{"role":"user","content":[{"type":"text","text":"raw\ud800"}]}]"#)
+                .unwrap()
+        ),
+        "raw input wins"
+    );
+    assert!(matches!(
+        prepared.input,
+        super::super::runner::AgentInput::Text(_)
+    ));
     assert_eq!(request.identity.session_id, JsString::from("session"));
     assert_eq!(request.identity.turn_id, JsString::from("turn"));
     assert_eq!(request.identity.run_id, JsString::from("run"));
@@ -1425,29 +1450,33 @@ fn execute_request_preserves_input_fields_and_option_identity() {
 }
 
 #[test]
-fn execute_request_rejects_non_object_input() {
-    for invalid in [
-        JsValue::Undefined,
-        JsValue::Null,
-        JsValue::Bool(true),
-        JsValue::Number(1.0),
-        "message".into(),
-        JsValue::Array(vec![]),
+fn execute_request_rejects_flattened_and_invalid_input() {
+    for raw in [
+        "null",
+        "true",
+        "1",
+        "[]",
+        r#"{"messages":[]}"#,
+        r#"{"type":"text","text":null}"#,
+        r#"{"type":"blocks","content":{}}"#,
     ] {
         assert!(
-            parse_execute_request(&invalid, &options())
-                .unwrap_err()
-                .message
-                .contains("Expected execution input object")
+            parse_execute_request(&parse_json(raw).unwrap(), &options(), vec![]).is_err(),
+            "reject {raw}"
         );
     }
+    let invalid = parse_json(r#"{"sessionId":"s","turnId":"t","syntheticMessages":{}}"#).unwrap();
+    assert!(
+        parse_execute_request(&input(), &invalid, vec![]).is_err(),
+        "reject synthetic shape"
+    );
 }
 
 #[tokio::test]
 async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
     let handlers = Arc::new(Mutex::new(Vec::new()));
     let created = handlers.clone();
-    let session = LiveSessionAdapter::new(move || {
+    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
         let created = created.clone();
         Box::pin(async move {
             let client = spawn_client("live-payload").await?;
@@ -1458,24 +1487,18 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
     });
     for number in 1_u32..=2 {
         let turn_id = JsValue::String(format!("turn-{number}").into());
-        let mut payload = input().as_object().unwrap().clone();
-        payload.insert("custom".into(), JsValue::Number(f64::from(number)));
-        payload.insert(
+        let mut turn_options = options().as_object().unwrap().clone();
+        turn_options.insert("turnId".into(), turn_id.clone());
+        turn_options.insert("custom".into(), JsValue::Number(f64::from(number)));
+        turn_options.insert(
             "model".into(),
             JsValue::String(format!("model-{number}").into()),
         );
-        let JsValue::Array(messages) = payload.get("messages").unwrap() else {
-            panic!("test input must contain messages");
-        };
-        let mut messages = messages.clone();
-        messages
-            .push(parse_json(&format!(r#"{{"role":"user","content":"turn-{number}"}}"#)).unwrap());
-        payload.insert("messages".into(), JsValue::Array(messages));
+        let mut payload = turn_options.clone();
+        payload.insert("messages".into(), input_messages());
         let payload = JsValue::Object(payload);
-        let mut turn_options = options().as_object().unwrap().clone();
-        turn_options.insert("turnId".into(), turn_id.clone());
         let mut turn = session
-            .submit(payload.clone(), JsValue::Object(turn_options))
+            .submit(input(), JsValue::Object(turn_options))
             .unwrap();
         assert!(session.submit(input(), options()).is_err());
         let started = next(turn.as_mut()).await.unwrap().unwrap();
@@ -1508,7 +1531,7 @@ async fn invalid_submit_does_not_consume_the_session() {
 async fn unpolled_drop_and_factory_failure_release_the_active_turn() {
     let calls = Arc::new(AtomicUsize::new(0));
     let created = calls.clone();
-    let session = LiveSessionAdapter::new(move || {
+    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
         created.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Err(HostError::new(HostErrorKind::Io, "spawn failed")) })
     });
@@ -1570,7 +1593,7 @@ async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
 async fn dispose_cancels_pending_host_creation_and_rejects_future_submits() {
     let started = Arc::new(tokio::sync::Notify::new());
     let entered = started.clone();
-    let session = LiveSessionAdapter::new(move || {
+    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
         entered.notify_one();
         Box::pin(std::future::pending())
     });
@@ -1987,7 +2010,7 @@ async fn aborted_execution_releases_validated_wire_reservations() {
     let client = spawn_client("live-normal").await.unwrap();
     let final_received = client.final_received();
     let child = client.child_id().unwrap();
-    let request = parse_execute_request(&input(), &options()).unwrap();
+    let (request, _) = parse_execute_request(&input(), &options(), vec![]).unwrap();
     let mut run = Box::pin(client.execute(request, handler.clone()));
     timeout(FINAL_SYNC_TIMEOUT, async {
         loop {
@@ -2298,7 +2321,7 @@ async fn pre_cancelled_factory(dispose: bool, interaction: bool) {
     let calls = Arc::new(AtomicUsize::new(0));
     let called = calls.clone();
     let session = if interaction {
-        LiveSessionAdapter::with_interaction(move |_| {
+        LiveSessionAdapter::with_interaction(test_recorder(), Vec::new, move |_, _| {
             called.fetch_add(1, Ordering::SeqCst);
             Box::pin(async {
                 Err(HostError::new(
@@ -2308,7 +2331,7 @@ async fn pre_cancelled_factory(dispose: bool, interaction: bool) {
             })
         })
     } else {
-        LiveSessionAdapter::new(move || {
+        LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
             called.fetch_add(1, Ordering::SeqCst);
             Box::pin(async {
                 Err(HostError::new(
@@ -2361,7 +2384,7 @@ async fn pending_factory(action: u8) {
     let dropped = finished.clone();
     let (release, wait) = tokio::sync::oneshot::channel::<()>();
     let receiver = Mutex::new(Some(wait));
-    let session = LiveSessionAdapter::new(move || {
+    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
         called.fetch_add(1, Ordering::SeqCst);
         let wait = receiver
             .lock()
@@ -2441,4 +2464,226 @@ async fn live_factory_pending_drop() {
 #[tokio::test]
 async fn live_factory_cancelled_waiter_resumes() {
     pending_factory(3).await;
+}
+
+#[test]
+fn live_input_matches_ts_original_history_synthetic_and_metadata() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/turn-runner/oracle.json"
+    ));
+    let JsValue::Array(rows) = oracle.get("matrix").unwrap() else {
+        panic!("matrix")
+    };
+    for row in rows.iter().filter(|row| row.get("rawInput").is_some()) {
+        let array = |key| match row.get(key).unwrap() {
+            JsValue::Array(values) => values.clone(),
+            _ => panic!("{key}"),
+        };
+        let mut opts = options().as_object().unwrap().clone();
+        if let Some(extra) = row.get("submitOptions") {
+            for (key, value) in extra.as_object().unwrap().entries() {
+                opts.insert(key.clone(), value.clone());
+            }
+        } else {
+            opts.insert("allowPlanModeTools".into(), JsValue::Bool(false));
+        }
+        opts.insert(
+            "syntheticMessages".into(),
+            row.get("synthetic").unwrap().clone(),
+        );
+        let (request, prepared) = parse_execute_request(
+            row.get("rawInput").unwrap(),
+            &JsValue::Object(opts),
+            array("history"),
+        )
+        .unwrap();
+        assert_eq!(
+            request.payload.get("messages"),
+            row.get("loopMessages"),
+            "TS loop input: {:?}",
+            row.get("name")
+        );
+        assert!(
+            !request.payload.contains_key("syntheticMessages"),
+            "synthetic must not be applied twice"
+        );
+        let transcript = row
+            .get("transcript")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap();
+        let accepted = transcript
+            .lines()
+            .map(|line| parse_json(line).unwrap())
+            .find(|e| e.get("type") == Some(&"accepted_input".into()))
+            .unwrap();
+        assert_eq!(
+            prepared.metadata.map(JsValue::Object),
+            accepted.get("metadata").cloned(),
+            "TS metadata"
+        );
+    }
+}
+
+async fn live_input_shared_recorder(interaction: bool) {
+    let recorder = test_recorder();
+    let supplied = recorder.clone();
+    let observed = Arc::new(AtomicUsize::new(0));
+    let calls = observed.clone();
+    let check = move |shared: Arc<Recorder>| {
+        assert!(
+            Arc::ptr_eq(&shared, &supplied),
+            "factory must receive the session Recorder"
+        );
+        assert!(
+            Arc::ptr_eq(shared.writer(), supplied.writer()),
+            "durable ports share writer"
+        );
+        calls.fetch_add(1, Ordering::SeqCst);
+        // Exercise the model/tool recording surface against the same turn state.
+        shared
+            .start_turn(&"session".into(), &"turn".into())
+            .unwrap();
+        shared
+            .record_model_request(
+                &"session".into(),
+                &"turn".into(),
+                parse_json(r#"{"messages":[]}"#).unwrap(),
+            )
+            .unwrap();
+        shared
+            .record_tool_calls(
+                &"session".into(),
+                &"turn".into(),
+                &[parse_json(r#"{"id":"call","name":"probe","input":{}}"#).unwrap()],
+            )
+            .unwrap();
+    };
+    let session = if interaction {
+        LiveSessionAdapter::with_interaction(recorder.clone(), Vec::new, move |_, shared| {
+            check(shared);
+            Box::pin(async { Err(HostError::new(HostErrorKind::Callback, "observed recorder")) })
+        })
+    } else {
+        LiveSessionAdapter::new(recorder.clone(), Vec::new, move |shared| {
+            check(shared);
+            Box::pin(async { Err(HostError::new(HostErrorKind::Callback, "observed recorder")) })
+        })
+    };
+    let mut turn = session.submit(input(), options()).unwrap();
+    assert!(
+        next(turn.as_mut())
+            .await
+            .unwrap_err()
+            .message
+            .contains("observed recorder")
+    );
+    assert_eq!(observed.load(Ordering::SeqCst), 1, "factory reached");
+    assert_eq!(
+        recorder.snapshot_state().0,
+        4,
+        "one shared sequence for start/step/model/tool"
+    );
+    let bytes = std::fs::read_to_string(recorder.writer().path()).unwrap();
+    let entries: Vec<_> = bytes
+        .lines()
+        .map(|line| parse_json(line).unwrap())
+        .collect();
+    for pair in entries.windows(2) {
+        assert_eq!(
+            pair[1].get("parentEntryId"),
+            pair[0].get("entryId"),
+            "shared parent chain"
+        );
+    }
+    std::fs::remove_dir_all(recorder.writer().path().parent().unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn live_input_new_factory_shares_recorder() {
+    live_input_shared_recorder(false).await;
+}
+#[tokio::test]
+async fn live_input_interaction_factory_shares_recorder() {
+    live_input_shared_recorder(true).await;
+}
+
+#[tokio::test]
+async fn live_input_reads_current_history_on_every_submit() {
+    let history = Arc::new(Mutex::new(vec![]));
+    let current = history.clone();
+    let session = LiveSessionAdapter::new(
+        test_recorder(),
+        move || current.lock().unwrap().clone(),
+        |_| {
+            Box::pin(async {
+                Ok((
+                    spawn_client("live-payload").await?,
+                    Arc::new(Handler::default()) as Arc<dyn HostHandler>,
+                ))
+            })
+        },
+    );
+    for text in ["first", "updated"] {
+        let message = parse_json(&format!(
+            r#"{{"role":"assistant","content":[{{"type":"text","text":"{text}"}}]}}"#
+        ))
+        .unwrap();
+        *history.lock().unwrap() = vec![message.clone()];
+        let mut turn = session.submit(input(), options()).unwrap();
+        next(turn.as_mut()).await.unwrap();
+        let accepted = next(turn.as_mut()).await.unwrap().unwrap();
+        let messages = accepted
+            .get("receivedPayload")
+            .unwrap()
+            .get("messages")
+            .unwrap();
+        assert_eq!(
+            messages,
+            &JsValue::Array(vec![
+                message,
+                parse_json(
+                    r#"{"role":"user","content":[{"type":"text","text":"original\ud800"}]}"#
+                )
+                .unwrap()
+            ]),
+            "fresh history per submit"
+        );
+        while next(turn.as_mut()).await.unwrap().is_some() {}
+    }
+    let mut opts = options().as_object().unwrap().clone();
+    let synthetic =
+        parse_json(r#"{"role":"user","content":[{"type":"text","text":"synthetic"}]}"#).unwrap();
+    opts.insert(
+        "syntheticMessages".into(),
+        JsValue::Array(vec![synthetic.clone()]),
+    );
+    let mut turn = session.submit(input(), JsValue::Object(opts)).unwrap();
+    session.abort(&"pre-cancel".into()).unwrap();
+    let aborted = next(turn.as_mut()).await.unwrap().unwrap();
+    let JsValue::Array(ref expected) = input_messages() else {
+        unreachable!()
+    };
+    let mut expected = expected.clone();
+    expected.insert(0, history.lock().unwrap()[0].clone());
+    expected.push(synthetic);
+    assert_eq!(
+        aborted.get("messages"),
+        Some(&JsValue::Array(expected)),
+        "abort preserves history and synthetic"
+    );
+}
+
+#[test]
+fn live_input_nullish_synthetic_is_empty() {
+    for value in [JsValue::Null, JsValue::Undefined] {
+        let mut opts = options().as_object().unwrap().clone();
+        opts.insert("syntheticMessages".into(), value);
+        let (request, prepared) =
+            parse_execute_request(&input(), &JsValue::Object(opts), vec![]).unwrap();
+        assert!(prepared.synthetic.is_empty(), "nullish synthetic is empty");
+        assert_eq!(request.payload.get("messages"), Some(&input_messages()));
+    }
 }

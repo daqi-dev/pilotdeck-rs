@@ -62,7 +62,7 @@ with mutating_sources(root, [source, runner], baseline=os.environ.get('PDRS_NEGA
     assert run('positive').returncode == 0
     for name, path, old, new in mutations:
         original = originals[path].decode()
-        path.write_text(mutate(original, None, [(old, new)], expected_count=2 if name == 'blocks-shape' else 1))
+        path.write_text(mutate(original, "from_agent_input" if name == "text-value" else None, [(old, new)], expected_count=2 if name == 'blocks-shape' else 1))
         result = run(name)
         assert result.returncode != 0 and 'test result: FAILED' in result.stdout, name
         assert 'panicked at' in result.stdout + result.stderr, name

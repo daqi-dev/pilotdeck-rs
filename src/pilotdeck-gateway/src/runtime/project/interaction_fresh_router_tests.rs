@@ -214,11 +214,11 @@ async fn assert_fresh_handlers(reload: bool) {
     let registry = Arc::new(interaction_registry(&scratch));
     let saved = Arc::new(Mutex::new(Vec::<(Arc<Probe>, model::Handler)>::new()));
     let observed = Arc::new(Mutex::new(Vec::new()));
-    let session = LiveSessionAdapter::with_interaction({
+    let session = LiveSessionAdapter::with_interaction(test_recorder(), Vec::new, {
         let registry = registry.clone();
         let saved = saved.clone();
         let observed = observed.clone();
-        move |identity| {
+        move |identity, _| {
             let lease = registry.acquire(None).unwrap();
             let mut saved = saved.lock().unwrap();
             let current = Arc::new(Probe {
@@ -263,7 +263,10 @@ async fn assert_fresh_handlers(reload: bool) {
             ("runId", "run".into()),
         ]));
         let mut stream = session
-            .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire)
+            .submit(
+                parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+                wire,
+            )
             .unwrap();
         let mut report = None;
         while let Some(event) = bounded(stream.next()).await.unwrap() {

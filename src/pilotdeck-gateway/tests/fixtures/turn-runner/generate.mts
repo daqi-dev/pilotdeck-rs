@@ -94,7 +94,7 @@ const malformedResult = (name: string): any => {
 };
 const catchCases = ['loop-failed-complete-once', 'loop-failed-invalid-idle', 'loop-failed-invalid-step'];
 for (const name of ['success','start-fails','accepted-fails','abort-before-execute','abort-after-accepted',
-  'loop-fails-twice','loop-throws','early-completed','consumer-drop','complete-once','complete-always','input-text','input-blocks','accepted-duplicate','loop-aborted-error','status-fails','loop-null-hint','input-metadata-all','input-metadata-false','input-metadata-null','input-metadata-absent','input-metadata-array','input-metadata-string','input-metadata-number','input-text-original',...completionCases,...catchCases,'loop-missing-message','loop-undefined-message','loop-null-message']) {
+  'loop-fails-twice','loop-throws','early-completed','consumer-drop','complete-once','complete-always','input-text','input-blocks','accepted-duplicate','loop-aborted-error','status-fails','loop-null-hint','input-metadata-all','input-metadata-false','input-metadata-null','input-metadata-absent','input-metadata-array','input-metadata-string','input-metadata-number','input-text-original','input-synthetic-null',...completionCases,...catchCases,'loop-missing-message','loop-undefined-message','loop-null-message']) {
   const fault = name === 'status-fails' ? 'agent_status_message' : name === 'start-fails' ? 'turn_started' : name === 'accepted-fails' ? 'accepted_input'
     : (name.startsWith('complete-') || name==='loop-failed-complete-once') ? 'turn_result' : '';
   const ctx = writerFor(name, fault, name.endsWith('complete-once') ? 1 : 99);
@@ -106,7 +106,7 @@ for (const name of ['success','start-fails','accepted-fails','abort-before-execu
   const messageCase=name.endsWith('-message');
   const failureError=messageCase ? {code:'agent_invalid_state',...(name==='loop-missing-message'?{}:{message:name==='loop-null-message'?null:undefined})} : undefined;
   const history=inputCase?[{role:'assistant',content:[{type:'text',text:'history'}]}]:[];
-  const synthetic=inputCase?[{role:'user',content:[{type:'text',text:'synthetic'}],metadata:{synthetic:true}}]:[];
+  const synthetic=name==='input-synthetic-null'?null:inputCase?[{role:'user',content:[{type:'text',text:'synthetic'}],metadata:{synthetic:true}}]:[];
   const submitOptions: any = name==='input-metadata-all' ? {modelSelection:{provider:'test',model:'chosen'},permissionMode:'default',runMode:'agent',basePermissionMode:'plan',allowPlanModeTools:true,ignored:'never persisted'}
     : name==='input-metadata-false' ? {modelSelection:false,permissionMode:'',runMode:false,basePermissionMode:0,allowPlanModeTools:false}
     : name==='input-metadata-null' ? {modelSelection:null,permissionMode:null,runMode:null,basePermissionMode:null,allowPlanModeTools:null}
@@ -209,6 +209,7 @@ const matrixConsumers: Record<string,string> = {
   "loop-null-hint": "runner_nullish_hint"
 };
 for(const name of [...completionCases,...catchCases,'loop-missing-message','loop-undefined-message','loop-null-message']) matrixConsumers[name]=`runner_${name.replaceAll('-','_')}`;
+matrixConsumers['input-synthetic-null']='recording_synthetic_null';
 for(const row of matrix) row.consumption = matrixConsumers[row.name]
   ? {status:row.name.startsWith('input-metadata-') || row.name==='input-text-original' ? 'pr3 端口已消费' : 'pr2 已消费',test:matrixConsumers[row.name],scope:'runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational'}
   : {status:'仅记录，由 pr3 消费',test:`live_runner_${row.name.replaceAll('-','_')}`,scope:'LiveSessionAdapter + AgentLoop host integration'};

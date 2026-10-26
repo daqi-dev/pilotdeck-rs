@@ -15,7 +15,7 @@ use crate::{
         steer::MutationRecorder,
         turn::{
             interaction::{InteractionTurn, InteractionTurnInput},
-            live::{InteractionHost, LiveSessionAdapter},
+            live::{InteractionHost, LiveSessionAdapter, test_recorder},
         },
     },
 };
@@ -153,7 +153,7 @@ async fn client_with_close_timeout(
     .await
 }
 fn adapter(registry: Arc<ProjectRuntimeRegistry>, mode: &'static str) -> LiveSessionAdapter {
-    LiveSessionAdapter::with_interaction(move |identity| {
+    LiveSessionAdapter::with_interaction(test_recorder(), Vec::new, move |identity, _| {
         let lease = registry.acquire(None).unwrap();
         Box::pin(async move {
             Ok(InteractionHost {
@@ -178,8 +178,8 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     let session = adapter(registry.clone(), "live-payload");
     let mut stream = session
         .submit(
-            parse_json(r#"{"messages":[],"hostModules":{"forged":true}}"#).unwrap(),
-            wire_options(),
+            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+            parse_json(r#"{"sessionId":"session","turnId":"turn","runId":"run","hostModules":{"forged":true}}"#).unwrap(),
         )
         .unwrap();
     assert_eq!(
@@ -193,7 +193,10 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     assert!(!Arc::ptr_eq(&old, &current));
     let second = adapter(registry.clone(), "live-payload");
     let mut newer = second
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .submit(
+            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+            wire_options(),
+        )
         .unwrap();
     bounded(newer.next()).await.unwrap();
     assert_eq!(old.lease_count(), 1);
@@ -412,7 +415,10 @@ async fn host_live_stdio_dispatches_all_four_ports_and_delivers_buffered_events(
     let registry = Arc::new(interaction_registry(&scratch));
     let session = adapter(registry.clone(), "live-interaction");
     let mut stream = session
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .submit(
+            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+            wire_options(),
+        )
         .unwrap();
     let mut events = Vec::new();
     while let Some(event) = bounded(stream.next()).await.unwrap() {
@@ -486,20 +492,24 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
         client("live-payload").await.unwrap(),
     ]));
     let owner = registry.clone();
-    let session = LiveSessionAdapter::with_interaction(move |identity| {
-        let client = clients.lock().unwrap().pop_front().unwrap();
-        let lease = owner.acquire(None).unwrap();
-        Box::pin(async move {
-            Ok(InteractionHost {
-                client,
-                lease,
-                router: router(&identity),
-                input: options(),
+    let session =
+        LiveSessionAdapter::with_interaction(test_recorder(), Vec::new, move |identity, _| {
+            let client = clients.lock().unwrap().pop_front().unwrap();
+            let lease = owner.acquire(None).unwrap();
+            Box::pin(async move {
+                Ok(InteractionHost {
+                    client,
+                    lease,
+                    router: router(&identity),
+                    input: options(),
+                })
             })
-        })
-    });
+        });
     let mut first = session
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .submit(
+            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+            wire_options(),
+        )
         .unwrap();
     bounded(first.next()).await.unwrap().unwrap();
     drop(first);
@@ -509,7 +519,10 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
         runtime.lease_count()
     );
     let mut next = session
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .submit(
+            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+            wire_options(),
+        )
         .unwrap();
     let event = bounded(next.next()).await.unwrap().unwrap();
     let mut kinds = vec![event.get("type").cloned().unwrap()];
@@ -604,7 +617,7 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
     let bound = turns.clone();
     let records = recorder.clone();
     let owner = registry.clone();
-    let session = LiveSessionAdapter::new(move || {
+    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
         let client = clients.lock().unwrap().pop_front().unwrap();
         let lease = owner.acquire(None).unwrap();
         let bound = bound.clone();
@@ -618,7 +631,10 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
         })
     });
     let mut first = session
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .submit(
+            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+            wire_options(),
+        )
         .unwrap();
     bounded(first.next()).await.unwrap().unwrap();
     let old = turns.lock().unwrap()[0].clone();
@@ -632,7 +648,10 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
         recorder.rows.lock().unwrap()
     );
     let mut next = session
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .submit(
+            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+            wire_options(),
+        )
         .unwrap();
     let mut next_event = next.next();
     std::future::poll_fn(|cx| {
@@ -661,7 +680,10 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
     drop(next_event);
     drop(next); // cancel the partially assembled replacement, including its lease
     let mut next = session
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire_options())
+        .submit(
+            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+            wire_options(),
+        )
         .unwrap();
     let mut next_event = next.next();
     std::future::poll_fn(|cx| {
