@@ -62,6 +62,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
@@ -107,6 +108,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
@@ -139,6 +141,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
@@ -298,6 +301,7 @@
             }
           ],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -420,6 +424,7 @@
               }
             }
           ],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -625,6 +630,7 @@
               }
             }
           ],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -754,6 +760,7 @@
             }
           ],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -849,6 +856,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -952,6 +960,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -1033,6 +1042,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -1114,6 +1124,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -1186,6 +1197,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -1265,6 +1277,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -1349,6 +1362,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -1538,6 +1552,7 @@
             }
           ],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -1675,6 +1690,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -1773,6 +1789,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -1883,6 +1900,7 @@
           "submits": [],
           "registryCalls": [],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -2152,6 +2170,7 @@
             }
           ],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -2501,6 +2520,7 @@
             }
           ],
           "storageCalls": [],
+          "sdkSetCalls": [],
           "interactionCalls": [
             {
               "bus": "grants",
@@ -2653,6 +2673,977 @@
         "state": "completed",
         "lastSeq": 5,
         "revision": 6
+      }
+    },
+    {
+      "name": "reconnect-equal-id-bad-generation",
+      "setup": {
+        "seed": {
+          "connectionId": "c1",
+          "generation": 2
+        },
+        "input": {
+          "interactionBinding": {
+            "connectionId": "c1",
+            "generation": "x"
+          }
+        }
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [],
+          "wire": [],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [],
+          "storageCalls": [],
+          "sdkSetCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": "Interaction connection generation must be a non-negative safe integer."
+        }
+      ]
+    },
+    {
+      "name": "sdk-config-valid-wired",
+      "setup": {
+        "wireSdkConfig": true,
+        "input": {
+          "sdkSessionConfig": {
+            "systemPrompt": "p1"
+          }
+        },
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "r",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "model_event",
+          "event": {
+            "type": "text_delta",
+            "text": "hello back"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "result": {
+            "type": "success",
+            "stopReason": "completed",
+            "usage": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "input_accepted",
+              "runId": "r"
+            },
+            {
+              "type": "assistant_text_delta",
+              "text": "hello back",
+              "runId": "r"
+            },
+            {
+              "type": "agent_status",
+              "event": "SessionEnd",
+              "runId": "r"
+            },
+            {
+              "type": "turn_completed",
+              "usage": {},
+              "finishReason": "completed",
+              "runId": "r"
+            }
+          ],
+          "wire": [
+            "{\"type\":\"input_accepted\",\"runId\":\"r\"}",
+            "{\"type\":\"assistant_text_delta\",\"text\":\"hello back\",\"runId\":\"r\"}",
+            "{\"type\":\"agent_status\",\"event\":\"SessionEnd\",\"runId\":\"r\"}",
+            "{\"type\":\"turn_completed\",\"usage\":{},\"finishReason\":\"completed\",\"runId\":\"r\"}"
+          ],
+          "hostCalls": [
+            "refresh",
+            "prepare",
+            "submit",
+            "after"
+          ],
+          "submits": [
+            {
+              "agentInput": {
+                "type": "text",
+                "text": "hello"
+              },
+              "options": {
+                "turnId": "r",
+                "execution": {
+                  "runId": "r",
+                  "operationId": "r"
+                },
+                "runMode": "agent",
+                "allowPlanModeTools": false,
+                "allowedReadFiles": [],
+                "permissionRules": {
+                  "allow": [],
+                  "deny": [],
+                  "ask": []
+                }
+              }
+            }
+          ],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sdkSessionConfig\":{\"systemPrompt\":\"p1\"},\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "input_accepted",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "hello back",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "agent_status",
+                "event": "SessionEnd",
+                "runId": "r"
+              }
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "turn_completed",
+                "usage": {},
+                "finishReason": "completed",
+                "runId": "r"
+              }
+            }
+          ],
+          "storageCalls": [],
+          "sdkSetCalls": [
+            {
+              "sessionKey": "s",
+              "config": {
+                "systemPrompt": "p1"
+              },
+              "projectKey": "p",
+              "aborted": false
+            }
+          ],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "input_accepted",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 2,
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "hello back",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 3,
+          "event": {
+            "type": "agent_status",
+            "event": "SessionEnd",
+            "runId": "r"
+          }
+        },
+        {
+          "seq": 4,
+          "event": {
+            "type": "turn_completed",
+            "usage": {},
+            "finishReason": "completed",
+            "runId": "r"
+          }
+        }
+      ],
+      "record": {
+        "state": "completed",
+        "lastSeq": 4,
+        "revision": 5
+      }
+    },
+    {
+      "name": "sdk-config-invalid-wired",
+      "setup": {
+        "wireSdkConfig": true,
+        "input": {
+          "sdkSessionConfig": {
+            "systemPrompt": 42
+          }
+        },
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "INVALID_SDK_SESSION_CONFIG",
+              "message": "systemPrompt must be a string.",
+              "recoverable": true
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"INVALID_SDK_SESSION_CONFIG\",\"message\":\"systemPrompt must be a string.\",\"recoverable\":true}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sdkSessionConfig\":{\"systemPrompt\":42},\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "INVALID_SDK_SESSION_CONFIG",
+                "message": "systemPrompt must be a string.",
+                "recoverable": true
+              }
+            }
+          ],
+          "storageCalls": [],
+          "sdkSetCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "INVALID_SDK_SESSION_CONFIG",
+            "message": "systemPrompt must be a string.",
+            "recoverable": true
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 1,
+        "revision": 2
+      }
+    },
+    {
+      "name": "sdk-config-managed-invalid-wired",
+      "setup": {
+        "wireSdkConfig": true,
+        "input": {
+          "sdkSessionConfig": {
+            "managedPermissions": {
+              "deny": [
+                ""
+              ],
+              "ask": []
+            }
+          }
+        },
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "UNSUPPORTED_SDK_MANAGED_SETTING",
+              "message": "managedPermissions may contain deny/ask entries, defaultMode=plan, and canPrompt=false only.",
+              "recoverable": true
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"UNSUPPORTED_SDK_MANAGED_SETTING\",\"message\":\"managedPermissions may contain deny/ask entries, defaultMode=plan, and canPrompt=false only.\",\"recoverable\":true}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sdkSessionConfig\":{\"managedPermissions\":{\"ask\":[],\"deny\":[\"\"]}},\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "UNSUPPORTED_SDK_MANAGED_SETTING",
+                "message": "managedPermissions may contain deny/ask entries, defaultMode=plan, and canPrompt=false only.",
+                "recoverable": true
+              }
+            }
+          ],
+          "storageCalls": [],
+          "sdkSetCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "UNSUPPORTED_SDK_MANAGED_SETTING",
+            "message": "managedPermissions may contain deny/ask entries, defaultMode=plan, and canPrompt=false only.",
+            "recoverable": true
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 1,
+        "revision": 2
+      }
+    },
+    {
+      "name": "sdk-config-invalid-unwired",
+      "setup": {
+        "input": {
+          "sdkSessionConfig": {
+            "systemPrompt": 42
+          }
+        },
+        "reachesRegistry": true
+      },
+      "steps": [
+        "observe"
+      ],
+      "native": [],
+      "results": [
+        {
+          "visible": [
+            {
+              "type": "error",
+              "runId": "r",
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "sdk_session_config is unavailable.",
+              "recoverable": true
+            }
+          ],
+          "wire": [
+            "{\"type\":\"error\",\"runId\":\"r\",\"code\":\"CAPABILITY_UNAVAILABLE\",\"message\":\"sdk_session_config is unavailable.\",\"recoverable\":true}"
+          ],
+          "hostCalls": [],
+          "submits": [],
+          "registryCalls": [
+            {
+              "op": "accept",
+              "requestMaterial": "{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sdkSessionConfig\":{\"systemPrompt\":42},\"sessionKey\":\"s\"}"
+            },
+            {
+              "op": "append",
+              "event": {
+                "type": "error",
+                "runId": "r",
+                "code": "CAPABILITY_UNAVAILABLE",
+                "message": "sdk_session_config is unavailable.",
+                "recoverable": true
+              }
+            }
+          ],
+          "storageCalls": [],
+          "sdkSetCalls": [],
+          "interactionCalls": [
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "grants",
+              "op": "allowRules",
+              "sessionKey": "s"
+            },
+            {
+              "bus": "elicitation",
+              "op": "rejectSession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            },
+            {
+              "bus": "permission",
+              "op": "denySession",
+              "sessionKey": "s",
+              "reason": "turn_ended"
+            }
+          ],
+          "compactCalls": [],
+          "compactAborts": [],
+          "authorizerCalls": [],
+          "active": false,
+          "ended": true,
+          "thrown": null
+        }
+      ],
+      "registryEvents": [
+        {
+          "seq": 1,
+          "event": {
+            "type": "error",
+            "runId": "r",
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "sdk_session_config is unavailable.",
+            "recoverable": true
+          }
+        }
+      ],
+      "record": {
+        "state": "failed",
+        "lastSeq": 1,
+        "revision": 2
       }
     }
   ]

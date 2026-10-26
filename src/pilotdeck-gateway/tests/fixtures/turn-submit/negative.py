@@ -28,6 +28,23 @@ test_source = rust / 'pilotdeck-gateway/src/runtime/turn/submit_tests.rs'
 # tree's `git stash create` object here; the mutating_sources baseline then
 # still proves the mutated bytes and the restore target are the same tree.
 baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+
+
+def panic_evidence(raw, used_test):
+    """fix-r1 P2: the marker must live in the named test's panic block.
+
+    libtest prints ``thread '<test>' panicked at``; only output inside a
+    block whose test name equals or extends ``used_test`` counts, so a mutant
+    killed by a different test's assertion can never satisfy the anchor.
+    """
+    evidence = []
+    for segment in raw.split("thread '")[1:]:
+        name = segment.split("'", 1)[0]
+        if name == used_test or name.startswith(used_test + '::'):
+            evidence.append(segment)
+    return '\n'.join(evidence)
+
+
 with mutating_sources(repo, [source, host_source, test_source], baseline=baseline) as snapshots:
     original = snapshots[source]
     host_original = snapshots[host_source]
@@ -117,6 +134,10 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         # makes it red. Swapping the fake's record order flips the observed
         # sequence without touching production, so the assertion itself is the
         # only thing that can fail.
+        # fix-r1 P2 (DeepSeek #747 r1): the tri-state lease assertion needs
+        # paired negative controls for all three arms. Swapping the recorded
+        # labels inverts the order assertion; skipping the acquisition and
+        # inventing a lease hit the two presence arms.
         ('lease-order-records-swapped', 'fn host(&self, value: &str) {\n        self.host.lock().unwrap().push(value.into());\n    }', 'fn host(&self, value: &str) {\n        let value = match value {\n            "lease_release" => "after",\n            "after" => "lease_release",\n            other => other,\n        };\n        self.host.lock().unwrap().push(value.into());\n    }', None, None, None),
         # Paired negative control for the missing-lease arm: presenting
         # attachments but acquiring no lease must fail the tri-state.
@@ -167,13 +188,6 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         # a stray panic in a sibling test must not count.
         return {line[4:].strip() for line in text.splitlines()
                 if line.startswith('    runtime::turn::')}
-
-    def panic_evidence(text, test_name):
-        # Collect every panic block owned by the named test (a poison test
-        # panics twice: once to poison, once at the unwrap).
-        blocks = [part for part in text.split("thread '")[1:]
-                  if part.startswith(f"{test_name}'")]
-        return '\n'.join(blocks)
 
     summary = []
     try:
@@ -229,6 +243,10 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
             if name == 'baseline':
                 valid = not timed_out and returncode == 0 and 'test result: ok. 4 passed' in raw and 'test result: ok. 10 passed' in raw
             else:
+                # The named test must be the one that panicked, and the marker
+                # must appear in that test's own panic output. Product panics
+                # (a poison-unwrap mutant) are evidence alongside assertion
+                # diffs; a marker elsewhere in the log is not.
                 evidence = panic_evidence(raw, used_test)
                 anchored = (f'panicked at {anchor}:' in evidence
                             if anchor_kind == 'location' else anchor in evidence)

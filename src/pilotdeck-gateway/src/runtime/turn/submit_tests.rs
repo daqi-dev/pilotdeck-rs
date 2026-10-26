@@ -268,7 +268,7 @@ impl SubmitAdmission for Host {
                 }
                 if self.session.setup["recoveryFailure"] == true {
                     let mut event = error_event(
-                        &run,
+                        run,
                         "gateway_dialog_recovery_cleanup_failed",
                         "injected recovery failure",
                         true,
