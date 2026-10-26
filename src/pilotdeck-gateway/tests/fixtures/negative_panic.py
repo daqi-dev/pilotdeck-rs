@@ -8,15 +8,39 @@ matched another test's panic, ordinary stdout, and the named test's own
 The slicing follows the #747 fix in ``turn-submit/negative.py``: libtest names
 the panic thread after the test, and a name extending the requested test with
 ``::`` still belongs to the requested test/module.
+
+A test may assert on a thread it spawned itself. libtest names those threads
+``<unnamed>``, so the assertion panic is not in the named test's block (#813
+fix-r1). Such a block is accepted only when the named test is the one libtest
+declared FAILED *and* this process ran exactly one test (``running 1 test``
+plus ``1 failed``). With one test in the process, any ``<unnamed>`` thread can
+only have been spawned by that test; with two or more tests the block cannot be
+attributed and stays rejected.
 """
+import re
+
+
+def single_failed_test_run(raw):
+    """``running 1 test`` and ``1 failed`` in the same libtest invocation.
+
+    Requiring exactly one of each line also rejects concatenated runs, whose
+    counts would otherwise be ambiguous.
+    """
+    running = re.findall(r'^running (\d+) tests?$', raw, re.MULTILINE)
+    failed = re.findall(r'^test result: FAILED\. \d+ passed; (\d+) failed;', raw,
+                        re.MULTILINE)
+    return running == ['1'] and failed == ['1']
 
 
 def panic_evidence(raw, used_test):
-    """Return the panic blocks owned by ``used_test``."""
+    """Return the panic blocks attributable to ``used_test``."""
+    include_unnamed = named_test_failed(raw, used_test) and single_failed_test_run(raw)
     blocks = []
     for segment in raw.split("thread '")[1:]:
         name = segment.split("'", 1)[0]
         if name == used_test or name.startswith(used_test + '::'):
+            blocks.append(segment)
+        elif include_unnamed and name == '<unnamed>':
             blocks.append(segment)
     return '\n'.join(blocks)
 

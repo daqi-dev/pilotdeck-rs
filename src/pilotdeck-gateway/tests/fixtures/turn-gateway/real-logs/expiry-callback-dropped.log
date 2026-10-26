@@ -1,0 +1,25 @@
+COMMAND cargo test --offline --manifest-path <repo>/src/Cargo.toml -p pilotdeck-gateway --lib runtime::turn::gateway::tests::serial_timer_cancels_queued_callbacks_and_replacements -- --exact --nocapture --test-threads=1
+cargo-slots: 在跑 3 / 上限 4
+
+running 1 test
+test runtime::turn::gateway::tests::serial_timer_cancels_queued_callbacks_and_replacements ... FAILED
+
+failures:
+
+failures:
+    runtime::turn::gateway::tests::serial_timer_cancels_queued_callbacks_and_replacements
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2090 filtered out; finished in 0.00s
+
+   Compiling pilotdeck-gateway v0.1.0 (<repo>/src/pilotdeck-gateway)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 39.65s
+     Running unittests src/lib.rs (_build/cargo-target/debug/deps/pilotdeck_gateway-5ce1c4618989be9c)
+
+thread 'runtime::turn::gateway::tests::serial_timer_cancels_queued_callbacks_and_replacements' (296141492) panicked at pilotdeck-gateway/src/runtime/turn/gateway_tests.rs:847:5:
+assertion `left == right` failed: replacement timer fires once
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p pilotdeck-gateway --lib`
+
+exit=101
