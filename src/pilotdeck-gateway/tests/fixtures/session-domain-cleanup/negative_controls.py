@@ -19,6 +19,11 @@ Run on the coordinator's host (no cargo is launched):
   python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py \
     --output _tmp/20261026-issue-164/negative/source
 
+``--only NAME`` (repeatable) restricts the source mutations to the named rows;
+the restored positive still runs.  ``MUTATIONS`` is the literal
+``(name, source, old, new)`` table read by #820's anchor selfcheck, and
+``JUDGES`` holds the mode/judge/launcher metadata keyed by mutation name.
+
 Exit codes: 0 every mutant killed and the restored source passes; 1 a mutant
 survived or the restored source failed; 2 an anchor is stale (refuse to mutate);
 3 an environment/startup failure made a case INVALID (never counted as KILLED).
@@ -96,9 +101,9 @@ def blocked_branch_removed(rows):
     error = row.get('error')
     if error != 'OSError: denied':
         return False, f'error={error!r}, want "OSError: denied"'
-    cases = row.get('cases') or []
-    if [case.get('case') for case in cases] != ['permission-denied']:
-        return False, f"cases={[case.get('case') for case in cases]!r}, want ['permission-denied']"
+    reported_cases = row.get('cases') or []
+    if [case.get('case') for case in reported_cases] != ['permission-denied']:
+        return False, f"cases={[case.get('case') for case in reported_cases]!r}, want ['permission-denied']"
     if row.get('passed') is not False:
         return False, f"passed={row.get('passed')!r}, want False"
     return True, f'blocked: error={error!r}, cases=[permission-denied], passed=False'
@@ -114,95 +119,109 @@ def wiring_relaxed(rows):
     })
 
 
-# (name, old, new, mode, judge, uses_launcher, allowed_probe_errors).  Every old
-# block must occur once.  ``allowed_probe_errors`` names the probe result fields
-# (``signalError`` / ``probeError``) this mutation's own fault is allowed to
-# produce; any other mutation that sees one is INVALID, never KILLED.
-MUTATIONS = (
-    ('empty-group-probe-removed',
+# (name, source, old, new).  Every old block must occur once.  Per-mutant
+# judge metadata (mode, judge, uses_launcher, allowed_probe_errors) lives in
+# JUDGES below: #820's anchor selfcheck reads literal replacement tables only,
+# so callables stay out of MUTATIONS.
+MUTATIONS = [
+    ('empty-group-probe-removed', SOURCE,
      "        return 'empty', (f'killpg0=EPERM with the unreaped zombie leader present '\n"
      "                         f'and an empty live-member census: {error}')",
-     "        return 'alive', 'mutant: empty-group probe removed'",
-     'clean',
-     lambda rows: match(rows, 'clean', {
-         'processTreeCleanup': 'GROUP_NOT_EMPTY',
-         'probe.emptyAfterSignal': False,
-         'probe.signal': 'SIGKILL',
-     }),
-     True,
-     ('signalError', 'probeError')),
-    ('cleanup-status-write-removed',
+     "        return 'alive', 'mutant: empty-group probe removed'"),
+    ('cleanup-status-write-removed', SOURCE,
      "            audit['processTreeCleanup'] = audit['processGroupProbe']['status']",
-     "            audit['processTreeCleanup'] = CLEANUP_VERIFIED",
-     'leak',
-     lambda rows: match(rows, 'leak', {
-         'processTreeCleanup': 'VERIFIED',
-         'probe.status': 'GROUP_NOT_EMPTY',
-     }),
-     True,
-     ()),
-    ('top-level-mapping-relaxed',
+     "            audit['processTreeCleanup'] = CLEANUP_VERIFIED"),
+    ('top-level-mapping-relaxed', SOURCE,
      "    return ('PASS' if audit.get('processTreeCleanup') == CLEANUP_VERIFIED\n"
      "            else CLEANUP_UNVERIFIED_STATUS)",
-     "    return 'PASS'",
-     'status', status_mapping, False, ()),
-    ('sigterm-removed',
+     "    return 'PASS'"),
+    ('sigterm-removed', SOURCE,
      "    for sig in (signal.SIGTERM, signal.SIGKILL):",
-     "    for sig in (signal.SIGKILL,):",
-     'leak',
-     lambda rows: match(rows, 'leak', {
-         'processTreeCleanup': 'GROUP_NOT_EMPTY',
-         'probe.signal': 'SIGKILL',
-     }),
-     True,
-     ()),
-    ('blocked-branch-removed',
+     "    for sig in (signal.SIGKILL,):"),
+    ('blocked-branch-removed', SOURCE,
      "    except OSError as error:\n        return 'blocked', str(error)",
-     "    except OSError:\n        raise",
-     'blocked', blocked_branch_removed, False, ()),
-    ('sigkill-escalation-removed',
+     "    except OSError:\n        raise"),
+    ('sigkill-escalation-removed', SOURCE,
      "    for sig in (signal.SIGTERM, signal.SIGKILL):",
-     "    for sig in (signal.SIGTERM,):",
-     'ignore',
-     lambda rows: match(rows, 'ignore', {
-         'processTreeCleanup': 'GROUP_NOT_EMPTY',
-         'probe.signal': 'SIGTERM',
-         'probe.emptyAfterSignal': False,
-     }),
-     True,
-     ()),
-    ('top-level-wiring-relaxed',
+     "    for sig in (signal.SIGTERM,):"),
+    ('top-level-wiring-relaxed', SOURCE,
      "                overall = cleanup_status(audit)",
-     "                overall = 'PASS'",
-     'wiring', wiring_relaxed, False, ()),
-    ('eperm-census-ignored',
+     "                overall = 'PASS'"),
+    ('eperm-census-ignored', SOURCE,
      "        live = live_group_members(pgid)",
-     "        live = set()  # mutant: ignore the independent live-member census",
-     'eperm-live-member',
-     lambda rows: match(rows, 'eperm-live-member', {
-         'processTreeCleanup': 'VERIFIED',
-         'topLevel': 'PASS',
-     }),
-     False,
-     ()),
-    ('unavailable-census-as-empty',
+     "        live = set()  # mutant: ignore the independent live-member census"),
+    ('unavailable-census-as-empty', SOURCE,
      "            return 'blocked', f'killpg0=EPERM; independent group census unavailable: {error}'",
-     "            live = set()  # mutant: treat an unavailable census as empty",
-     'census-unavailable',
-     lambda rows: match(rows, 'census-unavailable', {
-         'processTreeCleanup': 'VERIFIED',
-         'topLevel': 'PASS',
-     }),
-     False,
-     ()),
-    ('reap-guard-removed',
+     "            live = set()  # mutant: treat an unavailable census as empty"),
+    ('reap-guard-removed', SOURCE,
      "                if child.returncode is None and leader_state == 'RUNNING':",
-     "                if child.returncode is None:  # mutant: signal after REAPED",
-     'reap-state',
-     lambda rows: match(rows, 'reap-state', {'killCalls': 1}),
-     False,
-     ()),
-)
+     "                if child.returncode is None:  # mutant: signal after REAPED"),
+]
+
+# name -> (mode, judge, uses_launcher, allowed_probe_errors).  The judge names
+# the mutation's own expected (wrong) fields; ``allowed_probe_errors`` names the
+# probe result fields (``signalError`` / ``probeError``) this mutation's own
+# fault is allowed to produce, and any other mutation that sees one is INVALID,
+# never KILLED.
+JUDGES = {
+    'empty-group-probe-removed': (
+        'clean',
+        lambda rows: match(rows, 'clean', {
+            'processTreeCleanup': 'GROUP_NOT_EMPTY',
+            'probe.emptyAfterSignal': False,
+            'probe.signal': 'SIGKILL',
+        }),
+        True,
+        ('signalError', 'probeError')),
+    'cleanup-status-write-removed': (
+        'leak',
+        lambda rows: match(rows, 'leak', {
+            'processTreeCleanup': 'VERIFIED',
+            'probe.status': 'GROUP_NOT_EMPTY',
+        }),
+        True,
+        ()),
+    'top-level-mapping-relaxed': ('status', status_mapping, False, ()),
+    'sigterm-removed': (
+        'leak',
+        lambda rows: match(rows, 'leak', {
+            'processTreeCleanup': 'GROUP_NOT_EMPTY',
+            'probe.signal': 'SIGKILL',
+        }),
+        True,
+        ()),
+    'blocked-branch-removed': ('blocked', blocked_branch_removed, False, ()),
+    'sigkill-escalation-removed': (
+        'ignore',
+        lambda rows: match(rows, 'ignore', {
+            'processTreeCleanup': 'GROUP_NOT_EMPTY',
+            'probe.signal': 'SIGTERM',
+            'probe.emptyAfterSignal': False,
+        }),
+        True,
+        ()),
+    'top-level-wiring-relaxed': ('wiring', wiring_relaxed, False, ()),
+    'eperm-census-ignored': (
+        'eperm-live-member',
+        lambda rows: match(rows, 'eperm-live-member', {
+            'processTreeCleanup': 'VERIFIED',
+            'topLevel': 'PASS',
+        }),
+        False,
+        ()),
+    'unavailable-census-as-empty': (
+        'census-unavailable',
+        lambda rows: match(rows, 'census-unavailable', {
+            'processTreeCleanup': 'VERIFIED',
+            'topLevel': 'PASS',
+        }),
+        False,
+        ()),
+    'reap-guard-removed': ('reap-state', lambda rows: match(rows, 'reap-state', {'killCalls': 1}), False, ()),
+}
+
+if set(JUDGES) != {row[0] for row in MUTATIONS}:
+    raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
 
 
 def pgrep_launcher():
@@ -230,15 +249,14 @@ def run_check(case, mode, timeout=180):
                       '--mode', mode], cwd=ROOT, env=dict(os.environ), timeout=timeout)
 
 
-def classify(mutation, result, case):
+def classify(name, judge_spec, result, case):
     """KILLED only for the mutation's own expected failure fields.
 
     A probe/environment error that the mutation did not declare is INVALID:
     otherwise an unmutated implementation whose group signal is denied can
     satisfy the expected fields and be mis-counted as a kill.
     """
-    name, mode, judge, uses_launcher = mutation[0], mutation[3], mutation[4], mutation[5]
-    allowed_errors = mutation[6]
+    mode, judge, uses_launcher, allowed_errors = judge_spec
     if isinstance(result, subprocess.TimeoutExpired):
         return 'INVALID', f'check timed out: {result}'
     if isinstance(result, BaseException):
@@ -275,7 +293,14 @@ def main():
     parser.add_argument('--baseline', default='HEAD',
                         help='commit/tree to prove the source is pristine against '
                              '(default HEAD; a "git stash create" tree for a local rehearsal)')
+    parser.add_argument('--only', action='append', default=[],
+                        help='mutant name; repeat to select more (still runs the restored positive)')
     args = parser.parse_args()
+    known = {row[0] for row in MUTATIONS}
+    if set(args.only) - known or len(args.only) != len(set(args.only)):
+        parser.error('unknown or duplicate --only mutant')
+    selected = ([row for row in MUTATIONS if row[0] in args.only]
+                if args.only else list(MUTATIONS))
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     (output / 'pgrep-before.txt').write_text(pgrep_launcher())
@@ -286,8 +311,8 @@ def main():
         original = snapshots[SOURCE]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
-        stale = [(item[0], content.count(item[1])) for item in MUTATIONS
-                 if content.count(item[1]) != 1]
+        stale = [(item[0], content.count(item[2])) for item in selected
+                 if content.count(item[2]) != 1]
         if stale:
             (output / 'summary.json').write_text(json.dumps({
                 'status': 'ANCHOR_EXPIRED', 'anchors': stale}, ensure_ascii=False, indent=2) + '\n')
@@ -296,8 +321,10 @@ def main():
                                   'anchorCount': count}, ensure_ascii=False))
             return 2
         try:
-            for mutation in MUTATIONS:
-                name, old, new, mode = mutation[:4]
+            for mutation in selected:
+                name, _source, old, new = mutation
+                judge_spec = JUDGES[name]
+                mode = judge_spec[0]
                 changed = content.replace(old, new, 1)
                 case = output / name  # check_cleanup.py owns/creates this directory
                 SOURCE.write_text(changed)
@@ -308,10 +335,10 @@ def main():
                         returncode = run.returncode
                         log = run.stdout + run.stderr
                         (output / f'{name}.log').write_text(log)
-                        verdict, detail = classify(mutation, run, case)
+                        verdict, detail = classify(name, judge_spec, run, case)
                     except (subprocess.SubprocessError, OSError) as error:
                         (output / f'{name}.log').write_text(f'{type(error).__name__}: {error}\n')
-                        verdict, detail = classify(mutation, error, case)
+                        verdict, detail = classify(name, judge_spec, error, case)
                 finally:
                     SOURCE.write_bytes(original)
                     if hashlib.sha256(SOURCE.read_bytes()).hexdigest() != before:
@@ -351,6 +378,7 @@ def main():
         status = ('INVALID' if invalid else 'SURVIVED' if survived
                   else 'PASS' if restored_ok else 'FAIL')
         report = {'status': status, 'sourceSha256': before, 'baseline': args.baseline,
+                  'selected': [row[0] for row in selected],
                   'mutations': summary, 'restoredPass': restored_ok,
                   'restoredError': restored_error,
                   'invalid': [row['mutation'] for row in invalid],

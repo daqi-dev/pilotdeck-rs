@@ -61,6 +61,10 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_
 ```
 
 A pre-commit rehearsal can pass `--baseline <tree-ish>`; the default is `HEAD`.
+`--only NAME` (repeatable) runs just the named mutants and still runs the
+restored positive.  `MUTATIONS` is a literal `(name, source, old, new)` table
+read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
+`JUDGES`, keyed by the same names.
 
 `pgrep-before.txt` / `pgrep-after.txt` are collected around the mutations using
 the unique `session-domain-cleanup/launcher.py` pattern (bounded `timeout=5`);
