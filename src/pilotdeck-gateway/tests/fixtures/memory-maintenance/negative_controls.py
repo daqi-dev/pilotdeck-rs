@@ -16,6 +16,16 @@ refresh = root / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 env = os.environ.copy()
 env['CARGO_TARGET_DIR'] = str(root / '_build/cargo-target')
 mutations = [
+    ('cancel-reported-as-error', source, 'Err(_) => return, // Executor cancelled this invocation.', 'Err(_) => Err(MemoryProviderError::new("cancelled")),', 'cancelled_invocation_releases_flight_and_retries'),
+    ('cancel-flight-leaked', source, 'Flight(Some(state.clone()))', 'Flight(None)', 'cancelled_invocation_releases_flight_and_retries'),
+    ('panic-swallowed', source, 'Ok(payload) => Err(panic_error(payload)),', 'Ok(_payload) => return,', 'panic_after_await'),
+    ('panic-no-telemetry', source, 'inner.telemetry.track_error(&error, JsValue::Object(input));', 'let _ = input;', 'panic_after_await'),
+    ('panic-no-diagnostic', source, '(inner.diagnostic)(&JsString::from_utf16(message), &error);', 'let _ = message;', 'panic_after_await'),
+    ('panic-lost-request', source, 'state.requested = true;', 'state.requested = false;', 'panic_requested'),
+    ('panic-stuck-flight', source, 'state.in_flight = false;\n                    // Disarm', 'state.in_flight = true;\n                    // Disarm', 'panic_retry'),
+    ('panic-string-lost', source, 'payload.downcast_ref::<String>().map(String::as_str)', 'None', 'panic_string'),
+    ('panic-str-lost', source, '.downcast_ref::<&str>()\n        .copied()', '.downcast_ref::<&str>()\n        .and(None)' , 'panic_after_await'),
+    ('panic-fallback-lost', source, '.unwrap_or("memory maintenance panicked")', '.unwrap_or("wrong panic")', 'panic_opaque'),
     ('repoll-completed', source, 'first = Box::pin(std::future::ready(result));', 'let _ = result;', 'before_await'),
     ('production-root', source, 'self.project_root().to_string_lossy().as_ref().into()', '"/wrong".into()', 'runtime::project::factory::tests::memory_bundle_tests::memory_factory_injects_provider_and_publishes_three_handles'),
     ('production-handle', source, 'resource(Resource::MemoryService)?', 'resource(Resource::Memory)?', 'runtime::project::factory::tests::memory_bundle_tests::memory_factory_injects_provider_and_publishes_three_handles'),
@@ -28,7 +38,7 @@ mutations = [
     ('lost-request', source, 'state.requested = true;', 'state.requested = false;', 'coalesce'),
     ('no-finally-restart', source, 'if !std::mem::take(&mut state.requested) {', 'if true || !std::mem::take(&mut state.requested) {', 'settling'),
     ('cross-generation', source, 'key.ptr_eq(&Arc::downgrade(&runtime))', 'key.strong_count() > 0', 'generations'),
-    ('failure-escapes', source, 'Err(error) => {', 'Err(error) => { panic!("maintenance escaped: {error:?}");', 'reject_requested'),
+    ('failure-escapes', source, 'Err(error) => {\n                        let mut input', 'Err(error) => { panic!("maintenance escaped: {error:?}");\n                        let mut input', 'reject_requested'),
     ('no-error-telemetry', source, 'inner.telemetry.track_error(&error, JsValue::Object(input));', 'let _ = input;', 'reject'),
     ('no-diagnostic', source, '(inner.diagnostic)(&JsString::from_utf16(message), &error);', 'let _ = message;', 'reject'),
     ('wrong-reason', source, 'run_due_scheduled_maintenance("scheduled")', 'run_due_scheduled_maintenance("manual")', 'idle'),
