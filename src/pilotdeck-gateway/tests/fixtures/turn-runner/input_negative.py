@@ -14,8 +14,10 @@ out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 live = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 recording = live.with_name('runner_recording.rs')
+factory = live.with_name('host_factory.rs')
 oracle = 'live_input_matches_ts_original_history_synthetic_and_metadata'
 mutations = [
+    ('host-factory-recorder', factory, 'into_live_session', 'factory.create(&identity, recorder).await', 'factory.create(&identity, Arc::new(Recorder::from_writer(recorder.writer().clone()))).await', 'live_session_shares_recorder_and_reads_current_history', 'ports factory must receive the session Recorder'),
     ('new-recorder', live, None, 'host_factory(recorder)', 'host_factory(Arc::new(Recorder::from_writer(recorder.writer().clone())))', 'live_input_new_factory_shares_recorder', 'factory must receive the session Recorder'),
     ('interaction-recorder', live, 'with_interaction', 'factory(identity.clone(), recorder)', 'factory(identity.clone(), Arc::new(Recorder::from_writer(recorder.writer().clone())))', 'live_input_interaction_factory_shares_recorder', 'factory must receive the session Recorder'),
     ('history', live, 'submit', '(self.history)()', 'vec![]', 'live_input_reads_current_history_on_every_submit', 'fresh history per submit'),
@@ -29,9 +31,9 @@ mutations = [
     ('accepted-blocks', recording, 'accepted_messages', 'content.clone()', 'vec![]', oracle, 'TS loop input'),
     ('metadata', recording, 'from_agent_input', '(!metadata.is_empty()).then_some(metadata)', 'None', oracle, 'TS metadata'),
 ]
-command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::live::stream_tests::']
+command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib', '--', 'runtime::turn::live::stream_tests::', 'runtime::turn::host_factory::tests::live_session_shares_recorder_and_reads_current_history']
 run = partial(run, root=root, out=out, command=command, env=env)
-with mutating_sources(root, [live, recording], baseline=env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:
+with mutating_sources(root, [live, recording, factory], baseline=env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:
     assert run('positive').returncode == 0
     for name, path, scope, old, new, test, anchor in mutations:
         path.write_text(mutate(originals[path].decode(), scope, [(old, new)]))

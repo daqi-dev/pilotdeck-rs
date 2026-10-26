@@ -166,7 +166,7 @@ async fn replay(name: &str) {
         if let Some(raw) = row.get("rawInput") {
             prepared = TurnInput::from_agent_input(
                 raw,
-                row.get("submitOptions").unwrap_or(&object([("allowPlanModeTools", JsValue::Bool(false))])),
+                row.get("submitOptions").unwrap(),
                 array(row.get("history").unwrap()),
                 row.get("synthetic").filter(|v| !matches!(v, JsValue::Null)).map(array).unwrap_or_default(),
             )?;

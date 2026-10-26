@@ -2488,18 +2488,27 @@ fn live_input_matches_ts_original_history_synthetic_and_metadata() {
     let JsValue::Array(rows) = oracle.get("matrix").unwrap() else {
         panic!("matrix")
     };
+    let expected = rows
+        .iter()
+        .filter(|row| row.get("rawInput").is_some())
+        .count();
+    assert!(expected > 0, "oracle must contain rawInput cases");
+    let mut visited = 0;
     for row in rows.iter().filter(|row| row.get("rawInput").is_some()) {
+        visited += 1;
         let array = |key| match row.get(key).unwrap() {
             JsValue::Array(values) => values.clone(),
             _ => panic!("{key}"),
         };
         let mut opts = options().as_object().unwrap().clone();
-        if let Some(extra) = row.get("submitOptions") {
-            for (key, value) in extra.as_object().unwrap().entries() {
-                opts.insert(key.clone(), value.clone());
-            }
-        } else {
-            opts.insert("allowPlanModeTools".into(), JsValue::Bool(false));
+        for (key, value) in row
+            .get("submitOptions")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .entries()
+        {
+            opts.insert(key.clone(), value.clone());
         }
         opts.insert(
             "syntheticMessages".into(),
@@ -2539,6 +2548,10 @@ fn live_input_matches_ts_original_history_synthetic_and_metadata() {
             "TS metadata"
         );
     }
+    assert_eq!(
+        visited, expected,
+        "all rawInput oracle cases must be visited"
+    );
 }
 
 async fn live_input_shared_recorder(interaction: bool) {
@@ -2994,3 +3007,145 @@ live_recording_case!(live_recording_accept_failure, 1, "failure");
 live_recording_case!(live_recording_complete_failure, 2, "failure");
 
 live_recording_case!(live_recording_start_failure, 0, "failure");
+
+#[tokio::test]
+async fn live_history_slot_matrix() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/live-history/oracle.json"
+    ));
+    let JsValue::Array(rows) = oracle.get("matrix").unwrap() else {
+        panic!("matrix")
+    };
+    assert_eq!(rows.len(), 5);
+    let reads = Arc::new(AtomicUsize::new(0));
+    let observed = reads.clone();
+    let history = Arc::new(Mutex::new(Vec::new()));
+    let current = history.clone();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let factory_calls = Arc::new(AtomicUsize::new(0));
+    let calls = factory_calls.clone();
+    let session = Arc::new(LiveSessionAdapter::new(
+        test_recorder(),
+        move || {
+            if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap();
+            }
+            current.lock().unwrap().clone()
+        },
+        move |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { std::future::pending().await })
+        },
+    ));
+    let submitting = session.clone();
+    let first = std::thread::spawn(move || submitting.submit(input(), turn_options("first")));
+    entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    let mut seen = Vec::new();
+    let observe = |name: &str| {
+        crate::metadata::object([
+            ("name", name.into()),
+            (
+                "active",
+                JsValue::Number(usize::from(session.state.lock().unwrap().active.is_some()) as f64),
+            ),
+            (
+                "reads",
+                JsValue::Number(reads.load(Ordering::SeqCst) as f64),
+            ),
+        ])
+    };
+    let rejected = session.submit(input(), turn_options("history-owned")).err();
+    seen.push(observe("history-owned"));
+    // Release and join before asserting: a failed negative cannot strand its thread.
+    release_tx.send(()).unwrap();
+    let mut first = first.join().unwrap().unwrap();
+    assert_eq!(
+        rejected.map(|e| e.message).as_deref(),
+        Some("Agent session already has an active turn."),
+        "concurrent submit must reject before reading history"
+    );
+    // Enter the never-completing factory before pending/cancelled admission checks.
+    let mut pending = first.next();
+    std::future::poll_fn(|cx| {
+        assert!(pending.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    drop(pending);
+    assert_eq!(
+        factory_calls.load(Ordering::SeqCst),
+        1,
+        "pending predecessor reached factory"
+    );
+    for name in ["pending", "aborted"] {
+        if name == "aborted" {
+            session.abort(&"cancel".into()).unwrap();
+        }
+        let error = session.submit(input(), turn_options(name)).err();
+        assert_eq!(
+            error.map(|e| e.message).as_deref(),
+            Some("Agent session already has an active turn.")
+        );
+        seen.push(observe(name));
+    }
+    drop(first);
+    let fresh = rows[3].get("messages").unwrap().clone();
+    let JsValue::Array(messages) = &fresh else {
+        panic!("messages")
+    };
+    *history.lock().unwrap() = messages.clone();
+    let mut replacement = session
+        .submit(input(), turn_options("replacement"))
+        .unwrap();
+    session.abort(&"cancel before factory".into()).unwrap();
+    let active_at_read = usize::from(session.state.lock().unwrap().active.is_some());
+    let aborted = next(replacement.as_mut()).await.unwrap().unwrap();
+    let JsValue::Array(actual) = aborted.get("messages").unwrap() else {
+        panic!("messages")
+    };
+    let mut expected_messages = messages.clone();
+    let JsValue::Array(ref original_input) = input_messages() else {
+        unreachable!()
+    };
+    expected_messages.extend(original_input.iter().cloned());
+    assert_eq!(*actual, expected_messages, "new owner reads fresh history");
+    let observed_history = JsValue::Array(actual[..messages.len()].to_vec());
+    // The cancellation terminal releases ownership when the stream is drained.
+    seen.push(crate::metadata::object([
+        ("name", "released".into()),
+        ("active", JsValue::Number(active_at_read as f64)),
+        (
+            "reads",
+            JsValue::Number(reads.load(Ordering::SeqCst) as f64),
+        ),
+        ("messages", observed_history),
+    ]));
+    drop(replacement);
+    session.dispose().await.unwrap();
+    assert!(session.submit(input(), turn_options("disposed")).is_err());
+    seen.push(crate::metadata::object([
+        ("name", "disposed".into()),
+        (
+            "active",
+            JsValue::Number(usize::from(session.state.lock().unwrap().active.is_some()) as f64),
+        ),
+        (
+            "reads",
+            JsValue::Number(reads.load(Ordering::SeqCst) as f64),
+        ),
+    ]));
+    assert_eq!(seen, *rows, "history slot matrix must match real TS");
+}
+
+#[test]
+#[ignore = "requires fixed PDRS_BASELINE with installed TS dependencies"]
+fn live_history_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("live-history");
+}

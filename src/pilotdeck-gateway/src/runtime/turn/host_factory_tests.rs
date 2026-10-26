@@ -566,10 +566,14 @@ async fn live_session_shares_recorder_and_reads_current_history() {
         .unwrap();
         *history.lock().unwrap() = vec![previous.clone()];
         let mut turn = session
-            .submit(
-                parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
-                wire(),
-            )
+            .submit(parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(), {
+                let mut options = wire().as_object().unwrap().clone();
+                options.insert(
+                    "turnId".into(),
+                    JsValue::String(format!("history-{index}").into()),
+                );
+                JsValue::Object(options)
+            })
             .unwrap();
         let mut completed = None;
         while let Some(event) = bounded(turn.next()).await.unwrap() {
@@ -586,6 +590,16 @@ async fn live_session_shares_recorder_and_reads_current_history() {
                     .unwrap(),
             ])),
             "fresh history must reach the sidecar on every submit"
+        );
+        let bytes = std::fs::read_to_string(recorder.writer().path()).unwrap();
+        assert_eq!(
+            bytes
+                .lines()
+                .map(|line| parse_json(line).unwrap())
+                .filter(|row| row.get("type") == Some(&"accepted_input".into()))
+                .count(),
+            index + 1,
+            "each factory turn must persist accepted_input"
         );
         assert_eq!(port_calls.load(Ordering::SeqCst), index + 1);
         assert_eq!(history_calls.load(Ordering::SeqCst), index + 1);
@@ -608,10 +622,14 @@ async fn reload_between_turns_uses_new_generation() {
             bounded(registry.reload()).await.unwrap();
         }
         let mut turn = session
-            .submit(
-                parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
-                wire(),
-            )
+            .submit(parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(), {
+                let mut options = wire().as_object().unwrap().clone();
+                options.insert(
+                    "turnId".into(),
+                    JsValue::String(format!("reload-{index}").into()),
+                );
+                JsValue::Object(options)
+            })
             .unwrap();
         while bounded(turn.next()).await.unwrap().is_some() {}
         assert_peer_reaped(&pid_file).await;
