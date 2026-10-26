@@ -88,18 +88,38 @@ fn object(value: &JsValue) -> JsObject {
     decode(value).as_object().expect("object argument").clone()
 }
 
-fn message(value: &JsValue) -> MemoryMessage {
-    messages_from_value(&decode(&JsValue::Array(vec![value.clone()])))
-        .into_iter()
-        .next()
-        .expect("message")
+fn case_path(case: &JsValue) -> String {
+    let group = case
+        .get("group")
+        .and_then(JsValue::as_string)
+        .and_then(|group| group.to_utf8().ok())
+        .unwrap_or_else(|| "?".into());
+    format!("{group}/{}", name(case))
 }
 
-fn optional_message(value: &JsValue) -> Option<MemoryMessage> {
+fn message(value: &JsValue, case: &str) -> MemoryMessage {
+    let value = decode(value);
+    match messages_from_value(&JsValue::Array(vec![value.clone()]))
+        .into_iter()
+        .next()
+    {
+        Some(message) => message,
+        None => {
+            let role = value
+                .get("role")
+                .and_then(JsValue::as_string)
+                .and_then(|role| role.to_utf8().ok())
+                .unwrap_or_else(|| "<missing>".into());
+            panic!("heartbeat message dropped: role={role} case={case}");
+        }
+    }
+}
+
+fn optional_message(value: &JsValue, case: &str) -> Option<MemoryMessage> {
     let value = decode(value);
     match value {
         JsValue::Undefined | JsValue::Null => None,
-        other => Some(message(&other)),
+        other => Some(message(&other, case)),
     }
 }
 
@@ -171,10 +191,11 @@ fn label_i18n(case: &JsValue, index: usize) -> Option<JsValue> {
 
 fn call(case: &JsValue, clock_ms: i64) -> JsValue {
     let name = name(case);
+    let case_path = case_path(case);
     match name.as_str() {
         "sameMessage" => JsValue::Bool(same_message(
-            optional_message(arg(case, 0)).as_ref(),
-            optional_message(arg(case, 1)).as_ref(),
+            optional_message(arg(case, 0), &case_path).as_ref(),
+            optional_message(arg(case, 1), &case_path).as_ref(),
         )),
         "hasNewContent" => JsValue::Bool(has_new_content(
             &messages(arg(case, 0)),
@@ -192,7 +213,7 @@ fn call(case: &JsValue, clock_ms: i64) -> JsValue {
         )),
         "buildCandidateRoutingQuery" => JsValue::String(build_candidate_routing_query(
             &decode(arg(case, 0)),
-            &message(arg(case, 1)),
+            &message(arg(case, 1), &case_path),
         )),
         "buildCandidateMemoryPreview" => {
             JsValue::String(build_candidate_memory_preview(&decode(arg(case, 0))))
