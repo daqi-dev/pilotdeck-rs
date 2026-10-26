@@ -47,10 +47,10 @@ UNSUPPORTED = {
     'replacement/test-negative-518.py': 'unit tests of the mutation runner',
     'edgeclaw-entries/test_negative_runners.py': 'unit tests of the mutation runners',
     'turn-runner/_negative_common.py': 'shared function-scoped replacement helper',
-    'turn-runner/negative_controls.py': 'anchors are scoped to Rust functions by _negative_common.mutate',
-    'turn-runner/runner_negative.py': 'anchors are scoped to Rust functions by _negative_common.mutate',
-    'turn-runner/input_negative.py': 'mixed function-scoped and whole-file replacements',
-    'turn-runner/live_negative.py': 'ordered multi-step replacements on a generated function body',
+    'turn-runner/negative_controls.py': 'three-field name/scope/replacements rows with a variable scope; the recording adapter only handles four-field rows and a name-conditional scope',
+    'turn-runner/runner_negative.py': 'three-field name/scope/replacements rows, including ordered multiple replacements; not the recording adapter single-replacement consumer',
+    'turn-runner/input_negative.py': 'seven-field rows with per-row scope/None and an inline snapshot decode; not the recording adapter four-field consumer',
+    'turn-runner/live_negative.py': 'two-field rows with name-dependent ordered replacements on intermediate text in submit',
     'runtime-spawn-panic/negative_controls.py': 'conditional sequential re.subn rewrites of changed content with different flags, not whole-file table anchors',
     'plugin-runtime/negative-controls.py': 'CASES contains precomputed complete mutated files, not before fragments',
     'plugin-runtime/panic-negative.py': 'CASES contains precomputed complete mutated files, not before fragments',
@@ -67,6 +67,23 @@ UNSUPPORTED = {
     'recorder/fix3-negative.py': 'imperative replacement chain, no mutation table',
     'run-registry/count-negative.py': 'imperative replacement chain, no mutation table',
     'skills/negative_controls.py': 'mixed imperative Rust edits and generated TS fixture corruption',
+}
+# Known table/call signals in intentionally unsupported formats. All other
+# exempted helpers must remain free of these signals. The reason stays above;
+# neither a new filename nor a reason alone can hide a source mutation table.
+UNSUPPORTED_SIGNALS = {
+    'native-topology/run.py': {'table:CASES'},
+    'native-topology/controls.py': {'call:mutate'},
+    'negative_oracle_guard.py': {'table:CASES'},
+    'turn-runner/negative_controls.py': {'table:mutations', 'call:mutate'},
+    'turn-runner/runner_negative.py': {'table:mutations', 'call:mutate'},
+    'turn-runner/input_negative.py': {'table:mutations', 'call:mutate'},
+    'turn-runner/live_negative.py': {'table:mutations', 'call:mutate'},
+    'runtime-spawn-panic/negative_controls.py': {'table:mutants', 'table:cases'},
+    'plugin-runtime/negative-controls.py': {'table:CASES'},
+    'plugin-runtime/panic-negative.py': {'table:CASES'},
+    'spill-isolation/negative_controls.py': {'call:mutate'},
+    'skills/negative_controls.py': {'table:mutations'},
 }
 REGEX_SCRIPTS = {'background-panic/negative_controls.py'}
 IMPLICIT = {
@@ -125,13 +142,45 @@ class Static:
         self.tree = tree
         self.defs = {}
         self.original_updates = []
-        self.parents = {}
+        self.parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
         for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                self.parents[child] = node
+            if isinstance(node, ast.Name) and node.id in ('originals', 'snapshots') and isinstance(node.ctx, ast.Load):
+                parent = self.parents[node]
+                call = self.parents.get(parent)
+                if not (isinstance(parent, ast.Subscript) and parent.value is node
+                        or isinstance(parent, ast.Attribute) and isinstance(call, ast.Call) and call.func is parent):
+                    raise Unsupported('unsupported snapshot mapping escape')
+            # Unknown snapshot writes must never fall through to a basename
+            # path guess. Only bare originals[key] = expression is modeled.
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and self.snapshot_name(node.func.value)
+                    and node.func.attr not in ('get', 'items', 'keys', 'values')):
+                # user-dialog-channel drops an unused test snapshot. Track the
+                # removal so a later read/target cannot resurrect that key.
+                if (ast.unparse(node.func) == 'originals.pop' and len(node.args) == 2
+                        and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
+                        and isinstance(node.args[1], ast.Constant) and node.args[1].value is None
+                        and not node.keywords and isinstance(self.parents[node], ast.Expr)):
+                    self.original_updates.append((node.lineno, node.args[0], None))
+                else:
+                    raise Unsupported('unsupported snapshot mapping method')
+            if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                name = self.snapshot_name(node.value)
+                if name and not (name == 'originals' and isinstance(node.value, ast.Name)
+                                 and isinstance(self.parents[node], ast.Assign)):
+                    raise Unsupported('unsupported snapshot mapping write')
+            if (isinstance(node, ast.Attribute) and node.attr in ('originals', 'snapshots')
+                    and isinstance(node.ctx, (ast.Store, ast.Del))):
+                raise Unsupported('unsupported snapshot attribute binding')
+            if isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.Delete)):
+                targets = node.targets if isinstance(node, ast.Delete) else [node.target]
+                if any(self.snapshot_name(target) for target in targets):
+                    raise Unsupported('unsupported snapshot mapping write')
             if isinstance(node, ast.Assign):
                 for target in node.targets:
                     if isinstance(target, ast.Name):
+                        if target.id in ('originals', 'snapshots') and not isinstance(node.value, (ast.Dict, ast.DictComp)):
+                            raise Unsupported('unsupported snapshot mapping initializer')
                         self.defs.setdefault(target.id, []).append((node.lineno, node.value))
                     elif isinstance(target, ast.Tuple):
                         for index, item in enumerate(target.elts):
@@ -144,6 +193,16 @@ class Static:
         for defs in self.defs.values():
             defs.sort(key=lambda pair: pair[0])
         self.original_updates.sort(key=lambda update: update[0])
+        # Resolution uses statement line numbers; refuse ambiguous same-line
+        # deletion/update/read ordering instead of guessing column order.
+        for line, _, _ in self.original_updates:
+            if sum(isinstance(node, ast.stmt) and node.lineno == line for node in ast.walk(tree)) != 1:
+                raise Unsupported('unsupported same-line snapshot update')
+
+    @staticmethod
+    def snapshot_name(node):
+        name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+        return name if name in ('originals', 'snapshots') else None
 
     def named(self, name, line, local):
         if name in local:
@@ -219,6 +278,8 @@ class Static:
                 definition = max((n for n, _ in self.defs.get('originals', []) if n < line), default=0)
                 for n, subscript, expression in reversed(self.original_updates):
                     if definition < n < line and self.value(subscript, n, local) == key:
+                        if expression is None:
+                            raise Unsupported(f'removed snapshot key: {key!r}')
                         return self.value(expression, n, local)
             obj = self.value(node.value, line, local)
             if isinstance(node.slice, ast.Slice):
@@ -257,7 +318,7 @@ class Static:
                         return sorted(self.confined(obj).glob(args[0]))
                 if isinstance(obj, bytes) and method == 'decode' and not args:
                     return obj.decode('utf-8')
-                if isinstance(obj, str) and method in ('replace', 'index', 'split', 'join'):
+                if isinstance(obj, str) and method in ('replace', 'strip', 'index', 'split', 'join'):
                     return getattr(obj, method)(*args)
         raise Unsupported(f'unsupported expression: {ast.unparse(node)[:100]}')
 
@@ -306,15 +367,14 @@ class Static:
             definition = definitions[-1][0] if definitions else 0
             for n, subscript, expression in reversed(self.original_updates):
                 if definition < n < line and self.value(subscript, n, local) == value:
-                    if (isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute)
-                            and expression.func.attr == 'read_text'):
-                        return self.target(expression.func.value, n, local)
-                    break  # A transformed snapshot can still use the declared source path.
+                    if expression is None:
+                        raise Unsupported(f'removed snapshot key: {value!r}')
+                    return self.snapshot_target(expression, n, local)
             for n, mapping in definitions[-1:]:
                 if isinstance(mapping, ast.Dict):
                     for key, expression in zip(mapping.keys, mapping.values):
-                        if self.value(key, n, local) == value and isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute) and expression.func.attr == 'read_text':
-                            return self.target(expression.func.value, n, local)
+                        if self.value(key, n, local) == value:
+                            return self.snapshot_target(expression, n, local)
             for base in ('source', 'SRC', 'module'):
                 try:
                     folder = self.named(base, line, local)
@@ -323,6 +383,18 @@ class Static:
                 if isinstance(folder, Path) and folder.is_dir():
                     return self.confined(folder / value)
         raise Unsupported(f'unresolved source path: {value!r}')
+
+    def snapshot_target(self, expression, line, local):
+        """Follow the receiver through transforms, preserving the latest read."""
+        if isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute):
+            if expression.func.attr == 'read_text':
+                return self.target(expression.func.value, line, local)
+            if expression.func.attr in ('replace', 'strip'):
+                return self.snapshot_target(expression.func.value, line, local)
+        if (isinstance(expression, ast.Subscript) and isinstance(expression.value, ast.Name)
+                and expression.value.id == 'originals'):
+            return self.target(expression.slice, line, local)
+        raise Unsupported('unresolved source path: unsupported snapshot origin')
 
 
 def table_rows(tree, static):
@@ -432,6 +504,8 @@ def extract(script, root):
     relative = script.relative_to(root / 'src/pilotdeck-gateway/tests/fixtures').as_posix()
     tree = ast.parse(script.read_text(encoding='utf-8'), filename=str(script))
     static = Static(script, root, tree)
+    submit_maps = ({key: submit_mapping(static, key) for key in ('mutant_source', 'mutant_anchor')}
+                   if relative == 'turn-submit/negative.py' else {})
     flags = regex_flags(tree)
     anchors, notes = [], []
     declared = 'ANCHOR_COUNTS' in static.defs
@@ -500,7 +574,7 @@ def extract(script, root):
                 target = ast.Name(id=IMPLICIT[relative], ctx=ast.Load())
                 before_node = fields[1]
                 if relative == 'turn-submit/negative.py':
-                    routing = static.named('mutant_source', 10**9, {})
+                    routing = submit_maps['mutant_source']
                     path = routing.get(name, static.value(target, line, local))
                 else:
                     path = static.target(target, line, local)
@@ -543,7 +617,7 @@ def extract(script, root):
             if isinstance(before, bytes) and flags is not None:
                 raise Unsupported(f'{name}: byte anchors require literal consumers')
             if relative == 'turn-submit/negative.py':
-                check_submit_anchor(static, name, fields, path, before, after, line, local)
+                check_submit_anchor(static, name, fields, path, before, after, line, local, submit_maps['mutant_anchor'])
             count = declarations.get(name, 1)
             if relative == 'host-event-pump/negative_controls.py':
                 if name in declarations:
@@ -641,14 +715,53 @@ def check_scoped_consumer(static, name, scope):
         raise Unsupported(f'{name}: unsupported function-scoped source read')
 
 
-def check_submit_anchor(static, name, fields, path, before, after, line, local):
+def submit_mapping(static, name):
+    """Only one immutable declaration may supply a turn-submit override map."""
+    definitions = static.defs.get(name, [])
+    if len(definitions) != 1:
+        raise Unsupported(f'{name}: expected one override mapping declaration')
+    line, value = definitions[0]
+    if not isinstance(value, ast.Dict):
+        raise Unsupported(f'{name}: override mapping must be a literal mapping')
+    for node in ast.walk(static.tree):
+        if isinstance(node, ast.Name) and node.id == name:
+            parent = static.parents[node]
+            declaration = (isinstance(parent, ast.Assign) and parent.value is value
+                           and len(parent.targets) == 1 and parent.targets[0] is node)
+            if isinstance(node.ctx, (ast.Store, ast.Del)) and not declaration:
+                raise Unsupported(f'{name}: unsupported override mapping binding')
+            if isinstance(node.ctx, ast.Load) and node.lineno <= line:
+                raise Unsupported(f'{name}: override mapping read before declaration')
+            if (isinstance(parent, ast.Subscript) and isinstance(parent.ctx, (ast.Store, ast.Del))
+                    or isinstance(parent, ast.Attribute) and parent.attr != 'get'):
+                raise Unsupported(f'{name}: unsupported override mapping mutation')
+            if isinstance(node.ctx, ast.Load):
+                call = static.parents.get(parent)
+                if not (isinstance(parent, ast.Attribute) and parent.attr == 'get'
+                        and isinstance(call, ast.Call) and call.func is parent):
+                    raise Unsupported(f'{name}: unsupported override mapping escape')
+        binding = None
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            binding = node.name
+        elif isinstance(node, ast.arg):
+            binding = node.arg
+        elif isinstance(node, ast.alias):
+            binding = node.asname or node.name.split('.')[0]
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            binding = node.name
+        if binding == name:
+            raise Unsupported(f'{name}: unsupported override mapping binding')
+    result = static.value(value, line, {})
+    if not isinstance(result, dict):
+        raise Unsupported(f'{name}: override mapping must be a mapping')
+    return result
+
+
+def check_submit_anchor(static, name, fields, path, before, after, line, local, overrides):
     """Check the effective panic anchor, including overrides of a None marker."""
     if len(fields) != 6:
         raise Unsupported(f'{name}: expected six turn-submit fields')
     marker = static.value(fields[4], line, local)
-    overrides = static.named('mutant_anchor', 10**9, local)
-    if not isinstance(overrides, dict):
-        raise Unsupported(f'{name}: mutant_anchor must be a mapping')
     effective = overrides.get(name, ['message', marker])
     if not isinstance(effective, list) or len(effective) != 2:
         raise Unsupported(f'{name}: panic anchor must be a kind/value pair')
@@ -660,13 +773,12 @@ def check_submit_anchor(static, name, fields, path, before, after, line, local):
             raise Unsupported(f'{name}: unwrap must start at the replacement span')
         if not static.confined(path).is_relative_to((static.root / 'src').resolve()):
             raise Unsupported(f'{name}: location anchor source must be inside rust workspace')
-        # The current runner derives every location, even if the table still
-        # carries a string. Verify its helper and actual call before accepting
-        # the None placeholder; never import or execute the mutation runner.
-        if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == 'unwrap_site'
-               or isinstance(node, ast.Call) and ast.unparse(node.func) == 'unwrap_site'
-               for node in ast.walk(static.tree)):
-            anchor = derived_submit_location(static, name, path, before, local)
+        # A literal cannot prove the runtime span. Require the source-bound
+        # helper/consumer for every location, including hardcoded table values.
+        derived = derived_submit_location(static, name, path, before, local)
+        if anchor is not None and anchor != derived:
+            raise Unsupported(f'{name}: location anchor differs from span: expected={derived} actual={anchor!r}')
+        anchor = derived
     if not isinstance(anchor, str) or not anchor.strip():
         raise Unsupported(f'{name}: {kind} anchor must be a nonempty string')
 
@@ -860,15 +972,15 @@ outputs of the runners, not required caller configuration.
                 if isinstance(parent, ast.Assign) and nonempty(parent.value):
                     supplied.append((receiver, key.value, node.lineno, scope(node)))
                 continue
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ('get', 'getenv') and len(node.args) in (1, 2):
-            default = node.args[1] if len(node.args) == 2 else next((k.value for k in node.keywords if k.arg == 'default'), None)
-            if nonempty(default):
-                continue
-            key = node.args[0]
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ('get', 'getenv', 'setdefault') and len(node.args) <= 2:
+            default_name = 'value' if node.func.attr == 'setdefault' else 'default'
+            default = node.args[1] if len(node.args) == 2 else next((k.value for k in node.keywords if k.arg == default_name), None)
+            key = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == 'key'), None)
             receiver = ast.unparse(node.func.value)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'setdefault' and len(node.args) == 2 and isinstance(node.args[0], ast.Constant):
-            if nonempty(node.args[1]):
-                supplied.append((ast.unparse(node.func.value), node.args[0].value, node.lineno, scope(node)))
+            if nonempty(default):
+                if node.func.attr == 'setdefault' and isinstance(key, ast.Constant):
+                    supplied.append((receiver, key.value, node.lineno, scope(node)))
+                continue
         if isinstance(key, ast.Constant) and key.value in names:
             here = scope(node)
             if not any(receiver == obj and key.value == name and line < node.lineno
@@ -877,6 +989,16 @@ outputs of the runners, not required caller configuration.
                        for obj, name, line, where in supplied):
                 required.add(key.value)
     return required
+
+
+def exemption_signals(tree):
+    signals = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id.lower() in TABLES:
+            signals.add(f'table:{node.id}')
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ('mutation', 'mutate'):
+            signals.add(f'call:{node.func.id}')
+    return signals
 
 
 def check(root, *, anchors_only=False, environ=None):
@@ -891,6 +1013,9 @@ def check(root, *, anchors_only=False, environ=None):
     for name, reason in UNSUPPORTED.items():
         if name not in paths or not reason.strip():
             errors.append(f'stale/empty UNSUPPORTED entry: {name}')
+    for name in UNSUPPORTED_SIGNALS:
+        if name not in UNSUPPORTED:
+            errors.append(f'stale UNSUPPORTED_SIGNALS entry: {name}')
     if not scripts:
         errors.append('no negative scripts discovered')
     for script in scripts:
@@ -904,6 +1029,10 @@ def check(root, *, anchors_only=False, environ=None):
                     if not anchors_only:
                         errors.append(message)
             if relative in UNSUPPORTED:
+                actual = exemption_signals(tree)
+                expected = UNSUPPORTED_SIGNALS.get(relative, set())
+                if actual != expected:
+                    raise Unsupported(f'unsupported exemption signals: expected={sorted(expected)} actual={sorted(actual)}')
                 print(f'UNSUPPORTED {relative}: {UNSUPPORTED[relative]}')
                 skipped += 1
                 continue
