@@ -2583,6 +2583,13 @@ fn public_ipv4(host: &str) -> bool {
 /// The host half of `url`: a public IPv4 or a domain with a 2+ character
 /// alphabetic TLD. Shared by the scheme/authority parser so the host rules
 /// live in exactly one place.
+///
+/// #848 fix-r2: ajv-formats spells a label `(?:[host]+-)*[host]+`, so every
+/// `-` must be followed by at least one host character: leading/trailing `-`
+/// and consecutive `--` are all impossible. The first two were already
+/// checked; `http://user/x@exam--ple.com/` slipped through the new `@`
+/// candidate walk because only character membership was tested. Keep single
+/// hyphens valid (`exam-ple.com`).
 fn uri_host_valid(host: &str) -> bool {
     if public_ipv4(host) {
         return true;
@@ -2595,6 +2602,7 @@ fn uri_host_valid(host: &str) -> bool {
         if label.is_empty()
             || label.starts_with('-')
             || label.ends_with('-')
+            || label.contains("--")
             || !label.chars().all(|c| is_uri_host_char(c) || c == '-')
         {
             return false;
@@ -4073,6 +4081,17 @@ mod tests {
             ("url", "http://example.com:80/a", Some(true)),
             ("url", "http://example.com:1/a", Some(false)),
             ("url", "http://example.com:123456/a", Some(false)),
+            // #848 fix-r2 review P1: an ajv-formats label is
+            // `(?:[host]+-)*[host]+`, so every `-` needs a host character
+            // after it. The fix-r1 `@` walk accepted `exam--ple.com`; the
+            // bare and userinfo-slash spellings must both reject now, while
+            // single hyphens stay valid. Node v22.22.0 + real SDK measured.
+            ("url", "http://user/x@exam--ple.com/", Some(false)),
+            ("url", "http://u/x@a.b--c.com/", Some(false)),
+            ("url", "http://exam--ple.com/", Some(false)),
+            ("url", "http://a---b.com/", Some(false)),
+            ("url", "http://exam-ple.com/", Some(true)),
+            ("url", "http://user/x@a-b.c-d.com/", Some(true)),
             // #848: the path is `[^\s]*` and userinfo is `\S+`, using JS
             // `\s` (BOM in, NEL out). The host class is
             // `[a-z0-9\u{00a1}-\u{ffff}]`, so BOM and U+2000 are valid host
@@ -4330,7 +4349,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 952);
+        assert_eq!(cases.len(), 958);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),

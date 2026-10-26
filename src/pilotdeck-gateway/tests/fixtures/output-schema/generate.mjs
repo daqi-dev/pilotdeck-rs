@@ -490,6 +490,23 @@ for (const [id, schema, data] of [
   ['url/userinfo-slash', {type: 'string', format: 'url'}, 'http://user/x@host.com/'],
   ['url/userinfo-slash-path-bom', {type: 'string', format: 'url'},
     'http://example.com/bar@host.com/\uFEFF'],
+  // #848 fix-r2 review P1: the label expression is
+  // `(?:[a-z0-9\u00a1-\uffff]+-)*[a-z0-9\u00a1-\uffff]+`, so a hyphen must be
+  // followed by a host character — `--` is impossible. The fix-r1 `@`
+  // candidate walk accepted `exam--ple.com`; a single hyphen stays valid in
+  // the bare host and behind a userinfo containing `/`.
+  ['url/host-double-hyphen', {type: 'string', format: 'url'},
+    'http://exam--ple.com/'],
+  ['url/host-triple-hyphen', {type: 'string', format: 'url'},
+    'http://a---b.com/'],
+  ['url/host-single-hyphen', {type: 'string', format: 'url'},
+    'http://exam-ple.com/'],
+  ['url/userinfo-slash-host-double-hyphen', {type: 'string', format: 'url'},
+    'http://user/x@exam--ple.com/'],
+  ['url/userinfo-slash-host-double-hyphen-nested', {type: 'string', format: 'url'},
+    'http://u/x@a.b--c.com/'],
+  ['url/userinfo-slash-host-single-hyphen', {type: 'string', format: 'url'},
+    'http://user/x@a-b.c-d.com/'],
   // #834: `byte` is the one ajv-formats regex compiled with /gm — `^`/`$`
   // match around every ECMAScript line terminator (\n, \r, U+2028, U+2029;
   // U+0085 is not one), and `test` succeeds when any single full line is a

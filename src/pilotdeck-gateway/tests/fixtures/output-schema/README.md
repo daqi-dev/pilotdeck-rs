@@ -13,8 +13,8 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **952** cases (the #829 rounds added 26 of them, #834 another 23
-and #848 another 16; the unit test `formats_follow_ajv_formats` rows are
+count of **958** cases (the #829 rounds added 26 of them, #834 another 23
+and #848 another 22; the unit test `formats_follow_ajv_formats` rows are
 counted separately). Each
 case is
 either:
@@ -127,7 +127,12 @@ is valid (userinfo `example.com/bar@`, host `exa\uFEFFmple.com`), and
 therefore walks the candidate userinfo ends (string start and every `@`) and
 lets the host run end at `:port`, `/path` or the string end, instead of
 splitting at the first `/`; the `url/userinfo-slash*` rows pin this (#848
-fix-r1 review P1). Measured on Node v22.22.0.
+fix-r1 review P1). The label expression is
+`(?:[a-z0-9\u00a1-\uffff]+-)*[a-z0-9\u00a1-\uffff]+`, so every `-` must be
+followed by a host character: `exam--ple.com` (bare or behind a userinfo
+containing `/`) is invalid while `exam-ple.com` and `a-b.c-d.com` stay valid;
+the `url/*hyphen*` rows pin this (#848 fix-r2 review P1, Node v22.22.0
++ real SDK measured).
 
 `deep-pattern/*`, `deep-pattern-properties/*`, and `deep-format-regex/*`
 cover 10000 / 100000 nested capturing, noncapturing, and lookahead groups,
