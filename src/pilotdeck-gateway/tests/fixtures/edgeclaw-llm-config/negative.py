@@ -16,9 +16,11 @@ Run only the name-match sample plus one control, or list the names:
     CARGO_TARGET_DIR=/abs/target python3 negative.py /tmp/edgeclaw-negative \
         model-name-match provider-default
     python3 negative.py --list
+    python3 negative.py --self-test
 
 The ``# oracle`` comments name the ``cases[i]`` index whose expected value
-flips; the RESULT for fix-r1 lists every witness.
+flips; the RESULT for fix-r2 lists every witness. ``--self-test`` checks the
+three-way classifier directly and needs no Cargo target directory.
 """
 import json
 import os
@@ -29,6 +31,44 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+
+
+def classify(log, returncode):
+    """Three-way outcome for one mutant run.
+
+    Every KILLED/SURVIVED verdict must prove that exactly one test actually
+    ran. A renamed or filtered-out test prints ``running 0 tests`` and exits 0;
+    without this guard it would be reported as SURVIVED (a false negative).
+    """
+    if returncode is None:
+        return 'INVALID'
+    if 'could not compile' in log:
+        return 'INVALID'
+    ran = re.search(r'^running (\d+) tests?$', log, re.MULTILINE)
+    if ran is None or int(ran.group(1)) != 1:
+        return 'INVALID'
+    if returncode != 0 and 'test result: FAILED.' in log:
+        return 'KILLED'
+    if returncode == 0 and 'test result: ok.' in log:
+        return 'SURVIVED'
+    return 'INVALID'
+
+
+def self_test():
+    samples = [
+        ('running 0 tests\n\ntest result: ok. 0 passed; 0 failed;', 0, 'INVALID'),
+        ('running 1 test\n\ntest result: ok. 1 passed; 0 failed;', 0, 'SURVIVED'),
+        ('running 2 tests\n\ntest result: ok. 2 passed; 0 failed;', 0, 'INVALID'),
+        ('running 1 test\n\ntest result: FAILED. 0 passed; 1 failed;', 101, 'KILLED'),
+        ('running 1 test\n\ntest result: FAILED. 0 passed; 1 failed;', 0, 'INVALID'),
+        ('error: could not compile `pilotdeck-gateway`', 101, 'INVALID'),
+        ('running 0 tests\n\ntest result: FAILED.', 101, 'INVALID'),
+    ]
+    for log, returncode, expected in samples:
+        actual = classify(log, returncode)
+        assert actual == expected, (log, returncode, expected, actual)
+    print('classify self-test: PASS')
+
 
 root = Path(__file__).resolve().parents[5]
 config = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/config.rs'
@@ -97,6 +137,95 @@ cases = [
     ('api-type-default', config,
      '        JsString::from("openai-responses"),\n', '        JsString::from("anthropic"),\n',
      'llm_config_matches_ts'),
+    # NaN must stay NaN: `JSON.stringify` writes both NaN and Infinity as
+    # `null`, so only the strict number comparator can kill this.
+    # oracle: mergeIndexingSettings #308 autoIndex NaN -> Infinity.
+    ('merge-nan', config,
+     'Some(JsValue::Number(value)) if value.is_nan() => f64::NAN,',
+     'Some(JsValue::Number(value)) if value.is_nan() => f64::INFINITY,',
+     'llm_config_matches_ts'),
+    # Available providers follow ECMAScript own-key order (integer keys
+    # ascending), not JSON text order.
+    # oracle: openclaw #363 `10`/`2` text order, primary miss -> provider `2`.
+    ('provider-key-order', config,
+     '''    let available: Vec<(&JsString, &JsObject)> = providers
+        .own_entries()
+        .into_iter()''',
+     '''    let available: Vec<(&JsString, &JsObject)> = providers
+        .entries()
+        .iter()
+        .map(|(name, value)| (name, value))''',
+     'llm_config_matches_ts'),
+    # `toStringRecord` rejects arrays; accepting them leaks array indices as
+    # header names.
+    # oracle: openclaw #361/#362 array headers are dropped.
+    ('headers-array-accepted', config,
+     '''fn to_string_record(value: Option<&JsValue>) -> Option<JsObject> {
+    let record = value.and_then(JsValue::as_object)?;
+    let mut out = JsObject::new();
+    for (key, entry) in record.own_entries() {
+        let text = trimmed(entry.as_string());
+        if !text.is_empty() {
+            out.insert(key.clone(), JsValue::String(text));
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}''',
+     '''fn to_string_record(value: Option<&JsValue>) -> Option<JsObject> {
+    let mut out = JsObject::new();
+    for (key, entry) in JsRecord::of(value?)?.entries() {
+        let text = trimmed(entry.as_string());
+        if !text.is_empty() {
+            out.insert(key, JsValue::String(text));
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}''',
+     'llm_config_matches_ts'),
+    # `resolveMemoryLlm` keeps `cfg.model` untrimmed.
+    # oracle: resolveMemoryLlm #364 ` alpha/m1 ` -> provider ` alpha`.
+    ('memory-model-trim', config,
+     '''    let model_ref = config
+        .model
+        .clone()''',
+     '''    let model_ref = config
+        .model
+        .clone()
+        .map(|value| trimmed(Some(&value)))''',
+     'llm_config_matches_ts'),
+    # The cache lock must not cover home probing / file I/O; restoring the
+    # lock-held body makes the concurrency test time out.
+    ('lock-held-io', config,
+     '''    pub fn resolve(&self, home: impl FnOnce() -> Option<PathBuf>) -> Option<OpenClawModelConfig> {
+        if let Some(value) = self.read_cache() {
+            return value;
+        }
+        let value =
+            home().and_then(|home| load_open_claw_model_config(&open_claw_config_path(&home)));
+        let mut cached = self
+            .cached
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(value) = cached.as_ref() {
+            return value.clone();
+        }
+        *cached = Some(value.clone());
+        value
+    }''',
+     '''    pub fn resolve(&self, home: impl FnOnce() -> Option<PathBuf>) -> Option<OpenClawModelConfig> {
+        let mut cached = self
+            .cached
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(value) = cached.as_ref() {
+            return value.clone();
+        }
+        let value =
+            home().and_then(|home| load_open_claw_model_config(&open_claw_config_path(&home)));
+        *cached = Some(value.clone());
+        value
+    }''',
+     'open_claw_resolve_does_not_hold_lock_across_io'),
 ]
 
 names = [case[0] for case in cases]
@@ -104,7 +233,10 @@ assert len(names) == len(set(names)), 'duplicate control name'
 if sys.argv[1:] == ['--list']:
     print('\n'.join(names))
     raise SystemExit(0)
-assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | negative.py --list'
+if sys.argv[1:] == ['--self-test']:
+    self_test()
+    raise SystemExit(0)
+assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | negative.py --list | negative.py --self-test'
 selected = sys.argv[2:]
 unknown = set(selected) - set(names)
 assert not unknown, f'unknown controls: {sorted(unknown)}'
@@ -122,18 +254,6 @@ env['CARGO_TARGET_DIR'] = target
 command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
            '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_llm_config']
 results = []
-
-
-def classify(log, returncode):
-    if returncode is None:
-        return 'INVALID'
-    if 'could not compile' in log:
-        return 'INVALID'
-    if returncode != 0 and 'test result: FAILED.' in log and 'running 1 test' in log:
-        return 'KILLED'
-    if returncode == 0 and 'test result: ok.' in log:
-        return 'SURVIVED'
-    return 'INVALID'
 
 
 def write_summary(baseline):

@@ -427,6 +427,57 @@ export async function collect(baseline: string) {
     for (const protocol of [undefined, 'anthropic', 'google', 'openai-responses', 'openai', 'other', '']) {
       add('memoryApiTypeForProtocol', [protocol], factory.memoryApiTypeForProtocol(protocol));
     }
+    // Extra boundary goldens. Appended after every existing case so the case
+    // indices referenced by negative.py witnesses stay stable.
+    const extraOpenClaw: any[] = [
+      // `toStringRecord` rejects arrays (`isRecord` excludes them), so an
+      // array-valued provider header record is dropped while the model object
+      // headers still merge.
+      {name: 'headers-array-provider', json: {
+        models: {providers: {alpha: {
+          headers: [' provider ', ''],
+          models: [{id: 'm1', headers: {'X-Model': ' model '}}],
+        }}},
+        agents: {defaults: {model: {primary: 'alpha/m1'}}},
+      }},
+      // The mirror case: provider object headers merge, model array is dropped.
+      {name: 'headers-array-model', json: {
+        models: {providers: {alpha: {
+          headers: {'X-Provider': ' provider '},
+          models: [{id: 'm1', headers: [' model ', '']}],
+        }}},
+        agents: {defaults: {model: {primary: 'alpha/m1'}}},
+      }},
+      // JS own-key order enumerates integer keys ascending first. The raw
+      // file text must keep `10` before `2` (JSON.stringify would normalize
+      // it), so the fallback is only correct if the reader reorders integer
+      // keys. The empty primary model also exercises the selected-model
+      // fallback.
+      {name: 'integer-providers-primary-miss', json: {
+        models: {providers: {
+          '10': {models: [{id: 'ten'}]},
+          '2': {models: [{id: 'two'}]},
+        }},
+        agents: {defaults: {model: {primary: 'missing/'}}},
+      }, text: '{"models":{"providers":{"10":{"models":[{"id":"ten"}]},"2":{"models":[{"id":"two"}]}}},"agents":{"defaults":{"model":{"primary":"missing/"}}}}'},
+    ];
+    for (const scenario of extraOpenClaw) {
+      const home = join(scratch, `extra-openclaw-${index++}`);
+      mkdirSync(home, {recursive: true});
+      const state = scenario.text
+        ? {kind: 'valid', json: scenario.json, text: scenario.text}
+        : valid(scenario.json);
+      writeOpenClaw(home, state);
+      process.env.HOME = home;
+      const service = await loadService(baseline, scenario.name);
+      add('resolveOpenClawModelConfig', [[state]], [service.resolveOpenClawModelConfig()]);
+    }
+    // `resolveMemoryLlm` does not trim `cfg.model`: the space stays in the
+    // provider/model halves and only an exact provider key hits `providers`.
+    for (const model of [' alpha/m1 ', 'alpha/ m1 ']) {
+      add('resolveMemoryLlm', [{model}, modelConfig, undefined],
+          factory.resolveMemoryLlm({model}, modelConfig, undefined));
+    }
   } finally {
     process.env.HOME = savedHome;
     rmSync(scratch, {recursive: true, force: true});
