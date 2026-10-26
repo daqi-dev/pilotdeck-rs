@@ -11,7 +11,9 @@ use crate::runtime::memory::edgeclaw::{
     text::{hash_text, normalize_text},
 };
 use crate::{
-    js_value::{ascii_fold_haystack, number_string, to_string_units},
+    js_value::{
+        StackOverflow, ToStringError, ascii_fold_haystack, number_string, to_string_units_checked,
+    },
     project_files::{node_collator, node_compare_utf16, node_locale},
     runtime::memory::js_trim_units,
 };
@@ -444,15 +446,21 @@ fn is_generic_same_project_reason(reason: Option<&JsValue>) -> Result<bool, File
 
 /// `${cluster.reason || members.join(", ")}` in a dropped warning: a falsy
 /// non-string falls back to the joiner, a truthy one is coerced with JS
-/// `String()` (numbers, booleans, arrays and `[object Object]`).
+/// `String()` — which runs `ToPrimitive` (so `{toString:null}` throws the V8
+/// `TypeError`) and joins arrays (a too-deep join throws the V8 `RangeError`).
 fn drop_reason(
     reason: Option<&JsValue>,
     members: &[JsString],
 ) -> Result<JsString, FileMemoryError> {
     match reason {
-        Some(value) if js_truthy(value) => to_string_units(value)
+        Some(value) if js_truthy(value) => to_string_units_checked(value)
             .map(JsString::from_utf16)
-            .map_err(|_| FileMemoryError::Invalid("dream reason too deep for String()".into())),
+            .map_err(|error| match error {
+                ToStringError::NotPrimitive => type_error(ToStringError::NOT_PRIMITIVE),
+                ToStringError::StackOverflow => {
+                    FileMemoryError::Range(StackOverflow::MESSAGE.into())
+                }
+            }),
         _ => Ok(join_units(members, ", ")),
     }
 }
