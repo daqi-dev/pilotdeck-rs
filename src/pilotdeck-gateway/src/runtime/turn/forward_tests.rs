@@ -487,7 +487,7 @@ async fn forward_completed() {
                 .get("event")
                 .expect("#741h forward fixture invariant"),
         )
-        .expect_err("#741h forward expected strict terminal rejection");
+        .expect_err("#741 pr5d leaked completed must be rejected");
     assert!(
         error.message.contains("must not reach"),
         "#741h pr5d strict terminal guard retained"

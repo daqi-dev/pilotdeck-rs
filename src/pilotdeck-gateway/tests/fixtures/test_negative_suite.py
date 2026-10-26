@@ -52,7 +52,8 @@ class SuiteTests(unittest.TestCase):
                 return False
 
             def run(command, **kwargs):
-                self.assertEqual(command[-4:], [TEST, '--', '--exact', '--nocapture'])
+                self.assertEqual(command[-5:], [TEST, '--', '--exact', '--include-ignored', '--nocapture'],
+                                 'bound ignored tests must execute')
                 calls.append(source.read_text())
                 if source.read_text() == 'first':
                     if isinstance(first, Exception):

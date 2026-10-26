@@ -8,7 +8,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import Case, run_cases
 from _negative_common import mutate
 
 live = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
@@ -37,7 +37,7 @@ cases = [
      'finish', 'runtime::turn::live::stream_tests::slow_consumer_with_a_blocked_callback_still_exits_bounded', 'integrity failure terminal must be error'),
     ('completed-leak', live,
      'if event_type.equals_str("turn_completed") {', 'if false && event_type.equals_str("turn_completed") {',
-     'observe_source', 'runtime::turn::live::stream_tests::forwarding::forward_completed', 'pr5d strict terminal guard retained'),
+     'observe_source', 'runtime::turn::live::stream_tests::forwarding::forward_completed', '#741 pr5d leaked completed must be rejected'),
     ('failure-sticky', live,
      'wire && *state == IntegrityState::Initial', 'wire && *state != IntegrityState::Completed',
      'observe_source', 'runtime::turn::live::stream_tests::forwarding::forward_event_warning', 'forward event order/payload'),
@@ -76,35 +76,16 @@ if not env.get('PDRS_BASELINE'):
     raise SystemExit('PDRS_BASELINE must be supplied by caller')
 env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
            CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
+chosen = cases[:1] if sys.argv[2:] == ['--sample'] else cases
+if sys.argv[2:] and sys.argv[2:] != ['--sample']:
+    names = set(sys.argv[2:])
+    unknown = names - {row[0] for row in cases}
+    if unknown:
+        raise SystemExit(f'unknown controls: {sorted(unknown)}')
+    chosen = [row for row in cases if row[0] in names]
 out = Path(sys.argv[1])
 out.mkdir(parents=True, exist_ok=False)
-chosen = cases[:1] if sys.argv[2:] == ['--sample'] else cases
-audit()
-
-
-def run(label, test):
-    slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-    (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
-    result = run_owned(
-        ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-         '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact',
-         '--include-ignored', '--nocapture'], cwd=root, env=env, timeout=600)
-    (out / (label + '.log')).write_text(result.stdout + result.stderr)
-    return result
-
-
-with mutating_sources(root, [live, host, tests, oracle]) as originals:
-    for name, path, old, new, scope, test, panic in chosen:
-        assert run(name + '-positive', test).returncode == 0, name
-        path.write_text(mutate(originals[path].decode(), scope, [(old, new)]))
-        result = run(name + '-negative', test)
-        log = result.stdout + result.stderr
-        assert (result.returncode != 0 and 'test result: FAILED' in log
-                and test + ' ... FAILED' in log and 'panicked at' in log
-                and panic in log), (name, 'runtime assertion required')
-        print(f'KILLED {name}: {test}: {panic}', flush=True)
-        path.write_bytes(originals[path])
-        assert run(name + '-restored', test).returncode == 0, name
-        print(f'RESTORED {name}: {test}', flush=True)
-(out / 'summary.json').write_text(
-    json.dumps({'passed': [row[0] for row in chosen]}, indent=2) + '\n')
+raise SystemExit(run_cases(root,
+    [Case(name, path, old, new, test, panic, scope)
+     for name, path, old, new, scope, test, panic in chosen],
+    out, env, mutate, timeout=600, baseline=env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')))
