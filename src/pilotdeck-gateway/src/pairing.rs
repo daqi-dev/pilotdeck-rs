@@ -29,7 +29,7 @@ where
     D: AsyncRead + AsyncWrite + Unpin,
     U: AsyncRead + AsyncWrite + Unpin,
 {
-    run_with_metadata(downstream, upstream, crate::metadata::Metadata::from_env()).await
+    run_with_metadata(downstream, upstream, crate::metadata::Metadata::from_env()?).await
 }
 
 async fn run_with_metadata<D, U, F>(

@@ -1,0 +1,238 @@
+{
+  "node": "v22.22.0",
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/cli/LocalGatewayBootConfig.ts": "50868660983195f433ec076abc14a42f00d9673ed7ba769468b151f81af5dd8a",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "src/cli/pilotdeck.ts": "88c672b94f32c53d7bf5f188c62ef82965291aa55156e9032a43ae44198c8182"
+  },
+  "cases": [
+    {
+      "name": "relative-normal",
+      "boot": {
+        "cwdReads": 2,
+        "outcome": {
+          "home": "<root>/cwd/home",
+          "cwd": "<root>/cwd"
+        }
+      },
+      "home": {
+        "cwdReads": 1,
+        "outcome": {
+          "home": "<root>/cwd/home"
+        }
+      }
+    },
+    {
+      "name": "relative-deleted",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "home": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      }
+    },
+    {
+      "name": "tilde-normal",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "home": "<root>/user",
+          "cwd": "<root>/cwd"
+        }
+      },
+      "home": {
+        "cwdReads": 0,
+        "outcome": {
+          "home": "<root>/user"
+        }
+      }
+    },
+    {
+      "name": "tilde-deleted",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "home": {
+        "cwdReads": 0,
+        "outcome": {
+          "home": "<root>/user"
+        }
+      }
+    },
+    {
+      "name": "tilde-child-normal",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "home": "<root>/user/home",
+          "cwd": "<root>/cwd"
+        }
+      },
+      "home": {
+        "cwdReads": 0,
+        "outcome": {
+          "home": "<root>/user/home"
+        }
+      }
+    },
+    {
+      "name": "tilde-child-deleted",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "home": {
+        "cwdReads": 0,
+        "outcome": {
+          "home": "<root>/user/home"
+        }
+      }
+    },
+    {
+      "name": "absolute-normal",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "home": "<root>/home",
+          "cwd": "<root>/cwd"
+        }
+      },
+      "home": {
+        "cwdReads": 0,
+        "outcome": {
+          "home": "<root>/home"
+        }
+      }
+    },
+    {
+      "name": "absolute-deleted",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "home": {
+        "cwdReads": 0,
+        "outcome": {
+          "home": "<root>/home"
+        }
+      }
+    },
+    {
+      "name": "unset-normal",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "home": "<root>/user/.pilotdeck",
+          "cwd": "<root>/cwd"
+        }
+      },
+      "home": {
+        "cwdReads": 0,
+        "outcome": {
+          "home": "<root>/user/.pilotdeck"
+        }
+      }
+    },
+    {
+      "name": "unset-deleted",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "home": {
+        "cwdReads": 0,
+        "outcome": {
+          "home": "<root>/user/.pilotdeck"
+        }
+      }
+    },
+    {
+      "name": "empty-normal",
+      "boot": {
+        "cwdReads": 2,
+        "outcome": {
+          "home": "<root>/cwd",
+          "cwd": "<root>/cwd"
+        }
+      },
+      "home": {
+        "cwdReads": 1,
+        "outcome": {
+          "home": "<root>/cwd"
+        }
+      }
+    },
+    {
+      "name": "empty-deleted",
+      "boot": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      },
+      "home": {
+        "cwdReads": 1,
+        "outcome": {
+          "error": {
+            "name": "Error",
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_cwd",
+            "syscall": "uv_cwd"
+          }
+        }
+      }
+    }
+  ]
+}

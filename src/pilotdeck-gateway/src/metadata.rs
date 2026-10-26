@@ -279,14 +279,21 @@ pub(crate) struct Metadata<F = NativeFiles> {
 }
 
 impl Metadata {
-    pub fn from_env() -> Option<Self> {
-        let home = std::env::var("PILOT_HOME").ok()?;
+    pub fn from_env() -> io::Result<Option<Self>> {
+        let Ok(home) = std::env::var("PILOT_HOME") else {
+            return Ok(None);
+        };
         // Explicit PILOT_HOME only: never open the user's real default home.
         // Deployment must use the same cwd as TS process.cwd(): relative
         // project keys, .cwd markers and PILOT_HOME all resolve against it.
-        let cwd = std::env::current_dir().ok()?;
+        let cwd = std::env::current_dir().map_err(|error| {
+            let (_, message) = crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None);
+            io::Error::new(error.kind(), message)
+        })?;
         let home = if home == "~" || home.starts_with("~/") {
-            let user_home = std::env::var("HOME").ok()?;
+            let Ok(user_home) = std::env::var("HOME") else {
+                return Ok(None);
+            };
             resolve(
                 &cwd,
                 &PathBuf::from(user_home)
@@ -296,11 +303,11 @@ impl Metadata {
         } else {
             resolve(&cwd, &home)
         };
-        Some(Self {
+        Ok(Some(Self {
             home,
             cwd,
             files: NativeFiles,
-        })
+        }))
     }
 }
 
@@ -982,3 +989,7 @@ fn scan_metadata_summary(reader: &mut impl Read) -> io::Result<bool> {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "../tests/fixtures/metadata-from-env/regression.rs"]
+mod from_env_tests;
