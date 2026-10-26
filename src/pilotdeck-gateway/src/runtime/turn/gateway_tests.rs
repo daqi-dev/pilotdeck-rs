@@ -63,7 +63,7 @@ impl LiveSession for Arc<Session> {
         assert_eq!(
             std::thread::current().id(),
             self.thread,
-            "gateway host thread"
+            "session abort must run on the gateway host thread"
         );
         self.aborts.fetch_add(1, Ordering::SeqCst);
         self.accepted.open();
@@ -78,7 +78,7 @@ impl LiveSession for Arc<Session> {
         assert_eq!(
             std::thread::current().id(),
             self.thread,
-            "gateway host thread"
+            "session submit must run on the gateway host thread"
         );
         Ok(Box::new(Stream {
             session: self.clone(),
@@ -822,6 +822,16 @@ async fn serial_timer_cancels_queued_callbacks_and_replacements() {
         "serial timer must respect deadline"
     );
     clock.advance(1);
+    // #813 fix-r2: the clock callback only enqueues. Running it inside
+    // `advance` (the expiry-runs-on-clock-thread mutant) must trip this
+    // assertion, not the cancel assertion that queued-cancel-ignored owns.
+    // The default current-thread runtime cannot poll the driver before the
+    // next await, so only `advance` itself can change `fired` here.
+    assert_eq!(
+        fired.load(Ordering::SeqCst),
+        0,
+        "clock advance only enqueues the serial expiry"
+    );
     timer.cancel(&key); // Cancel a callback already detached from the clock.
     for _ in 0..8 {
         tokio::task::yield_now().await;
