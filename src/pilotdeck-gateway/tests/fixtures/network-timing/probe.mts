@@ -4,12 +4,18 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import {sources, matrix, dependencyFingerprint, expectedTiming} from './observations.mts';
 
+import {lifecycleCell} from './lifecycle.mts';
+import {ioCell} from './io.mts';
+
 assert.equal(process.version, 'v22.22.0');
 const root = process.env.PDRS_BASELINE;
 assert.ok(root, 'set PDRS_BASELINE');
 const { fetch, setGlobalDispatcher, getGlobalDispatcher } = await import(pathToFileURL(`${root}/node_modules/undici/index.js`).href);
 const { networkFetch } = await import(pathToFileURL(`${root}/src/network/fetch.ts`).href);
 const { getURLMarkdownContent } = await import(pathToFileURL(`${root}/src/tool/builtin/web/urlFetcher.ts`).href);
+const { McpClient } = await import(pathToFileURL(`${root}/src/mcp/client/McpClient.ts`).href);
+const { HttpHookExecutor } = await import(pathToFileURL(`${root}/src/extension/hooks/execution/HttpHookExecutor.ts`).href);
+const { BackgroundSubagentRuntime } = await import(pathToFileURL(`${root}/src/agent/sub/BackgroundSubagentRuntime.ts`).href);
 const realTimer = globalThis.setTimeout, realClear = globalThis.clearTimeout, realRandom = Math.random;
 const oldDispatcher = getGlobalDispatcher();
 for (const source of sources) console.log(JSON.stringify({source, sha256: createHash('sha256').update(readFileSync(`${root}/${source}`)).digest('hex'), node: process.version}));
@@ -18,11 +24,16 @@ const specs = matrix();
 try {
   Math.random = () => 0;
   for (const spec of specs) {
+    if(spec.phase==='lifecycle'){console.log(JSON.stringify(await lifecycleCell(spec,root)));continue;}
+    if(spec.phase==='io-headers'){console.log(JSON.stringify(await ioCell(spec,root)));continue;}
     const {path, phase, event, order} = spec;
     const id = `${path}/${phase}/${event}/${order}`;
     let captured = false;
     for (let attempt = 0; attempt < 10; attempt++) {
       const parent = new AbortController();
+      let background: any, task: any, stopped: boolean | null = null;
+      let parentFired: () => void;
+      const parentDone = new Promise<void>(resolve => {parentFired = resolve;});
       const handles = new Map<any, any>();
       const timers: any[] = [], owned: any[] = [], timeline: string[] = [], requests: string[] = [];
       const retryPhase = phase.startsWith('retry-');
@@ -37,7 +48,7 @@ try {
         const record = {kind, requested, start: timer._idleStart, delay: timer._idleTimeout};
         timers.push(record); handles.set(record, timer); return record;
       };
-      const armParent = () => { parentTimer = addTimer('parent', parentMs, parentMs, () => parent.abort()); };
+      const armParent = () => { parentTimer = addTimer('parent', parentMs, parentMs, () => { if (background) stopped = background.stop(task.taskId); else parent.abort(); parentFired(); }); };
       const overdue = () => { const until = performance.now() + 55; while (performance.now() < until) {} };
       const armTarget = (kind: string, requested: number, callback: () => void) => {
         assert.ok(!armed, id); armed = true;
@@ -53,7 +64,7 @@ try {
           armTarget('retry', ms, () => callback(...args));
           return handles.get(targetTimer);
         }
-        if (path === 'web_fetch' && event === 'idle' && !bodyPhase && ms === 60000 && !armed && (phase !== 'redirect-hop' || requests.length > 0)) {
+        if (['web_fetch', 'mcp_get', 'mcp_post', 'background'].includes(path) && event === 'idle' && !bodyPhase && ms === (path === 'mcp_get' ? 10000 : 60000) && !armed && (phase !== 'redirect-hop' || path !== 'web_fetch' || requests.length > 0)) {
           // Arm before the first (outer hop) timeout, not after fetch starts.
           armed = true;
           if (parentFirst) armParent();
@@ -61,7 +72,7 @@ try {
           if (!parentFirst) armParent();
           return handles.get(targetTimer);
         }
-        const actual = ms === 60000 ? (event === 'idle' && !bodyPhase ? 40 : 1000) : ms;
+        const actual = [10000,60000].includes(ms) ? (event === 'idle' && !bodyPhase ? 40 : 1000) : ms;
         const record = addTimer('timer', ms, actual, () => callback(...args));
         return handles.get(record);
       }) as any;
@@ -126,12 +137,35 @@ try {
             const cache = {get() {return undefined;}, set() {}};
             return (await getURLMarkdownContent('https://fixture.test/start', parent.signal, {cache} as any)).content;
           }
+          if (path.startsWith('mcp_')) {
+            const client = new McpClient({id:'timing', transport:'streamable_http', url:'https://fixture.test/start'} as any);
+            const transport = (client as any).buildTransport();
+            return await (await transport._fetch('https://fixture.test/start', {method: path === 'mcp_post' ? 'POST' : 'GET', signal:parent.signal})).text();
+          }
+          if (path === 'hooks') {
+            return await new HttpHookExecutor(fetch as any).execute({hook:{type:'http',url:'https://fixture.test/start'},hookInput:{} as any,signal:parent.signal});
+          }
+          if (path === 'background') {
+            background = new BackgroundSubagentRuntime();
+            let childResult: any;
+            task = background.start({sessionId:'session',parentTurnId:'turn',subagentId:'child',subagentType:'test',run:async (signal:AbortSignal) => {
+              try { const response = await networkFetch('https://fixture.test/start', {signal}, {timeoutMs:60000,retry:{maxRetries:1,baseDelayMs:500,maxDelayMs:5000}});
+                childResult = {name:null,message:null,delivery:'ok',content:await response.text()};
+              } catch (error:any) { childResult = {name:error.name,message:error.message,delivery:'throw',content:null}; throw error; }
+            }});
+            await (background as any).entries.get(task.taskId).done;
+            await parentDone;
+            return {childResult,task:{status:task.status,error:task.error ?? null,ended:!!task.endedAt,stopped}};
+          }
           const response = retryPhase
             ? await networkFetch('https://fixture.test/start', {}, {signal: parent.signal, timeoutMs: 60000, retry: {maxRetries: 2, baseDelayMs: 500, maxDelayMs: 5000}})
             : await fetch('https://fixture.test/start', {signal: parent.signal});
           return phase === 'text-body' ? await response.text() : Buffer.from(await response.arrayBuffer()).toString();
         })();
-        result = {name: null, message: null, delivery: 'ok', content: await Promise.race([operation, bounded])};
+        const value = await Promise.race([operation, bounded]);
+        result = path === 'hooks' ? {name:null,message:value.stderr || null,delivery:'return',content:value.stdout,hook:value}
+          : path === 'background' ? {...value.childResult,task:value.task}
+          : {name: null, message: null, delivery: 'ok', content:value};
       } catch (error: any) {
         if (error.message.startsWith('probe deadline:')) throw error;
         result = {name: error.name, message: error.message, delivery: 'throw', content: null};

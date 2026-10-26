@@ -45,6 +45,11 @@ use std::{
     time::Duration,
 };
 
+#[path = "common/network_timing_background.rs"]
+mod background_timing;
+#[path = "common/network_timing_io.rs"]
+mod io_timing;
+
 const RAW: &str = include_str!("fixtures/network-timing/oracle.json");
 const URL: &str = "https://fixture.test/start";
 
@@ -191,7 +196,7 @@ fn error(name: Option<&str>, message: &str) -> Value {
     json!({"name":name,"message":message,"delivery":"throw","content":null})
 }
 
-async fn web(transport: MatrixTransport, context: &ToolRunContext) -> Value {
+async fn web(transport: impl ModelHttpTransport + 'static, context: &ToolRunContext) -> Value {
     let mut fetcher = UrlFetcher::new(Arc::new(transport));
     fetcher.cache = Arc::new(UrlCache::default());
     fetcher.random = Arc::new(|| 0.0);
@@ -362,6 +367,12 @@ async fn poll_once<F: Future>(mut future: Pin<&mut F>) -> Option<F::Output> {
     .await
 }
 async fn replay(row: &Value, overdue: bool) -> Value {
+    if row["phase"] == "io-headers" {
+        return io_timing::replay(row).await;
+    }
+    if row["path"] == "background" {
+        return background_timing::replay(row).await;
+    }
     let phase = row["phase"].as_str().unwrap();
     let event = row["event"].as_str().unwrap();
     let path = row["path"].as_str().unwrap();
@@ -493,7 +504,7 @@ async fn check_mode(id: &str, overdue: bool) {
     baseline::oracle(RAW);
     let oracle: Value = serde_json::from_str(RAW).unwrap();
     let rows = oracle["cases"].as_array().unwrap();
-    assert_eq!(rows.len(), 100);
+    assert_eq!(rows.len(), 336);
     let row = rows.iter().find(|row| row["id"] == id).expect("matrix id");
     let actual = replay(row, overdue).await;
     println!("{}", json!({"id":id,"ts":row["observable"],"rust":actual}));
@@ -585,7 +596,14 @@ async fn known_differences_remain_exact_and_ignored() {
             entry["ts"], entry["rust"],
             "resolved difference must be unignored: {id}"
         );
+        let real_io = row["phase"] == "io-headers";
+        if real_io {
+            tokio::time::resume();
+        }
         let actual = replay(row, false).await;
+        if real_io {
+            tokio::time::pause();
+        }
         assert_eq!(actual, entry["rust"], "known difference changed: {id}");
     }
     assert_eq!(
@@ -1172,4 +1190,441 @@ async fn fetch_redirect_retry_status_fulfilled_tie_parent_last_overdue() {
 #[tokio::test(start_paused = true)]
 async fn fetch_redirect_retry_error_fulfilled_tie_parent_last_overdue() {
     check_mode("fetch_redirect/retry-error/fulfilled/tie-parent-last", true).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_fulfilled_continuation_first() {
+    check("background/headers/fulfilled/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_fulfilled_parent_first() {
+    check("background/headers/fulfilled/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_fulfilled_tie_parent_first() {
+    check("background/headers/fulfilled/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_fulfilled_tie_parent_last() {
+    check("background/headers/fulfilled/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_rejected_continuation_first() {
+    check("background/headers/rejected/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_rejected_parent_first() {
+    check("background/headers/rejected/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_rejected_tie_parent_first() {
+    check("background/headers/rejected/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_rejected_tie_parent_last() {
+    check("background/headers/rejected/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_idle_continuation_first() {
+    check("background/headers/idle/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_idle_parent_first() {
+    check("background/headers/idle/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_idle_tie_parent_first() {
+    check("background/headers/idle/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_headers_idle_tie_parent_last() {
+    check("background/headers/idle/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_body_fulfilled_continuation_first() {
+    check("background/body/fulfilled/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+#[ignore = "#456 差异：headers 后 Rust 仍响应父取消，TS 已解除监听"]
+async fn background_body_fulfilled_parent_first() {
+    check("background/body/fulfilled/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+#[ignore = "#456 差异：headers 后 Rust 仍响应父取消，TS 已解除监听"]
+async fn background_body_fulfilled_tie_parent_first() {
+    check("background/body/fulfilled/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_body_fulfilled_tie_parent_last() {
+    check("background/body/fulfilled/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_body_rejected_continuation_first() {
+    check("background/body/rejected/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+#[ignore = "#456 差异：headers 后 Rust 仍响应父取消，TS 已解除监听"]
+async fn background_body_rejected_parent_first() {
+    check("background/body/rejected/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+#[ignore = "#456 差异：headers 后 Rust 仍响应父取消，TS 已解除监听"]
+async fn background_body_rejected_tie_parent_first() {
+    check("background/body/rejected/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_body_rejected_tie_parent_last() {
+    check("background/body/rejected/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_body_idle_continuation_first() {
+    check("background/body/idle/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+#[ignore = "#456 差异：headers 后 Rust 仍响应父取消，TS 已解除监听"]
+async fn background_body_idle_parent_first() {
+    check("background/body/idle/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+#[ignore = "#456 差异：headers 后 Rust 仍响应父取消，TS 已解除监听"]
+async fn background_body_idle_tie_parent_first() {
+    check("background/body/idle/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_body_idle_tie_parent_last() {
+    check("background/body/idle/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_fulfilled_continuation_first() {
+    check("background/redirect-hop/fulfilled/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_fulfilled_parent_first() {
+    check("background/redirect-hop/fulfilled/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_fulfilled_tie_parent_first() {
+    check("background/redirect-hop/fulfilled/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_fulfilled_tie_parent_last() {
+    check("background/redirect-hop/fulfilled/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_rejected_continuation_first() {
+    check("background/redirect-hop/rejected/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_rejected_parent_first() {
+    check("background/redirect-hop/rejected/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_rejected_tie_parent_first() {
+    check("background/redirect-hop/rejected/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_rejected_tie_parent_last() {
+    check("background/redirect-hop/rejected/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_idle_continuation_first() {
+    check("background/redirect-hop/idle/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_idle_parent_first() {
+    check("background/redirect-hop/idle/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_idle_tie_parent_first() {
+    check("background/redirect-hop/idle/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_redirect_hop_idle_tie_parent_last() {
+    check("background/redirect-hop/idle/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_retry_status_fulfilled_continuation_first() {
+    check("background/retry-status/fulfilled/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_retry_status_fulfilled_parent_first() {
+    check("background/retry-status/fulfilled/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_retry_status_fulfilled_tie_parent_first() {
+    check("background/retry-status/fulfilled/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_retry_status_fulfilled_tie_parent_last() {
+    check("background/retry-status/fulfilled/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_retry_error_fulfilled_continuation_first() {
+    check("background/retry-error/fulfilled/continuation-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_retry_error_fulfilled_parent_first() {
+    check("background/retry-error/fulfilled/parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_retry_error_fulfilled_tie_parent_first() {
+    check("background/retry-error/fulfilled/tie-parent-first").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_retry_error_fulfilled_tie_parent_last() {
+    check("background/retry-error/fulfilled/tie-parent-last").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_lifecycle_pending_stop_ordered() {
+    check("background/lifecycle/pending-stop/ordered").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_lifecycle_settled_fulfilled_ordered() {
+    check("background/lifecycle/settled-fulfilled/ordered").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_lifecycle_settled_rejected_ordered() {
+    check("background/lifecycle/settled-rejected/ordered").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn background_lifecycle_running_uncooperative_ordered() {
+    check("background/lifecycle/running-uncooperative/ordered").await;
+}
+
+#[tokio::test]
+async fn web_fetch_io_headers_fulfilled_continuation_first() {
+    check("web_fetch/io-headers/fulfilled/continuation-first").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_fulfilled_parent_first() {
+    check("web_fetch/io-headers/fulfilled/parent-first").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_fulfilled_tie_parent_first() {
+    check("web_fetch/io-headers/fulfilled/tie-parent-first").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_fulfilled_tie_parent_last() {
+    check("web_fetch/io-headers/fulfilled/tie-parent-last").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_rejected_continuation_first() {
+    check("web_fetch/io-headers/rejected/continuation-first").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_rejected_parent_first() {
+    check("web_fetch/io-headers/rejected/parent-first").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_rejected_tie_parent_first() {
+    check("web_fetch/io-headers/rejected/tie-parent-first").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_rejected_tie_parent_last() {
+    check("web_fetch/io-headers/rejected/tie-parent-last").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_idle_continuation_first() {
+    check("web_fetch/io-headers/idle/continuation-first").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_idle_parent_first() {
+    check("web_fetch/io-headers/idle/parent-first").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_idle_tie_parent_first() {
+    check("web_fetch/io-headers/idle/tie-parent-first").await;
+}
+
+#[tokio::test]
+#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
+async fn web_fetch_io_headers_idle_tie_parent_last() {
+    check("web_fetch/io-headers/idle/tie-parent-last").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_fulfilled_continuation_first() {
+    check("fetch_redirect/io-headers/fulfilled/continuation-first").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_fulfilled_parent_first() {
+    check("fetch_redirect/io-headers/fulfilled/parent-first").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_fulfilled_tie_parent_first() {
+    check("fetch_redirect/io-headers/fulfilled/tie-parent-first").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_fulfilled_tie_parent_last() {
+    check("fetch_redirect/io-headers/fulfilled/tie-parent-last").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_rejected_continuation_first() {
+    check("fetch_redirect/io-headers/rejected/continuation-first").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_rejected_parent_first() {
+    check("fetch_redirect/io-headers/rejected/parent-first").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_rejected_tie_parent_first() {
+    check("fetch_redirect/io-headers/rejected/tie-parent-first").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_rejected_tie_parent_last() {
+    check("fetch_redirect/io-headers/rejected/tie-parent-last").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_idle_continuation_first() {
+    check("fetch_redirect/io-headers/idle/continuation-first").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_idle_parent_first() {
+    check("fetch_redirect/io-headers/idle/parent-first").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_idle_tie_parent_first() {
+    check("fetch_redirect/io-headers/idle/tie-parent-first").await;
+}
+
+#[tokio::test]
+async fn fetch_redirect_io_headers_idle_tie_parent_last() {
+    check("fetch_redirect/io-headers/idle/tie-parent-last").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_fulfilled_continuation_first() {
+    check("background/io-headers/fulfilled/continuation-first").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_fulfilled_parent_first() {
+    check("background/io-headers/fulfilled/parent-first").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_fulfilled_tie_parent_first() {
+    check("background/io-headers/fulfilled/tie-parent-first").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_fulfilled_tie_parent_last() {
+    check("background/io-headers/fulfilled/tie-parent-last").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_rejected_continuation_first() {
+    check("background/io-headers/rejected/continuation-first").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_rejected_parent_first() {
+    check("background/io-headers/rejected/parent-first").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_rejected_tie_parent_first() {
+    check("background/io-headers/rejected/tie-parent-first").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_rejected_tie_parent_last() {
+    check("background/io-headers/rejected/tie-parent-last").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_idle_continuation_first() {
+    check("background/io-headers/idle/continuation-first").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_idle_parent_first() {
+    check("background/io-headers/idle/parent-first").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_idle_tie_parent_first() {
+    check("background/io-headers/idle/tie-parent-first").await;
+}
+
+#[tokio::test]
+async fn background_io_headers_idle_tie_parent_last() {
+    check("background/io-headers/idle/tie-parent-last").await;
 }

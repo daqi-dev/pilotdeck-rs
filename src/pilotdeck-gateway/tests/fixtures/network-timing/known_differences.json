@@ -815,6 +815,435 @@
         "name": null,
         "retries": 1
       }
+    },
+    {
+      "id": "background/body/fulfilled/parent-first",
+      "test": "background_body_fulfilled_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "This operation was aborted",
+        "name": "AbortError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      }
+    },
+    {
+      "id": "background/body/fulfilled/tie-parent-first",
+      "test": "background_body_fulfilled_tie_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": "FIRST",
+        "delivery": "ok",
+        "message": null,
+        "name": null,
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "This operation was aborted",
+        "name": "AbortError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      }
+    },
+    {
+      "id": "background/body/idle/parent-first",
+      "test": "background_body_idle_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "This operation was aborted",
+        "name": "AbortError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      }
+    },
+    {
+      "id": "background/body/idle/tie-parent-first",
+      "test": "background_body_idle_tie_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "This operation was aborted",
+        "name": "AbortError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      }
+    },
+    {
+      "id": "background/body/rejected/parent-first",
+      "test": "background_body_rejected_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "This operation was aborted",
+        "name": "AbortError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      }
+    },
+    {
+      "id": "background/body/rejected/tie-parent-first",
+      "test": "background_body_rejected_tie_parent_first",
+      "category": "POST-HEADERS-PARENT",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "terminated",
+        "name": "TypeError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "This operation was aborted",
+        "name": "AbortError",
+        "retries": 0,
+        "task": {
+          "ended": true,
+          "error": null,
+          "status": "cancelled",
+          "stopped": true
+        }
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/fulfilled/parent-first",
+      "test": "web_fetch_io_headers_fulfilled_parent_first",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/fulfilled/tie-parent-first",
+      "test": "web_fetch_io_headers_fulfilled_tie_parent_first",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/fulfilled/tie-parent-last",
+      "test": "web_fetch_io_headers_fulfilled_tie_parent_last",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/idle/continuation-first",
+      "test": "web_fetch_io_headers_idle_continuation_first",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/idle/parent-first",
+      "test": "web_fetch_io_headers_idle_parent_first",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/idle/tie-parent-first",
+      "test": "web_fetch_io_headers_idle_tie_parent_first",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/idle/tie-parent-last",
+      "test": "web_fetch_io_headers_idle_tie_parent_last",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/rejected/continuation-first",
+      "test": "web_fetch_io_headers_rejected_continuation_first",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network retry aborted.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network retry aborted.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/rejected/parent-first",
+      "test": "web_fetch_io_headers_rejected_parent_first",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/rejected/tie-parent-first",
+      "test": "web_fetch_io_headers_rejected_tie_parent_first",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
+    },
+    {
+      "id": "web_fetch/io-headers/rejected/tie-parent-last",
+      "test": "web_fetch_io_headers_rejected_tie_parent_last",
+      "category": "ERROR-CLASS",
+      "ts": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": "NetworkFetchError",
+        "retries": 0
+      },
+      "rust": {
+        "calls": 1,
+        "content": null,
+        "delivery": "throw",
+        "message": "Network request aborted by parent signal.",
+        "name": null,
+        "retries": 0
+      }
     }
   ]
 }
