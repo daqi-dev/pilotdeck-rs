@@ -111,24 +111,68 @@ pub(crate) async fn read_text_body_with_signal<B>(
     limit: usize,
     idle: Option<Duration>,
     signal: Option<&crate::runtime::network::Cancellation>,
-    mut continuation_before_abort: bool,
+    continuation_before_abort: bool,
 ) -> Result<Vec<u8>, BodyError>
 where
     B: Body<Data = Bytes> + Send + 'static,
     B::Error: Send,
 {
-    use crate::runtime::network::{Exchange, body_frame};
+    read_text_body_ordered(body, limit, idle, signal, continuation_before_abort, None).await
+}
+
+/// A prearmed absolute deadline and the per-frame idle timeout compete in
+/// the same dispatcher. The earlier timer wins even after a late poll; the
+/// prearmed deadline wins ties. Existing signal-only callers are unchanged.
+pub(crate) async fn read_text_body_with_deadline<B>(
+    body: B,
+    limit: usize,
+    idle: Option<Duration>,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<Vec<u8>, BodyError>
+where
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Send,
+{
+    read_text_body_ordered(body, limit, idle, None, false, deadline).await
+}
+
+async fn read_text_body_ordered<B>(
+    body: B,
+    limit: usize,
+    idle: Option<Duration>,
+    signal: Option<&crate::runtime::network::Cancellation>,
+    mut continuation_before_abort: bool,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<Vec<u8>, BodyError>
+where
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Send,
+{
+    use crate::runtime::network::{Exchange, body_frame_at};
     let mut body = Box::pin(body);
     let mut buffer = Vec::new();
     let mut too_long = false;
     loop {
         // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-PARENT-TIE-001.md
-        let frame = match body_frame(&mut body, idle, signal, &mut continuation_before_abort).await
-        {
-            Exchange::Response(frame, _) => frame,
-            Exchange::Timeout { .. } => return Err(BodyError::Terminated),
-            Exchange::Aborted => return Err(BodyError::Aborted),
+        let now = tokio::time::Instant::now();
+        let deadline_first = deadline.is_some_and(|at| idle.is_none_or(|idle| at <= now + idle));
+        let next = if deadline_first {
+            deadline
+        } else {
+            idle.map(|idle| now + idle)
         };
+        let frame =
+            match body_frame_at(&mut body, next, signal, &mut continuation_before_abort).await {
+                Exchange::Response(frame, _) => frame,
+                Exchange::Timeout { .. } => {
+                    return Err(if deadline_first {
+                        BodyError::Aborted
+                    } else {
+                        BodyError::Terminated
+                    });
+                }
+                Exchange::Aborted => return Err(BodyError::Aborted),
+            };
         let Some(frame) = frame else {
             return if too_long {
                 Err(BodyError::TooLong)

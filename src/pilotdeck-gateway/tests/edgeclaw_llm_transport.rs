@@ -238,7 +238,7 @@ fn input(spec: &Value) -> StructuredInput {
 }
 fn config(spec: &Value, origin: &str) -> JsValue {
     let model = spec["model"].as_str().unwrap_or("m");
-    let mut provider = json!({"api":spec["api"],"baseUrl":spec["baseUrl"].as_str().map(str::to_owned).unwrap_or_else(||format!("{origin}{}",spec["path"].as_str().unwrap_or("/v1"))),"apiKey":"fixture-key","headers":spec["headers"],"models":[{"id":model}]});
+    let mut provider = json!({"api":spec["api"],"baseUrl":spec["baseUrl"].as_str().map(str::to_owned).unwrap_or_else(||format!("{origin}{}",spec["path"].as_str().unwrap_or("/v1"))),"apiKey":spec["apiKey"].as_str().unwrap_or("fixture-key"),"headers":spec["headers"],"models":[{"id":model}]});
     if let Some(missing) = spec["missing"].as_str() {
         provider.as_object_mut().unwrap().remove(missing);
     }
@@ -511,7 +511,10 @@ async fn pending_and_cancellation_matrix() {
         let mut future = Box::pin(call(&extractor, &input, &spec, &mut debug));
         assert!(poll_once(future.as_mut()).await.is_none());
         tokio::time::advance(Duration::from_secs(100)).await;
-        assert!(poll_once(future.as_mut()).await.is_none());
+        assert!(
+            poll_once(future.as_mut()).await.is_none(),
+            "disabled deadline remains pending"
+        );
         if spec["mode"] == "backoff-held" {
             // The held branch has only model_request so far; response follows release.
             runtime.release.notify_one();
@@ -688,4 +691,473 @@ async fn timer_order_matrix() {
         count += 1;
     }
     assert_eq!(count, 3);
+}
+
+const FIX_R1: &str = include_str!("fixtures/edgeclaw-llm-fix-r1/oracle.json");
+fn fix_cases() -> Vec<Value> {
+    baseline::oracle(FIX_R1);
+    serde_json::from_str::<Value>(FIX_R1).unwrap()["cases"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+fn fix_input(spec: &Value) -> StructuredInput {
+    StructuredInput {
+        system_prompt: "s".into(),
+        user_prompt: "u".into(),
+        request_label: "probe".into(),
+        ..input(spec)
+    }
+}
+fn fix_spec(spec: &Value) -> Value {
+    let mut spec = spec.clone();
+    spec["steps"] = json!([match spec["mode"].as_str().unwrap() {
+        "headers" => json!({"kind":"headers-hang"}),
+        "body" => json!({"kind":"body-hang","status":spec["status"].as_u64().unwrap_or(200)}),
+        _ => json!({"status":200,"body":if spec["api"] == "chat" {
+            r#"{"choices":[{"message":{"content":"ok"}}]}"#
+        } else { r#"{"output_text":"ok"}"# }}),
+    }]);
+    spec
+}
+fn fix_check(case: &Value, actual: JsValue, debug: Vec<JsValue>, runtime: &Runtime, prefix: &str) {
+    let name = case["spec"]["name"].as_str().unwrap();
+    equal(
+        &actual,
+        &js(case["expected"]["result"].clone()),
+        "unused",
+        &format!("{prefix} result {name}"),
+    );
+    equal(
+        &JsValue::Array(debug),
+        &js(case["expected"]["debug"].clone()),
+        "unused",
+        &format!("{prefix} debug {name}"),
+    );
+    assert_eq!(
+        json!(*runtime.sleeps.lock().unwrap()),
+        case["expected"]["sleeps"],
+        "{prefix} sleeps {name}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn headers_transport_deadline_matrix() {
+    let mut count = 0;
+    for case in fix_cases()
+        .into_iter()
+        .filter(|c| c["spec"]["mode"] == "headers" && c["spec"]["cancel"] != true)
+    {
+        let spec = fix_spec(&case["spec"]);
+        let runtime = Arc::new(Runtime::default());
+        let transport = transport(&spec, &runtime, true);
+        let ms = spec["transportMs"].as_u64().unwrap();
+        let mut extractor = LlmMemoryExtractor::new(
+            config(&spec, "http://fixture.invalid"),
+            transport.clone(),
+            runtime.clone(),
+        );
+        // Exercise the actual default constructor as well as the CLI override.
+        if ms != 300000 {
+            extractor = extractor.with_transport_timeout(Duration::from_millis(ms));
+        }
+        let input = fix_input(&spec);
+        let mut debug = Vec::new();
+        let mut future = Box::pin(call(&extractor, &input, &spec, &mut debug));
+        assert!(
+            poll_once(future.as_mut()).await.is_none(),
+            "headers initial pending"
+        );
+        tokio::time::advance(Duration::from_secs(100)).await;
+        assert!(
+            poll_once(future.as_mut()).await.is_none(),
+            "headers before transport deadline"
+        );
+        let first_boundary = spec["timeout"]
+            .as_u64()
+            .filter(|value| *value > 0)
+            .map_or(ms, |value| value.min(ms));
+        tokio::time::advance(Duration::from_millis(first_boundary - 100001)).await;
+        assert!(
+            poll_once(future.as_mut()).await.is_none(),
+            "headers pending before boundary"
+        );
+        assert_eq!(
+            transport.calls.load(Ordering::SeqCst),
+            1,
+            "headers before boundary sends"
+        );
+        let mut actual = None;
+        // At most six attempts. Every poll resumes after both deadlines; no unbounded await.
+        for attempt in 0..6 {
+            tokio::time::advance(Duration::from_millis(if attempt == 0 {
+                ms + 200001 - first_boundary
+            } else {
+                ms + 200000
+            }))
+            .await;
+            if let Some(value) = poll_once(future.as_mut()).await {
+                actual = Some(value);
+                break;
+            }
+            assert_eq!(
+                transport.calls.load(Ordering::SeqCst),
+                attempt + 2,
+                "headers transport boundary"
+            );
+        }
+        drop(future);
+        fix_check(
+            &case,
+            actual.expect("headers bounded attempts"),
+            debug,
+            &runtime,
+            "headers",
+        );
+        let calls = case["expected"]["calls"].as_u64().unwrap() as usize;
+        assert_eq!(
+            transport.calls.load(Ordering::SeqCst),
+            calls,
+            "headers attempt count"
+        );
+        assert_eq!(
+            transport.dropped.load(Ordering::SeqCst),
+            calls,
+            "headers predecessor released"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 20, "headers fixture inventory");
+}
+
+#[tokio::test(start_paused = true)]
+async fn body_idle_deadline_matrix() {
+    let mut count = 0;
+    for mut case in fix_cases().into_iter().filter(|c| {
+        c["spec"]["mode"] == "body" && c["spec"]["cancel"] != true && c["spec"]["frameAt"].is_null()
+    }) {
+        let spec = fix_spec(&case["spec"]);
+        let runtime = Arc::new(Runtime::default());
+        let transport = transport(&spec, &runtime, true);
+        let ms = spec["transportMs"].as_u64().unwrap();
+        let timeout = spec["timeout"].as_u64().unwrap();
+        let extractor = LlmMemoryExtractor::new(
+            config(&spec, "http://fixture.invalid"),
+            transport.clone(),
+            runtime.clone(),
+        )
+        .with_transport_timeout(Duration::from_millis(ms));
+        let input = fix_input(&spec);
+        let mut debug = Vec::new();
+        let mut future = Box::pin(call(&extractor, &input, &spec, &mut debug));
+        assert!(
+            poll_once(future.as_mut()).await.is_none(),
+            "body initial pending"
+        );
+        let mut actual = None;
+        for _ in 0..2 {
+            tokio::time::advance(Duration::from_millis(ms + 200000)).await;
+            if let Some(value) = poll_once(future.as_mut()).await {
+                actual = Some(value);
+                break;
+            }
+        }
+        drop(future);
+        // TS clears the configuration timer after headers. Existing D-2 deliberately
+        // extends it through the body; only these earlier/tied cells differ.
+        if timeout <= ms {
+            let message = format!("probe request timed out after {timeout}ms");
+            case["expected"]["result"] = json!({"error":message,"name":"Error"});
+            case["expected"]["debug"][0]["timedOut"] = json!(true);
+            case["expected"]["debug"][0]["errorMessage"] = json!(message);
+        }
+        fix_check(
+            &case,
+            actual.expect("body bounded attempts"),
+            debug,
+            &runtime,
+            "body",
+        );
+        let calls = case["expected"]["calls"].as_u64().unwrap() as usize;
+        assert_eq!(
+            transport.calls.load(Ordering::SeqCst),
+            calls,
+            "body attempt count"
+        );
+        assert_eq!(
+            transport.dropped.load(Ordering::SeqCst),
+            calls,
+            "body predecessor released"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 24, "body fixture inventory");
+}
+
+struct CaptureTransport {
+    requests: Mutex<Vec<HeaderMap>>,
+    calls: AtomicUsize,
+    chat: bool,
+    redirect: Option<String>,
+}
+use hyper::HeaderMap;
+impl ModelHttpTransport for CaptureTransport {
+    fn send(&self, request: Request<Full<Bytes>>) -> TransportFuture {
+        let index = self.calls.fetch_add(1, Ordering::SeqCst);
+        self.requests
+            .lock()
+            .unwrap()
+            .push(request.headers().clone());
+        if index == 0
+            && let Some(url) = &self.redirect
+        {
+            return TransportFuture::ready(Ok(Response::builder()
+                .status(307)
+                .header("location", url)
+                .body(
+                    Full::new(Bytes::new())
+                        .map_err(|never| match never {})
+                        .boxed(),
+                )
+                .unwrap()));
+        }
+        TransportFuture::ready(Ok(Response::new(
+            Full::new(Bytes::from_static(if self.chat {
+                br#"{"choices":[{"message":{"content":"ok"}}]}"#
+            } else {
+                br#"{"output_text":"ok"}"#
+            }))
+            .map_err(|never| match never {})
+            .boxed(),
+        )))
+    }
+}
+#[tokio::test]
+async fn header_construction_vs_send_matrix() {
+    let mut count = 0;
+    for case in fix_cases()
+        .into_iter()
+        .filter(|c| c["spec"]["mode"] == "header")
+    {
+        let spec = &case["spec"];
+        let runtime = Arc::new(Runtime::default());
+        let transport = Arc::new(CaptureTransport {
+            requests: Mutex::new(Vec::new()),
+            calls: AtomicUsize::new(0),
+            chat: spec["api"] == "chat",
+            redirect: None,
+        });
+        let extractor = LlmMemoryExtractor::new(
+            config(spec, "http://fixture.invalid"),
+            transport.clone(),
+            runtime.clone(),
+        );
+        let mut debug = Vec::new();
+        let actual = call(&extractor, &fix_input(spec), spec, &mut debug).await;
+        fix_check(&case, actual, debug, &runtime, "header phase");
+        assert_eq!(
+            transport.calls.load(Ordering::SeqCst) as u64,
+            case["expected"]["connects"].as_u64().unwrap(),
+            "header phase sends {}",
+            spec["name"]
+        );
+        count += 1;
+    }
+    assert_eq!(count, 24, "header fixture inventory");
+}
+#[tokio::test]
+async fn encoding_matrix() {
+    let mut count = 0;
+    for case in fix_cases()
+        .into_iter()
+        .filter(|c| c["spec"]["mode"] == "encoding")
+    {
+        let spec = &case["spec"];
+        let runtime = Arc::new(Runtime::default());
+        let transport = Arc::new(CaptureTransport {
+            requests: Mutex::new(Vec::new()),
+            calls: AtomicUsize::new(0),
+            chat: false,
+            redirect: spec["redirect"].as_str().map(str::to_owned),
+        });
+        let extractor = LlmMemoryExtractor::new(
+            config(spec, "http://fixture.invalid"),
+            transport.clone(),
+            runtime.clone(),
+        );
+        let mut debug = Vec::new();
+        let actual = call(&extractor, &fix_input(spec), spec, &mut debug).await;
+        fix_check(&case, actual, debug, &runtime, "encoding");
+        let encodings: Vec<_> = transport
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|headers| headers["accept-encoding"].to_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            json!(encodings),
+            case["expected"]["encodings"],
+            "encoding {}",
+            spec["name"].as_str().unwrap()
+        );
+        count += 1;
+    }
+    assert_eq!(count, 9, "encoding fixture inventory");
+}
+
+struct FrameBody {
+    _pending: NeverBody,
+    frame: Arc<AtomicUsize>,
+}
+impl Body for FrameBody {
+    type Data = Bytes;
+    type Error = BodyFailure;
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BodyFailure>>> {
+        if self.frame.swap(0, Ordering::SeqCst) == 1 {
+            Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"{")))))
+        } else {
+            Poll::Pending
+        }
+    }
+}
+struct FrameTransport {
+    dropped: Arc<AtomicUsize>,
+    frame: Arc<AtomicUsize>,
+}
+impl ModelHttpTransport for FrameTransport {
+    fn send(&self, _: Request<Full<Bytes>>) -> TransportFuture {
+        TransportFuture::ready(Ok(Response::new(
+            FrameBody {
+                _pending: NeverBody {
+                    dropped: self.dropped.clone(),
+                },
+                frame: self.frame.clone(),
+            }
+            .boxed(),
+        )))
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn body_idle_resets_and_drop_cancels_predecessor() {
+    let cases = fix_cases();
+    let case = cases
+        .iter()
+        .find(|c| c["spec"]["name"] == "body-idle-reset")
+        .unwrap();
+    assert_eq!(
+        case["expected"]["pendingAfterOriginalIdle"], true,
+        "TS idle reset witness"
+    );
+    let cancelled = cases
+        .iter()
+        .find(|c| c["spec"]["name"] == "cancel-body-after-frame")
+        .unwrap();
+    assert_eq!(
+        cancelled["expected"]["frameSent"], true,
+        "TS frame-before-cancel witness"
+    );
+    assert_eq!(
+        cancelled["expected"]["firstSocketDestroyed"], true,
+        "TS frame cancellation witness"
+    );
+    for timeout in [0, 400000] {
+        for cancel in [false, true] {
+            let mut spec = case["spec"].clone();
+            spec["timeout"] = json!(timeout);
+            let dropped = Arc::new(AtomicUsize::new(0));
+            let frame = Arc::new(AtomicUsize::new(0));
+            let transport = Arc::new(FrameTransport {
+                dropped: dropped.clone(),
+                frame: frame.clone(),
+            });
+            let extractor = LlmMemoryExtractor::new(
+                config(&spec, "http://fixture.invalid"),
+                transport,
+                Arc::new(Runtime::default()),
+            );
+            let input = fix_input(&spec);
+            let mut future = Box::pin(extractor.call_structured_json(&input));
+            assert!(
+                poll_once(future.as_mut()).await.is_none(),
+                "frame initial pending"
+            );
+            tokio::time::advance(Duration::from_secs(200)).await;
+            frame.store(1, Ordering::SeqCst);
+            assert!(
+                poll_once(future.as_mut()).await.is_none(),
+                "frame continuation pending"
+            );
+            tokio::time::advance(Duration::from_secs(150)).await;
+            assert!(
+                poll_once(future.as_mut()).await.is_none(),
+                "idle reset retains pending body"
+            );
+            if !cancel {
+                tokio::time::advance(Duration::from_secs(200)).await;
+                let error = poll_once(future.as_mut())
+                    .await
+                    .expect("frame bounded completion")
+                    .unwrap_err();
+                assert_eq!(
+                    error.message,
+                    JsString::from(if timeout == 0 {
+                        "terminated"
+                    } else {
+                        "probe request timed out after 400000ms"
+                    }),
+                    "frame idle versus absolute deadline"
+                );
+            }
+            drop(future);
+            assert_eq!(
+                dropped.load(Ordering::SeqCst),
+                1,
+                "frame predecessor released"
+            );
+        }
+    }
+    for case in cases
+        .iter()
+        .filter(|c| c["spec"]["cancel"] == true && c["spec"]["frameAt"].is_null())
+    {
+        assert_eq!(
+            case["expected"]["firstSocketDestroyed"], true,
+            "TS cancel socket witness"
+        );
+        let spec = fix_spec(&case["spec"]);
+        let runtime = Arc::new(Runtime::default());
+        let transport = transport(&spec, &runtime, true);
+        let extractor = LlmMemoryExtractor::new(
+            config(&spec, "http://fixture.invalid"),
+            transport.clone(),
+            runtime,
+        );
+        let input = fix_input(&spec);
+        let mut future = Box::pin(extractor.call_structured_json(&input));
+        assert!(
+            poll_once(future.as_mut()).await.is_none(),
+            "cancel predecessor pending"
+        );
+        drop(future);
+        tokio::time::advance(Duration::from_secs(1000)).await;
+        assert_eq!(
+            transport.dropped.load(Ordering::SeqCst),
+            1,
+            "cancel predecessor released"
+        );
+        assert_eq!(
+            transport.calls.load(Ordering::SeqCst),
+            1,
+            "cancel no successor"
+        );
+    }
+}
+#[test]
+#[ignore]
+fn regenerates_fix_r1_identically() {
+    baseline::regenerates_identically("edgeclaw-llm-fix-r1");
 }
