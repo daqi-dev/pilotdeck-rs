@@ -21,7 +21,7 @@ controls = [
  ('worker-slot', runner, 'let owner = self.owner.clone();', 'let owner: Option<Arc<dyn Send + Sync>> = None;', 'live_recording_accept_drop', 'worker owns active slot'),
  ('worker-lease', runner, 'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);', 'drop(lease);\n            let result = write(&recorder, &session, &turn);\n            drop(owner);', 'live_recording_complete_dispose', 'worker retains lease'),
  ('waiter-takes-transition', driver, 'self\n            .pending\n            .as_mut()', 'self\n            .pending\n            .take()', 'live_recording_accept_cancel', 'pending predecessor'),
- ('pending-payload', live, 'self.pending_event = Some((event, terminal));', 'self.pending_event = Some((if terminal { crate::metadata::object([("type", "turn_completed".into())]) } else { event }, terminal));', 'live_recording_complete_cancel', 'original payload survives cancelled next'),
+ ('pending-payload', live, 'self.pending_event = Some((event, terminal, receipt));', 'self.pending_event = Some((if terminal { crate::metadata::object([("type", "turn_completed".into())]) } else { event }, terminal, receipt));', 'live_recording_complete_cancel', 'original payload survives cancelled next'),
  ('terminal-releases-runner', live, '        self.recording.take();', '        // mutant retains recording', 'live_recording_complete_cancel', 'EOF stream releases slot'),
  ('accepted-marker', live, 'self.accepted = true;', 'self.accepted = false;', 'live_recording_complete_cancel', 'recording gate must precede delivery'),
  ('complete-dispatch', live, '_ if terminal && self.accepted =>', '_ if terminal && !self.accepted =>', 'live_recording_complete_cancel', 'recording gate must precede delivery'),
@@ -31,7 +31,7 @@ controls = [
 # Preflight payloads now come from the committed runner; completion preserves
 # the original sidecar payload. Mutate the delivery path each phase really uses.
 for phase, kind, field in [('start','turn_started','sessionId'),('accept','input_accepted','messages'),('complete','turn_completed','messages')]:
- old = 'self.pending_event = Some((event, terminal));' if phase == 'complete' else 'fn deliver_recorded(&mut self, event: JsValue) -> Result<Option<JsValue>, RuntimeError> {'
+ old = 'self.pending_event = Some((event, terminal, receipt));' if phase == 'complete' else 'fn deliver_recorded(&mut self, event: JsValue) -> Result<Option<JsValue>, RuntimeError> {'
  injection = f'let event = if event.get("type") == Some(&"{kind}".into()) {{ let mut fields = event.as_object().unwrap().clone(); fields.insert("{field}".into(), JsValue::Null); JsValue::Object(fields) }} else {{ event }};'
  new = injection + old if phase == 'complete' else old + injection
  for action in ['cancel', 'resubmit']:

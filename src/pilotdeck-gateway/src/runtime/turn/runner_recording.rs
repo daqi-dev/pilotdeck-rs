@@ -116,6 +116,7 @@ pub enum RecordingAction {
     Start,
     Accept(TurnInput),
     LoopFailed(JsValue),
+    Status(JsValue),
     Complete(JsValue),
     Fail(JsValue),
 }
@@ -142,6 +143,12 @@ impl Recording {
     pub fn runner(&self) -> Option<&TurnRunner> {
         self.runner.as_ref()
     }
+    pub(crate) fn callback_error(&self) -> Option<String> {
+        self.runner.as_ref()?.callback_error.clone()
+    }
+    pub(crate) fn take_callback_error(&mut self) -> Option<String> {
+        self.runner.as_mut()?.callback_error.take()
+    }
     pub fn begin(&mut self, action: RecordingAction) -> RecorderResult<()> {
         if self.pending.is_some() {
             return Err(RecorderError::State(
@@ -157,6 +164,7 @@ impl Recording {
                 RecordingAction::Start => runner.start().await,
                 RecordingAction::Accept(input) => runner.accept(input).await,
                 RecordingAction::LoopFailed(error) => runner.loop_failed(error).await,
+                RecordingAction::Status(event) => runner.loop_status(event).await,
                 RecordingAction::Complete(result) => runner.complete(result).await,
                 RecordingAction::Fail(error) => runner.fail(error).await,
             }

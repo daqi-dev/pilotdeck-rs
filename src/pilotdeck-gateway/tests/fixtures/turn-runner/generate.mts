@@ -60,13 +60,13 @@ const [{TurnRunner}, , {AgentSessionEventRecorder}, {JsonlTranscriptWriter}, {Se
 const now = () => new Date('2026-10-26T00:00:00.000Z');
 mkdirSync(output, {recursive:true});
 writeFileSync(join(output, '.generation-owner'), 'turn-runner\n', {flag:'wx'});
-function writerFor(name: string, fault = '', failures = 0) {
+function writerFor(name: string, fault = '', failures = 0, errorMessage = 'injected write failure') {
   const path = join(output, `${name}.jsonl`);
   writeFileSync(path, '', {flag:'wx'});
   let ids = 0, attempts = 0;
   const runtime = new SessionRuntime({now, uuid:() => `id-${++ids === 2 && name === 'accepted-duplicate' ? 1 : ids}`});
   const persistence = new JsonlSessionPersistence({path});
-  runtime.subscribe(entry => {if (entry.type === fault && ++attempts <= failures) throw new Error('injected write failure');
+  runtime.subscribe(entry => {if (entry.type === fault && ++attempts <= failures) throw new Error(errorMessage);
     return persistence.append(entry);}, {failureMode:'propagate', flush:() => persistence.flush()});
   const writer = new JsonlTranscriptWriter({path, eventStore:runtime});
   return {writer, attempts:()=>attempts, bytes:()=>{try{return readFileSync(path,'utf8');}catch{return '';}}};
@@ -152,6 +152,121 @@ for (const name of ['success','start-fails','accepted-fails','abort-before-execu
   }}catch(e:any){error=e.message;}
   matrix.push({name,...(invalidResult?{rawResult:malformedResult(name),...(malformedResult(name)===undefined?{rawResultUndefined:true}:{}),...(name.startsWith('invalid-result-turn-undefined-')?{rawTurnUndefined:true}:{}),openStep:name.endsWith('-step')}:{}),...(catchCases.includes(name)?{rawResult:result('error',name.startsWith('loop-failed-invalid-')?'other':'t'),openStep:name.endsWith('-step')}:{}),...(messageCase?{failureError,failureMessageUndefined:Object.hasOwn(failureError,'message') && failureError.message===undefined,statusTextOwn:events.filter(e=>e.type==='agent_status').map(e=>Object.hasOwn(e,'text')),statusTextUndefined:events.filter(e=>e.type==='agent_status').map(e=>e.text===undefined)}:{}),events,error,loopCalls,modelCalls,returns,completes,closes,writeAttempts:ctx.attempts(),transcript:ctx.bytes(),...(inputCase?{rawInput,history,synthetic,loopMessages}: {}),...(inputCase?{submitOptions}: {})});
 }
+// Execute the baseline's exact status normalizer; do not reimplement the oracle.
+const sidecarSource=readFileSync(join(root,'src/agent/modules/transport/agentLoopSidecarClient.ts'),'utf8');
+const statusSource=sidecarSource.slice(sidecarSource.indexOf('function sidecarStatusMessage('),sidecarSource.indexOf('function serializeTransportError('));
+const {sidecarStatusMessage}=await import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(statusSource+'\nexport {sidecarStatusMessage};', {compilerOptions:{target:ts.ScriptTarget.ESNext,module:ts.ModuleKind.ESNext}}).outputText).toString('base64'));
+const forward:any[]=[];
+const agentEventSource=readFileSync(join(root,'src/agent/protocol/events.ts'),'utf8').split('export type AgentEventEmitter')[0];
+const eventTypes=[...agentEventSource.matchAll(/type: "([a-z_]+)"/g)].map(m=>m[1]);
+const ordinary=eventTypes.filter(t=>!['turn_started','input_accepted','turn_completed','turn_failed','file_artifacts','agent_status'].includes(t));
+const ev=(type:string,extra:any={})=>({type,sessionId:'s',turnId:'t',moduleId:'loop',timeline:{epoch:0,order:7},streamBoundary:{marker:'raw'},extra:{keep:[null,'x'],startedAt:'keep',nested:{type:'turn_completed',messages:['keep'],completedAt:'keep'}},...extra});
+const failure=()=>ev('turn_failed',{error:{code:'agent_invalid_state',message:'loop failed'}});
+const status=(extra:any={})=>ev('agent_status',{event:'custom',...extra});
+const definitions:any[]=[...ordinary.map(t=>({name:`event_${t}`,inputs:[{event:ev(t,{phase:"first"}),wire:true},{event:ev(t,{phase:"following"}),wire:true},{event:failure(),wire:true},{event:ev(t,{phase:"after_failure"}),wire:true}]})),
+  {name:'artifacts',inputs:[{event:ev('file_artifacts',{artifacts:[{path:'ignored'}]}),wire:true}]},
+  {name:'completed',inputs:[{event:ev('turn_completed',{result:result()}),wire:true},{event:ev('warning'),wire:true}]},
+  {name:'failed_twice',inputs:[{event:failure(),wire:true},{event:failure(),wire:true}]},
+  ...Object.entries({explicit:{kind:'error'},normal:{kind:'status'},turn_failed:{kind:'error',event:'turn_failed'},hidden:{kind:'error',detail:{visible:false}},
+    severity:{detail:{severity:'error',message:'detail text'}},nullish:{kind:null,text:null,event:'model_request_failed',detail:{message:'detail text'}},
+    text:{kind:'error',text:'explicit',detail:{message:'unused'}},text_empty:{text:''},text_false:{text:false},text_zero:{text:0},kind_false:{kind:false,event:'model_request_failed'},kind_zero:{kind:0,event:'model_request_failed'},detail_null:{detail:null},empty_kind:{kind:'',event:'model_request_failed'},numeric_message:{detail:{message:3}},
+    ...Object.fromEntries(['max_budget_reached','task_budget_reached','model_request_failed','tool_call_recovery_exhausted','max_turns_reached','max_output_recovery_exhausted','empty_response','content_filter','unknown_finish_reason'].map(event=>[`implicit_${event}`,{event}]))})
+    .map(([name,extra])=>({name:`status_${name}`,inputs:[{event:status(extra),wire:true},{event:failure(),wire:true}]})),
+  {name:'host_status',inputs:[{event:status({kind:'error'}),wire:false},{event:failure(),wire:true}]},
+  ...['host','pump'].map(source=>({name:`malformed_${source}`,source,inputs:[{event:ev('turn_failed',{error:null}),wire:false}]})),
+  {name:'status_after_failed',inputs:[{event:failure(),wire:true},{event:status({kind:'error'}),wire:true},{event:failure(),wire:true}]},
+  {name:'status_write_error',fault:'agent_status_message',inputs:[{event:status({kind:'error'}),wire:true}]},
+  ...['null','missing'].flatMap(kind=>[false,true].map(visible=>({name:`malformed_${kind}_${visible?'visible':'first'}`,inputs:[...(visible?[{event:status({kind:'error'}),wire:true}]:[]),{event:ev('turn_failed',kind==='null'?{error:null}:{}),wire:true}]}))),
+  ...['complete_once','invalid_idle','invalid_step'].map(name=>({name:`catch_${name}`,fault:name==='complete_once'?'turn_result':'',inputs:[{event:failure(),wire:true}]}))];
+for(const def of definitions) {
+  const ctx=writerFor(`forward-${def.name}`,def.fault??'',1,'recording write failed'), recorder=new AgentSessionEventRecorder(ctx.writer);
+  const r=result(def.inputs.some((i:any)=>i.event.type==='turn_failed')?'error':'success',def.name.startsWith('catch_invalid')?'other':'t');
+  const loop={async *run(input:any){
+    if(def.name==='catch_invalid_step')await recorder.recordModelRequest('s','t',{request:{messages:[]}});
+    for(const item of def.inputs) {
+      if(item.wire && item.event.type==='agent_status')await input.onAgentStatusMessage(sidecarStatusMessage(item.event));
+      yield item.event;
+    }
+    if(def.name!=='completed')yield {type:'turn_completed',sessionId:'s',turnId:'t',result:r};
+    return {result:r,messages:input.messages};
+  }};
+  const runner=new TurnRunner(loop,ctx.writer,undefined,now,undefined,{cwd:output,transcriptPath:'',collectFileArtifacts:false},{eventRecorder:recorder});
+  const events:any[]=[];
+  for await(const event of runner.run({sessionId:'s',turnId:'t',messages:[],input:{type:'text',text:'probe'}}))events.push(event);
+  forward.push({...def,result:r,events,transcript:ctx.bytes(),consumption:{test:`forward_${def.name}`,scope:def.name==='completed'?'strict guard retained; end-to-end pending pr5d':'real TurnRunner + sidecarStatusMessage, StreamHandler/LiveTurnStream replay'}});
+}
+// A status writer is an explicit predecessor: neither next nor return overtakes it.
+for(const name of ['status_cancel','status_drop']) {
+  const ctx=writerFor(`forward-${name}`), before=ctx.writer.recordAgentStatusMessage.bind(ctx.writer);
+  let enter!:()=>void, release!:()=>void;
+  const entered=new Promise<void>(r=>enter=r), gate=new Promise<void>(r=>release=r);
+  let writes=0,closed=false;
+  ctx.writer.recordAgentStatusMessage=async(...args:any[])=>{writes++;enter();await gate;return before(...args);};
+  const loop={async *run(input:any){try{const event=status({kind:'error'});await input.onAgentStatusMessage(sidecarStatusMessage(event));yield event;return {result:result(),messages:input.messages};}finally{closed=true;}}};
+  const runner=new TurnRunner(loop,ctx.writer,undefined,now,undefined,{cwd:output,transcriptPath:'',collectFileArtifacts:false});
+  const it=runner.run({sessionId:'s',turnId:'t',messages:[],input:{type:'text',text:'probe'}});
+  const timer=setTimeout(()=>{console.error(`forward ${name}: gate timeout`);process.exit(1);},20000);
+  try {
+    for(let i=0;i<3;i++)await it.next();
+    let first=false,second=false;
+    const pending=it.next().then(n=>{first=true;return n;});await entered;
+    const next=(name==='status_drop'?it.return(undefined):it.next()).then(n=>{second=true;return n;});
+    for(let i=0;i<100;i++)await Promise.resolve();
+    assert.equal(first,false);assert.equal(second,false);assert.equal(writes,1);assert.equal(closed,false);
+    release();const delivered=await pending;await next;await it.return(undefined);
+    assert.equal(delivered.value.type,'agent_status');assert.equal(writes,1);assert.equal(closed,true);
+    forward.push({name,pending:{first:false,second:false,writes:1,closed:false},after:{writes,closed,type:delivered.value.type},consumption:{test:`forward_${name}`,scope:'TS queued next/return; Rust cancelled borrow/drop retain blocking owner; Drop difference inherited from pr5b'}});
+  }finally{clearTimeout(timer);}
+}
+// The real client owns callback/yield/ACK ordering; the connection only supplies frames.
+const {createAgentLoopSidecarRuntimeFactory}=await load('agent/modules/transport/agentLoopSidecarClient.ts');
+function ackGate(){let resolve!:(v?:any)=>void;const promise=new Promise<any>(r=>resolve=r);return {promise,resolve};}
+for(const reject of [false,true]) {
+  const name=reject?'status_receipt_failure':'status_receipt_success';
+  const entered=ackGate(),release=ackGate(),sent:any[]=[],incoming:any[]=[];let waiter:any,closed=0,callbacks=0;
+  const hostEvents=[status({event:'host-probe',kind:'error'})];
+  const push=(value:any)=>{if(waiter){const r=waiter;waiter=undefined;r({value,done:false});}else incoming.push(value);};
+  const binding={protocolVersion:'2.0',moduleId:'fixture',moduleInstanceId:'instance',connectionGeneration:'current',capabilitiesVersion:'v1'};
+  const connection={send(m:any){sent.push(m);const reply={kind:'response',messageId:'response-'+m.messageId,inReplyTo:m.messageId,ok:true};
+    if(m.method==='hello')push({...reply,...binding});
+    if(m.method==='capabilities')push({...reply,...binding,payload:{capabilitiesVersion:'v1',methods:[{name:'execute',profiles:['streaming'],resumeSupport:'streaming'},{name:'resume'},{name:'ack'}]}});
+    if(m.method==='execute'){push({...reply,requestId:m.requestId,streamId:'stream'});const ids={runId:m.runId,operationId:m.operationId,requestId:m.requestId};
+      push({kind:'event',eventType:'agent_event',streamId:'stream',...ids,sequence:0,final:false,payload:{type:'agent_status',sessionId:'s',turnId:'t',event:'custom',kind:'error',text:'failure'}});
+      push({kind:'event',eventType:'agent_event',streamId:'stream',...ids,sequence:1,final:true,outcome:'completed',payload:{result:result(),messages:[]}});
+    }
+  },receive(){return {[Symbol.asyncIterator](){return this;},next():Promise<any>{return incoming.length?Promise.resolve({value:incoming.shift(),done:false}):new Promise(r=>waiter=r);}};},close(){closed++;}};
+  const context={permissionContext:()=>({}),toolRuntimeContext:()=>({}),executionContext:()=>({})};
+  const modules={event:{drain:()=>hostEvents.splice(0)},model:{execution:{}},capability:{runtimeContext:{bindTurn:()=>context},execution:{list:()=>[]}},permission:{requestContext:{bindTurn:()=>context}},context:{requestIdentity:{bindTurn:()=>({contextIdentity:()=>({})})}}};
+  const factory=createAgentLoopSidecarRuntimeFactory({connect:async()=>connection,uuid:()=> 'id',turnComposition:()=>({forTurn:()=>({moduleHandlers:{}})})});
+  const runner=factory({config:{cwd:output,permissionMode:'default'},capabilities:{transport:{}},sidecarModules:modules} as any);
+  const iterator=runner.run({sessionId:'s',turnId:'t',messages:[],execution:{runId:'run',operationId:'operation'},onAgentStatusMessage:async()=>{callbacks++;entered.resolve();await release.promise;if(reject)throw new Error('status write failed');}});
+  const acks=()=>sent.filter(x=>x.method==='ack');
+  const timer=setTimeout(()=>{console.error(`${name}: gate timeout`);process.exit(1);},5000);
+  try {
+    const host=(await iterator.next()).value;assert.equal(host.type,'agent_status');assert.equal(host.event,'host-probe');assert.equal(callbacks,0);
+    const first=iterator.next();await entered.promise;assert.equal(callbacks,1);assert.equal(acks().length,0);release.resolve();
+    if(reject){await assert.rejects(first,/status write failed/);assert.equal(acks().length,0);}
+    else {assert.equal((await first).value.type,'agent_status');assert.equal(acks().length,0);assert.equal((await iterator.next()).value.type,'turn_completed');await iterator.next();assert.equal(acks().length,1);}
+    writeFileSync(join(output,`${name}-raw.json`),JSON.stringify({sent,closed,hostStatusCallbacks:0,totalStatusCallbacks:callbacks},null,2)+'\n',{flag:'wx'});
+    forward.push({name,reject,pendingAcks:0,acks:acks().map(a=>a.lastAppliedSequence),closed,consumption:{test:`forward_${name}`,scope:'real TS client ACK; Rust real HostClient callback/applied cursor with existing peer'}});
+  }finally{clearTimeout(timer);}
+}
+// An iterator's asynchronous finally must finish before catch completes the turn.
+{
+  const name='pump_error_cleanup',ctx=writerFor(name),entered=ackGate(),release=ackGate();let closed=false,completes=0;
+  const recorder=new AgentSessionEventRecorder(ctx.writer);const complete=recorder.completeTurn.bind(recorder);recorder.completeTurn=async(...args:any[])=>{assert.equal(closed,true);completes++;return complete(...args);};
+  const loop={async *run(){try{throw new Error('pump failed');}finally{entered.resolve();await release.promise;closed=true;}}};
+  const runner=new TurnRunner(loop,ctx.writer,undefined,now,undefined,{cwd:output,transcriptPath:'',collectFileArtifacts:false},{eventRecorder:recorder});
+  const iterator=runner.run({sessionId:'s',turnId:'t',messages:[],input:{type:'text',text:'probe'}});
+  const timer=setTimeout(()=>{console.error(`${name}: cleanup timeout`);process.exit(1);},5000);
+  try{
+    for(let i=0;i<3;i++)await iterator.next();
+    let resolved=false;const pending=iterator.next().then(n=>{resolved=true;return n;});await entered.promise;
+    assert.equal(resolved,false);assert.equal(completes,0);release.resolve();await pending;while(!(await iterator.next()).done){}
+    assert.equal(completes,1);
+    forward.push({name,pendingCompletes:0,closed,completes,consumption:{test:`forward_${name}`,scope:'real TurnRunner awaits loop finally; Rust pump joins owned execute cleanup'}});
+  }finally{clearTimeout(timer);}
+}
 // Recorder completion is independently replayable in Rust, including retry state.
 const recorderCases:any[]=[];
 for(const name of ['success','error','aborted','max_turns','no-step','unstarted','step-once','result-once','result-always','new-turn','restore','restart-fails',
@@ -217,9 +332,11 @@ for(const row of matrix) row.consumption = matrixConsumers[row.name]
 for(const row of matrix) if (/^invalid-result-(session|number|array|missing-turn|missing-session|turn-undefined)-/.test(row.name))
   row.consumption = {status:'差异已登记，非 TS 对齐',test:matrixConsumers[row.name],scope:'raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001'};
 for(const row of sidecar) row.consumption = {status:'仅记录，由 pr3 消费',plannedTest:`live_sidecar_${row.name.replaceAll('-','_')}`,scope:'real TS sidecar + Rust host; approved differences require separate acceptance'};
-verifyConsumers([...matrix,...sidecar], ['runner_tests.rs','live_stream_tests.rs'].map(file=>join(dirname(fileURLToPath(import.meta.url)),'../../../src/runtime/turn',file)));
+verifyConsumers([...matrix,...sidecar,...forward], ['runner_tests.rs','live_stream_tests.rs','forward_tests.rs'].map(file=>join(dirname(fileURLToPath(import.meta.url)),'../../../src/runtime/turn',file)));
 assertBaseline(root);
-writeFileSync(join(output,'oracle.json'), JSON.stringify({sourceCommit,sourceSha256,matrix,recorderCases,sidecar},null,2)+'\n',{flag:'wx'});
+writeFileSync(join(output,'oracle.json'), JSON.stringify({sourceCommit,sourceSha256,matrix,recorderCases,sidecar,forward},null,2)+'\n',{flag:'wx'});
 for(const row of matrix)console.log(JSON.stringify({name:row.name,events:row.events.map((e:any)=>e.type),error:row.error,
   completes:row.completes,loopCalls:row.loopCalls,modelCalls:row.modelCalls,returns:row.returns}));
 console.log(JSON.stringify({sidecar},null,2));
+
+for(const row of forward)console.log(JSON.stringify(row));

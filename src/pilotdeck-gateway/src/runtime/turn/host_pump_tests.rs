@@ -36,7 +36,13 @@ async fn advance<T>(task: &mut HostFuture<T>, ms: u64) {
     tokio::time::advance(Duration::from_millis(ms)).await;
     assert_pending(task).await;
 }
-async fn opened(capacity: usize) -> (Arc<Handler>, Arc<StreamHandler>, mpsc::Receiver<JsValue>) {
+async fn opened(
+    capacity: usize,
+) -> (
+    Arc<Handler>,
+    Arc<StreamHandler>,
+    mpsc::Receiver<ForwardedEvent>,
+) {
     let (inner, handler, mut rx) = buffered_handler(capacity);
     deliver(&handler, &host_event("turn_started"), false)
         .await
@@ -83,7 +89,7 @@ async fn host_pump_idle_reset_and_heartbeat_oracle() {
                 advance(&mut task, 1).await;
             }
             elapsed = at;
-            assert_eq!(&rx.try_recv().unwrap(), event, "{name} at {at}");
+            assert_eq!(&rx.try_recv().unwrap().0, event, "{name} at {at}");
         }
         if name == "interleave" {
             advance(&mut task, 2000).await;
@@ -117,12 +123,12 @@ async fn host_pump_pending_callback_does_not_hold_batches() {
     assert!(rx.try_recv().is_err());
     advance(&mut task, 1).await;
     assert_pending(&mut callback).await;
-    assert_eq!(rx.try_recv().unwrap(), *trace[0].get("event").unwrap());
+    assert_eq!(rx.try_recv().unwrap().0, *trace[0].get("event").unwrap());
     assert_pending(&mut task).await;
-    assert_eq!(rx.try_recv().unwrap(), *trace[1].get("event").unwrap());
+    assert_eq!(rx.try_recv().unwrap().0, *trace[1].get("event").unwrap());
     queue_host_events(&inner, &[trace[2].get("event").unwrap().clone()]);
     advance(&mut task, 500).await;
-    assert_eq!(rx.try_recv().unwrap(), *trace[2].get("event").unwrap());
+    assert_eq!(rx.try_recv().unwrap().0, *trace[2].get("event").unwrap());
     assert_pending(&mut callback).await;
 }
 
@@ -155,12 +161,12 @@ async fn host_pump_wire_predecessor_cancel_and_drop_are_bounded() {
                 .event(wire(&host_event("input_accepted"), false))
                 .await
                 .unwrap();
-            assert_eq!(rx.try_recv().unwrap(), host_event("input_accepted"));
+            assert_eq!(rx.try_recv().unwrap().0, host_event("input_accepted"));
             assert_pending(&mut task).await;
             advance(&mut task, 499).await;
             assert!(rx.try_recv().is_err());
             advance(&mut task, 1).await;
-            assert_eq!(rx.try_recv().unwrap(), host_event("background"));
+            assert_eq!(rx.try_recv().unwrap().0, host_event("background"));
             drop(guard);
             done.send(Ok(ExecuteResult::Aborted { terminal: None }))
                 .unwrap();
@@ -170,7 +176,7 @@ async fn host_pump_wire_predecessor_cancel_and_drop_are_bounded() {
             // any surviving predecessor; covered also by existing splice tests.
             drop(guard);
             assert_pending(&mut task).await;
-            assert_eq!(rx.try_recv().unwrap(), host_event("background"));
+            assert_eq!(rx.try_recv().unwrap().0, host_event("background"));
             done.send(Ok(ExecuteResult::Aborted { terminal: None }))
                 .unwrap();
             task.await.unwrap();
@@ -212,7 +218,7 @@ async fn host_pump_finish_cancel_drop_stop_draining() {
                 assert_pending(&mut task).await;
                 queue_host_events(&inner, &[host_event("during_cancel")]);
                 advance(&mut task, 500).await;
-                assert_eq!(rx.try_recv().unwrap(), host_event("during_cancel"));
+                assert_eq!(rx.try_recv().unwrap().0, host_event("during_cancel"));
             }
             if name == "finish" {
                 queue_host_events(&inner, &[case(name)[0].get("event").unwrap().clone()]);
@@ -234,7 +240,10 @@ async fn host_pump_finish_cancel_drop_stop_draining() {
                 .unwrap();
             task.await.unwrap();
             if name == "finish" {
-                assert_eq!(rx.try_recv().unwrap(), *case(name)[0].get("event").unwrap());
+                assert_eq!(
+                    rx.try_recv().unwrap().0,
+                    *case(name)[0].get("event").unwrap()
+                );
             }
         }
         queue_host_events(&inner, &[host_event("after_stop")]);
