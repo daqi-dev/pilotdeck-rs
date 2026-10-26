@@ -49,12 +49,19 @@ mutants = [
     ('durable-construction-catch', pub, re.escape('let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));'), 'let future: Result<_, Box<dyn std::any::Any + Send>> = Ok(registry.append(&self.run, &event));', construction, 'injected construction panic'),
     ('durable-construction-fifo', pub, re.escape('let _ = previous.await;'), 'drop(previous);', construction, 'construction successor cannot overtake pending predecessor'),
     ('durable-payload-cleanup', pub, r'(?P<cleanup>            let mut state = lock\(&publication.state\);.*?let _ = done.send\(\(\)\);\n)            drop\(panic_payload\);', r'            drop(panic_payload);\n\g<cleanup>', 'durable_panic_payload_drop_runs_after_cleanup', 'spawn completion deadline'),
-    ('background-construction', background, r'let initial_snapshot = std::panic::catch_unwind\(std::panic::AssertUnwindSafe\(\|\| \{(?P<body>.*?)\n        \}\)\);', r'let initial_snapshot: Result<_, Box<dyn std::any::Any + Send>> = Ok({\g<body>\n        });', reservation, 'injected construction panic'),
-    ('background-capacity', background, re.escape('self.inner.state.lock().unwrap().pending_starts -= 1;'), 'let _ = &self.inner;', reservation, 'construction reservation matrix'),
-    ('background-start-drain', background, r'(?m)^                self\.inner\.starts\.send_modify\(\|starts\| \*starts -= 1\);', '                let _ = &self.inner.starts;', reservation, 'construction dispose deadline'),
+    ('background-construction', background, re.escape('match std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback)) {'), 'match Ok::<_, Box<dyn std::any::Any + Send>>(callback()) {', reservation, 'injected construction panic'),
+    ('background-capacity', background, re.escape('lock(&self.inner.state).pending_starts -= 1;'), 'let _ = &self.inner;', reservation, 'construction reservation matrix'),
+    ('background-start-drain', background, r'(?m)^        self\.inner\.starts\.send_modify\(\|starts\| \*starts -= 1\);', '        let _ = &self.inner.starts;', reservation, 'construction dispose deadline'),
     ('background-str-payload', background, r'let message = payload\s*\.downcast_ref::<&str>\(\)\s*\.copied\(\)', 'let message = None::<&str>', reservation, 'construction panic error'),
     ('background-owned-payload', background, re.escape('.or_else(|| payload.downcast_ref::<String>().map(String::as_str))'), '', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
-    ('background-fallback', background, re.escape('.unwrap_or("Background initial snapshot construction failed.")'), '.unwrap_or("wrong fallback")', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
+    ('background-fallback', background, re.escape('            "Background initial snapshot construction failed.",'), '            "wrong fallback",', 'initial_snapshot_construction_panic_payloads', 'construction panic payload'),
+    ('clock-catch', background, re.escape('match std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback)) {'), 'match Ok::<_, Box<dyn std::any::Any + Send>>(callback()) {', 'clock_start_panic_releases_reservations_and_observers', 'injected clock panic'),
+    ('clock-locked', background, re.escape('started_at: reservation.call(|| (self.inner.now)(), "Background clock failed.")?,'), 'started_at: reservation.call(|| { let _state = lock(&self.inner.state); (self.inner.now)() }, "Background clock failed.")?,', 'clock_start_panic_releases_reservations_and_observers', 'WouldBlock'),
+    ('clock-payload-order', background, re.escape('                self.release();'), '                let _ = self;', 'clock_start_payload_drop_happens_after_release', 'payload sees released starts'),
+    ('clock-pending-snapshot', background, re.escape('        let task = result?;'), '', 'clock_start_failure_does_not_wait_for_snapshot', 'clock pending snapshot deadline'),
+    ('clock-transfer', background, re.escape('        reservation.pending = false;'), '        reservation.pending = true;', 'clock_start_panic_releases_reservations_and_observers', 'attempt to subtract with overflow'),
+    ('clock-idempotent', background, re.escape('        if self.released {\n            return;\n        }'), '', 'clock_start_panic_releases_reservations_and_observers', 'attempt to subtract with overflow'),
+    ('clock-drop', background, re.escape("impl Drop for StartReservation<'_> {\n    fn drop(&mut self) {\n        self.release();"), "impl Drop for StartReservation<'_> {\n    fn drop(&mut self) {\n        let _ = self;", 'clock_start_panic_releases_reservations_and_observers', 'clock dispose deadline'),
     ('construction-matrix', fixture, None, 'construct-', 'construction_oracle_has_exact_matrix', 'complete construction matrix'),
     ('construction-duplicate', fixture, None, 'construct-', 'construction_oracle_has_exact_matrix', 'complete construction matrix'),
     ('shared-matrix', fixture, None, 'shared-', shared, 'complete shared matrix'),
@@ -94,6 +101,9 @@ for name, relative, pattern, replacement, test, anchor in mutants:
         else:
             changed, count = re.subn(pattern, replacement, content, flags=re.S)
             assert count == 1, (name, count)
+        if name == 'clock-pending-snapshot':
+            changed, count = re.subn(re.escape('        Ok(task)\n    }\n\n    fn insert('), '        result\n    }\n\n    fn insert(', changed)
+            assert count == 1, (name, 'return anchor', count)
         path.write_text(changed)
         result, log = run(test, name)
         assert result.returncode == 101 and f'{test} ... FAILED' in log and any(part in log for part in anchor.split('|')) and 'test result: FAILED' in log, (name, 'not an anchored runtime failure')

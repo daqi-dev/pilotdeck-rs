@@ -67,6 +67,8 @@ use std::{
 };
 use tokio::{io::AsyncReadExt, sync::watch};
 
+use super::cleanup_task::lock;
+
 mod output;
 use output::OutputStore;
 
@@ -279,6 +281,51 @@ struct Inner {
     disk_spill_dir: Option<std::path::PathBuf>,
     snapshot_store:
         Option<Arc<dyn crate::runtime::background_snapshot::BackgroundTaskSnapshotStore>>,
+}
+
+/// Own both counters before calling any injectable port. Publication consumes
+/// capacity under the same lock; every other exit releases it here.
+struct StartReservation<'a> {
+    inner: &'a Inner,
+    pending: bool,
+    released: bool,
+}
+impl StartReservation<'_> {
+    fn release(&mut self) {
+        if self.released {
+            return;
+        }
+        if self.pending {
+            lock(&self.inner.state).pending_starts -= 1;
+        }
+        self.inner.starts.send_modify(|starts| *starts -= 1);
+        self.released = true;
+    }
+
+    fn call<T>(
+        &mut self,
+        callback: impl FnOnce() -> T,
+        fallback: &str,
+    ) -> Result<T, BackgroundTaskError> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback)) {
+            Ok(value) => Ok(value),
+            Err(payload) => {
+                // Even a payload whose destructor panics cannot strand starts.
+                self.release();
+                let message = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or(fallback);
+                Err(BackgroundTaskError::error(JsString::from(message)))
+            }
+        }
+    }
+}
+impl Drop for StartReservation<'_> {
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 
 /// `StartTaskSpec`. `env: None` inherits the gateway's environment, like
@@ -510,8 +557,8 @@ impl BackgroundTaskRuntime {
         &self,
         spec: StartTaskSpec,
     ) -> Result<BackgroundBashTask, BackgroundTaskError> {
-        let (task_id, entry) = {
-            let mut state = self.inner.state.lock().unwrap();
+        let mut reservation = {
+            let mut state = lock(&self.inner.state);
             if state.phase != Phase::Active {
                 return Err(BackgroundTaskError::error(JsString::from(
                     format!(
@@ -541,78 +588,77 @@ impl BackgroundTaskRuntime {
                 )));
             }
             self.inner.starts.send_modify(|starts| *starts += 1);
-            let task_id = JsString::from(uuid::Uuid::new_v4().to_string().as_str());
-            let task = BackgroundBashTask {
-                task_id: task_id.clone(),
-                agent_id: spec.agent_id.clone(),
-                session_id: spec.session_id.clone(),
-                kind: match &spec.kind {
-                    JsValue::Undefined | JsValue::Null => JsValue::from("bash"),
-                    kind => kind.clone(),
-                },
-                command: spec.command.clone(),
-                cwd: JsValue::String(spec.cwd.clone()),
-                pid: None,
-                status: TaskStatus::Pending,
-                exit_code: None,
-                interrupted: false,
-                started_at: (self.inner.now)(),
-                ended_at: None,
-                output_bytes: 0,
-            };
             state.pending_starts += 1;
-            (task_id, task)
+            StartReservation {
+                inner: &self.inner,
+                pending: true,
+                released: false,
+            }
+        };
+        let task_id = JsString::from(uuid::Uuid::new_v4().to_string().as_str());
+        let entry = BackgroundBashTask {
+            task_id: task_id.clone(),
+            agent_id: spec.agent_id.clone(),
+            session_id: spec.session_id.clone(),
+            kind: match &spec.kind {
+                JsValue::Undefined | JsValue::Null => JsValue::from("bash"),
+                kind => kind.clone(),
+            },
+            command: spec.command.clone(),
+            cwd: JsValue::String(spec.cwd.clone()),
+            pid: None,
+            status: TaskStatus::Pending,
+            exit_code: None,
+            interrupted: false,
+            started_at: reservation.call(|| (self.inner.now)(), "Background clock failed.")?,
+            ended_at: None,
+            output_bytes: 0,
         };
         // Queue the initial metadata before spawning can produce output or
         // settle the task. Pending is recoverable as Unknown after a crash.
-        let initial_snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.inner.snapshot_store.as_ref().map(|store| {
-                use crate::runtime::background_snapshot::{
-                    PersistedBackgroundTask, PersistedOutput, persist_task,
-                };
-                store.write(PersistedBackgroundTask {
-                    task: persist_task(&entry),
-                    output: PersistedOutput {
-                        total_bytes: 0,
-                        persisted: false,
-                    },
+        let initial_snapshot = reservation.call(
+            || {
+                self.inner.snapshot_store.as_ref().map(|store| {
+                    use crate::runtime::background_snapshot::{
+                        PersistedBackgroundTask, PersistedOutput, persist_task,
+                    };
+                    store.write(PersistedBackgroundTask {
+                        task: persist_task(&entry),
+                        output: PersistedOutput {
+                            total_bytes: 0,
+                            persisted: false,
+                        },
+                    })
                 })
-            })
-        }));
-        let initial_snapshot = match initial_snapshot {
-            Ok(snapshot) => snapshot,
-            Err(payload) => {
-                // No child or entry exists yet. Release capacity before waking
-                // dispose's start-drain observers, like TS start's finally.
-                self.inner.state.lock().unwrap().pending_starts -= 1;
-                self.inner.starts.send_modify(|starts| *starts -= 1);
-                let message = payload
-                    .downcast_ref::<&str>()
-                    .copied()
-                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                    .unwrap_or("Background initial snapshot construction failed.");
-                return Err(BackgroundTaskError::error(JsString::from(message)));
-            }
-        };
+            },
+            "Background initial snapshot construction failed.",
+        )?;
         #[cfg(test)]
         if let Some(before_spawn) = &self.before_spawn {
             before_spawn();
         }
-        let result = self.spawn_task(task_id, entry, spec);
-        self.inner.starts.send_modify(|starts| *starts -= 1);
+        let result = self.spawn_task(task_id, entry, spec, &mut reservation);
+        drop(reservation);
+        let task = result?;
         // Release the start reservation before awaiting: dropping the caller
         // must not strand dispose(), and the store owns the accepted write.
         if let Some(snapshot) = initial_snapshot {
             let _ = snapshot.await;
         }
-        result
+        Ok(task)
     }
 
-    fn insert(&self, task_id: &JsString, entry: Entry) -> Arc<Entry> {
+    fn insert(
+        &self,
+        reservation: &mut StartReservation<'_>,
+        task_id: &JsString,
+        entry: Entry,
+    ) -> Arc<Entry> {
         let entry = Arc::new(entry);
-        let mut state = self.inner.state.lock().unwrap();
+        let mut state = lock(&self.inner.state);
         state.entries.push((task_id.clone(), Arc::clone(&entry)));
         state.pending_starts -= 1;
+        reservation.pending = false;
         entry
     }
 
@@ -621,6 +667,7 @@ impl BackgroundTaskRuntime {
         task_id: JsString,
         task: BackgroundBashTask,
         spec: StartTaskSpec,
+        reservation: &mut StartReservation<'_>,
     ) -> Result<BackgroundBashTask, BackgroundTaskError> {
         // The child state is installed before the entry is published, so a
         // concurrent `stop` can never observe a running entry with no handle.
@@ -683,6 +730,7 @@ impl BackgroundTaskRuntime {
                 let mut task = task;
                 task.status = TaskStatus::Running;
                 let entry = self.insert(
+                    reservation,
                     &task_id,
                     new_entry(
                         task,
@@ -702,8 +750,9 @@ impl BackgroundTaskRuntime {
             Err((false, message)) => {
                 let mut task = task;
                 task.status = TaskStatus::Failed;
-                task.ended_at = Some((self.inner.now)());
-                let entry = self.insert(&task_id, new_entry(task, false, None));
+                task.ended_at =
+                    Some(reservation.call(|| (self.inner.now)(), "Background clock failed.")?);
+                let entry = self.insert(reservation, &task_id, new_entry(task, false, None));
                 let text = concat(&[&units("spawn error: "), message.units(), &units("\n")]);
                 entry.append(String::from_utf16_lossy(text.units()).as_bytes());
                 self.inner.settle(&entry);
@@ -716,6 +765,7 @@ impl BackgroundTaskRuntime {
                 task.status = TaskStatus::Running;
                 task.pid = pid;
                 let entry = self.insert(
+                    reservation,
                     &task_id,
                     new_entry(
                         task,
@@ -1732,6 +1782,299 @@ mod tests {
             agent_id: "a".into(),
             kind: JsValue::Undefined,
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn clock_start_panic_releases_reservations_and_observers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let text = include_str!("../../tests/fixtures/background-clock/oracle.json");
+        crate::test_baseline::oracle(text);
+        let oracle: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(oracle["cases"].as_array().unwrap().len(), 2, "clock matrix");
+        for panic_at in [0, 1] {
+            for draining in [false, true] {
+                let (entered, reached) = tokio::sync::oneshot::channel();
+                let entered = Mutex::new(Some(entered));
+                let (resume, paused) = std::sync::mpsc::channel();
+                let paused = Mutex::new(paused);
+                let calls = AtomicUsize::new(0);
+                let mut runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                    max_tasks: Some(1),
+                    now: Some(Arc::new(move || {
+                        if calls.fetch_add(1, Ordering::SeqCst) == panic_at {
+                            entered.lock().unwrap().take().unwrap().send(()).unwrap();
+                            paused
+                                .lock()
+                                .unwrap()
+                                .recv_timeout(Duration::from_secs(5))
+                                .unwrap();
+                            panic!("injected clock panic");
+                        }
+                        0.0
+                    })),
+                    ..Default::default()
+                });
+                let spawned = Arc::new(AtomicUsize::new(0));
+                let counted = spawned.clone();
+                runtime.before_spawn = Some(Arc::new(move || {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                }));
+                let starting = runtime.clone();
+                let start = tokio::spawn(async move { starting.start(construction_spec()).await });
+                tokio::time::timeout(Duration::from_secs(5), reached)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                // Clock is paused: this also proves it runs outside the owner lock.
+                assert_eq!(runtime.inner.state.try_lock().unwrap().pending_starts, 1);
+                assert_eq!(*runtime.inner.starts.borrow(), 1);
+                let mut disposers = vec![];
+                if draining {
+                    for _ in 0..3 {
+                        let owner = runtime.clone();
+                        let (registered, ready) = tokio::sync::oneshot::channel();
+                        disposers.push(tokio::spawn(async move {
+                            let mut observer = Box::pin(owner.dispose());
+                            let mut registered = Some(registered);
+                            std::future::poll_fn(|cx| {
+                                let poll = observer.as_mut().poll(cx);
+                                if let Some(registered) = registered.take() {
+                                    assert!(poll.is_pending());
+                                    registered.send(()).unwrap();
+                                }
+                                poll
+                            })
+                            .await;
+                        }));
+                        tokio::time::timeout(Duration::from_secs(5), ready)
+                            .await
+                            .unwrap()
+                            .unwrap();
+                    }
+                    let cancelled = disposers.pop().unwrap();
+                    cancelled.abort();
+                    assert!(
+                        tokio::time::timeout(Duration::from_secs(5), cancelled)
+                            .await
+                            .unwrap()
+                            .unwrap_err()
+                            .is_cancelled()
+                    );
+                } else {
+                    assert!(
+                        runtime
+                            .start(construction_spec())
+                            .await
+                            .unwrap_err()
+                            .message
+                            .to_utf8()
+                            .unwrap()
+                            .contains("max tasks")
+                    );
+                }
+                resume.send(()).unwrap();
+                let error = tokio::time::timeout(Duration::from_secs(5), start)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap_err();
+                assert_eq!(
+                    error.message.to_utf8().unwrap(),
+                    oracle["cases"][panic_at]["error"],
+                    "clock error"
+                );
+                assert!(
+                    !runtime.inner.state.is_poisoned(),
+                    "clock must not poison owner"
+                );
+                assert_eq!(*runtime.inner.starts.borrow(), 0, "clock starts released");
+                assert_eq!(
+                    runtime.inner.state.lock().unwrap().pending_starts,
+                    0,
+                    "clock capacity released"
+                );
+                assert!(runtime.list(&TaskListFilter::default(), None).is_empty());
+                let mut actual = serde_json::json!({
+                    "id": format!("B{}", panic_at + 1), "error": error.message.to_utf8().unwrap(),
+                    "activeStarts": *runtime.inner.starts.borrow(),
+                    "entries": runtime.list(&TaskListFilter::default(), None).iter().map(|t|
+                        serde_json::json!({"status": t.status.as_str(), "ended": t.ended_at.is_some()})
+                    ).collect::<Vec<_>>(), "spawned": spawned.load(Ordering::SeqCst)
+                });
+                if !draining {
+                    let task = runtime.start(construction_spec()).await.unwrap();
+                    assert_eq!(task.status, TaskStatus::Failed, "clock retry accepted");
+                    actual["retry"] = task.status.as_str().into();
+                    assert_eq!(runtime.list(&TaskListFilter::default(), None).len(), 1);
+                    assert!(runtime.get(&task.task_id, None).is_some());
+                    assert!(
+                        runtime
+                            .get_output(
+                                &task.task_id,
+                                &JsValue::Number(0.0),
+                                &JsValue::Number(100.0),
+                                None
+                            )
+                            .is_ok()
+                    );
+                    for _ in 0..3 {
+                        assert_eq!(
+                            tokio::time::timeout(
+                                Duration::from_secs(5),
+                                runtime.wait(&task.task_id, &JsValue::Undefined, None, None)
+                            )
+                            .await
+                            .expect("clock wait deadline")
+                            .unwrap()
+                            .unwrap()
+                            .outcome,
+                            "completed"
+                        );
+                    }
+                    runtime
+                        .stop(&task.task_id, &JsValue::Number(0.0), None)
+                        .await
+                        .unwrap();
+                    disposers = (0..3)
+                        .map(|_| {
+                            let owner = runtime.clone();
+                            tokio::spawn(async move { owner.dispose().await })
+                        })
+                        .collect();
+                }
+                for observer in disposers {
+                    tokio::time::timeout(Duration::from_secs(5), observer)
+                        .await
+                        .expect("clock dispose deadline")
+                        .unwrap();
+                }
+                assert_eq!(runtime.inner.state.lock().unwrap().phase, Phase::Disposed);
+                assert!(runtime.start(construction_spec()).await.is_err());
+                if !draining {
+                    actual["disposed"] =
+                        (runtime.inner.state.lock().unwrap().phase == Phase::Disposed).into();
+                    let mut expected = oracle["cases"][panic_at].clone();
+                    // B2 fixes TS's orphan failed entry/done: ledger CLOCK-START-001.
+                    if panic_at == 1 {
+                        expected["entries"] = serde_json::json!([]);
+                        expected["disposed"] = true.into();
+                    }
+                    assert_eq!(
+                        actual, expected,
+                        "clock TS matrix with registered B2 difference"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn clock_start_payload_drop_happens_after_release() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Payload(Arc<Inner>);
+        impl Drop for Payload {
+            fn drop(&mut self) {
+                assert_eq!(*self.0.starts.borrow(), 0, "payload sees released starts");
+                assert_eq!(
+                    lock(&self.0.state).pending_starts,
+                    0,
+                    "payload sees released capacity"
+                );
+                panic!("payload destructor panic");
+            }
+        }
+        for panic_at in [0, 1] {
+            let owner = Arc::new(Mutex::new(None::<Arc<Inner>>));
+            let observed = owner.clone();
+            let calls = AtomicUsize::new(0);
+            let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+                now: Some(Arc::new(move || {
+                    if calls.fetch_add(1, Ordering::SeqCst) == panic_at {
+                        let inner = observed.lock().unwrap().take().unwrap();
+                        std::panic::panic_any(Payload(inner));
+                    }
+                    0.0
+                })),
+                ..Default::default()
+            });
+            *owner.lock().unwrap() = Some(runtime.inner.clone());
+            let starting = runtime.clone();
+            let panic = tokio::time::timeout(
+                Duration::from_secs(5),
+                tokio::spawn(async move { starting.start(construction_spec()).await }),
+            )
+            .await
+            .unwrap()
+            .unwrap_err()
+            .into_panic();
+            assert_eq!(
+                panic.downcast_ref::<&str>(),
+                Some(&"payload destructor panic")
+            );
+            assert!(runtime.list(&TaskListFilter::default(), None).is_empty());
+            assert_eq!(*runtime.inner.starts.borrow(), 0);
+            assert_eq!(runtime.inner.state.lock().unwrap().pending_starts, 0);
+            tokio::time::timeout(Duration::from_secs(5), runtime.dispose())
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn clock_start_failure_does_not_wait_for_snapshot() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct PendingSnapshot;
+        impl crate::runtime::background_snapshot::BackgroundTaskSnapshotStore for PendingSnapshot {
+            fn load(&self) -> Vec<crate::runtime::background_snapshot::PersistedBackgroundTask> {
+                vec![]
+            }
+            fn write(
+                &self,
+                _: crate::runtime::background_snapshot::PersistedBackgroundTask,
+            ) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + '_>> {
+                Box::pin(std::future::pending())
+            }
+            fn flush(&self) -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + '_>> {
+                Box::pin(async { Ok(()) })
+            }
+        }
+        let scratch = crate::test_scratch::Scratch::new("804-pending");
+        let calls = AtomicUsize::new(0);
+        let runtime = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
+            now: Some(Arc::new(move || {
+                assert_ne!(
+                    calls.fetch_add(1, Ordering::SeqCst),
+                    1,
+                    "injected clock panic"
+                );
+                0.0
+            })),
+            snapshot_store: Some(Arc::new(PendingSnapshot)),
+            disk_spill_dir: Some(scratch.path().into()),
+            ..Default::default()
+        });
+        let error =
+            tokio::time::timeout(Duration::from_secs(5), runtime.start(construction_spec()))
+                .await
+                .expect("clock pending snapshot deadline")
+                .unwrap_err();
+        assert!(
+            error
+                .message
+                .to_utf8()
+                .unwrap()
+                .contains("injected clock panic")
+        );
+        assert_eq!(*runtime.inner.starts.borrow(), 0);
+        tokio::time::timeout(Duration::from_secs(5), runtime.dispose())
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires the fixed TS baseline and its Node dependencies"]
+    fn background_clock_regenerates_identically() {
+        crate::test_baseline::regenerates_identically("background-clock");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

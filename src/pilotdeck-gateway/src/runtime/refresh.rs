@@ -33,6 +33,7 @@
 //! reload's broadcast happens, as in TS. Strings stay UTF-16 (`JsString`)
 //! end to end, so project keys and changed paths with lone surrogates reach
 //! the collaborators and log lines unchanged.
+use super::cleanup_task::lock;
 use super::project::{ProjectRuntimeRegistry, RuntimeError, RuntimeResult};
 use crate::config::{
     Error as ConfigError,
@@ -45,7 +46,7 @@ use std::{
     future::Future,
     path::Path,
     pin::Pin,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
 };
 use tokio::{runtime::Handle, sync::watch};
 
@@ -215,12 +216,6 @@ struct Inner {
     unsubscribe: Mutex<Option<Unsubscribe>>,
     server: Mutex<Option<Arc<dyn NotificationServer>>>,
     executor: Handle,
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// `GatewayRuntimeRefreshBundle`. Construct inside a Tokio runtime; settled

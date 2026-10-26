@@ -1,6 +1,10 @@
 //! Completion must survive a task that is never polled, aborted, or panics.
 use crate::host::{HostError, ModuleError};
-use std::{future::Future, panic::AssertUnwindSafe};
+use std::{
+    future::Future,
+    panic::AssertUnwindSafe,
+    sync::{Mutex, MutexGuard},
+};
 use tokio::{runtime::Handle, sync::watch};
 
 pub(crate) struct Completion<T, E> {
@@ -89,4 +93,10 @@ pub(crate) fn spawn_completion<T: Send + Sync + 'static, E: Send + Sync + 'stati
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
         executor.spawn(async move { completion.finish(cleanup.await) })
     }));
+}
+
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
