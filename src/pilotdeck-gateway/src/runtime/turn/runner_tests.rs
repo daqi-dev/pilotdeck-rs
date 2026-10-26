@@ -168,7 +168,7 @@ async fn replay(name: &str) {
                 raw,
                 row.get("submitOptions").unwrap_or(&object([("allowPlanModeTools", JsValue::Bool(false))])),
                 array(row.get("history").unwrap()),
-                array(row.get("synthetic").unwrap()),
+                row.get("synthetic").filter(|v| !matches!(v, JsValue::Null)).map(array).unwrap_or_default(),
             )?;
             let accepted = text(row.get("transcript").unwrap()).lines()
                 .map(|line| parse_json(line).unwrap())
@@ -616,6 +616,7 @@ async fn advance(
     recording.settle().await
 }
 case!(recording_original_text, "input-text-original");
+case!(recording_synthetic_null, "input-synthetic-null");
 case!(recording_metadata_all, "input-metadata-all");
 case!(recording_metadata_false, "input-metadata-false");
 case!(recording_metadata_null, "input-metadata-null");

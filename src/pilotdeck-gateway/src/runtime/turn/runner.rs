@@ -130,17 +130,7 @@ impl TurnRunner {
     }
     pub async fn accept(mut self, input: TurnInput) -> Transition {
         self.require(Phase::Started)?;
-        let content = match input.input {
-            AgentInput::Text(text) => vec![object([
-                ("type", "text".into()),
-                ("text", JsValue::String(text)),
-            ])],
-            AgentInput::Blocks(content) => content,
-        };
-        let accepted = vec![object([
-            ("role", "user".into()),
-            ("content", JsValue::Array(content)),
-        ])];
+        let accepted = input.accepted_messages();
         let durable: Vec<_> = accepted.iter().cloned().chain(input.synthetic).collect();
         self.messages = input.history;
         let written = durable.clone();

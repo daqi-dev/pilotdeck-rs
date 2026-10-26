@@ -2,7 +2,7 @@
 
 `oracle.json` 由固定基线 `cc7c4e6`、Node 22.22.0 的真实 TS 生成。`matrix` 保存真实 TurnRunner 事件与 JSONL；`recorderCases` 是 Rust 已实现的独立耐久完成闭环；`sidecar` 是真实 stdio AgentLoop + 确定性模型端口的观测字段。完整原始 wire（含实际注入后的帧）保存在每次生成目录的 `sidecar-*-raw.json`，未拿 Rust 输出生成期望。
 
-**本切片不代表 #741 完成**：Rust 已有独立 `runtime/turn/runner.rs` 持久化端口，尚未接 LiveSessionAdapter / AgentLoop 宿主流，也没有放松 StreamIntegrity。TS native loop 的前置 abort 有终态，真实 sidecar 前置 abort 没有；TS 接受合法重排至 sequence 0 的 final，issue 要求 Rust 拒绝。这些实测事实留作接线依据，不把目标行为倒写成 TS 金样。
+**本切片不代表 #741 完成**：Rust 已有独立 `runtime/turn/runner.rs` 持久化端口，LiveSessionAdapter 已接原始输入与共享 Recorder 注入，尚未持有 Recording / 接 AgentLoop 宿主生命周期，也没有放松 StreamIntegrity。TS native loop 的前置 abort 有终态，真实 sidecar 前置 abort 没有；TS 接受合法重排至 sequence 0 的 final，issue 要求 Rust 拒绝。这些实测事实留作接线依据，不把目标行为倒写成 TS 金样。
 
 生成器直接导入真实 TurnRunner、AgentSessionEventRecorder、JSONL writer、AgentLoop；故障只注入 persistence append 观察者、确定性 UUID 源及 loop / wire 边界。循环模型与工具不访问网络；子进程 HOME 位于新生成目录。每个 sidecar 场景上限 20 秒，close 超过 1 秒升级终止；drop 等待真实 transport 完成回收。所有输出均独占创建，重复目录不得重用。
 
@@ -37,7 +37,7 @@ python3 src/pilotdeck-gateway/tests/fixtures/turn-runner/runner_negative.py /tmp
 
 runner 负控默认25项（两个 terminal 分支分别变异，每个锚点 count == 1），可在输出目录后传具体变异名。与旧 recorder 负控一样使用共享保护器，不能在变异期间另起同树 cargo 或改源码。`test_sources` 仅在 cfg(test) 存在，让 recorder 与直接 writer 调用共用同一确定性来源。
 
-待接续：LiveSessionAdapter 注入/接线、active slot 与不可取消 I/O 的共同所有权、AgentLoop-only integrity、真实 TS sidecar 的 Rust 宿主验收、旧 Python peer 与兄弟测试同步、已有可见 failure status 回调去重、hooks/steer/artifact/session 元数据收尾。取消/early-final 实测差异见 specs/gateway-parity/diffs/A7.2-TURN-{ABORT,EARLYFINAL}-001.md（未批准）。本切片不关闭 #741/#589。
+待接续：LiveTurnStream 持有 Recording、active slot 与不可取消 I/O 的共同所有权、AgentLoop-only integrity、真实 TS sidecar 的 Rust 宿主验收、旧 Python peer 与兄弟测试同步、已有可见 failure status 回调去重、hooks/steer/artifact/session 元数据收尾。取消/early-final 实测差异见 specs/gateway-parity/diffs/A7.2-TURN-{ABORT,EARLYFINAL}-001.md（未批准）。本切片不关闭 #741/#589。
 
 ## fix-r1 消费账本
 
@@ -105,3 +105,9 @@ runner 负控默认25项（两个 terminal 分支分别变异，每个锚点 cou
 真实 sidecar 新增 dispose-before 行（连接/模型调用为0）；live 的预取消 factory 用例消费 abort-before/dispose-before 的连接数，使用两种真实 adapter 构造器核 factory 零调用。另测 pending factory 的 abort/dispose/drop，以及两次取消 next 借用后继续同一前驱。这里只对齐“不得创建连接”，不声称 Rust synthesized aborted terminal 与 TS 无终态一致。旧 Python peer 协议未改，StreamIntegrity 未放松。
 
 四套负控都要求调用方显式提供 CARGO_TARGET_DIR，不能覆盖为别树 target。runner 31项；新 live_negative.py 3项（eager factory、factory 优先、忽略 pending cancel）。它们使用 mutating_sources/run_owned/wait_for_slot，未提交的新源码遇到 baseline 拒绝须交协调者提交后运行，不建立副本仓库或第二构建目录。既有 ignored runner_regenerates_identically 覆盖新金样并需显式运行。
+
+## pr5a 输入与共享 Recorder（按 500 行规则仅交付第 1 条）
+
+`LiveSessionAdapter::new/with_interaction` 显式接收会话的 `Arc<Recorder>` 与当前 history 读取函数，factory 接收同一个 Arc，组装 model/tool durable ports 时必须复用它。submit 接原始 text/blocks；执行配置与 syntheticMessages 来自 options，history→accepted→synthetic 的组装由 TurnInput 共用。`input-synthetic-null` 是真实 TS 新行，原有行与 sourceSha256 保持，已有 ignored `runner_regenerates_identically` 覆盖重生成。
+
+`input_negative.py` 将12个源码变异逐项绑定测试名和断言，使用公共 mutating_sources/run_owned/wait_for_slot，要求调用方设置 CARGO_TARGET_DIR。旧 live factory 负控参数锚点及 recording text-value 作用域已同步。第 2 条 Recording/真实 active slot 共持与 I/O pending 矩阵仍未交付，不能用输入测试或 runner 测试 guard 代替。

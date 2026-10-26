@@ -31,6 +31,7 @@
 //!
 //! It does not claim dropped-frame or duplicate-frame detection.
 
+use super::runner::TurnInput;
 use crate::{
     host::{
         Cancellation, EventGuard, ExecuteRequest, ExecuteResult, HostClient, HostError,
@@ -40,6 +41,7 @@ use crate::{
         project::{DisposeFuture, RuntimeError, RuntimeResult},
         session::{LiveSession, LiveTurn, SessionNext},
     },
+    storage::recorder::Recorder,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity, parse_json};
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
@@ -48,7 +50,8 @@ use tokio::sync::mpsc;
 
 type TurnHost = (HostClient, Arc<dyn HostHandler>);
 type PreparedHost = (HostClient, Arc<dyn HostHandler>, Option<JsObject>);
-type TurnHostFactory = dyn Fn(ExecutionIdentity) -> HostFuture<PreparedHost> + Send + Sync;
+type TurnHostFactory =
+    dyn Fn(ExecutionIdentity, Arc<Recorder>) -> HostFuture<PreparedHost> + Send + Sync;
 
 /// Host-acquired authority for one turn. Acquire the project lease with
 /// ProjectRuntimeRegistry::acquire when this factory is invoked, not when the
@@ -68,6 +71,8 @@ pub struct InteractionHost {
 /// HostClient closes its process and disposes its handler after each execution.
 pub struct LiveSessionAdapter {
     host_factory: Arc<TurnHostFactory>,
+    recorder: Arc<Recorder>,
+    history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
     state: Arc<Mutex<SessionState>>,
 }
 
@@ -88,10 +93,18 @@ impl Drop for ActiveTurn {
 impl LiveSessionAdapter {
     /// The factory must create turn-owned resources, including a fresh handler
     /// when its dispose implementation releases module resources.
-    pub fn new(host_factory: impl Fn() -> HostFuture<TurnHost> + Send + Sync + 'static) -> Self {
+    /// Pass the supplied recorder to model/tool durable ports; never construct
+    /// a second writer. `history` reads the session's current projection.
+    pub fn new(
+        recorder: Arc<Recorder>,
+        history: impl Fn() -> Vec<JsValue> + Send + Sync + 'static,
+        host_factory: impl Fn(Arc<Recorder>) -> HostFuture<TurnHost> + Send + Sync + 'static,
+    ) -> Self {
         Self {
-            host_factory: Arc::new(move |_| {
-                let host = host_factory();
+            recorder,
+            history: Arc::new(history),
+            host_factory: Arc::new(move |_, recorder| {
+                let host = host_factory(recorder);
                 Box::pin(async move {
                     let (client, handler) = host.await?;
                     Ok((client, handler, None))
@@ -105,11 +118,18 @@ impl LiveSessionAdapter {
     /// InteractionHost's fresh-router contract, even across a project reload
     /// that admits the same session/turn identity again.
     pub fn with_interaction(
-        factory: impl Fn(ExecutionIdentity) -> HostFuture<InteractionHost> + Send + Sync + 'static,
+        recorder: Arc<Recorder>,
+        history: impl Fn() -> Vec<JsValue> + Send + Sync + 'static,
+        factory: impl Fn(ExecutionIdentity, Arc<Recorder>) -> HostFuture<InteractionHost>
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         Self {
-            host_factory: Arc::new(move |identity| {
-                let host = factory(identity.clone());
+            recorder,
+            history: Arc::new(history),
+            host_factory: Arc::new(move |identity, recorder| {
+                let host = factory(identity.clone(), recorder);
                 Box::pin(async move {
                     let host = host.await?;
                     let handler = super::interaction::InteractionTurn::bind(
@@ -135,7 +155,7 @@ impl LiveSessionAdapter {
 impl LiveSession for LiveSessionAdapter {
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         // Invalid requests must not occupy the session's active turn slot.
-        let mut request = parse_execute_request(&input, &options)?;
+        let (mut request, input) = parse_execute_request(&input, &options, (self.history)())?;
         let cancellation = Cancellation::default();
         {
             let mut state = self.state.lock().unwrap();
@@ -151,6 +171,7 @@ impl LiveSession for LiveSessionAdapter {
         }
         let active = ActiveTurn(self.state.clone());
         let host_factory = self.host_factory.clone();
+        let recorder = self.recorder.clone();
         let identity = request.identity.clone();
         // Shared between the host-side validation hook (every received event)
         // and finish()'s second, contradiction-only check; see StreamHandler.
@@ -167,7 +188,7 @@ impl LiveSession for LiveSessionAdapter {
                     }
                     // select constructs every branch before polling; keep the
                     // factory call lazy so a pre-cancel never creates resources.
-                    host = async { host_factory(request.identity.clone()).await } => host?,
+                    host = async { host_factory(request.identity.clone(), recorder).await } => host?,
                 };
                 if let Some(manifest) = manifest {
                     for (key, value) in manifest.entries() {
@@ -224,7 +245,7 @@ struct LiveTurnStream {
     result: Option<Result<ExecuteResult, HostError>>,
     events: mpsc::Receiver<JsValue>,
     identity: ExecutionIdentity,
-    input: JsValue,
+    input: TurnInput,
     // The instance the host-side receive hook observes into. finish() also
     // consults it so a contradiction received but dropped before delivery (for
     // example turn_failed followed by success) still fails the terminal.
@@ -384,10 +405,7 @@ impl LiveTurnStream {
         terminal.insert("result".into(), JsValue::Object(result));
         terminal.insert(
             "messages".into(),
-            self.input
-                .get("messages")
-                .cloned()
-                .unwrap_or(JsValue::Undefined),
+            JsValue::Array(self.input.loop_messages()),
         );
         JsValue::Object(terminal)
     }
@@ -786,7 +804,8 @@ impl StreamIntegrity {
 fn parse_execute_request(
     input: &JsValue,
     options: &JsValue,
-) -> Result<ExecuteRequest, RuntimeError> {
+    history: Vec<JsValue>,
+) -> Result<(ExecuteRequest, TurnInput), RuntimeError> {
     // Extract required fields from input/options
     let session_id = extract_string(options, "sessionId")?;
     let turn_id = extract_string(options, "turnId")?;
@@ -794,25 +813,42 @@ fn parse_execute_request(
     let operation_id = extract_string(options, "operationId").unwrap_or_else(|_| "default".into());
     let request_id = extract_string(options, "requestId").unwrap_or_else(|_| "default".into());
 
-    // The sidecar reads messages and execution parameters directly from payload.
-    // Preserve all fields and JS values, including lone UTF-16 surrogates.
-    let payload = input
+    let synthetic = match options.get("syntheticMessages") {
+        None | Some(JsValue::Null | JsValue::Undefined) => vec![],
+        Some(JsValue::Array(messages)) => messages.clone(),
+        _ => return Err(RuntimeError::new("Expected syntheticMessages array.")),
+    };
+    let input = TurnInput::from_agent_input(input, options, history, synthetic)
+        .map_err(|error| RuntimeError::new(error.to_string()))?;
+    // Execution configuration is host-owned. Raw AgentInput cannot smuggle
+    // an already-expanded message list or override execution parameters.
+    let mut payload = JsObject::new();
+    for (key, value) in options
         .as_object()
-        .ok_or_else(|| RuntimeError::new("Expected execution input object"))?
-        .clone();
+        .expect("identity checked above")
+        .entries()
+    {
+        if !key.equals_str("syntheticMessages") {
+            payload.insert(key.clone(), value.clone());
+        }
+    }
+    payload.insert("messages".into(), JsValue::Array(input.loop_messages()));
 
-    Ok(ExecuteRequest {
-        identity: ExecutionIdentity {
-            run_id,
-            operation_id,
-            request_id,
-            session_id,
-            turn_id,
+    Ok((
+        ExecuteRequest {
+            identity: ExecutionIdentity {
+                run_id,
+                operation_id,
+                request_id,
+                session_id,
+                turn_id,
+            },
+            payload,
+            idempotency_key: None,
+            operation_deadline: None,
         },
-        payload,
-        idempotency_key: None,
-        operation_deadline: None,
-    })
+        input,
+    ))
 }
 
 fn extract_string(obj: &JsValue, key: &str) -> Result<JsString, RuntimeError> {
@@ -830,6 +866,21 @@ fn extract_string(obj: &JsValue, key: &str) -> Result<JsString, RuntimeError> {
 
 fn map_host_error(error: HostError) -> RuntimeError {
     RuntimeError::new(format!("Host execution failed: {}", error.message))
+}
+
+#[cfg(test)]
+pub(crate) fn test_recorder() -> Arc<Recorder> {
+    use crate::storage::{JsonlTranscriptStore, TranscriptKey};
+    let root = std::env::temp_dir().join(format!("pdrs-live-{}", uuid::Uuid::new_v4()));
+    Arc::new(Recorder::new(
+        Arc::new(JsonlTranscriptStore::new()),
+        TranscriptKey {
+            project_root: root.clone(),
+            pilot_home: root.join("home"),
+            session_id: "session".into(),
+            transcript_path: root.join("session.jsonl"),
+        },
+    ))
 }
 
 #[cfg(test)]

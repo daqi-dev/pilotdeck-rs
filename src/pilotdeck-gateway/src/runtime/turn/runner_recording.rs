@@ -5,6 +5,29 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{future::Future, pin::Pin, sync::Arc};
 
 impl TurnInput {
+    pub fn accepted_messages(&self) -> Vec<JsValue> {
+        let content = match &self.input {
+            AgentInput::Text(text) => vec![super::object([
+                ("type", "text".into()),
+                ("text", JsValue::String(text.clone())),
+            ])],
+            AgentInput::Blocks(content) => content.clone(),
+        };
+        vec![super::object([
+            ("role", "user".into()),
+            ("content", JsValue::Array(content)),
+        ])]
+    }
+
+    pub fn loop_messages(&self) -> Vec<JsValue> {
+        self.history
+            .iter()
+            .cloned()
+            .chain(self.accepted_messages())
+            .chain(self.synthetic.iter().cloned())
+            .collect()
+    }
+
     /// Parse the original AgentInput, never a flattened loop message list.
     /// History and synthetic messages are host-owned, separate input domains.
     pub fn from_agent_input(
