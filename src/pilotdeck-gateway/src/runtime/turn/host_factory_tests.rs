@@ -26,7 +26,7 @@ use crate::{
         },
         session::LiveSession,
         steer::MutationRecorder,
-        turn::interaction::InteractionTurn,
+        turn::{interaction::InteractionTurn, live::test_recorder},
     },
 };
 use pilotdeck_protocol::{
@@ -37,7 +37,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime},
@@ -191,7 +191,7 @@ fn factory(
         deployment,
         Limits::default(),
         Some(JsString::from("fixture")),
-        move |_| ports(context_runtime.clone()),
+        move |_, _| ports(context_runtime.clone()),
     )
 }
 
@@ -527,19 +527,91 @@ fn assert_ts_lease(name: &str, leases: usize, disposals: usize, state: &str) {
 }
 
 #[tokio::test]
+async fn live_session_shares_recorder_and_reads_current_history() {
+    let scratch = Scratch::new();
+    let registry = registry(&scratch);
+    let recorder = test_recorder();
+    let expected_recorder = recorder.clone();
+    let port_calls = Arc::new(AtomicUsize::new(0));
+    let observed_calls = port_calls.clone();
+    let history = Arc::new(Mutex::new(Vec::new()));
+    let current_history = history.clone();
+    let history_calls = Arc::new(AtomicUsize::new(0));
+    let observed_history = history_calls.clone();
+    let pid_file = scratch.0.join("shared.pid");
+    let session = TurnHostFactory::new(
+        registry.clone(),
+        peer("success", Some(&pid_file)),
+        Limits::default(),
+        Some(JsString::from("fixture")),
+        move |_, shared| {
+            assert!(
+                Arc::ptr_eq(&shared, &expected_recorder),
+                "ports factory must receive the session Recorder"
+            );
+            observed_calls.fetch_add(1, Ordering::SeqCst);
+            ports(None)
+        },
+    )
+    .into_live_session(recorder.clone(), move || {
+        observed_history.fetch_add(1, Ordering::SeqCst);
+        current_history.lock().unwrap().clone()
+    });
+    assert_eq!(port_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(history_calls.load(Ordering::SeqCst), 0);
+    for index in 0..2 {
+        let previous = parse_json(&format!(
+            r#"{{"role":"assistant","content":"history-{index}"}}"#
+        ))
+        .unwrap();
+        *history.lock().unwrap() = vec![previous.clone()];
+        let mut turn = session
+            .submit(
+                parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
+                wire(),
+            )
+            .unwrap();
+        let mut completed = None;
+        while let Some(event) = bounded(turn.next()).await.unwrap() {
+            if event.get("type") == Some(&"turn_completed".into()) {
+                completed = Some(event);
+            }
+        }
+        let completed = completed.expect("peer completed the turn");
+        assert_eq!(
+            completed.get("messages"),
+            Some(&JsValue::Array(vec![
+                previous,
+                parse_json(r#"{"role":"user","content":[{"type":"text","text":"hello"}]}"#)
+                    .unwrap(),
+            ])),
+            "fresh history must reach the sidecar on every submit"
+        );
+        assert_eq!(port_calls.load(Ordering::SeqCst), index + 1);
+        assert_eq!(history_calls.load(Ordering::SeqCst), index + 1);
+        assert_peer_reaped(&pid_file).await;
+    }
+    session.dispose().await.unwrap();
+    bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
 async fn reload_between_turns_uses_new_generation() {
     let scratch = Scratch::new();
     let registry = registry(&scratch);
     let old = registry.resolve(None).unwrap();
     let pid_file = scratch.0.join("between.pid");
-    let session =
-        factory(registry.clone(), peer("success", Some(&pid_file)), None).into_live_session();
+    let session = factory(registry.clone(), peer("success", Some(&pid_file)), None)
+        .into_live_session(test_recorder(), Vec::new);
     for (index, expected) in [(0, false), (1, true)] {
         if index == 1 {
             bounded(registry.reload()).await.unwrap();
         }
         let mut turn = session
-            .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire())
+            .submit(
+                parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
+                wire(),
+            )
             .unwrap();
         while bounded(turn.next()).await.unwrap().is_some() {}
         assert_peer_reaped(&pid_file).await;
@@ -558,10 +630,13 @@ async fn reload_mid_turn_holds_old_lease_until_turn_drops() {
     let registry = registry(&scratch);
     let old = registry.resolve(None).unwrap();
     let pid_file = scratch.0.join("mid-turn.pid");
-    let session =
-        factory(registry.clone(), peer("hold", Some(&pid_file)), None).into_live_session();
+    let session = factory(registry.clone(), peer("hold", Some(&pid_file)), None)
+        .into_live_session(test_recorder(), Vec::new);
     let mut turn = session
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire())
+        .submit(
+            parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
+            wire(),
+        )
         .unwrap();
     assert_eq!(
         bounded(turn.next()).await.unwrap().unwrap().get("type"),
@@ -588,11 +663,14 @@ async fn retire_does_not_dispose_while_lease_outstanding() {
     let scratch = Scratch::new();
     let pid_file = scratch.0.join("retire-held.pid");
     let registry = registry(&scratch);
-    let session =
-        factory(registry.clone(), peer("hold", Some(&pid_file)), None).into_live_session();
+    let session = factory(registry.clone(), peer("hold", Some(&pid_file)), None)
+        .into_live_session(test_recorder(), Vec::new);
     let runtime = registry.resolve(None).unwrap();
     let mut turn = session
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire())
+        .submit(
+            parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
+            wire(),
+        )
         .unwrap();
     assert_eq!(
         bounded(turn.next()).await.unwrap().unwrap().get("type"),
@@ -638,7 +716,11 @@ async fn spawn_failure_releases_lease_once_and_returns_host_error() {
     }
     let factory = factory(registry.clone(), deployment, None);
     for _ in 0..2 {
-        let error = factory.create(&identity()).await.err().unwrap();
+        let error = factory
+            .create(&identity(), test_recorder())
+            .await
+            .err()
+            .unwrap();
         assert!(
             error.message.contains("No such file") || error.message.contains("not found"),
             "{error:?}"
@@ -670,12 +752,15 @@ async fn spawn_failure_awaits_release_of_concurrently_retired_generation() {
         deployment,
         Limits::default(),
         Some(JsString::from("fixture")),
-        move |_| {
+        move |_, _| {
             invalidating.invalidate(None);
             ports(None)
         },
     );
-    let error = bounded(factory.create(&identity())).await.err().unwrap();
+    let error = bounded(factory.create(&identity(), test_recorder()))
+        .await
+        .err()
+        .unwrap();
     assert!(
         error.message.contains("No such file") || error.message.contains("not found"),
         "{error:?}"
@@ -699,7 +784,11 @@ async fn handshake_failure_reaps_child_and_releases_lease() {
         peer("handshake-reject", Some(&pid_file)),
         None,
     );
-    let error = factory.create(&identity()).await.err().unwrap();
+    let error = factory
+        .create(&identity(), test_recorder())
+        .await
+        .err()
+        .unwrap();
     assert!(
         error.message.contains("hello") || error.message.contains("handshake"),
         "{error:?}"
@@ -720,9 +809,12 @@ async fn dispose_cancels_pending_host_creation_and_releases_lease() {
         peer("handshake-hang", Some(&pid_file)),
         None,
     )
-    .into_live_session();
+    .into_live_session(test_recorder(), Vec::new);
     let mut turn = session
-        .submit(parse_json(r#"{"messages":[]}"#).unwrap(), wire())
+        .submit(
+            parse_json(r#"{"type":"text","text":"hello"}"#).unwrap(),
+            wire(),
+        )
         .unwrap();
     let mut pending = Box::pin(turn.next());
     bounded(async {
