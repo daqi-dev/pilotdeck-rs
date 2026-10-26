@@ -2125,6 +2125,12 @@ mod tests {
             .is_err(),
             "emit throws like the TS record call inside it"
         );
+        assert!(
+            !coordinator.state.is_poisoned(),
+            "both panics must unwind outside the composite-state guard (#805 made \
+             the tolerant lock keep serving sessions anyway, so the poison flag is \
+             the observable that neither panic crossed the lock)"
+        );
 
         // Every session still works after both panics.
         assert!(coordinator.emit(&other, &tick_event("later")));

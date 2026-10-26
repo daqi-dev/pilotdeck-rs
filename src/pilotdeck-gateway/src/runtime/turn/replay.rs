@@ -1313,6 +1313,12 @@ mod tests {
             store.record(&key, &JsValue::Undefined);
         }));
         assert!(panicked.is_err(), "undefined has no JSON text in TS either");
+        assert!(
+            !store.state.is_poisoned(),
+            "the serialization panic must unwind outside the state guard (#805 made the \
+             tolerant lock keep serving sessions anyway, so the poison flag is the \
+             observable that the serialization stayed outside the lock)"
+        );
 
         // A healthy session still works after the panic.
         let other = JsString::from("other");
