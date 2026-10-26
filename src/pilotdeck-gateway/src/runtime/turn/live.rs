@@ -47,6 +47,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdenti
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::{Duration, Instant, sleep_until};
 
 type TurnHost = (
     HostFuture<HostClient>,
@@ -250,8 +251,12 @@ impl LiveSession for LiveSessionAdapter {
                     client = client => client?,
                 };
                 pending_host.handoff();
-                client
-                    .execute_cancellable(request, handler, cancellation)
+                let identity = request.identity.clone();
+                handler
+                    .with_pump(
+                        client.execute_cancellable(request, handler.clone(), cancellation),
+                        identity,
+                    )
                     .await
             })),
             result: None,
@@ -683,6 +688,168 @@ impl Drop for Delivery {
 struct Forwarding {
     tail: Option<DeliveryWait>,
     wire: std::collections::VecDeque<(Arc<()>, Delivery)>,
+    activity: Option<Instant>,
+    stopped: bool,
+    parent: Option<ExecutionIdentity>,
+    subagents: Vec<HostSubagent>,
+}
+
+struct HostSubagent {
+    id: JsString,
+    kind: Option<JsValue>,
+    started: Instant,
+    heartbeat: Instant,
+    tool: Option<JsValue>,
+    name: Option<JsValue>,
+}
+
+impl HostSubagent {
+    fn status(
+        &self,
+        parent: &ExecutionIdentity,
+        status: &str,
+        now: Instant,
+        success: Option<&JsValue>,
+    ) -> JsObject {
+        let mut event = JsObject::new();
+        for (key, value) in [
+            ("type", "subagent_status".into()),
+            ("sessionId", JsValue::String(parent.session_id.clone())),
+            ("turnId", JsValue::String(parent.turn_id.clone())),
+            ("subagentId", JsValue::String(self.id.clone())),
+        ] {
+            event.insert(key.into(), value);
+        }
+        if let Some(kind) = &self.kind {
+            event.insert("subagentType".into(), kind.clone());
+        }
+        event.insert("status".into(), status.into());
+        for (key, value) in [("toolCallId", &self.tool), ("toolName", &self.name)] {
+            if let Some(value) = value {
+                event.insert(key.into(), value.clone());
+            }
+        }
+        if let Some(success) = success {
+            event.insert("success".into(), success.clone());
+        }
+        event.insert(
+            "durationMs".into(),
+            JsValue::Number(now.duration_since(self.started).as_millis() as f64),
+        );
+        event
+    }
+}
+
+impl Forwarding {
+    fn deadline(&self) -> Instant {
+        self.activity.unwrap_or_else(Instant::now) + Duration::from_millis(500)
+    }
+
+    // Only host-buffer events update the active map, like TS drain(). Wire
+    // events go through project(), which does not track host subagents.
+    fn project_host(&mut self, events: Vec<JsObject>, heartbeat: bool) -> Vec<JsObject> {
+        let now = Instant::now();
+        let mut projected = Vec::new();
+        let Some(parent) = &self.parent else {
+            return events;
+        };
+        for event in events {
+            let kind = event.get("type").and_then(JsValue::as_string);
+            let lifecycle = kind.is_some_and(|k| {
+                k.equals_str("subagent_started") || k.equals_str("subagent_completed")
+            });
+            let pre = kind.is_some_and(|k| k.equals_str("pre_tool_execute"));
+            let post = kind.is_some_and(|k| k.equals_str("post_tool_execute"));
+            let id = if lifecycle {
+                event
+                    .get("subagentId")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+            } else if pre || post {
+                event.get("sessionId").and_then(JsValue::as_string).and_then(|session| {
+                    let units = session.units();
+                    let marker = [58, 58, 115, 117, 98, 58, 58];
+                    let index = units.windows(marker.len()).rposition(|s| s == marker)?;
+                    let rest = &units[index + marker.len()..];
+                    let space = |u: &u16| matches!(*u, 9..=13 | 32 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff);
+                    let start = rest.iter().position(|u| !space(u))?;
+                    let end = rest.iter().rposition(|u| !space(u))? + 1;
+                    Some(JsString::from_utf16(rest[start..end].to_vec()))
+                })
+            } else {
+                None
+            };
+            let mut derived = None;
+            if let Some(id) = id {
+                let found = self.subagents.iter().position(|s| s.id == id);
+                if kind.is_some_and(|k| k.equals_str("subagent_completed")) {
+                    self.subagents.retain(|s| s.id != id);
+                } else {
+                    let fresh = HostSubagent {
+                        id,
+                        kind: if lifecycle {
+                            event.get("subagentType").cloned()
+                        } else {
+                            None
+                        },
+                        started: now,
+                        heartbeat: now,
+                        tool: None,
+                        name: None,
+                    };
+                    let index = found.unwrap_or_else(|| {
+                        self.subagents.push(fresh);
+                        self.subagents.len() - 1
+                    });
+                    let state = &mut self.subagents[index];
+                    if lifecycle {
+                        state.kind = event.get("subagentType").cloned();
+                        state.started = now;
+                        state.tool = None;
+                        state.name = None;
+                    }
+                    state.heartbeat = now;
+                    if pre || post {
+                        state.tool = event.get("toolCallId").cloned();
+                        state.name = event.get("toolName").cloned();
+                        let status = state.status(
+                            parent,
+                            if pre {
+                                "tool_started"
+                            } else {
+                                "tool_completed"
+                            },
+                            now,
+                            if post { event.get("success") } else { None },
+                        );
+                        if post {
+                            state.tool = None;
+                            state.name = None;
+                        }
+                        derived = Some(status);
+                    }
+                }
+            }
+            projected.push(event);
+            projected.extend(derived);
+        }
+        if heartbeat {
+            for state in &mut self.subagents {
+                if now.duration_since(state.heartbeat) < Duration::from_millis(2000) {
+                    continue;
+                }
+                state.heartbeat = now;
+                let running = state.name.as_ref().is_some_and(super::submit::truthy);
+                projected.push(state.status(
+                    parent,
+                    if running { "running" } else { "waiting_model" },
+                    now,
+                    None,
+                ));
+            }
+        }
+        projected
+    }
 }
 impl Forwarding {
     fn reserve(&mut self) -> Delivery {
@@ -694,69 +861,142 @@ impl Forwarding {
     }
 }
 impl StreamHandler {
+    async fn with_pump(
+        &self,
+        execution: impl std::future::Future<Output = Result<ExecuteResult, HostError>>,
+        identity: ExecutionIdentity,
+    ) -> Result<ExecuteResult, HostError> {
+        {
+            let mut state = self.forwarding.lock().unwrap();
+            state.parent = Some(identity);
+            state.activity = Some(Instant::now());
+        }
+        tokio::pin!(execution);
+        tokio::select! {
+            biased;
+            result = &mut execution => result,
+            error = async {
+                loop {
+                    if self.forwarding.lock().unwrap().stopped { std::future::pending::<()>().await; }
+                    let deadline = self.forwarding.lock().unwrap().deadline();
+                    sleep_until(deadline).await;
+                    let mut delivery = self.forwarding.lock().unwrap().reserve();
+                    delivery.wait().await;
+                    if self.forwarding.lock().unwrap().stopped || Instant::now() < self.forwarding.lock().unwrap().deadline() { continue; }
+                    self.forwarding.lock().unwrap().activity = Some(Instant::now());
+                    if let Err(error) = self.forward(Box::pin(async { Ok(()) }), None, Some(delivery), false, true).await { break error; }
+                }
+            } => Err(error),
+        }
+    }
+
     fn forward<T: Send + 'static>(
         &self,
         applied: HostFuture<T>,
         payload: Option<JsValue>,
         delivery: Option<Delivery>,
+        module: bool,
+        heartbeat: bool,
     ) -> HostFuture<T> {
         // Capture and validate synchronously at callback invocation. Even a
         // subsequently dropped callback must leave contradiction evidence.
-        let buffered = self
-            .inner
-            .drain_events()
-            .and_then(|events| {
-                for event in &events {
-                    self.integrity
-                        .observe_event(&JsValue::Object(event.clone()))
-                        .map_err(|e| HostError::new(HostErrorKind::Protocol, e.message))?;
-                }
-                Ok(events)
-            })
-            .inspect_err(|error| {
+        // Serialize capture/reservation with receive validation and closing
+        // the inner port: dispose may run on another runtime thread.
+        let mut state = self.forwarding.lock().unwrap();
+        if heartbeat && state.stopped {
+            return applied;
+        }
+        // A received wire payload owns the earlier slot. Leave later host
+        // writes for the pump/module boundary instead of prepending them to it.
+        let buffered = if payload.is_some() {
+            Ok(Vec::new())
+        } else {
+            self.inner.drain_events()
+        }
+        .and_then(|events| {
+            for event in &events {
                 self.integrity
-                    .host_error
-                    .lock()
-                    .unwrap()
-                    .get_or_insert_with(|| error.message.clone());
-            });
-        if buffered.as_ref().is_ok_and(Vec::is_empty) && payload.is_none() && delivery.is_none() {
+                    .observe_event(&JsValue::Object(event.clone()))
+                    .map_err(|e| HostError::new(HostErrorKind::Protocol, e.message))?;
+            }
+            Ok(events)
+        })
+        .inspect_err(|error| {
+            self.integrity
+                .host_error
+                .lock()
+                .unwrap()
+                .get_or_insert_with(|| error.message.clone());
+        });
+        if buffered.as_ref().is_ok_and(Vec::is_empty)
+            && payload.is_none()
+            && delivery.is_none()
+            && !heartbeat
+        {
             return applied; // pending model/tool calls must not stall wire events
         }
         // One send chain across module and wire callbacks: concurrent futures
         // cannot interleave batches or overtake an earlier callback's payload.
-        let mut delivery = delivery.unwrap_or_else(|| self.forwarding.lock().unwrap().reserve());
+        let mut delivery = delivery.unwrap_or_else(|| state.reserve());
+        let deadline = state.deadline();
+        drop(state);
         let events = self.events.clone();
         let integrity = self.integrity.clone();
+        let forwarding = self.forwarding.clone();
         Box::pin(async move {
             let buffered = buffered?;
-            let result = applied.await?;
-            delivery.wait().await;
-            for event in buffered.into_iter().map(JsValue::Object).chain(payload) {
-                let permit = events.reserve().await.map_err(|_| {
-                    HostError::new(HostErrorKind::Callback, "LiveTurn event receiver closed.")
-                })?;
-                // A callback may have passed validation before a later host
-                // drain failed, then waited for ordering or channel capacity.
-                // Check and send atomically with respect to recording failure.
-                let error = integrity.host_error.lock().unwrap();
-                if let Some(error) = error.as_ref() {
-                    return Err(HostError::new(HostErrorKind::Protocol, error));
+            let sending = async move {
+                delivery.wait().await;
+                let buffered = forwarding.lock().unwrap().project_host(buffered, heartbeat);
+                for event in buffered.into_iter().map(JsValue::Object).chain(payload) {
+                    let permit = events.reserve().await.map_err(|_| {
+                        HostError::new(HostErrorKind::Callback, "LiveTurn event receiver closed.")
+                    })?;
+                    // A callback may have passed validation before a later host
+                    // drain failed, then waited for ordering or channel capacity.
+                    // Check and send atomically with respect to recording failure.
+                    let error = integrity.host_error.lock().unwrap();
+                    if let Some(error) = error.as_ref() {
+                        return Err(HostError::new(HostErrorKind::Protocol, error));
+                    }
+                    permit.send(event);
+                    drop(error);
+                    if !module {
+                        forwarding.lock().unwrap().activity = Some(Instant::now());
+                    }
                 }
-                permit.send(event);
+                drop(delivery); // wake the next sender only after the whole batch
+                Ok(())
+            };
+            let mut applied = applied;
+            if module {
+                // A long module callback must not sequester its captured host
+                // events. After the pump deadline, drive application and sends
+                // concurrently; only the sending future owns the Delivery.
+                tokio::select! {
+                    biased;
+                    result = &mut applied => { let result = result?; sending.await?; Ok(result) }
+                    _ = sleep_until(deadline) => {
+                        let (result, ()) = tokio::try_join!(applied, sending)?;
+                        Ok(result)
+                    }
+                }
+            } else {
+                let result = applied.await?;
+                sending.await?;
+                Ok(result)
             }
-            drop(delivery); // wake the next sender only after the whole batch
-            Ok(result)
         })
     }
 }
 
 impl HostHandler for StreamHandler {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
-        self.forward(self.inner.module_call(call), None, None)
+        self.forward(self.inner.module_call(call), None, None, true, false)
     }
 
     fn validate_event(&self, payload: &JsValue) -> Result<EventGuard, HostError> {
+        let mut state = self.forwarding.lock().unwrap();
         // Own lifecycle check first: an invalid event is cut off before the
         // inner contract sees it, exactly like it is cut off before
         // application. Then forward the inner handler's validation so wrapping
@@ -766,11 +1006,9 @@ impl HostHandler for StreamHandler {
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
         let inner = self.inner.validate_event(payload)?;
         let key = Arc::new(());
-        {
-            let mut forwarding = self.forwarding.lock().unwrap();
-            let slot = forwarding.reserve();
-            forwarding.wire.push_back((key.clone(), slot));
-        }
+        let slot = state.reserve();
+        state.wire.push_back((key.clone(), slot));
+        drop(state);
         let forwarding = self.forwarding.clone();
         Ok(EventGuard::new(move || {
             // event() normally consumes this slot. Abandoning the queue or an
@@ -788,6 +1026,9 @@ impl HostHandler for StreamHandler {
         // TS client:662 uses truthiness; the wire decoder separately enforces
         // a boolean final. Embedded callbacks reach this boundary directly.
         let final_event = event.get("final").is_some_and(super::submit::truthy);
+        if final_event {
+            self.forwarding.lock().unwrap().stopped = true;
+        }
         let payload = event.get("payload").cloned();
         // TS agentLoopSidecarClient.ts:1310-1317,1739-1743 rejects missing or
         // non-object AgentEvent payloads with this message. Wire shape/type
@@ -819,10 +1060,15 @@ impl HostHandler for StreamHandler {
             applied,
             if final_event { None } else { payload },
             Some(delivery),
+            false,
+            false,
         )
     }
 
     fn dispose(&self) -> HostFuture<()> {
+        // The inner turn closes its event port synchronously, before its
+        // asynchronous cleanup completes. Never pump that closed port.
+        self.forwarding.lock().unwrap().stopped = true;
         self.inner.dispose()
     }
 
