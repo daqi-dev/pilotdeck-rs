@@ -79,7 +79,7 @@ messages = {
     'header-combine': 'headers-chat',
     'header-bytes': 'result header-boundary-wide',
     'default-timeout': 'result chat-attempt-0-event-27',
-    'disabled-timeout': 'disabled deadline remains pending',
+    'disabled-timeout': '#763 disabled timeout preserves transport call count',
     'body-deadline': 'D-2 bounded body',
     'response-text': 'result responses-attempt-0-event-0',
     'content-empties': 'result extract-responses-4',

@@ -537,7 +537,8 @@ async fn pending_and_cancellation_matrix() {
                     .get("calls")
                     .unwrap()
                     .as_number()
-                    .unwrap()
+                    .unwrap(),
+                "#763 disabled timeout preserves transport call count"
             );
             assert_eq!(
                 transport.dropped.load(Ordering::SeqCst)
