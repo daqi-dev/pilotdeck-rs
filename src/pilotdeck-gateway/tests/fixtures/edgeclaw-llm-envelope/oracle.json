@@ -1,0 +1,2104 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/context/memory/edgeclaw-memory-core/src/core/skills/llm-extraction.ts": "6cde29bc33b1d2fccfcfa5ee507941b2280c6960254da28794ac18845224372e",
+    "src/context/memory/edgeclaw-memory-core/src/core/types.ts": "abc773ea38e2ba98d83aa7bad1d4672fac3d2f01fb5ad992e8d0382912ee7f99"
+  },
+  "nodeVersion": "v22.22.0",
+  "clockMs": 1792627200000,
+  "cases": [
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        ""
+      ],
+      "threw": "Empty extraction response"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "   \n\t "
+      ],
+      "threw": "Empty extraction response"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{}"
+      ],
+      "value": "{}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "  {\"a\":1}  "
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "prefix prose {\"a\":1} suffix prose"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "```json\n{\"a\":1}\n```"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "```json\n{\"a\": {\"b\": 2}}\n``` tail"
+      ],
+      "value": "{\"a\": {\"b\": 2}}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":{\"b\":{\"c\":3}}}"
+      ],
+      "value": "{\"a\":{\"b\":{\"c\":3}}}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":1"
+      ],
+      "threw": "Incomplete JSON object in extraction response"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":\"}\"}"
+      ],
+      "value": "{\"a\":\"}\"}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":\"\\\"}\"}"
+      ],
+      "value": "{\"a\":\"\\\"}\"}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":\"\\\\\"}"
+      ],
+      "value": "{\"a\":\"\\\\\"}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "first {\"a\":1} and {\"b\":2}"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":1}{\"b\":2}"
+      ],
+      "value": "{\"a\":1}{\"b\":2}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "[1,2] {\"a\":3}"
+      ],
+      "value": "{\"a\":3}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{ \"a\": [1,2,{\"b\":3}] }"
+      ],
+      "value": "{ \"a\": [1,2,{\"b\":3}] }"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "﻿{\"a\":1}﻿"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":1} // trailing }"
+      ],
+      "value": "{\"a\":1} // trailing }"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":\"unterminated}"
+      ],
+      "value": "{\"a\":\"unterminated}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":1} x }"
+      ],
+      "value": "{\"a\":1} x }"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "}"
+      ],
+      "threw": "No JSON object found in extraction response"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "}{\"a\":1}"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{"
+      ],
+      "threw": "Incomplete JSON object in extraction response"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "  {  \"a\" : 1 }  "
+      ],
+      "value": "{  \"a\" : 1 }"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "text { \"nested\": \"a\\\"b\", \"arr\": [ { \"x\": 1 } ] } more"
+      ],
+      "value": "{ \"nested\": \"a\\\"b\", \"arr\": [ { \"x\": 1 } ] }"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "\ud800 {\"a\":1} \udfff"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\":\"line\nbreak\"}"
+      ],
+      "value": "{\"a\":\"line\nbreak\"}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "x {\"a\":1} y {\"b\":2}"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractFirstJsonObject",
+      "args": [
+        "{\"a\": [1, {\"b\": \"}\"}] }"
+      ],
+      "value": "{\"a\": [1, {\"b\": \"}\"}] }"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        ""
+      ],
+      "threw": "Empty extraction response"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "   "
+      ],
+      "threw": "Empty extraction response"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "no braces here"
+      ],
+      "threw": "No JSON envelope found in extraction response"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "}{"
+      ],
+      "threw": "No JSON envelope found in extraction response"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "}"
+      ],
+      "threw": "No JSON envelope found in extraction response"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "{"
+      ],
+      "threw": "No JSON envelope found in extraction response"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "json {\"a\":1} end"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "{\"a\":1}{\"b\":2}"
+      ],
+      "value": "{\"a\":1}{\"b\":2}"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "prefix {\"a\":\"} \"} tail"
+      ],
+      "value": "{\"a\":\"} \"}"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "```json\n{\"a\":1}\n```"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "﻿{\"a\":1}﻿"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "xx {\"a\": [1,2]} yy }"
+      ],
+      "value": "{\"a\": [1,2]} yy }"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "{{\"a\":1}}"
+      ],
+      "value": "{{\"a\":1}}"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "text {\"a\":1"
+      ],
+      "threw": "No JSON envelope found in extraction response"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "{\"a\":1} trailing } with }"
+      ],
+      "value": "{\"a\":1} trailing } with }"
+    },
+    {
+      "fn": "extractLooseJsonEnvelope",
+      "args": [
+        "\ud800{\"a\":1}\udfff"
+      ],
+      "value": "{\"a\":1}"
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "{\"skip\":true}",
+        "skip"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "{\"skip\" : FALSE }",
+        "skip"
+      ],
+      "value": false
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"SKIP\":TrUe",
+        "skip"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "{\"other\":true}",
+        "skip"
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"skip\": truex",
+        "skip"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"skip\":1",
+        "skip"
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"skip\"\n:\r\n\ttrue",
+        "skip"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "{\"a.b\":true}",
+        "a.b"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "{\"axb\":true}",
+        "a.b"
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"skıp\":true",
+        "skip"
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"ſkip\":true",
+        "skip"
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"skip\": false, \"skip\": true",
+        "skip"
+      ],
+      "value": false
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"sk$ip\":true",
+        "sk$ip"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"sk|ip\":true",
+        "sk|ip"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "",
+        "skip"
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"skip\" : true",
+        "skip"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"skip\":true﻿",
+        "skip"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"é\":true",
+        "É"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"ſ\":true",
+        "s"
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"ß\":true",
+        "ẞ"
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"ς\":true",
+        "σ"
+      ],
+      "value": true
+    },
+    {
+      "fn": "extractLooseJsonBooleanProperty",
+      "args": [
+        "\"Å\":true",
+        "Å"
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"hello\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "hello"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"a\\nb\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "a\nb"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"he said \\\"hi\\\"\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "he said \"hi\""
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"a,b\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "a,b"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"line1\nline2\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "line1\nline2"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"x\",\"unknown\":\"y\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"x\",\"name\":\"n\",\"description\":\"d\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "x"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"x\" , \"name\" : \"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "x"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"x\", \"NAME\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "x"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"x\", \"nameless\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"x\",\"name\":\"n\"",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "x"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"a\\\"b\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "a\"b"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"a\\\\nb\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "a\\\nb"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"a\r\nb\tc\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "a\r\nb\tc"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"x\" ,﻿\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "x"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"x\",\"name\":\"n\",\"name\":\"m\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "x"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"É\":\"v\",\"name\":\"n\"}",
+        "é",
+        [
+          "name"
+        ]
+      ],
+      "value": "v"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"é\":\"v\",\"name\":\"n\"}",
+        "é",
+        [
+          "name"
+        ]
+      ],
+      "value": "v"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"# hi\"}",
+        "markdown",
+        []
+      ],
+      "value": "# hi"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"a}b\"}",
+        "markdown",
+        []
+      ],
+      "value": "a}b"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"a\\\"b\"}",
+        "markdown",
+        []
+      ],
+      "value": "a\"b"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"\"}",
+        "markdown",
+        []
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"x\" }",
+        "markdown",
+        []
+      ],
+      "value": "x"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"x\"}\n",
+        "markdown",
+        []
+      ],
+      "value": "x"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"x\"} trailing",
+        "markdown",
+        []
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"line1\nline2\"}",
+        "markdown",
+        []
+      ],
+      "value": "line1\nline2"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"a\" } \"b\" }",
+        "markdown",
+        []
+      ],
+      "value": "a\" } \"b"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"x\",\"name\":\"n\",\"description\":\"d\",\"markdown\":\"m\"}",
+        "markdown",
+        []
+      ],
+      "value": "m"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"x\"  }   ",
+        "markdown",
+        []
+      ],
+      "value": "x"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"x\"} }",
+        "markdown",
+        []
+      ],
+      "value": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"a\\\\b\"}",
+        "markdown",
+        []
+      ],
+      "value": "a\\b"
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"skip\":false,\"reason\":\"why\",\"name\":\"n\",\"description\":\"d\",\"markdown\":\"m\"}"
+      ],
+      "value": {
+        "skip": false,
+        "reason": "why",
+        "name": "n",
+        "description": "d",
+        "markdown": "m"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"n\",\"description\":\"d\",\"markdown\":\"m\"}"
+      ],
+      "value": {
+        "name": "n",
+        "description": "d",
+        "markdown": "m"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"n\",\"description\":\"d\"}"
+      ],
+      "value": null
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"description\":\"d\",\"markdown\":\"m\"}"
+      ],
+      "value": null
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"n\",\"markdown\":\"m\"}"
+      ],
+      "value": null
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "prefix ```json\n{\"name\":\"n\",\"description\":\"d\",\"markdown\":\"# m\"}\n``` suffix"
+      ],
+      "value": {
+        "name": "n",
+        "description": "d",
+        "markdown": "# m"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"a\\\"b\",\"description\":\"d\\ne\",\"markdown\":\"m\\t\"}"
+      ],
+      "value": {
+        "name": "a\"b",
+        "description": "d\ne",
+        "markdown": "m\t"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"skip\":\"TRUE\",\"reason\":\"r\",\"name\":\"n\",\"description\":\"d\",\"markdown\":\"m\"}"
+      ],
+      "value": {
+        "reason": "r",
+        "name": "n",
+        "description": "d",
+        "markdown": "m"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"skip\":\"no\",\"name\":\"n\",\"description\":\"d\",\"markdown\":\"m\"}"
+      ],
+      "value": {
+        "name": "n",
+        "description": "d",
+        "markdown": "m"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"reason\":\"r\",\"name\":\"n\",\"description\":\"d\",\"markdown\":\"m\",\"extra\":1}"
+      ],
+      "value": null
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"n\",\"description\":\"d\",\"markdown\":\"line1\\nline2\\\\\"}"
+      ],
+      "value": {
+        "name": "n",
+        "description": "d",
+        "markdown": "line1\nline2\\"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        ""
+      ],
+      "threw": "Empty extraction response"
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "   "
+      ],
+      "threw": "Empty extraction response"
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "no json at all"
+      ],
+      "threw": "No JSON envelope found in extraction response"
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "}{"
+      ],
+      "threw": "No JSON envelope found in extraction response"
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"n\",\"description\":\"d\",\"markdown\":\"\"}"
+      ],
+      "value": null
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"markdown\":\"m\",\"description\":\"d\",\"name\":\"n\"}"
+      ],
+      "value": null
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"n\",\"description\":\"d\",\"markdown\":\"a}b\"}"
+      ],
+      "value": {
+        "name": "n",
+        "description": "d",
+        "markdown": "a}b"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"n\",\"description\":\"d\",\"markdown\":\"a\\\"b\"}"
+      ],
+      "value": {
+        "name": "n",
+        "description": "d",
+        "markdown": "a\"b"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"n\",\"description\":\"d\",\"markdown\":\"m\"} tail {\"x\":1}"
+      ],
+      "value": null
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"skip\":true,\"name\":\"n\",\"description\":\"d\",\"markdown\":\"m\",\"reason\":\"r\"}"
+      ],
+      "value": {
+        "skip": true,
+        "name": "n",
+        "description": "d",
+        "markdown": "m\",\"reason\":\"r"
+      }
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        "  a  ",
+        3
+      ],
+      "value": [
+        "a"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        "",
+        3
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        "   ",
+        3
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        "a",
+        0
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        "a",
+        -1
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        "a",
+        -2
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        " a b ",
+        1
+      ],
+      "value": [
+        "a b"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        2
+      ],
+      "value": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a",
+          "a",
+          "b"
+        ],
+        10
+      ],
+      "value": [
+        "a",
+        "a",
+        "b"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          " a ",
+          " b "
+        ],
+        2
+      ],
+      "value": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          1,
+          "x",
+          null,
+          "  ",
+          true,
+          "y"
+        ],
+        10
+      ],
+      "value": [
+        "x",
+        "y"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        -1
+      ],
+      "value": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        -2
+      ],
+      "value": [
+        "a"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        0
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        {
+          "$number": "NaN"
+        }
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        {
+          "$number": "Infinity"
+        }
+      ],
+      "value": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        2.9
+      ],
+      "value": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        1e+300
+      ],
+      "value": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [],
+        5
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          null
+        ],
+        5
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        {},
+        5
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        true,
+        5
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        0,
+        5
+      ],
+      "value": []
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        " x ",
+        2
+      ],
+      "value": [
+        "x"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "nested"
+        ],
+        5
+      ],
+      "value": [
+        "nested"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        "\ud800",
+        2
+      ],
+      "value": [
+        "\ud800"
+      ]
+    },
+    {
+      "fn": "normalizeStringArray",
+      "args": [
+        [
+          "a"
+        ],
+        -1.5
+      ],
+      "value": []
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [],
+        10
+      ],
+      "value": []
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          "a",
+          "a",
+          "b"
+        ],
+        10
+      ],
+      "value": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          " a ",
+          "a ",
+          " b"
+        ],
+        10
+      ],
+      "value": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          "",
+          "  "
+        ],
+        10
+      ],
+      "value": []
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        2
+      ],
+      "value": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        -1
+      ],
+      "value": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          "a",
+          "b",
+          "a"
+        ],
+        -1
+      ],
+      "value": [
+        "a"
+      ]
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        {
+          "$number": "NaN"
+        }
+      ],
+      "value": []
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          " a ",
+          "a"
+        ],
+        10
+      ],
+      "value": [
+        "a"
+      ]
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          "\ud800",
+          "\ud800"
+        ],
+        10
+      ],
+      "value": [
+        "\ud800"
+      ]
+    },
+    {
+      "fn": "uniqueStrings",
+      "args": [
+        [
+          "a",
+          "b",
+          "c"
+        ],
+        {
+          "$number": "Infinity"
+        }
+      ],
+      "value": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "",
+        5
+      ],
+      "value": ""
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abc",
+        5
+      ],
+      "value": "abc"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        3
+      ],
+      "value": "abc"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        0
+      ],
+      "value": ""
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        -2
+      ],
+      "value": "abcd"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        -10
+      ],
+      "value": ""
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "  ab  ",
+        4
+      ],
+      "value": "ab"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "ab  ",
+        4
+      ],
+      "value": "ab  "
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "😀",
+        1
+      ],
+      "value": "\ud83d"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "😀",
+        2
+      ],
+      "value": "😀"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "\ud800x",
+        1
+      ],
+      "value": "\ud800"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        2.9
+      ],
+      "value": "ab"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        {
+          "$number": "NaN"
+        }
+      ],
+      "value": ""
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        {
+          "$number": "Infinity"
+        }
+      ],
+      "value": "abcdef"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        {
+          "$number": "-Infinity"
+        }
+      ],
+      "value": ""
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        1e+300
+      ],
+      "value": "abcdef"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "a\tb\nc",
+        4
+      ],
+      "value": "a\tb"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        " ab ",
+        3
+      ],
+      "value": "ab"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "﻿abc﻿",
+        4
+      ],
+      "value": "abc"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "中文测试",
+        2
+      ],
+      "value": "中文"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        6
+      ],
+      "value": "abcdef"
+    },
+    {
+      "fn": "truncate",
+      "args": [
+        "abcdef",
+        5.999
+      ],
+      "value": "abcde"
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        ""
+      ],
+      "value": ""
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        "   "
+      ],
+      "value": ""
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        "a\t\n b"
+      ],
+      "value": "a b"
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        " a b "
+      ],
+      "value": "a b"
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        "﻿a﻿"
+      ],
+      "value": "a"
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        "ab"
+      ],
+      "value": "ab"
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        "a᠎b"
+      ],
+      "value": "a᠎b"
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        "a b c"
+      ],
+      "value": "a b c"
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        "  a  b  "
+      ],
+      "value": "a b"
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        "\ud800 \udfff"
+      ],
+      "value": "\ud800 \udfff"
+    },
+    {
+      "fn": "normalizeWhitespace",
+      "args": [
+        "a\n\n\nb"
+      ],
+      "value": "a b"
+    },
+    {
+      "fn": "truncateForPrompt",
+      "args": [
+        "  a   b  ",
+        10
+      ],
+      "value": "a b"
+    },
+    {
+      "fn": "truncateForPrompt",
+      "args": [
+        "aaa   bbb",
+        4
+      ],
+      "value": "aaa"
+    },
+    {
+      "fn": "truncateForPrompt",
+      "args": [
+        "",
+        5
+      ],
+      "value": ""
+    },
+    {
+      "fn": "truncateForPrompt",
+      "args": [
+        "abcdef",
+        3
+      ],
+      "value": "abc"
+    },
+    {
+      "fn": "truncateForPrompt",
+      "args": [
+        "a b",
+        4
+      ],
+      "value": "a b"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        "user"
+      ],
+      "value": "user"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        "project"
+      ],
+      "value": "project"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        "mix"
+      ],
+      "value": "mix"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        "none"
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        "USER"
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        " user"
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        ""
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        "user "
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        true
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        null
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        0
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        [
+          "user"
+        ]
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        {
+          "route": "user"
+        }
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeMemoryRoute",
+      "args": [
+        {
+          "$undefined": true
+        }
+      ],
+      "value": "none"
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        true,
+        false
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        false,
+        true
+      ],
+      "value": false
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "true",
+        false
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "TRUE",
+        false
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        " True ",
+        false
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "false",
+        true
+      ],
+      "value": false
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "False",
+        true
+      ],
+      "value": false
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "1",
+        false
+      ],
+      "value": false
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "yes",
+        true
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "",
+        true
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        null,
+        true
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        {
+          "$undefined": true
+        },
+        false
+      ],
+      "value": false
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        0,
+        true
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        [
+          "true"
+        ],
+        true
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        {},
+        true
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "TrUe",
+        false
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "true﻿",
+        false
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        " true ",
+        false
+      ],
+      "value": true
+    },
+    {
+      "fn": "normalizeBoolean",
+      "args": [
+        "false ",
+        true
+      ],
+      "value": false
+    }
+  ]
+}
