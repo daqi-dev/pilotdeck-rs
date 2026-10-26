@@ -746,6 +746,71 @@
     {
       "fn": "extractLooseJsonStringProperty",
       "args": [
+        "{\"reason\":\"\\r\\n\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "\n"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"a\\r\\nb\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "a\nb"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"a\\r\\nb\\r\\nc\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "a\nb\nc"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"a\\rb\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "a\rb"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"reason\":\"a\\\\r\\\\nb\",\"name\":\"n\"}",
+        "reason",
+        [
+          "name",
+          "description",
+          "markdown"
+        ]
+      ],
+      "value": "a\\\r\\\nb"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
         "{\"É\":\"v\",\"name\":\"n\"}",
         "é",
         [
@@ -887,6 +952,33 @@
         []
       ],
       "value": "a\\b"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"\\r\\n\"}",
+        "markdown",
+        []
+      ],
+      "value": "\n"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"a\\r\\nb\"}",
+        "markdown",
+        []
+      ],
+      "value": "a\nb"
+    },
+    {
+      "fn": "extractLooseJsonStringProperty",
+      "args": [
+        "{\"markdown\":\"a\\\\r\\\\nb\"}",
+        "markdown",
+        []
+      ],
+      "value": "a\\\r\\\nb"
     },
     {
       "fn": "tryParseLooseMemoryCreatePayload",
@@ -1077,6 +1169,17 @@
         "name": "n",
         "description": "d",
         "markdown": "m\",\"reason\":\"r"
+      }
+    },
+    {
+      "fn": "tryParseLooseMemoryCreatePayload",
+      "args": [
+        "{\"name\":\"n\\r\\nm\",\"description\":\"d\\r\\ne\",\"markdown\":\"m\\r\\no\"}"
+      ],
+      "value": {
+        "name": "n\nm",
+        "description": "d\ne",
+        "markdown": "m\no"
       }
     },
     {

@@ -125,6 +125,14 @@ export async function collect(baseline: string) {
     '{"reason":"a\r\nb\tc","name":"n"}',
     '{"reason":"x"\u00a0,\uFEFF"name":"n"}',
     '{"reason":"x","name":"n","name":"m"}',
+    // Literal decode escapes: a JSON `\r\n` pair decodes to one LF, and the
+    // CR-LF pass must run before the single `\r`/`\n` passes (fix-r1).
+    '{"reason":"\\r\\n","name":"n"}',
+    '{"reason":"a\\r\\nb","name":"n"}',
+    '{"reason":"a\\r\\nb\\r\\nc","name":"n"}',
+    '{"reason":"a\\rb","name":"n"}',
+    // A doubled backslash stays one backslash; the CR/LF escapes still decode.
+    '{"reason":"a\\\\r\\\\nb","name":"n"}',
   ]) add('extractLooseJsonStringProperty', [raw, 'reason', reasonNext], () => ts.extractLooseJsonStringProperty(raw, 'reason', reasonNext));
   add('extractLooseJsonStringProperty', ['{"É":"v","name":"n"}', 'é', ['name']],
     () => ts.extractLooseJsonStringProperty('{"É":"v","name":"n"}', 'é', ['name']));
@@ -145,6 +153,10 @@ export async function collect(baseline: string) {
     '{"markdown":"x"  }   ',
     '{"markdown":"x"} }',
     '{"markdown":"a\\\\b"}',
+    // Same literal decode escapes through the greedy `\s*}\s*$` shape.
+    '{"markdown":"\\r\\n"}',
+    '{"markdown":"a\\r\\nb"}',
+    '{"markdown":"a\\\\r\\\\nb"}',
   ]) add('extractLooseJsonStringProperty', [raw, 'markdown', []], () => ts.extractLooseJsonStringProperty(raw, 'markdown', []));
 
   // tryParseLooseMemoryCreatePayload: full/partial payloads, order, escapes.
@@ -167,6 +179,8 @@ export async function collect(baseline: string) {
     '{"name":"n","description":"d","markdown":"a\\"b"}',
     '{"name":"n","description":"d","markdown":"m"} tail {"x":1}',
     '{"skip":true,"name":"n","description":"d","markdown":"m","reason":"r"}',
+    // End-to-end: decoded CR-LF escapes become one LF in every string field.
+    '{"name":"n\\r\\nm","description":"d\\r\\ne","markdown":"m\\r\\no"}',
   ]) one('tryParseLooseMemoryCreatePayload', raw);
 
   // normalizeStringArray / uniqueStrings: JS slice(0, max) edge cases.
