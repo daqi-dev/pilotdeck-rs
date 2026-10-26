@@ -9542,6 +9542,252 @@
       "expected": {
         "$undefined": true
       }
+    },
+    {
+      "fn": "resolveOpenClawModelConfig",
+      "args": [
+        [
+          {
+            "kind": "valid",
+            "json": {
+              "models": {
+                "providers": {
+                  "alpha": {
+                    "headers": [
+                      " provider ",
+                      ""
+                    ],
+                    "models": [
+                      {
+                        "id": "m1",
+                        "headers": {
+                          "X-Model": " model "
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "agents": {
+                "defaults": {
+                  "model": {
+                    "primary": "alpha/m1"
+                  }
+                }
+              }
+            },
+            "text": "{\n  \"models\": {\n    \"providers\": {\n      \"alpha\": {\n        \"headers\": [\n          \" provider \",\n          \"\"\n        ],\n        \"models\": [\n          {\n            \"id\": \"m1\",\n            \"headers\": {\n              \"X-Model\": \" model \"\n            }\n          }\n        ]\n      }\n    }\n  },\n  \"agents\": {\n    \"defaults\": {\n      \"model\": {\n        \"primary\": \"alpha/m1\"\n      }\n    }\n  }\n}"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "provider": "alpha",
+          "model": "m1",
+          "apiType": {
+            "$undefined": true
+          },
+          "baseUrl": {
+            "$undefined": true
+          },
+          "apiKey": {
+            "$undefined": true
+          },
+          "headers": {
+            "X-Model": "model"
+          }
+        }
+      ]
+    },
+    {
+      "fn": "resolveOpenClawModelConfig",
+      "args": [
+        [
+          {
+            "kind": "valid",
+            "json": {
+              "models": {
+                "providers": {
+                  "alpha": {
+                    "headers": {
+                      "X-Provider": " provider "
+                    },
+                    "models": [
+                      {
+                        "id": "m1",
+                        "headers": [
+                          " model ",
+                          ""
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "agents": {
+                "defaults": {
+                  "model": {
+                    "primary": "alpha/m1"
+                  }
+                }
+              }
+            },
+            "text": "{\n  \"models\": {\n    \"providers\": {\n      \"alpha\": {\n        \"headers\": {\n          \"X-Provider\": \" provider \"\n        },\n        \"models\": [\n          {\n            \"id\": \"m1\",\n            \"headers\": [\n              \" model \",\n              \"\"\n            ]\n          }\n        ]\n      }\n    }\n  },\n  \"agents\": {\n    \"defaults\": {\n      \"model\": {\n        \"primary\": \"alpha/m1\"\n      }\n    }\n  }\n}"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "provider": "alpha",
+          "model": "m1",
+          "apiType": {
+            "$undefined": true
+          },
+          "baseUrl": {
+            "$undefined": true
+          },
+          "apiKey": {
+            "$undefined": true
+          },
+          "headers": {
+            "X-Provider": "provider"
+          }
+        }
+      ]
+    },
+    {
+      "fn": "resolveOpenClawModelConfig",
+      "args": [
+        [
+          {
+            "kind": "valid",
+            "json": {
+              "models": {
+                "providers": {
+                  "2": {
+                    "models": [
+                      {
+                        "id": "two"
+                      }
+                    ]
+                  },
+                  "10": {
+                    "models": [
+                      {
+                        "id": "ten"
+                      }
+                    ]
+                  }
+                }
+              },
+              "agents": {
+                "defaults": {
+                  "model": {
+                    "primary": "missing/"
+                  }
+                }
+              }
+            },
+            "text": "{\"models\":{\"providers\":{\"10\":{\"models\":[{\"id\":\"ten\"}]},\"2\":{\"models\":[{\"id\":\"two\"}]}}},\"agents\":{\"defaults\":{\"model\":{\"primary\":\"missing/\"}}}}"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "provider": "2",
+          "model": "two",
+          "apiType": {
+            "$undefined": true
+          },
+          "baseUrl": {
+            "$undefined": true
+          },
+          "apiKey": {
+            "$undefined": true
+          }
+        }
+      ]
+    },
+    {
+      "fn": "resolveMemoryLlm",
+      "args": [
+        {
+          "model": " alpha/m1 "
+        },
+        {
+          "providers": {
+            "alpha": {
+              "protocol": "openai",
+              "url": " https://a.example ",
+              "apiKey": " KEY "
+            },
+            "beta": {
+              "protocol": "anthropic"
+            },
+            "gamma": {
+              "protocol": "openai-responses"
+            },
+            "delta": {
+              "protocol": "google"
+            },
+            "epsilon": {
+              "protocol": "unknown"
+            }
+          }
+        },
+        {
+          "$undefined": true
+        }
+      ],
+      "expected": {
+        "provider": " alpha",
+        "model": "m1 ",
+        "baseUrl": {
+          "$undefined": true
+        },
+        "apiKey": {
+          "$undefined": true
+        }
+      }
+    },
+    {
+      "fn": "resolveMemoryLlm",
+      "args": [
+        {
+          "model": "alpha/ m1 "
+        },
+        {
+          "providers": {
+            "alpha": {
+              "protocol": "openai",
+              "url": " https://a.example ",
+              "apiKey": " KEY "
+            },
+            "beta": {
+              "protocol": "anthropic"
+            },
+            "gamma": {
+              "protocol": "openai-responses"
+            },
+            "delta": {
+              "protocol": "google"
+            },
+            "epsilon": {
+              "protocol": "unknown"
+            }
+          }
+        },
+        {
+          "$undefined": true
+        }
+      ],
+      "expected": {
+        "provider": "alpha",
+        "model": " m1 ",
+        "baseUrl": " https://a.example ",
+        "apiKey": " KEY ",
+        "apiType": "openai-completions"
+      }
     }
   ]
 }

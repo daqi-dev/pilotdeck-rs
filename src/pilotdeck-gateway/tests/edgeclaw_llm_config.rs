@@ -1,9 +1,10 @@
 //! Real TS oracle for A6.6-edgeclaw-5 LLM config resolution.
 use pilotdeck_gateway::runtime::memory::edgeclaw::llm::config::{
     ConfigError, LlmOptions, MergedIndexingSettings, ModelSelection, OpenClawModelConfig,
-    OpenClawStore, build_llm_config_with, looks_like_env_var_name, memory_api_type_for_protocol,
-    merge_indexing_settings, parse_config_model_ref, parse_model_ref, resolve_agent_primary_model,
-    resolve_api_key, resolve_memory_llm, resolve_selection, sanitize_headers,
+    OpenClawStore, build_llm_config_with, load_open_claw_model_config, looks_like_env_var_name,
+    memory_api_type_for_protocol, merge_indexing_settings, open_claw_config_path,
+    parse_config_model_ref, parse_model_ref, resolve_agent_primary_model, resolve_api_key,
+    resolve_memory_llm, resolve_selection, sanitize_headers,
 };
 use pilotdeck_gateway::runtime::memory::{MemoryConfig, MemoryModelConfig, MemoryModelProvider};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -76,7 +77,84 @@ fn wire(value: &JsValue) -> String {
 }
 
 fn assert_wire(actual: &JsValue, expected: &JsValue) {
+    assert_same(actual, expected, "$");
+    // The recursive walk above only special-cases numbers. The wire text stays
+    // the final oracle: it pins JSON shape, key order and string escaping.
     assert_eq!(wire(actual), wire(expected), "actual {actual:?}");
+}
+
+/// `JSON.stringify` writes every non-finite number as `null`, so the wire text
+/// alone cannot tell `NaN`, `+Infinity`, `-Infinity` and `null` apart. Compare
+/// numbers by value first, then let [`assert_wire`] compare the remaining wire
+/// shape.
+fn assert_same(actual: &JsValue, expected: &JsValue, path: &str) {
+    match (actual, expected) {
+        (JsValue::Number(actual), JsValue::Number(expected)) => {
+            assert_number(*actual, *expected, path)
+        }
+        (JsValue::Number(actual), other) => {
+            panic!("{path}: expected {other:?}, actual number {actual:?}")
+        }
+        (other, JsValue::Number(expected)) => {
+            panic!("{path}: expected number {expected:?}, actual {other:?}")
+        }
+        (JsValue::Array(actual), JsValue::Array(expected)) => {
+            assert_eq!(actual.len(), expected.len(), "{path}: array length");
+            for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+                assert_same(actual, expected, &format!("{path}[{index}]"));
+            }
+        }
+        (JsValue::Object(actual), JsValue::Object(expected)) => {
+            // `JSON.stringify` drops undefined-valued properties; compare the
+            // same effective key set and recurse into every present value.
+            let undefined = JsValue::Undefined;
+            for (key, actual) in actual.own_entries() {
+                if matches!(actual, JsValue::Undefined) {
+                    continue;
+                }
+                let expected = expected.get_key(key).unwrap_or(&undefined);
+                assert_same(actual, expected, &format!("{path}.{}", key_label(key)));
+            }
+            for (key, expected) in expected.own_entries() {
+                if matches!(expected, JsValue::Undefined) {
+                    continue;
+                }
+                assert!(
+                    actual.get_key(key).is_some(),
+                    "{path}.{}: missing key",
+                    key_label(key)
+                );
+            }
+        }
+        (actual, expected) => assert_eq!(wire(actual), wire(expected), "{path}: actual {actual:?}"),
+    }
+}
+
+fn key_label(key: &JsString) -> String {
+    key.to_utf8().unwrap_or_else(|_| format!("{key:?}"))
+}
+
+fn assert_number(actual: f64, expected: f64, path: &str) {
+    if actual.is_nan() {
+        assert!(expected.is_nan(), "{path}: expected NaN, actual {actual:?}");
+    } else if actual.is_infinite() {
+        assert!(
+            expected.is_infinite(),
+            "{path}: expected {expected:?}, actual {actual:?}"
+        );
+        assert_eq!(
+            actual.is_sign_negative(),
+            expected.is_sign_negative(),
+            "{path}: infinity sign"
+        );
+    } else {
+        assert!(
+            !expected.is_nan() && !expected.is_infinite(),
+            "{path}: actual {actual:?}, expected {expected:?}"
+        );
+        // `to_bits` also distinguishes `-0.0` from `0.0`; the wire text cannot.
+        assert_eq!(actual.to_bits(), expected.to_bits(), "{path}: number bits");
+    }
 }
 
 fn opt_string(value: &JsValue) -> Option<JsString> {
@@ -403,6 +481,97 @@ fn open_claw_cache_does_not_reprobe_home_after_first_read() {
         .resolve(|| -> Option<PathBuf> { panic!("home must not be re-read") })
         .expect("cached");
     assert_eq!(first, second);
+}
+
+#[test]
+fn open_claw_resolve_does_not_hold_lock_across_io() {
+    use std::{
+        sync::{Arc, mpsc},
+        time::Duration,
+    };
+
+    let scratch = scratch::Scratch::new("edgeclaw-llm-config-lock");
+    let home_a = scratch.path().join("a");
+    let home_b = scratch.path().join("b");
+    for (home, provider) in [(&home_a, "a"), (&home_b, "b")] {
+        fs::create_dir_all(home.join(".openclaw")).unwrap();
+        fs::write(
+            home.join(".openclaw/openclaw.json"),
+            format!(r#"{{"models":{{"providers":{{"{provider}":{{"models":[{{"id":"m"}}]}}}}}}}}"#),
+        )
+        .unwrap();
+    }
+    let expected_b = load_open_claw_model_config(&open_claw_config_path(&home_b)).expect("b");
+
+    let store = Arc::new(OpenClawStore::new());
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let first = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || {
+            store.resolve(|| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Some(home_a)
+            })
+        })
+    };
+    entered_rx.recv().expect("first caller entered home()");
+
+    let (done_tx, done_rx) = mpsc::channel();
+    let second = {
+        let store = Arc::clone(&store);
+        let home_b = home_b.clone();
+        std::thread::spawn(move || {
+            let value = store.resolve(|| Some(home_b));
+            done_tx.send(value).unwrap();
+        })
+    };
+    let second_result = done_rx.recv_timeout(Duration::from_secs(5));
+    // Always release the first caller: a failure below must not leave a
+    // thread blocked for the rest of the test binary.
+    release_tx.send(()).unwrap();
+    second.join().unwrap();
+    let second_result = second_result
+        .expect("second resolve blocked: the cache lock covers I/O")
+        .expect("b config");
+    assert_eq!(second_result, expected_b);
+    // The first caller loaded `a` but must adopt the first completed write
+    // (`b`) instead of returning its own result.
+    assert_eq!(first.join().unwrap().expect("cached"), expected_b);
+    assert_eq!(
+        store
+            .resolve(|| panic!("cache must be filled"))
+            .expect("cache"),
+        expected_b
+    );
+}
+
+#[test]
+fn wire_comparator_distinguishes_non_finite_numbers() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let differs = |actual: JsValue, expected: JsValue| {
+        catch_unwind(AssertUnwindSafe(|| assert_wire(&actual, &expected))).is_err()
+    };
+    assert!(differs(
+        JsValue::Number(f64::NAN),
+        JsValue::Number(f64::INFINITY)
+    ));
+    assert!(differs(
+        JsValue::Number(f64::INFINITY),
+        JsValue::Number(f64::NEG_INFINITY)
+    ));
+    assert!(differs(JsValue::Number(f64::NAN), JsValue::Null));
+    assert!(differs(JsValue::Number(-0.0), JsValue::Number(0.0)));
+    assert!(!differs(
+        JsValue::Number(f64::NAN),
+        JsValue::Number(f64::NAN)
+    ));
+    assert!(!differs(
+        JsValue::Number(f64::NEG_INFINITY),
+        JsValue::Number(f64::NEG_INFINITY)
+    ));
 }
 
 #[test]

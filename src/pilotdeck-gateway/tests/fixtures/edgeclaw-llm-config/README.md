@@ -14,11 +14,12 @@
 oracle 与宿主环境无关。cache case 在同一个模块实例上先坏 JSON 再写合法
 JSON，记录两次返回值，锁定「首次失败后永久 null」。
 
-覆盖 361 个观测：openclaw 缺失 / 坏 JSON / primary 命中与不命中（含按
+覆盖 366 个观测：openclaw 缺失 / 坏 JSON / primary 命中与不命中（含按
 `id` / `name` 命中，且 name 命中的模型可以不是首个模型）/ provider
-或 model 缺失 / headers 合并与 trim；`buildLlmConfig` 的默认值、六条 env
-回退、options 覆盖、modelRef、openclaw 选择命中与不命中、apiKey 环境变量名
-字面量；extractor 的 `sanitizeHeaders`（含数组记录）、`resolveAgentPrimaryModel`、
+或 model 缺失 / headers 合并与 trim（数组 headers 被 `isRecord` 拒绝）/
+整数 provider 名按 JS 键序回退（raw JSON 文本里 `10` 在 `2` 前）；
+`buildLlmConfig` 的默认值、六条 env 回退、options 覆盖、modelRef、openclaw
+选择命中与不命中、apiKey 环境变量名字面量；extractor 的 `sanitizeHeaders`（含数组记录）、`resolveAgentPrimaryModel`、
 `parseModelRef`、`looksLikeEnvVarName`、`resolveSelection`（api/baseUrl/
 headers 覆盖与尾斜杠）、`resolveApiKey`（直接值 / 环境变量名 / runtime
 resolver）、`mergeIndexingSettings`（含 NaN / Infinity / -0 语义）与工厂
@@ -42,9 +43,12 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --test edgeclaw_l
 PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
   -p pilotdeck-gateway --test edgeclaw_llm_config -- --include-ignored
 python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-llm-config/negative.py /tmp/edgeclaw-llm-config-negative
+python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-llm-config/negative.py --self-test
 ```
 
 `negative.py` 用 `mutating_sources` 锁定并恢复产品源码，逐格要求编译成功、
 运行时断言转红；一格失败不中止，跑完后汇总 `KILLED / SURVIVED / INVALID`，
-有存活或无效退出 1。脚本要求调用方提供 `CARGO_TARGET_DIR`，未设即报错。
-整套负控逐个重编译，耗时较长，由协调者在宿主执行（见 RESULT）。
+有存活或无效退出 1；`SURVIVED` 还要求恰好跑满 1 个测试，测试名漂移导致的
+`running 0 tests` 记 `INVALID`。脚本要求调用方提供 `CARGO_TARGET_DIR`，未设
+即报错。`--self-test` 直接校验分类器的三态。整套负控逐个重编译，耗时较长，
+由协调者在宿主执行（见 RESULT）。

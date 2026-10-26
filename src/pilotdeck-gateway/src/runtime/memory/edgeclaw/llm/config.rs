@@ -130,7 +130,20 @@ impl OpenClawStore {
 
     /// The home lookup only runs on the first read; a later `HOME` change no
     /// longer affects the cached result (TS computes the path at module load).
+    ///
+    /// `home()` and the file read happen **outside** the cache lock: probing
+    /// `HOME` can spawn `id -P`/`getent` and reading `~/.openclaw/openclaw.json`
+    /// can block on a FIFO or a stalled network home. A cold pair of callers
+    /// may therefore load twice; the first completed write wins and the loser
+    /// returns the winner's cached value, so every caller observes one
+    /// consistent result. This is cheaper than a `OnceLock`/`get_or_init`,
+    /// which would make every other caller wait behind the same I/O.
     pub fn resolve(&self, home: impl FnOnce() -> Option<PathBuf>) -> Option<OpenClawModelConfig> {
+        if let Some(value) = self.read_cache() {
+            return value;
+        }
+        let value =
+            home().and_then(|home| load_open_claw_model_config(&open_claw_config_path(&home)));
         let mut cached = self
             .cached
             .lock()
@@ -138,10 +151,15 @@ impl OpenClawStore {
         if let Some(value) = cached.as_ref() {
             return value.clone();
         }
-        let value =
-            home().and_then(|home| load_open_claw_model_config(&open_claw_config_path(&home)));
         *cached = Some(value.clone());
         value
+    }
+
+    fn read_cache(&self) -> Option<Option<OpenClawModelConfig>> {
+        self.cached
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
 }
 
