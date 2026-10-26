@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""#829 negative controls: break the JS `/i` (no `/u`) fold emulation, require red.
+"""#829/#834 negative controls: break the JS flag emulation, require red.
 
 Every mutant changes one production behavior in output_schema.rs (the ASCII
-fold mask, or the `(?i)` the port now adds where ajv-formats compiles with
-`/i`). While a mutant is live, `formats_follow_ajv_formats` and — for the
-oracle mutants — `replays_the_ajv_oracle` must FAIL on the #829 rows; after
+fold mask, the `(?i)` the port now adds where ajv-formats compiles with
+`/i`, the #834 `url` `/iu` fold, or the `byte` `/gm` line split). While a
+mutant is live, `formats_follow_ajv_formats` and — for the oracle mutants —
+`replays_the_ajv_oracle` must FAIL on the pinned rows; after
 `mutating_sources` restores the bytes, the same command must pass (the caller
 runs the unmutated suite separately). Compile failures and timeouts are
 INVALID evidence. Run exclusively; cargo uses the caller's CARGO_TARGET_DIR.
@@ -84,6 +85,32 @@ MUTANTS = [
      b'if text.contains([\'\\u{017F}\', \'\\u{212A}\', \'\\u{0130}\']) {\n'
      b'        std::borrow::Cow::Owned(text.replace(\'\\u{017F}\', "s").replace(\'\\u{0130}\', "i").replace(\'\\u{212A}\', "\\u{FFFD}"))',
      False),
+    # #834: `url` is /iu, so ſ must fold onto the scheme's `s`; dropping the
+    # fold restores the false reject of HTTPſ://.
+    ('url-long-s-not-folded',
+     b'    let lower = if lower.contains(\'\\u{17f}\') {\n'
+     b'        std::borrow::Cow::Owned(lower.replace(\'\\u{17f}\', "s"))\n'
+     b'    } else {\n'
+     b'        std::borrow::Cow::Borrowed(lower.as_str())\n'
+     b'    };\n'
+     b'    let rest = lower',
+     b'    let lower = std::borrow::Cow::Borrowed(lower.as_str());\n'
+     b'    let rest = lower',
+     True),
+    # #834: `byte` is /gm — \\r and U+2028/U+2029 are line terminators too;
+    # recognizing only \\n is exactly the bug #834 fixes.
+    ('byte-newline-only',
+     b'    text.split([\'\\n\', \'\\r\', \'\\u{2028}\', \'\\u{2029}\'])\n'
+     b'        .any(|line| formats().byte.is_match(line))',
+     b'    text.split(\'\\n\')\n'
+     b'        .any(|line| formats().byte.is_match(line))',
+     True),
+    # #834: `/gm` test semantics is "any full line matches", not "all";
+    # aGVsbG8=\\r!! is valid on its first line.
+    ('byte-all-lines-required',
+     b'        .any(|line| formats().byte.is_match(line))',
+     b'        .all(|line| formats().byte.is_match(line))',
+     True),
 ]
 selected = sys.argv[2:] or [name for name, _old, _new, _oracle in MUTANTS]
 

@@ -2185,8 +2185,11 @@ fn formats() -> &'static Formats {
             r"^(?:0|[1-9][0-9]*)(?:#|(?:/(?:[^~/]|~0|~1)*)*)$",
         )
         .expect("relative-json-pointer format"),
+        // No `(?m)` here: ajv-formats' `/gm` line anchors recognize every
+        // ECMAScript line terminator, which Rust's `(?m)` cannot express;
+        // [`byte_valid`] splits the haystack instead.
         byte: Regex::new(
-            r"(?m)^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+            r"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
         )
         .expect("byte format"),
     })
@@ -2194,7 +2197,9 @@ fn formats() -> &'static Formats {
 
 /// ajv-formats compiles its full-mode format regexes with `/i` and no `/u`
 /// (measured on the baseline's SDK provider; see the output-schema fixture
-/// README's #829 note), so their case folding is ASCII-only. Unicode `(?i)`
+/// README's #829 note), so their case folding is ASCII-only. The two
+/// exceptions — `url` (`/iu`, folded in [`url_valid`]) and `byte` (`/gm`,
+/// split in [`byte_valid`]) — are handled per format below. Unicode `(?i)`
 /// additionally folds U+017F (ſ) and U+212A (KELVIN SIGN) — the only
 /// non-ASCII code points whose simple case fold is an ASCII letter — onto
 /// `s`/`k`; mask them so a Rust `(?i)` match behaves like the JavaScript one.
@@ -2244,7 +2249,7 @@ fn string_format_valid(format: &str, text: &str) -> Option<bool> {
             .json_pointer_uri_fragment
             .is_match(&ascii_fold_haystack(text)),
         "relative-json-pointer" => regexes.relative_json_pointer.is_match(text),
-        "byte" => regexes.byte.is_match(text),
+        "byte" => byte_valid(text),
         "password" | "binary" => true,
         "int32" | "int64" | "float" | "double" => return None,
         _ => return None,
@@ -2399,6 +2404,17 @@ fn regex_format_valid(text: &str) -> Option<bool> {
     Some(parse_js_pattern_non_unicode(text).is_ok())
 }
 
+/// `byte` from ajv-formats compiles with `/gm`: `^`/`$` match around every
+/// ECMAScript line terminator (`\n`, `\r`, U+2028, U+2029), while Rust's
+/// `(?m)` only recognizes `\n`. `test` succeeds when any single full line is
+/// a base64 value (`aGVsbG8=\r!!` passes on its first line while
+/// `aGVsbG8\r!!`, with no valid line, fails), so split on all four
+/// terminators and accept on the first matching line.
+fn byte_valid(text: &str) -> bool {
+    text.split(['\n', '\r', '\u{2028}', '\u{2029}'])
+        .any(|line| formats().byte.is_match(line))
+}
+
 fn is_uri_host_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || ('\u{a1}'..='\u{ffff}').contains(&c)
 }
@@ -2412,6 +2428,18 @@ fn is_tld_char(c: char) -> bool {
 /// excludes 10/127/169.254/192.168/172.16-31 hosts.
 fn url_valid(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
+    // #834: `url` is the one ajv-formats regex compiled with `/iu`, not just
+    // `/i`: V8 canonicalizes through Unicode case folding, so U+017F (ſ)
+    // folds onto `s` and `HTTPſ://` is a valid `https` scheme. Folding ſ
+    // after the ASCII lowering is safe in every other position too: the
+    // host/TLD classes contain both spellings literally, and the other
+    // non-ASCII folds (U+212A onto `k`, U+0130 onto `i`) hit no
+    // fold-sensitive position — the scheme letters are h/t/p/s/f.
+    let lower = if lower.contains('\u{17f}') {
+        std::borrow::Cow::Owned(lower.replace('\u{17f}', "s"))
+    } else {
+        std::borrow::Cow::Borrowed(lower.as_str())
+    };
     let rest = lower
         .strip_prefix("https://")
         .or_else(|| lower.strip_prefix("http://"))
@@ -3933,6 +3961,20 @@ mod tests {
             ("uri-template", "{\u{17f}}", Some(false)),
             ("url", "https://example.com/a?b=1", Some(true)),
             ("url", "http://192.168.1.1/x", Some(false)),
+            // #834: `url` is the one ajv-formats regex with /iu, so ſ folds
+            // onto the scheme's `s`; the host/TLD classes contain ſ literally
+            // either way, and İ (folds onto `i`) hits no fold-sensitive
+            // position in `url`.
+            ("url", "HTTPS://EXAMPLE.COM/A", Some(true)),
+            ("url", "HTTP\u{17f}://example.com/a", Some(true)),
+            ("url", "Http\u{17f}://example.com/a", Some(true)),
+            ("url", "http://e\u{17f}ample.com/", Some(true)),
+            ("url", "http://example.\u{17f}om/", Some(true)),
+            ("url", "http://e\u{212a}ample.com/", Some(true)),
+            ("url", "http://e\u{131}ample.com/", Some(true)),
+            ("url", "HTTP\u{17f}://192.168.1.1/x", Some(false)),
+            ("url", "\u{17f}http://example.com/", Some(false)),
+            ("url", "http\u{fb06}://example.com/a", Some(false)),
             ("email", "a.b@example.com", Some(true)),
             ("email", "User@Example.com", Some(true)),
             ("email", "a..b@example.com", Some(false)),
@@ -3974,6 +4016,19 @@ mod tests {
             ("relative-json-pointer", "0/a", Some(true)),
             ("byte", "aGVsbG8=", Some(true)),
             ("byte", "aGVsbG8", Some(false)),
+            // #834: ajv-formats' byte regex carries /gm — `^`/`$` match
+            // around every ECMAScript line terminator (\n, \r, U+2028,
+            // U+2029), and any single full base64 line makes the string
+            // valid; `\u{85}` is not a line terminator.
+            ("byte", "aGVsbG8=\r", Some(true)),
+            ("byte", "\raGVsbG8=", Some(true)),
+            ("byte", "aGVsbG8=\r\n", Some(true)),
+            ("byte", "aGVsbG8=\u{2028}", Some(true)),
+            ("byte", "aGVsbG8=\u{2029}", Some(true)),
+            ("byte", "aGVsbG8=\u{85}", Some(false)),
+            ("byte", "aGVsbG8=\r!!", Some(true)),
+            ("byte", "aGVsbG8\r!!", Some(false)),
+            ("byte", "aGVsbG8\r!\rQQ==", Some(true)),
             ("regex", "^a+$", Some(true)),
             ("regex", "[", Some(false)),
             ("regex", "(?=a)", Some(true)),
@@ -4156,7 +4211,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 913);
+        assert_eq!(cases.len(), 932);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),
