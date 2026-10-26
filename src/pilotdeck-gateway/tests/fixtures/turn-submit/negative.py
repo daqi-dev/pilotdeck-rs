@@ -36,6 +36,11 @@ def panic_evidence(raw, used_test):
     libtest prints ``thread '<test>' panicked at``; only output inside a
     block whose test name equals or extends ``used_test`` counts, so a mutant
     killed by a different test's assertion can never satisfy the anchor.
+    fix-r3: every matching block counts, not just the first. libtest names a
+    thread after the single test running on it, so a test that panics twice
+    (the poison test's deliberate poisoning panic, then the production panic
+    the mutant causes) owns both blocks; a helper thread's panic still has a
+    different name and stays excluded.
     """
     evidence = []
     for segment in raw.split("thread '")[1:]:
@@ -53,10 +58,29 @@ def marker_kills_named_test(raw, used_test, marker):
     return marker in panic_evidence(raw, used_test)
 
 
+def unwrap_site(anchor_source, before, original):
+    """fix-r3: derive a ``location`` anchor from the original bytes.
+
+    A poison-tolerant lock reverted to ``unwrap()`` panics at the start of the
+    replaced span — ``unwrap()`` begins exactly where ``unwrap_or_else()``
+    began — so the panic site is the span's own line:column. The frozen
+    ``301:14``/``247:22`` anchors rotted when A7.2-pr6a-7 shifted both spans
+    two lines down and the poison mutants turned INVALID; a derived anchor
+    cannot rot, and it stays bound to the mutation itself rather than to a
+    hand-copied line number."""
+    assert before, 'a location anchor needs the mutation span'
+    text = original.decode()
+    assert text.count(before) == 1
+    head = text[:text.index(before)]
+    return f'{anchor_source.relative_to(rust)}:{head.count(chr(10)) + 1}:{len(head) - head.rfind(chr(10))}'
+
+
 def anchor_self_test():
     """fix-r2 P0 self-test: a marker confined to another test's panic block
     must not count as evidence (the r1 comment promised this; ``marker in
-    raw`` did not deliver)."""
+    raw`` did not deliver). fix-r3: the multi-block rule is pinned too — the
+    poison test panics twice, and only its second block carries the mutant's
+    evidence."""
     marker = 'invalid-mode: step'
     used_test = 'runtime::turn::submit::tests::real_ts_submit_scenarios'
     stray = (
@@ -71,6 +95,32 @@ def anchor_self_test():
     assert not marker_kills_named_test(stray, used_test, marker), \
         'a marker in another test\'s panic block must be invalid evidence'
     assert marker_kills_named_test(stray + real, used_test, marker)
+    # fix-r3: the real poison-test shape — the test's own deliberate panic
+    # first, the mutant's production panic second. The marker must count in
+    # any block under the test's thread name, not only in the first one.
+    poison_test = 'runtime::turn::submit_host::tests::finish_pump_releases_a_lease_after_the_leases_mutex_is_poisoned'
+    poison_log = (
+        "thread '" + poison_test + "' (285708320) panicked at "
+        "pilotdeck-gateway/src/runtime/turn/submit_host_tests.rs:328:9:\n"
+        "poison the leases mutex mid-turn\n"
+        "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n"
+        "thread '" + poison_test + "' (285708320) panicked at "
+        "pilotdeck-gateway/src/runtime/turn/submit_host.rs:303:14:\n"
+        "called `Result::unwrap()` on an `Err` value: PoisonError { .. }\n"
+    )
+    deliberate = poison_log[:poison_log.index("\nthread '")]
+    assert not marker_kills_named_test(deliberate, poison_test, 'PoisonError'), \
+        'the deliberate poison panic alone is not the mutant\'s evidence'
+    assert marker_kills_named_test(poison_log, poison_test, 'PoisonError'), \
+        'the production panic after the deliberate one must count as evidence'
+    # A helper thread panicking with the marker is still not the test's own
+    # evidence: libtest names only the test thread after the test.
+    helper = (
+        "thread 'tokio-runtime-worker' (285708321) panicked at submit.rs:1:\n"
+        'PoisonError\n'
+    )
+    assert not marker_kills_named_test(helper, poison_test, 'PoisonError'), \
+        'a helper thread\'s panic block must not count as the test\'s evidence'
     print('anchor self-test: PASS', flush=True)
 
 
@@ -210,12 +260,15 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         'always-acquire-lease': lease_order,
     })
     # Anchor kinds: `message` is a key substring of the assertion/panic message
-    # for the named test; `location` is the exact panic file:line:column. The
-    # generic "some assertion happened somewhere" check is deliberately gone.
+    # for the named test; `location` is the exact panic file:line:column of
+    # the reverted `unwrap()` itself, derived by ``unwrap_site`` from the
+    # span the mutant replaces (fix-r3: a frozen line number rots with every
+    # shift above the span). The generic "some assertion happened somewhere"
+    # check is deliberately gone.
     mutant_anchor = {
         'host-lease-release-skipped': ('message', 'assertion `left == right` failed'),
-        'lease-poison-unwrap-finish': ('location', 'pilotdeck-gateway/src/runtime/turn/submit_host.rs:301:14'),
-        'lease-poison-unwrap-prepare': ('location', 'pilotdeck-gateway/src/runtime/turn/submit_host.rs:247:22'),
+        'lease-poison-unwrap-finish': ('location', None),
+        'lease-poison-unwrap-prepare': ('location', None),
         'lease-order-records-swapped': ('message', 'lease_release must precede after_turn'),
         'lease-acquisition-skipped': ('message', 'attachments must record lease_release and after_turn'),
         'always-acquire-lease': ('message', 'lease_release recorded without an attachment lease'),
@@ -246,6 +299,13 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
             target_original = originals[target]
             used_test = mutant_test.get(name, test)
             anchor_kind, anchor = mutant_anchor.get(name, ('message', marker))
+            if anchor_kind == 'location':
+                anchor = unwrap_site(target, before, target_original)
+            # A marker of None without an explicit anchor entry would silently
+            # judge every run INVALID after the cargo run; refuse it up front
+            # so the control fails closed before any compile.
+            assert name == 'baseline' or anchor, \
+                (name, 'marker is None and no anchor entry names the evidence')
             if before: target.write_text(target_original.decode().replace(before, after, 1))
             slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], text=True, capture_output=True, timeout=10)
             slot_deadline = time.monotonic() + 1800
