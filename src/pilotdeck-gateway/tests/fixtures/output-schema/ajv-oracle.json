@@ -24,6 +24,9 @@
     "node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js": "8eb57dc4b4c0993869273a5e01a35c71e8d84c3d5050e9871a8cf141360f883d",
     "node_modules/@modelcontextprotocol/sdk/dist/esm/types.js": "962836b0f8dad85bcd398ad3ddb5ba81a7c7530c706955aa846dd8dfc02dd6a9"
   },
+  "formatFlags": {
+    "url": "iu"
+  },
   "sdk": "1.29.0",
   "ajv": "8.20.0",
   "ajvFormats": "3.0.1",
@@ -3465,6 +3468,163 @@
       },
       "data": "#/İ",
       "errorText": "data must match format \"json-pointer-uri-fragment\""
+    },
+    {
+      "id": "url/upper",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "HTTPS://EXAMPLE.COM/A"
+    },
+    {
+      "id": "url/long-s-scheme",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "HTTPſ://example.com/a"
+    },
+    {
+      "id": "url/long-s-scheme-mixed",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "Httpſ://example.com/a"
+    },
+    {
+      "id": "url/long-s-host",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://eſample.com/"
+    },
+    {
+      "id": "url/long-s-tld",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://example.ſom/"
+    },
+    {
+      "id": "url/kelvin-host",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://eK.example.com/"
+    },
+    {
+      "id": "url/dotless-i-host",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://eıample.com/"
+    },
+    {
+      "id": "url/long-s-private",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "HTTPſ://192.168.1.1/x",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/long-s-not-scheme",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "ſhttp://example.com/",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/ligature-st-scheme",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "httpﬆ://example.com/a",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "byte/cr-tail",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "aGVsbG8=\r"
+    },
+    {
+      "id": "byte/cr-head",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "\raGVsbG8="
+    },
+    {
+      "id": "byte/crlf-tail",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "aGVsbG8=\r\n"
+    },
+    {
+      "id": "byte/ls-tail",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "aGVsbG8= "
+    },
+    {
+      "id": "byte/ps-tail",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "aGVsbG8= "
+    },
+    {
+      "id": "byte/nel-tail",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "aGVsbG8=",
+      "errorText": "data must match format \"byte\""
+    },
+    {
+      "id": "byte/cr-any-line",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "aGVsbG8=\r!!"
+    },
+    {
+      "id": "byte/cr-bad-lines",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "aGVsbG8\r!!",
+      "errorText": "data must match format \"byte\""
+    },
+    {
+      "id": "byte/cr-last-line-good",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "aGVsbG8\r!\rQQ=="
     },
     {
       "id": "pattern/word-0",

@@ -9,6 +9,7 @@
 // The generator is deterministic; a second run must be byte-identical.
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
 import {execFileSync} from 'node:child_process';
 import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.mjs';
 import path from 'node:path';
@@ -80,6 +81,17 @@ assert.deepEqual(regexCompilation, [
   {pattern: '^sdk_key_probe$', flags: 'u'},
 ]);
 globalThis.RegExp = nativeRegExp;
+
+// #834: ajv-formats' format regexes are literals, so the construction proxy
+// above never sees them — read the imported module's flags instead. `url` is
+// the one full format compiled with /iu; `byte` is a function wrapping a
+// module-private /gm regex (not readable from outside), pinned behaviorally
+// by the goldens instead.
+const require = createRequire(import.meta.url);
+const {fullFormats} = require(path.join(baseline, 'node_modules/ajv-formats/dist/formats.js'));
+assert.equal(typeof fullFormats.url, 'object');
+assert.equal(fullFormats.url.flags, 'iu', 'url must stay /iu');
+assert.equal(typeof fullFormats.byte, 'function');
 
 const cases = [];
 const add = (id, schema, data) => cases.push({id, schema, data});
@@ -417,6 +429,36 @@ for (const [id, schema, data] of [
   ['json-pointer-uri-fragment/long-s', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/ſ'],
   ['json-pointer-uri-fragment/kelvin', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/K'],
   ['json-pointer-uri-fragment/i-with-dot', {type: 'string', format: 'json-pointer-uri-fragment'}, '#/İ'],
+  // #834: `url` is the one ajv-formats regex compiled with /iu (measured with
+  // the RegExp proxy: every other /i format has no /u), so V8 folds ſ
+  // (U+017F) onto the scheme's `s` — HTTPſ:// is a valid https URL. The
+  // host/TLD classes contain ſ literally either way; İ (folds onto `i`) and
+  // K (U+212A, onto `k`) hit no fold-sensitive position, and the ligature
+  // ﬆ (multi-code-point fold) does not fold at all.
+  ['url/upper', {type: 'string', format: 'url'}, 'HTTPS://EXAMPLE.COM/A'],
+  ['url/long-s-scheme', {type: 'string', format: 'url'}, 'HTTPſ://example.com/a'],
+  ['url/long-s-scheme-mixed', {type: 'string', format: 'url'}, 'Httpſ://example.com/a'],
+  ['url/long-s-host', {type: 'string', format: 'url'}, 'http://eſample.com/'],
+  ['url/long-s-tld', {type: 'string', format: 'url'}, 'http://example.ſom/'],
+  ['url/kelvin-host', {type: 'string', format: 'url'}, 'http://eK.example.com/'],
+  ['url/dotless-i-host', {type: 'string', format: 'url'}, 'http://eıample.com/'],
+  ['url/long-s-private', {type: 'string', format: 'url'}, 'HTTPſ://192.168.1.1/x'],
+  ['url/long-s-not-scheme', {type: 'string', format: 'url'}, 'ſhttp://example.com/'],
+  ['url/ligature-st-scheme', {type: 'string', format: 'url'}, 'httpﬆ://example.com/a'],
+  // #834: `byte` is the one ajv-formats regex compiled with /gm — `^`/`$`
+  // match around every ECMAScript line terminator (\n, \r, U+2028, U+2029;
+  // U+0085 is not one), and `test` succeeds when any single full line is a
+  // base64 value: `aGVsbG8=\r!!` passes on its first line while
+  // `aGVsbG8\r!!`, with no valid line, fails.
+  ['byte/cr-tail', {type: 'string', format: 'byte'}, 'aGVsbG8=\r'],
+  ['byte/cr-head', {type: 'string', format: 'byte'}, '\raGVsbG8='],
+  ['byte/crlf-tail', {type: 'string', format: 'byte'}, 'aGVsbG8=\r\n'],
+  ['byte/ls-tail', {type: 'string', format: 'byte'}, 'aGVsbG8= '],
+  ['byte/ps-tail', {type: 'string', format: 'byte'}, 'aGVsbG8= '],
+  ['byte/nel-tail', {type: 'string', format: 'byte'}, 'aGVsbG8=\u0085'],
+  ['byte/cr-any-line', {type: 'string', format: 'byte'}, 'aGVsbG8=\r!!'],
+  ['byte/cr-bad-lines', {type: 'string', format: 'byte'}, 'aGVsbG8\r!!'],
+  ['byte/cr-last-line-good', {type: 'string', format: 'byte'}, 'aGVsbG8\r!\rQQ=='],
 ]) {
   add(id, schema, data);
 }
@@ -988,6 +1030,7 @@ Object.assign(cases.find(({id}) => id === 'ref/recursive-499'), {portDepthLimit:
 
 const oracle = {
   sourceCommit, sourceSha256, regexCompilation, recursiveSdkSha256,
+  formatFlags: {url: fullFormats.url.flags},
   sdk: sdkPackage.version,
   ajv: ajvPackage.version,
   ajvFormats: formatsPackage.version,

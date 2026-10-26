@@ -13,8 +13,9 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **913** cases (the #829 rounds added 26 of them; the unit test
-`formats_follow_ajv_formats` rows are counted separately). Each case is
+count of **932** cases (the #829 rounds added 26 of them and #834 another 19;
+the unit test `formats_follow_ajv_formats` rows are counted separately). Each
+case is
 either:
 
 - `compileError`: `getValidator` threw (the SDK does this in `tools/list`);
@@ -81,6 +82,23 @@ For `uri`/`uri-reference` the IPvFuture suffix class `[a-z0-9…]` is just as
 fold-sensitive as the scheme class: `v://[V1.A]` and `//[V1.A]` stay valid
 (ASCII folding) while `v://[v1.ſ]` and `v://[v1.K]` (U+212A) stay invalid —
 the same haystack mask covers this position too.
+
+The `url/*` and `byte/*` rows pin #834. `url` is the one ajv-formats full
+format compiled with **`/iu`**, not `/i` (the generator asserts
+`fullFormats.url.flags === 'iu'` and records it as `formatFlags`; regex
+literals never pass through the construction proxy), so V8's Unicode
+canonicalization folds ſ (U+017F) onto the scheme's `s`: `HTTPſ://example.com/a`
+is valid. `url` is also the only format the port hand-lowers instead of
+running a `(?i)` regex, so it folds ſ onto the ASCII-lowered haystack rather
+than masking it — the host/TLD classes contain both spellings literally, and
+the other non-ASCII folds (İ onto `i`, K onto `k`) hit no fold-sensitive
+position in `url` (measured: `/i/iu` does not fold ı and ﬆ never folds).
+`byte` is the one `/m` format: its `/gm` anchors match around every
+ECMAScript line terminator (`\n`, `\r`, U+2028, U+2029; U+0085 is not one —
+measured on Node 22.22.0), and `test` succeeds when any single full line is a
+base64 value (`aGVsbG8=\r!!` is valid on its first line; `aGVsbG8\r!!`, with
+no valid line, is not). Rust's `(?m)` only recognizes `\n`, so the port
+splits the haystack on all four terminators instead of using `(?m)`.
 
 `deep-pattern/*`, `deep-pattern-properties/*`, and `deep-format-regex/*`
 cover 10000 / 100000 nested capturing, noncapturing, and lookahead groups,
