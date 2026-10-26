@@ -32,6 +32,7 @@ UNSUPPORTED = {
     'test_negative_process.py': 'unit tests of the shared process/source guard',
     'background-output/test_negative.py': 'unit tests of the mutation runner',
     'background-panic/test_negative_controls.py': 'mutation helper unit tests on in-memory strings/JSON, no product source replacement table',
+    'session-admission/test_negative.py': 'mutation boundary unit tests on in-memory product text, no product source replacement table',
     'replacement/test-negative-518.py': 'unit tests of the mutation runner',
     'edgeclaw-entries/test_negative_runners.py': 'unit tests of the mutation runners',
     'turn-runner/_negative_common.py': 'shared function-scoped replacement helper',
