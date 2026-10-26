@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned
 from negative_selection import select
+from negative_source import assertion_message_present
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
@@ -112,11 +113,11 @@ with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as 
         'PDRS_SUBMIT_CAPABILITY': ('submit capability filter must match at least one scenario', submit_tests),
     }
     for key, (message, path) in filter_assertions.items():
-        # Match the assertion whitespace-insensitively: rustfmt splits it
-        # across lines, so a single-line literal would report false drift.
-        flat = ' '.join(original[path].decode().split())
-        assert f'assert!( selected > 0, "{message}" );' in flat \
-            or f'assert!(selected > 0, "{message}");' in flat, \
+        # Relax whitespace only outside the string literal: rustfmt may split
+        # the assertion across lines, but the message itself is data (#813
+        # fix-r4). `str.split()` used to normalize `must  match` to `must
+        # match` and let that drift through.
+        assert assertion_message_present(original[path].decode(), message), \
             (key, 'filter assertion message drifted')
 
     selected = [dict(name='baseline', test=fence_test, marker=None)] + mutants

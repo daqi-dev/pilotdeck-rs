@@ -4,7 +4,7 @@ Run with the launcher environment and a fresh evidence directory. Restore the
 exact source bytes after each mutation; compilation errors never count.
 Optional mutation ids (``restore-old-logic``, ``catch-first-poll-only``,
 ``invoke-under-state-lock``) select a subset; every one still runs in its own
-process.
+process, after an unmutated baseline for each selected target test.
 """
 import hashlib
 import json
@@ -16,7 +16,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import select
+from negative_selection import baseline_passed, select
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
@@ -75,26 +75,52 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
         b'        drop(_state_guard);\n        // Every synchronous prologue has run before any callback can resume.',
     )
     # Both the timeout expectation and the completion assertion are real
-    # detections of the stranding; which one fires depends on scheduling.
-    stranded = ('sync panic stranded a waiter: dispose deadline',
-                'assertion `left == right` failed')
+    # detections of the stranding. Neither is a generic `assert_eq!` message:
+    # the completion anchor is asserted in plugins_tests.rs (#813 fix-r4).
+    STRANDED_MARKERS = (
+        'sync panic stranded a waiter: dispose deadline',
+        'sync panic stranded a waiter: completion count',
+    )
     CASES = [
         ('restore-old-logic', old_logic, 'disposal_sync_panic_does_not_strand_other_waiters',
-         stranded),
+         STRANDED_MARKERS),
         ('catch-first-poll-only', first_only, 'disposal_sync_panic_does_not_strand_other_waiters',
-         stranded),
+         STRANDED_MARKERS),
         ('invoke-under-state-lock', hold_lock, 'disposal_prologue_can_access_runtime_state',
          'DisposeFn invoked under state lock'),
     ]
-    # Optional mutation ids keep a host re-run bounded; `always=()` because
-    # this script has no unmutated baseline row.
+    # Optional mutation ids keep a host re-run bounded; `always=()` because the
+    # unmutated baseline is run explicitly below, before any mutation.
     cases = select(CASES, sys.argv[2:], always=())
     # #813: the libtest status line and the panic block carry the full module
     # path; the bare function name cannot be judged exactly.
     TEST_PREFIX = 'runtime::plugins::tests::'
+    baseline_tests = list(dict.fromkeys(test for _name, _mutation, test, _marker in cases))
     summary = []
     start = time.monotonic()
     try:
+        # #813 fix-r4: a subset run must first prove the selected target tests
+        # are green without a mutation. Otherwise a pre-existing failure would
+        # be attributed to the mutant and count as KILLED.
+        for test in baseline_tests:
+            test_name = TEST_PREFIX + test
+            assert SOURCE.read_bytes() == BASE, 'source changed outside exclusive runner'
+            slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
+                                 timeout=max(1, 590 - (time.monotonic() - start)))
+            (OUT / f'baseline-{test}.slots.log').write_text(slot.stdout + slot.stderr)
+            result = run_owned([
+                'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
+                '-p', 'pilotdeck-gateway', '--lib', test_name,
+                '--', '--exact', '--nocapture', '--test-threads=1',
+            ], cwd=ROOT, env=ENV, timeout=max(1, min(150, 590 - (time.monotonic() - start))))
+            output = result.stdout + result.stderr
+            (OUT / f'baseline-{test}.log').write_text(output)
+            passed = (result.returncode == 0 and baseline_passed(output, test_name))
+            summary.append(dict(mutation='baseline', test=test_name, exit=result.returncode,
+                                killed=False, baseline=passed))
+            print(json.dumps(summary[-1]), flush=True)
+            if not passed:
+                raise SystemExit(f'baseline {test_name} failed: INVALID before mutation')
         for name, mutation, test, marker in cases:
             test_name = TEST_PREFIX + test
             assert mutation != BASE, f'{name} must change bytes'
@@ -127,5 +153,6 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
         assert SOURCE.read_bytes() == BASE
         (OUT / 'summary.json').write_text(json.dumps(dict(
             sourceSha256=hashlib.sha256(BASE).hexdigest(), restored=True,
+            invalid=any(row.get('baseline') is False for row in summary),
             seconds=time.monotonic() - start, cases=summary,
         ), indent=2) + '\n')

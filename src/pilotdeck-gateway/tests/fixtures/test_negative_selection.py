@@ -8,7 +8,7 @@ baseline.
 """
 import unittest
 
-from negative_selection import select
+from negative_selection import baseline_passed, select
 
 ROWS = [('baseline', 'pass'), ('mutant-a', 'kill'), ('mutant-b', 'kill')]
 
@@ -33,6 +33,22 @@ class SubsetSelection(unittest.TestCase):
     def test_missing_baseline_is_rejected(self):
         with self.assertRaisesRegex(ValueError, r'missing baseline control\(s\): baseline'):
             select([('mutant-a', 'kill')], [])
+
+    def test_baseline_passed_requires_the_named_test(self):
+        ok = ('running 1 test\n'
+              'test pkg::tests::target ... ok\n'
+              'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n')
+        self.assertTrue(baseline_passed(ok, 'pkg::tests::target'))
+        failed = ok.replace('... ok', '... FAILED').replace(
+            'test result: ok.', 'test result: FAILED.')
+        self.assertFalse(baseline_passed(failed, 'pkg::tests::target'))
+        # A zero-test filter is not a baseline: cargo exits 0 but the target
+        # never ran (the subset runner used to accept this as green).
+        empty = ('running 0 tests\n'
+                 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out\n')
+        self.assertFalse(baseline_passed(empty, 'pkg::tests::target'))
+        sibling = ok.replace('pkg::tests::target', 'pkg::tests::other')
+        self.assertFalse(baseline_passed(sibling, 'pkg::tests::target'))
 
     def test_dict_rows_use_the_name_key(self):
         rows = [dict(name='baseline'), dict(name='mutant-a')]

@@ -283,7 +283,11 @@ fn deep_provider_raw_and_args_preview_fall_back_to_ts_string_conversion() {
     )
     .expect("turn_failed projects");
     let provider_error = field(&frames[0], "providerError");
-    assert_eq!(utf8(field(provider_error, "raw")), "[object Object]");
+    assert_eq!(
+        utf8(field(provider_error, "raw")),
+        "[object Object]",
+        "deep preview falls back to the TS String conversion"
+    );
 
     let calls = object([
         ("type", text("tool_calls_detected")),
@@ -302,7 +306,11 @@ fn deep_provider_raw_and_args_preview_fall_back_to_ts_string_conversion() {
         GatewayAgentEventProjectorOptions::default(),
     )
     .expect("tool_calls_detected projects");
-    assert_eq!(utf8(field(&frames[0], "argsPreview")), "[object Object]");
+    assert_eq!(
+        utf8(field(&frames[0], "argsPreview")),
+        "[object Object]",
+        "deep preview falls back to the TS String conversion"
+    );
 }
 
 /// P1: `persist` is fire-and-forget (`void this.write(...)`); projection must
@@ -1055,7 +1063,11 @@ fn artifact_writer_refuses_a_path_beside_the_root() {
         rustix::process::geteuid().as_raw(),
     )
     .expect_err("a path beside the root must be refused");
-    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "a path beside the root must be refused"
+    );
     assert!(!beside.exists(), "nothing may be written beside the root");
 }
 
@@ -1451,7 +1463,11 @@ fn every_advisory_write_is_eventually_persisted() {
     }
     store.wait_for_pending();
     let written = written.lock().unwrap();
-    assert_eq!(written.len(), 12, "written: {written:?}");
+    assert_eq!(
+        written.len(),
+        12,
+        "every advisory write must reach the writer: {written:?}"
+    );
     for path in &paths {
         assert!(written.contains(path), "missing advisory write: {path}");
     }
