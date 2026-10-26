@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Reversible product mutations for edgeclaw-llm-envelope.
 
-Every case must compile and fail a runtime oracle assertion. A surviving case
+Every case must compile and fail a runtime oracle assertion. Every anchor is
+checked against the baseline bytes before the unmutated suite runs: a stale
+anchor is a harness defect, not a surviving mutant, so it prints
+``STALE ANCHOR`` and exits 2 (same rule as #772 fix-r2). A surviving case
 does not stop the run: all selected cases are executed, the script prints a
 KILLED / SURVIVED summary and exits 1 when anything survived or is invalid.
 The original bytes are restored after every case and again in ``finally``;
@@ -215,6 +218,7 @@ cases = [
 
 names = [case[0] for case in cases]
 assert len(names) == len(set(names)), 'duplicate control name'
+all_cases = list(cases)
 if sys.argv[1:] == ['--list']:
     print('\n'.join(names))
     raise SystemExit(0)
@@ -257,9 +261,24 @@ def write_summary(baseline):
 
 with mutating_sources(root, [source]) as originals:
     original = originals[source].decode()
-    for name, _path, before, _after, _test in cases:
+    # An anchor that this list did not follow is a harness defect, not a
+    # classified cell: INVALID/exit 1 still blames the wrong thing and lets a
+    # broken control hide behind an environment or compile fault. Refuse
+    # before compiling.
+    stale = []
+    for name, _path, before, _after, _test in all_cases:
         count = original.count(before)
-        assert count == 1, (name, 'anchor count', count)
+        if count != 1:
+            stale.append((name, source.relative_to(root).as_posix(), count))
+    if stale:
+        report = '\n'.join(
+            f'STALE ANCHOR {name}: {count} matches in {relative}'
+            for name, relative, count in stale) + '\n'
+        (out / 'stale-anchors.log').write_text(report)
+        print(report, end='', flush=True)
+        print('STALE ANCHORS: negative.py is out of sync with envelope.rs; refusing to run',
+              flush=True)
+        sys.exit(2)
     baseline_ok = False
     baseline = {'name': 'baseline', 'outcome': 'INVALID', 'returncode': None}
     try:

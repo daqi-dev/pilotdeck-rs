@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Reversible product mutations for edgeclaw-llm-config.
 
-Every case must compile and fail a runtime oracle assertion. A surviving case
+Every case must compile and fail a runtime oracle assertion. Every anchor is
+checked against the baseline bytes before the unmutated suite runs: a stale
+anchor is a harness defect, not a surviving mutant, so it prints
+``STALE ANCHOR`` and exits 2 (same rule as #772 fix-r2). A surviving case
 does not stop the run: all selected cases execute, the script prints a
 KILLED / SURVIVED / INVALID summary, and exits 1 when anything survived or is
 invalid. The original bytes come from ``mutating_sources`` and are restored
@@ -230,6 +233,7 @@ cases = [
 
 names = [case[0] for case in cases]
 assert len(names) == len(set(names)), 'duplicate control name'
+all_cases = list(cases)
 if sys.argv[1:] == ['--list']:
     print('\n'.join(names))
     raise SystemExit(0)
@@ -263,6 +267,24 @@ def write_summary(baseline):
 
 with mutating_sources(root, [config]) as originals:
     original = originals[config].decode()
+    # An anchor that this list did not follow is a harness defect, not a
+    # classified cell: INVALID/exit 1 still blames the wrong thing and lets a
+    # broken control hide behind an environment or compile fault. Refuse
+    # before compiling.
+    stale = []
+    for name, _path, before, _after, _test in all_cases:
+        count = original.count(before)
+        if count != 1:
+            stale.append((name, config.relative_to(root).as_posix(), count))
+    if stale:
+        report = '\n'.join(
+            f'STALE ANCHOR {name}: {count} matches in {relative}'
+            for name, relative, count in stale) + '\n'
+        (out / 'stale-anchors.log').write_text(report)
+        print(report, end='', flush=True)
+        print('STALE ANCHORS: negative.py is out of sync with config.rs; refusing to run',
+              flush=True)
+        sys.exit(2)
     baseline_ok = False
     baseline = {'name': 'baseline', 'outcome': 'INVALID', 'returncode': None}
     try:
@@ -291,9 +313,6 @@ with mutating_sources(root, [config]) as originals:
             log = ''
             returncode = None
             try:
-                count = original.count(before)
-                if count != 1:
-                    raise ValueError(f'{name}: anchor count {count}')
                 slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
                 slots_text = slots.stdout + slots.stderr
                 # Snapshot bytes come only from mutating_sources; the mutation
