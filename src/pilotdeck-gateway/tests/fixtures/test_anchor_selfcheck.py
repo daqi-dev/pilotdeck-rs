@@ -82,7 +82,7 @@ class ScannerControls(unittest.TestCase):
         self.source.write_text('before before')
         self.write("mutants = [('sample', source, 'before', 'after', 2)]\n")
         self.run_check()
-        for count in ['0', '-1', 'True', '1.5']:
+        for count in ['0', '-1', 'True', 'False', '1.5']:
             with self.subTest(count=count):
                 self.write(f"mutants = [('sample', source, 'before', 'after', {count})]\n")
                 self.assertIn('positive integer', self.run_check(1))
@@ -92,6 +92,24 @@ class ScannerControls(unittest.TestCase):
         self.assertIn('positive integers', self.run_check(1))
         self.write("ANCHOR_COUNTS = {'sample': 2}\nmutants = [('sample', source, 'before', 'after', 2)]\n")
         self.assertIn('duplicate count', self.run_check(1))
+
+    def test_empty_counts_differ_from_missing_and_bool_counts_are_rejected(self):
+        table = "mutants = [('sample', source, 'before', 'after')]\n"
+        self.write(table)
+        self.run_check(label='missing-counts-default-one')
+        self.write('ANCHOR_COUNTS = {}\n' + table)
+        self.assertIn('empty ANCHOR_COUNTS', self.run_check(1, label='empty-counts'))
+        self.write("ANCHOR_COUNTS = {'sample': 1}\n" + table)
+        self.run_check(label='nonempty-counts-restored')
+        for count in ('True', 'False'):
+            for inline in (True, False):
+                with self.subTest(count=count, inline=inline):
+                    self.write(table.replace("'after')", f"'after', {count})") if inline
+                               else f"ANCHOR_COUNTS = {{'sample': {count}}}\n" + table)
+                    self.assertIn('positive integer', self.run_check(1, label=f'bool-count-{inline}-{count}'))
+                    self.write(table.replace("'after')", "'after', 1)") if inline
+                               else "ANCHOR_COUNTS = {'sample': 1}\n" + table)
+                    self.run_check(label='integer-count-restored')
 
     def test_regex_flags_are_used_and_invalid_regex_fails(self):
         self.source.write_text('BEGIN\nend')
@@ -407,6 +425,48 @@ mutants = [('sample', source, text, part + 'after')]
         self.source.write_text('missing')
         self.run_check(1)
 
+    def test_snapshot_updates_and_set_inventory_are_interpreted(self):
+        table = "mutants = [('sample', source, originals['example.rs'], 'after')]\n"
+        prefix = "paths = {source}\noriginals = {p.name: p.read_text() for p in {p for p in paths} | {source}}\n"
+        self.write(prefix + table)
+        self.run_check(label='snapshot-set-inventory')
+        update = "originals['example.rs'] = originals['example.rs'].replace('before', 'missing')\n"
+        self.write(prefix + update + table)
+        self.assertIn('actual=0', self.run_check(1, label='transformed-snapshot-before'))
+        self.write(prefix + update + "originals = {'example.rs': source.read_text()}\n" + table)
+        self.run_check(label='rebound-snapshot-restored')
+        self.write(prefix.replace('{p for p in paths}', '{p for p in paths if condition}') + table)
+        self.assertIn('unconditional single-loop', self.run_check(1, label='unknown-set-selection'))
+        self.write(prefix + table)
+        self.run_check()
+
+    def test_snapshot_json_assignment_is_resolved_to_its_read_path(self):
+        path = self.root / 'src/oracle.json'
+        path.write_text('before')
+        prefix = "originals = {}\noriginals['oracle.json'] = (root / 'src/oracle.json').read_text()\n"
+        table = "mutants = [('sample', 'oracle.json', originals['oracle.json'], 'after')]\n"
+        self.write(prefix + table)
+        self.run_check(label='snapshot-json-path')
+        self.write(prefix + "originals['oracle.json'] = 'missing'\n" + table)
+        self.assertIn('unresolved source path', self.run_check(1, label='snapshot-json-read-removed'))
+        self.write(prefix + table)
+        self.run_check(label='snapshot-json-read-restored')
+
+    def test_snapshot_rebinding_discards_stale_path_assignments(self):
+        other = self.root / 'src/other.rs'
+        other.write_text('before')
+        self.write("""other = root / 'src/other.rs'
+originals = {'alias.rs': source.read_text()}
+originals['alias.rs'] = source.read_text()
+originals = {'alias.rs': other.read_text()}
+mutants = [('sample', 'alias.rs', 'before', 'after')]
+""")
+        self.run_check(label='rebound-path-original')
+        other.write_text('missing')
+        self.assertIn('src/other.rs expected=1 actual=0', self.run_check(1, label='rebound-path-anchor-missing'))
+        other.write_text('before')
+        self.run_check(label='rebound-path-restored')
+
     def test_environment_gaps_fail_strict_mode_only(self):
         self.write("mutants = [('sample', source, 'before', 'after')]\nassert os.environ.get('PDRS_BASELINE')\nassert env['CARGO_TARGET_DIR']\n")
         self.assertIn('MISSING_ENV PDRS_BASELINE', self.run_check(1, anchors_only=False, label='missing-environment'))
@@ -424,6 +484,32 @@ mutants = [('sample', source, text, part + 'after')]
         self.assertEqual(CHECK.environment_requirements(ast.parse("env['PDRS_BASELINE'] = 'provided'\ndef run(env):\n env['PDRS_BASELINE']")), {'PDRS_BASELINE'})
         self.assertEqual(CHECK.environment_requirements(ast.parse("env.setdefault('PDRS_BASELINE', '')\nenv['PDRS_BASELINE']")), {'PDRS_BASELINE'})
 
+    def test_two_argument_environment_defaults_fail_then_restore(self):
+        table = "mutants = [('sample', source, 'before', 'after')]\n"
+        for reader in ('env.get', 'os.environ.get', 'os.getenv'):
+            for default in ("''", 'None', 'False', '0', 'unknown_default'):
+                with self.subTest(reader=reader, default=default):
+                    self.write(table + f"{reader}('CARGO_TARGET_DIR', 'cache')\n")
+                    self.run_check(anchors_only=False)
+                    self.write(table + f"{reader}('CARGO_TARGET_DIR', {default})\n")
+                    self.assertIn('MISSING_ENV CARGO_TARGET_DIR', self.run_check(
+                        1, anchors_only=False, label=f'env-default-{reader}-{default}'))
+                    self.run_check(anchors_only=False, env={'CARGO_TARGET_DIR': 'cache'}, label='caller-env-restored')
+                    self.assertIn('MISSING_ENV', self.run_check(anchors_only=True))
+                    self.write(table + f"{reader}('CARGO_TARGET_DIR', str(root / 'target'))\n")
+                    self.run_check(anchors_only=False, label='default-path-restored')
+
+    def test_getenv_keyword_default_and_per_read_fallback(self):
+        table = "mutants = [('sample', source, 'before', 'after')]\n"
+        self.write(table + "os.getenv('CARGO_HOME', default='cache')\n")
+        self.run_check(anchors_only=False)
+        self.write(table + "os.getenv('CARGO_HOME', default='')\n")
+        self.assertIn('MISSING_ENV CARGO_HOME', self.run_check(1, anchors_only=False, label='empty-keyword-default'))
+        self.write(table + "env.get('CARGO_HOME', 'cache')\nenv.get('CARGO_HOME', '')\n")
+        self.assertIn('MISSING_ENV CARGO_HOME', self.run_check(1, anchors_only=False, label='fallback-is-not-assignment'))
+        self.write(table + "env['CARGO_HOME'] = 'cache'\nenv.get('CARGO_HOME', '')\n")
+        self.run_check(anchors_only=False, label='assigned-env-restored')
+
     def test_unknown_script_and_partial_table_fail_closed(self):
         self.run_check()
         other = self.fixtures / 'sample/negative_new.py'
@@ -434,6 +520,31 @@ mutants = [('sample', source, text, part + 'after')]
         self.assertIn('unsupported mutation row', self.run_check(1))
         self.write("mutants = unknown_format()\n")
         self.assertIn('unsupported mutation table', self.run_check(1))
+
+    def test_controls_and_arbitrary_filenames_are_discovered(self):
+        hidden_source = self.root / 'src/hidden.rs'
+        hidden_source.write_text('before\n')
+        for filename in ('controls.py', 'mutations.py', 'unusual.py'):
+            with self.subTest(filename=filename):
+                destination = self.script.with_name(filename)
+                destination.write_text(self.script.read_text().replace('src/example.rs', 'src/hidden.rs'))
+                self.run_check(label=f'discover-{filename}')
+                hidden_source.write_text('missing\n')
+                report = self.run_check(1, label=f'broken-{filename}')
+                self.assertIn(f'sample/{filename}', report)
+                self.assertIn('actual=0', report)
+                hidden_source.write_text('before\n')
+                self.run_check(label=f'restored-{filename}')
+                destination.unlink()
+        other = self.fixtures / 'sample/runner.py'
+        other.write_text("raise RuntimeError('must never execute')\n")
+        self.assertIn('runner.py: no supported mutation anchors', self.run_check(1, label='unregistered-helper'))
+        CHECK.UNSUPPORTED['sample/runner.py'] = 'synthetic helper without a table'
+        self.assertIn('UNSUPPORTED sample/runner.py', self.run_check(label='registered-helper'))
+        other.unlink()
+        self.assertIn('stale/empty UNSUPPORTED', self.run_check(1, label='removed-helper'))
+        del CHECK.UNSUPPORTED['sample/runner.py']
+        self.run_check()
 
     def test_table_rewrites_fail_but_selection_is_supported(self):
         table = "mutants = [('sample', source, 'before', 'after')]\n"
@@ -463,11 +574,11 @@ mutants = [('sample', source, text, part + 'after')]
                 script.parent.mkdir(parents=True, exist_ok=True)
                 script.write_text("raise RuntimeError('must not run')\n")
                 CHECK.UNSUPPORTED[name] = reason
-                self.run_check()
+                self.run_check(label=f'allowlist-present-{name}')
                 script.unlink()
-                self.assertIn('stale/empty', self.run_check(1))
+                self.assertIn('stale/empty', self.run_check(1, label=f'allowlist-missing-{name}'))
                 script.write_text("raise RuntimeError('must not run')\n")
-                self.run_check()
+                self.run_check(label=f'allowlist-restored-{name}')
                 print(f'ALLOWLIST {name}: present=0 missing=1 restored=0')
                 script.unlink()
                 del CHECK.UNSUPPORTED[name]
@@ -480,11 +591,9 @@ mutants = [('sample', source, text, part + 'after')]
                 self.script = self.fixtures / name
                 self.script.parent.mkdir(parents=True, exist_ok=True)
                 good = "('good', source, 'before', 'after')"
-                siblings = ', '.join(f"({other!r}, source, unknown_scoped_anchor, 'after')"
-                                     for file, other in CHECK.ROW_EXCEPTIONS
-                                     if file == name and other != label)
-                excluded = f"({label!r}, source, unknown_scoped_anchor, 'after')"
-                good = ', '.join(part for part in (good, siblings) if part)
+                oracle = self.root / 'src/oracle.json'
+                oracle.write_text('{"hash": "' + 'a' * 64 + '"}')
+                excluded = f"({label!r}, root / 'src/oracle.json', 'a' * 64, '0' * 64)"
                 self.write(f'mutants = [{good}, {excluded}]\n')
                 self.run_check()
                 self.write(f'mutants = [{good}]\n')
@@ -493,6 +602,227 @@ mutants = [('sample', source, text, part + 'after')]
                 self.run_check()
                 print(f'ROW_EXCEPTION {name}/{label}: present=0 missing=1 restored=0')
                 self.script.unlink()
+
+    def test_sequential_rows_have_independent_stale_and_reason_checks(self):
+        self.move_script('turn-gates/negative.py')
+        rows = {name: f"({name!r}, source, unknown_scoped_anchor, 'after')"
+                for filename, name in CHECK.SEQUENTIAL_ROWS if filename == 'turn-gates/negative.py'}
+        good = "('good', source, 'before', 'after')"
+        for name in rows:
+            siblings = [row for other, row in rows.items() if other != name]
+            body = 'mutants = [' + ', '.join([good, *siblings, rows[name]]) + ']\n'
+            self.write(body)
+            self.run_check(label=f'sequential-present-{name}')
+            self.write('mutants = [' + ', '.join([good, *siblings]) + ']\n')
+            self.assertIn('stale row exceptions', self.run_check(1, label=f'sequential-missing-{name}'))
+            self.write(body)
+            with patch.dict(CHECK.SEQUENTIAL_ROWS, {('turn-gates/negative.py', name): ''}):
+                self.assertIn('empty sequential row reason', self.run_check(1, label='empty-sequential-reason'))
+            self.run_check(label=f'sequential-restored-{name}')
+        # A known row label in another script never inherits this exception.
+        self.move_script('other/negative.py')
+        self.write(body)
+        self.assertIn('unresolved name', self.run_check(1, label='sequential-wrong-file'))
+
+    def test_row_exceptions_validate_shape_and_search_all_sources(self):
+        self.script.unlink()
+        for (filename, name), reason in CHECK.ROW_EXCEPTIONS.items():
+            with self.subTest(filename=filename):
+                self.script = self.fixtures / filename
+                self.script.parent.mkdir(parents=True, exist_ok=True)
+                oracle = self.root / 'src/oracle.json'
+                oracle.write_text('{"hash": "' + 'a' * 64 + '"}')
+                prefix = "oracle = root / 'src/oracle.json'\nold = json.loads(oracle.read_text())['hash']\n"
+                good = "('good', source, 'before', 'after')"
+                exempt = f"({name!r}, oracle, old, '0' * 64)"
+                table = f'mutants = [{good}, {exempt}]\n'
+                self.write(prefix + table)
+                self.run_check(label=f'json-exception-{filename}')
+                for broken, error in (
+                    (exempt.replace(', oracle,', ', source,'), 'JSON hash replacement'),
+                    (exempt.replace(', old,', ", 'before',"), 'JSON hash replacement'),
+                    (exempt.replace(", '0' * 64)", ', None)'), 'JSON hash replacement'),
+                    (exempt.replace(', old,', ', unknown_before,'), 'unresolved name'),
+                    (exempt.replace(", '0' * 64)", ')'), 'expected name/path/before/after'),
+                ):
+                    self.write(prefix + f'mutants = [{good}, {broken}]\n')
+                    self.assertIn(error, self.run_check(1, label=f'bad-exception-shape-{filename}'))
+                self.write(prefix + table)
+                sibling = self.root / 'src/unrelated.rs'
+                sibling.write_text('// ' + 'a' * 64)
+                self.assertIn('exempted before occurs in source src/unrelated.rs', self.run_check(
+                    1, label=f'exempted-source-anchor-{filename}'))
+                sibling.unlink()
+                self.run_check(label=f'exemption-restored-{filename}')
+                oracle.write_text('{"hash": "' + 'b' * 64 + '"}')
+                self.write(prefix + table.replace(', old,', ", 'a' * 64,"))
+                self.assertIn('absent from JSON target', self.run_check(1, label='json-target-anchor-missing'))
+                self.write(prefix + table)
+                self.run_check(label='json-target-anchor-restored')
+                with patch.dict(CHECK.ROW_EXCEPTIONS, {(filename, name): ''}):
+                    self.assertIn('empty row exception reason', self.run_check(1))
+                self.script.unlink()
+
+    def test_function_scoped_row_is_checked_instead_of_exempted(self):
+        self.script.unlink()
+        self.script = self.fixtures / 'turn-runner/recording_negative.py'
+        self.script.parent.mkdir()
+        consumer = """for name, path, old, new in mutations:
+    original = originals[path].decode()
+    path.write_text(mutate(original, 'from_agent_input' if name == 'text-value' else None, [(old, new)], expected_count=ANCHOR_COUNTS.get(name, 1)))
+"""
+        table = "mutations = [('text-value', source, '.cloned()', '.map(convert)')]\n" + consumer
+        original = '    fn previous() { value.cloned(); }\n    pub fn from_agent_input() { value.cloned(); }\n    async fn following() { value.cloned(); }\n'
+        self.source.write_text(original)
+        self.write(table)
+        self.run_check(label='scoped-anchor-original')
+        self.source.write_text(original.replace('from_agent_input() { value.cloned()', 'from_agent_input() { value.changed()'))
+        self.assertIn('actual=0', self.run_check(1, label='scoped-anchor-missing'))
+        self.source.write_text(original.replace('from_agent_input() { value.cloned()', 'from_agent_input() { value.cloned().cloned()'))
+        self.assertIn('actual=2', self.run_check(1, label='scoped-anchor-duplicate'))
+        self.write("ANCHOR_COUNTS = {'text-value': 2}\n" + table)
+        self.assertIn('function-scoped count must be one', self.run_check(1, label='scoped-count-cannot-relax'))
+        self.write(table)
+        self.source.write_text(original.replace('previous', 'from_agent_input'))
+        self.assertIn('invalid function-scoped anchor', self.run_check(1, label='duplicate-scope'))
+        self.source.write_text(original.replace('from_agent_input', 'renamed'))
+        self.assertIn('invalid function-scoped anchor', self.run_check(1, label='missing-scope'))
+        self.source.write_text(original)
+        for before in (' .cloned()', '.cloned()\n'):
+            self.write(f"mutations = [('text-value', source, {before!r}, 'after')]\n" + consumer)
+            self.assertIn('invalid function-scoped anchor', self.run_check(1, label='invalid-scoped-shape'))
+        for bad in (
+            table.replace("'from_agent_input' if name == 'text-value' else None", 'None'),
+            table.replace('[(old, new)]', '[(other, new)]'),
+            table.replace('originals[path]', 'originals[other]'),
+            table.replace('in mutations:', 'in unknown:'),
+            table + "mutate(original, None, [(old, new)])\n",
+        ):
+            self.write(bad)
+            self.assertIn('function-scoped', self.run_check(1, label='changed-scoped-consumer'))
+        self.write("mutations = [('renamed', source, 'previous', 'after')]\n")
+        self.assertIn('stale scoped rows', self.run_check(1, label='stale-scope-rule'))
+        self.write(table)
+        self.run_check(label='scoped-anchor-restored')
+        self.write(table.replace("'.cloned()', '.map(convert)'", "b'.cloned()', b'.map(convert)'"))
+        self.assertIn('function-scoped anchors must be strings', self.run_check(1, label='scoped-bytes-rejected'))
+        self.write(table)
+        self.run_check(label='scoped-string-restored')
+
+    def test_turn_submit_effective_message_anchor(self):
+        self.script.unlink()
+        self.script = self.fixtures / 'turn-submit/negative.py'
+        self.script.parent.mkdir()
+        table = "mutant_source = {}\nmutants = [('sample', 'before', 'after', None, None, None)]\n"
+        self.write(table + "mutant_anchor = {'sample': ('message', 'specific panic')}\n")
+        self.run_check(label='none-marker-with-override')
+        for overrides in ('{}', "{'sample': ('message', None)}", "{'sample': ('message', '')}",
+                          "{'sample': ('message', '  ')}", "{'sample': ('unknown', 'panic')}",
+                          'None', '[]', "{'sample': 'message'}", "{'sample': ('message',)}"):
+            self.write(table + f'mutant_anchor = {overrides}\n')
+            self.assertIn('anchor', self.run_check(1, label=f'invalid-effective-anchor-{overrides}'))
+        self.write(table.replace("'after', None, None, None", "'after', None, None")
+                   + "mutant_anchor = {'sample': ('message', 'panic')}\n")
+        self.assertIn('six turn-submit fields', self.run_check(1, label='incomplete-submit-row'))
+        self.write(table.replace("'after', None, None, None", "'after', None, 'specific panic', None")
+                   + 'mutant_anchor = {}\n')
+        self.run_check(label='marker-fallback-restored')
+
+    def test_turn_submit_location_span_start_and_workspace(self):
+        self.script.unlink()
+        self.script = self.fixtures / 'turn-submit/negative.py'
+        self.script.parent.mkdir()
+        before = 'unwrap_or_else(|poisoned| poisoned.into_inner())'
+        table = f"mutant_source = {{}}\nmutants = [('sample', {before!r}, 'unwrap()', None, None, None)]\n"
+        override = "mutant_anchor = {'sample': ('location', 'example.rs:1:1')}\n"
+        self.source.write_text(before)
+        self.write(table + override)
+        self.run_check(label='unwrap-start-original')
+        self.write(table.replace("'unwrap()'", "'prefix.unwrap()'") + override)
+        self.assertIn('unwrap must start', self.run_check(1, label='shifted-unwrap-start'))
+        self.source.write_text('prefix.' + before)
+        self.write(table.replace(repr(before), repr('prefix.' + before)) + override)
+        self.assertIn('unwrap must start', self.run_check(1, label='shifted-before-start'))
+        self.source.write_text(before)
+        outside = self.root / 'outside.rs'
+        outside.write_text(before)
+        self.write("source = root / 'outside.rs'\n" + table + override)
+        self.assertIn('inside rust workspace', self.run_check(1, label='location-outside-rust'))
+        self.write(table + override.replace("'example.rs:1:1'", 'None'))
+        self.assertIn('location anchor must be', self.run_check(1, label='unverified-derived-location'))
+        self.write(table + override)
+        self.run_check(label='unwrap-start-restored')
+
+    def test_single_line_abort_anchor_is_unique(self):
+        self.source.write_text('timer.abort();\n')
+        self.write("mutations = [('skip-timer-abort', source, 'timer.abort();', '')]\n")
+        self.run_check(label='timer-abort-original')
+        self.source.write_text('timer.abort();\ntimer.abort();\n')
+        self.assertIn('expected=1 actual=2', self.run_check(1, label='timer-abort-duplicate'))
+        self.source.write_text('timer.abort();\n')
+        self.run_check(label='timer-abort-restored')
+
+    def test_turn_submit_derived_location_is_bound_to_helper_and_source(self):
+        self.move_script('turn-submit/negative.py')
+        before = 'unwrap_or_else(|poisoned| poisoned.into_inner())'
+        original = '// prefix\n    ' + before + '\n'
+        self.source.write_text(original)
+        helper = '''def unwrap_site(anchor_source, before, original):
+    """The helper is inspected, never executed."""
+    assert before, 'a location anchor needs the mutation span'
+    text = original.decode()
+    assert text.count(before) == 1
+    head = text[:text.index(before)]
+    return f'{anchor_source.relative_to(rust)}:{head.count(chr(10)) + 1}:{len(head) - head.rfind(chr(10))}'
+'''
+        setup = ("rust = root / 'src'\nmutant_source = {}\noriginals = {source: snapshots[source]}\n"
+                 "mutant_anchor = {'sample': ('location', None)}\n"
+                 f"mutants = [('sample', {before!r}, 'unwrap()', None, None, None)]\n")
+        consumer = '''selected = mutants
+for name, before, after, case, marker, capability in selected:
+    target = mutant_source.get(name, source)
+    target_original = originals[target]
+    used_test = mutant_test.get(name, test)
+    anchor_kind, anchor = mutant_anchor.get(name, ('message', marker))
+    if anchor_kind == 'location':
+        anchor = unwrap_site(target, before, target_original)
+'''
+        body = setup + helper + consumer
+        self.write(body)
+        self.run_check(label='derived-location-original')
+        static = CHECK.Static(self.script, self.root, ast.parse(self.script.read_text()))
+        self.assertEqual(CHECK.derived_submit_location(static, 'sample', self.source, before, {}), 'example.rs:2:5')
+        for bad, diagnostic in [
+            (body.replace('head.count(chr(10)) + 1', 'head.count(chr(10)) + 2'), 'location helper'),
+            (body.replace('    assert text.count(before) == 1\n', ''), 'location helper'),
+            (body.replace('relative_to(rust)', 'relative_to(root)'), 'location helper'),
+            (body.replace('def unwrap_site(', '@unknown_decorator\ndef unwrap_site('), 'location helper'),
+            (body.replace('unwrap_site(target, before, target_original)', 'unwrap_site(source, before, target_original)'), 'location consumer'),
+            (body.replace("if anchor_kind == 'location':", "if anchor_kind == 'message':"), 'location consumer'),
+            (body.replace('in selected:', 'in other:'), 'location loop'),
+            (body.replace('originals[target]', 'originals[source]'), 'location source binding'),
+            (body.replace('target = mutant_source.get(name, source)', 'target = source'), 'location source binding'),
+            (body.replace('snapshots[source]', "b'different bytes'"), 'location snapshot'),
+            (body.replace("rust = root / 'src'", 'rust = root'), 'location helper workspace'),
+            (body + 'unwrap_site(target, before, target_original)\n', 'location consumer'),
+            (body.replace('selected = mutants', "unwrap_site = lambda *args: 'bogus.rs:0:0'\nselected = mutants"), 'location binding'),
+            (body + "    anchor = 'bogus.rs:0:0'\n", 'location binding'),
+            (body + "    anchor_kind = 'message'\n", 'location binding'),
+            (body.replace('selected = mutants', 'from elsewhere import unwrap_site\nselected = mutants'), 'location binding'),
+            (body + "def anchor():\n    return 'bogus.rs:0:0'\n", 'location binding'),
+            (body.replace("'unwrap()'", "'prefix.unwrap()'"), 'unwrap must start'),
+            (setup + consumer, 'location helper'),
+            (setup + helper, 'location consumer'),
+        ]:
+            self.write(bad)
+            self.assertIn(diagnostic, self.run_check(1, label='derived-location-invalid-contract'))
+        self.write(body)
+        for content in ('missing', original * 2):
+            self.source.write_text(content)
+            self.assertIn('location span expected=1', self.run_check(1, label='derived-span-not-unique'))
+        self.source.write_text(original)
+        self.run_check(label='derived-location-restored')
+        self.assertEqual(self.source.read_text(), original)
 
     def test_regex_json_exemption_cannot_hide_a_product_anchor(self):
         self.script.unlink()
