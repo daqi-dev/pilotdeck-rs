@@ -19,12 +19,12 @@
 `HOME` 固定为 `/fixture/home`，时钟冻结在 `2026-10-22T00:00:00.000Z`，
 `Math.random` 固定为 `0.5`。
 
-覆盖 229 个观测：extractFirstJsonObject 的前后缀散文、代码围栏、截断 JSON、
+覆盖 238 个观测：extractFirstJsonObject 的前后缀散文、代码围栏、截断 JSON、
 转义引号/反斜杠、嵌套大括号、多对象、BOM、孤立代理、字符串内的 `}`；
 extractLooseJsonEnvelope 的 first-`{`/last-`}`、多对象、`}{`；loose 布尔的
 非 unicode `/i`（`"SKIP"`、`"é"`/`"É"`、`"σ"`/`"ς"` 命中；`"skıp"`、`"ſkip"`、`"ß"`/`"ẞ"`、`"Å"`/`"Å"` 不命中，Node 实测）、正则元字符
 键转义、JS `\s`（NBSP/FEFF）；loose 字符串的 lazy（下一键）与 greedy
-（`\s*}\s*$`）两种回溯、空捕获、转义解码顺序；payload 的必填三字段、
+（`\s*}\s*$`）两种回溯、空捕获、转义解码顺序（含字面 `\r\n` 先于单独 `\r`/`\n` 解码、双反斜杠保留）；payload 的必填三字段、
 `skip` 三态、错误传播；`normalizeStringArray`/`uniqueStrings`/`truncate` 的
 JS `slice(0, max)` 负值/NaN/Infinity/小数语义、UTF-16 截断、JS trim；route
 大小写敏感与布尔字符串归一化。
@@ -50,8 +50,19 @@ CARGO_TARGET_DIR="$CARGO_TARGET_DIR" python3 \
   src/pilotdeck-gateway/tests/fixtures/edgeclaw-llm-envelope/negative.py /tmp/edgeclaw-envelope-negative
 ```
 
-`negative.py` 有 17 个变异体（object 短路/转义扫描、envelope 边界、解码末步与
+`negative.py` 有 26 个变异体（object 短路/转义扫描、envelope 边界、解码末步与
 CR-LF 顺序、lazy/greedy 捕获与尾部空白、负 slice、去重、prompt 先归一化、route
-大小写、布尔小写、payload 必填/吞错、ASCII 与非 ASCII 折叠），每个变异都要求编译成功且指定测试运行时转红。`envelope.rs` 是新增
-文件，提交前不在 `HEAD`，`mutating_sources` 会拒绝运行（#764 自查第 11 条）；
-提交后由协调者在宿主执行。
+大小写、布尔小写、payload 必填/吞错、ASCII 与非 ASCII 折叠，以及 r1 P2 补的
+`normalizeStringArray` 单串/空白/非串/非数组、空捕获、布尔 `false` 分支、
+`key_at` 键折叠、`comma_key_at` next-key 过滤）。每个变异都要求编译成功且
+指定测试运行时转红；一例存活不会中止，脚本逐例跑完并汇总
+`KILLED / SURVIVED / INVALID`，有存活或无效即退出 1。
+
+```sh
+# 列表与单例（宿主可先跑 decode-crlf 样本）
+python3 .../negative.py --list
+CARGO_TARGET_DIR="$CARGO_TARGET_DIR" python3 .../negative.py /tmp/edgeclaw-envelope-negative decode-crlf
+```
+
+26 个变异体逐个重编译；本会话按任务只跑 `decode-crlf` 样本（实测单例编译 6.6 s），其余 25 例
+由协调者在宿主执行。
