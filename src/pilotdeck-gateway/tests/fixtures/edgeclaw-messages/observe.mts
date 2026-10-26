@@ -24,7 +24,7 @@ const PRIVATE = [
   'stripLeadingMessageEnvelopeLines', 'stripUserNoise',
   'stripAssistantThinking', 'hasToolCallContent', 'shouldSkipUserMessage',
   'parseLeadingSlashCommand', 'parseBangCommand', 'shouldSkipAssistantMessage',
-  'normalizeSingleMessage',
+  'normalizeSingleMessage', 'KNOWN_SLASH_COMMANDS',
 ];
 
 export function enc(v: any): any {
@@ -245,6 +245,8 @@ export async function collect(baseline: string) {
   for (const value of [
     '', 'hello', '@alice hello', '  @alice   hello', '@a-b.c @bob  hi',
     '@@x', '@', '@x\n  y', '@x \n\n y', 'text @not-leading',
+    '@a\u00a0@b  hi', '@a\uFEFF@b hi', '@a\t@b\n@c x', '@a@b', '@a.',
+    '@-a', '@å x', '@a_b-c.d x', '@a\u2028@b x', '@a\r\n@b  tail',
   ]) one('mentions', 'stripLeadingMentions', value);
   for (const value of [
     '', 'plain', '```json\n{"a":1}\n```\nreal',
@@ -304,6 +306,15 @@ export async function collect(baseline: string) {
     one('commands', 'parseBangCommand', value);
     one('commands', 'isSessionStartupMarkerText', value);
     one('commands', 'isCommandOnlyUserText', value);
+  }
+  // Every item in the TS whitelist itself: the exact command, the uppercase
+  // form with the optional colon, and a trailing unit that must make the
+  // command unknown again. Iterating the real Set (instead of a copied list)
+  // keeps this fixture covering the whitelist even when TS adds an entry.
+  for (const command of m.KNOWN_SLASH_COMMANDS as Set<string>) {
+    for (const value of [`/${command}`, `/${command.toUpperCase()}:`, `/${command}x`]) {
+      one('commands', 'parseLeadingSlashCommand', value);
+    }
   }
   for (const args of [
     [[], 'text'], [[{type: 'toolCall'}], 'text'], [[{type: 'toolCall'}, {type: 'text'}], 'text'],

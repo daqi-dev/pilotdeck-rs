@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
 """Reversible product mutations for edgeclaw-messages.
 
-Every case compiles and must fail a runtime oracle assertion; the original
-bytes are restored in `finally`. `mutating_sources` demands that the gateway
+Before any mutation the script runs the unmutated suite once and requires
+exit code 0: a panic caused by the environment (for example a bad
+``PDRS_BASELINE``) must not be mistaken for a killed mutant. A killed mutant
+must then fail on an assertion, not on any panic:
+
+* ``assertion `left == right` failed`` from an ``assert_eq!`` replay, or
+* an assertion message beginning with one of the oracle's ``{group}/`` anchors
+  (the replay helper formats its message that way).
+
+``could not compile`` is never a kill. Every case compiles and the original
+bytes are restored in ``finally``. ``mutating_sources`` demands that the gateway
 product tree match the baseline, so an uncommitted authoring tree is refused;
 the coordinator runs this once after committing (item 11 of the task).
 
 A surviving mutant does not abort the run: every case is executed, then the
-script prints KILLED/SURVIVED and exits 1 when anything survived. This is what
-let the host run stop at `extract-depth` and never reach the other cases.
-
-For an uncommitted authoring tree, `NEGATIVE_BASELINE=$(git stash create)` can
-name a dangling commit of the current worktree so the same script can prove
-1-2 samples without committing. The default remains HEAD.
+script prints KILLED/SURVIVED and exits 1 when anything survived. For an
+uncommitted authoring tree, ``NEGATIVE_BASELINE=$(git stash create)`` can name a
+dangling commit of the current worktree so the same script can prove 1-2
+samples without committing. The default remains HEAD. ``NEGATIVE_ONLY=a,b``
+runs just those cases (the unmutated baseline still runs first); it is for
+proving a sample without spending the full mutation matrix.
 """
+import json
 import os
 from pathlib import Path
 import sys
@@ -22,12 +32,54 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
+fixtures = Path(__file__).resolve().parent
 messages = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/messages.rs'
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
 baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
 out.mkdir(parents=True, exist_ok=True)
+
+oracle_groups = {case['group'] for case in
+                 json.loads((fixtures / 'oracle.json').read_text())['cases']}
+assertion_anchors = sorted(oracle_groups | {'mentions-scale'})
+
+mention_scan = '''    let value = text.units();
+    let mut index = skip_js_space(value, 0);
+    while value.get(index) == Some(&u16::from(b'@')) {
+        let mut end = index + 1;
+        while end < value.len() && is_mention_unit(value[end]) {
+            end += 1;
+        }
+        if end == index + 1 {
+            break;
+        }
+        index = skip_js_space(value, end);
+    }
+    JsString::from_utf16(value[index..].to_vec())'''
+
+mention_loop = '''    fn trim_start_js(value: &JsString) -> JsString {
+        let start = value
+            .units()
+            .iter()
+            .position(|unit| !js_is_space_unit(*unit))
+            .unwrap_or(value.len_utf16());
+        JsString::from_utf16(value.units()[start..].to_vec())
+    }
+    fn mention_pattern() -> &'static Regex {
+        static RE: OnceLock<Regex> = OnceLock::new();
+        RE.get_or_init(|| rx(r"^@[A-Za-z0-9_.-]+$S*"))
+    }
+    let mut cleaned = trim_start_js(text);
+    loop {
+        let encoded = encode(&cleaned);
+        let next = mention_pattern().replace(&encoded, "").to_string();
+        if next == encoded {
+            return cleaned;
+        }
+        cleaned = trim_start_js(&decode(&next));
+    }'''
+
 cases = [
     # 1. Depth bound: a content object at depth 5 stops extracting.
     ('extract-depth', messages, 'const MAX_DEPTH: usize = 5;',
@@ -91,13 +143,56 @@ cases = [
     ('extract-current-first', messages,
      '.rposition(|part| part == marker)',
      '.position(|part| part == marker)', 'case_fold_matches_ts'),
+    # 16. The single-pass mention strip reverts to one whole-string
+    #     encode/replace/decode per mention. `leading_mentions_scale_is_linear`
+    #     must hit its watchdog instead of finishing.
+    ('mentions-quadratic', messages, mention_scan, mention_loop,
+     'leading_mentions_scale_is_linear'),
+    # 17. One whitelist item disappears, so the oracle case for it (and only
+    #     it) comes back as `undefined`.
+    ('slash-whitelist-missing', messages, '    "allowlist",\n', '',
+     'commands_match_ts'),
+    # 18. The single scan stops treating `-` as a mention unit (the TS
+    #     `[\w.-]` class includes it), so `@a-b.c` only loses `@a`.
+    ('mentions-unit-class', messages,
+     '|| matches!(unit, 0x005F | 0x002E | 0x002D)',
+     '|| matches!(unit, 0x005F | 0x002E)', 'user_strip_matches_ts'),
+    # 19. The scan stops consuming the whitespace after a mention, so a
+    #     leading separator survives.
+    ('mentions-no-trim', messages,
+     'index = skip_js_space(value, end);', 'index = end;',
+     'user_strip_matches_ts'),
 ]
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
+only = {name for name in os.environ.get('NEGATIVE_ONLY', '').split(',') if name}
+unknown = only - {case[0] for case in cases}
+assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
+
+
+def assertion_failure(log):
+    if 'could not compile' in log:
+        return False
+    if 'assertion `left == right` failed' in log:
+        return True
+    return any(f'{anchor}/' in log for anchor in assertion_anchors)
+
+
 killed, survived = [], []
 with mutating_sources(root, sorted({path for _, path, _, _, _ in cases}),
                       baseline=baseline) as originals:
+    base_cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
+                '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_messages']
+    slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
+    run = run_owned(base_cmd, cwd=root, env=env, timeout=600)
+    (out / 'baseline.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)
+    if run.returncode != 0:
+        print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
+        sys.exit(1)
+
     for name, path, before, after, test in cases:
+        if only and name not in only:
+            continue
         reason = None
         try:
             source = originals[path].decode()
@@ -110,9 +205,8 @@ with mutating_sources(root, sorted({path for _, path, _, _, _ in cases}),
                 run = run_owned(cmd, cwd=root, env=env, timeout=300)
                 log = run.stdout + run.stderr
                 (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
-                failed = 'test result: FAILED.' in log or 'panicked at' in log
-                if not (run.returncode != 0 and failed and 'could not compile' not in log):
-                    reason = 'did not fail a runtime assertion'
+                if not (run.returncode != 0 and assertion_failure(log)):
+                    reason = 'did not fail a narrowed assertion'
             finally:
                 path.write_bytes(originals[path])
         except Exception as error:

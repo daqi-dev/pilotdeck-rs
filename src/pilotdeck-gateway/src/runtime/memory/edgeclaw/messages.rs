@@ -142,15 +142,6 @@ fn units_of(value: &str) -> Vec<u16> {
     value.encode_utf16().collect()
 }
 
-fn trim_start_js(value: &JsString) -> JsString {
-    let start = value
-        .units()
-        .iter()
-        .position(|unit| !js_is_space_unit(*unit))
-        .unwrap_or(value.len_utf16());
-    JsString::from_utf16(value.units()[start..].to_vec())
-}
-
 fn trim_lines(value: &[u16]) -> Vec<&[u16]> {
     value.split(|unit| *unit == u16::from(b'\n')).collect()
 }
@@ -501,12 +492,16 @@ pub fn strip_plugin_state_scaffolding(text: &JsString) -> JsString {
         .map(text::trim_js)
         .filter(|paragraph| !paragraph.is_empty())
         .collect();
+    // Consume the noisy prefix in one position walk, then drop it once:
+    // `remove(0)` per paragraph shifted the whole Vec and was O(k²).
+    let mut skipped = 0;
     while paragraphs
-        .first()
+        .get(skipped)
         .is_some_and(paragraph_looks_like_plugin_noise)
     {
-        paragraphs.remove(0);
+        skipped += 1;
     }
+    paragraphs.drain(..skipped);
     let mut cleaned = text::trim_js(&text::join_text(&paragraphs, "\n\n"));
     if cleaned.is_empty() {
         return cleaned;
@@ -740,16 +735,33 @@ pub fn strip_leading_sender_prefix(text: &JsString, hints: &[JsString]) -> JsStr
     text::trim_js(&text::join_text(&parts, "\n"))
 }
 
+fn is_mention_unit(unit: u16) -> bool {
+    (u16::from(b'A')..=u16::from(b'Z')).contains(&unit)
+        || (u16::from(b'a')..=u16::from(b'z')).contains(&unit)
+        || (u16::from(b'0')..=u16::from(b'9')).contains(&unit)
+        || matches!(unit, 0x005F | 0x002E | 0x002D)
+}
+
+/// TS loops `cleaned.replace(/^@[\w.-]+\s*/, "").trimStart()` until the text
+/// stops changing, which is one mention plus its trailing whitespace per
+/// round. That whole loop is a prefix walk, so a single pass that consumes
+/// every `@name` and its trailing ECMAScript whitespace lands on the same
+/// byte: the cost is O(n) instead of re-encoding the remaining string per
+/// mention.
 pub fn strip_leading_mentions(text: &JsString) -> JsString {
-    let mut cleaned = trim_start_js(text);
-    loop {
-        let encoded = encode(&cleaned);
-        let next = mention_pattern().replace(&encoded, "").to_string();
-        if next == encoded {
-            return cleaned;
+    let value = text.units();
+    let mut index = skip_js_space(value, 0);
+    while value.get(index) == Some(&u16::from(b'@')) {
+        let mut end = index + 1;
+        while end < value.len() && is_mention_unit(value[end]) {
+            end += 1;
         }
-        cleaned = trim_start_js(&decode(&next));
+        if end == index + 1 {
+            break;
+        }
+        index = skip_js_space(value, end);
     }
+    JsString::from_utf16(value[index..].to_vec())
 }
 
 pub fn strip_leading_message_envelope_lines(text: &JsString) -> JsString {
@@ -1230,7 +1242,6 @@ lazy_regex!(opaque_label_pattern, r"^[A-Za-z0-9_.@()\- ]+$");
 lazy_regex!(opaque_digit_pattern, r"[0-9_]");
 lazy_regex!(opaque_word_pattern, r"^[A-Za-z][A-Za-z0-9_.@()\- ]{4,}$");
 lazy_regex!(sender_prefix_pattern, r"(?s)^([^:\n]{1,120}):$S*(.*)$");
-lazy_regex!(mention_pattern, r"^@[A-Za-z0-9_.-]+$S*");
 lazy_regex!(
     untrusted_prefix_pattern,
     r"^(?:(?i-u:Conversation info)|(?i-u:Sender))$S*\((?i-u:untrusted metadata)\)$S*:?"
