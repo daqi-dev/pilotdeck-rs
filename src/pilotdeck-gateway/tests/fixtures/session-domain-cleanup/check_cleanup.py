@@ -15,6 +15,12 @@ Modes:
            the census report GROUP_NOT_EMPTY instead of VERIFIED
   identity-lost - the leader was already reaped: NOT_VERIFIED and no signal
   census-unavailable - the live-member census is missing: BLOCKED, not empty
+  census-snapshot - a member appears between two group snapshots: GROUP_NOT_EMPTY
+  census-descendant - a stable pair including the descendant reports it
+  census-unstable - two complete scans disagree: no stable census
+  census-truncated - libproc reports a full buffer: no complete enumeration
+  census-enumeration - enumeration failure: BLOCKED, not empty
+  signal-entry - the single signal entry refuses a reaped leader, sends while held
   reap-state - the leader was reported REAPED: no bare kill, NOT_VERIFIED
   status - status mapping for VERIFIED / GROUP_NOT_EMPTY / BLOCKED / NOT_VERIFIED
   wiring - drive session_domain.main()'s real cleanup tail with a non-empty
@@ -48,6 +54,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[5]
 LAUNCHER = Path(__file__).resolve().with_name('launcher.py')
 SESSION_DOMAIN = ROOT / 'scripts/gateway-parity/session_domain.py'
+md = None
 
 
 def load_session_domain():
@@ -59,23 +66,12 @@ def load_session_domain():
 
 
 def pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True
+    return md.HeldProcessGroup.observe_pid(pid) == 'alive'
 
 
 def group_empty(pgid):
-    try:
-        os.killpg(pgid, 0)
-        return False
-    except ProcessLookupError:
-        return True
-    except OSError:
-        return False
+    # Signal-0 observation through the same entry; never a delivered signal.
+    return md.HeldProcessGroup.observe(pgid) == 'empty'
 
 
 def wait_group_empty(pgid, timeout=5):
@@ -216,13 +212,13 @@ def runtime_negative(md, output):
     def bypass_probe(child):
         # run_fixture calls this while the leader is an unreaped zombie and
         # before child.wait(): -child.pid is provably this run's group.
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
+        outcome, detail = md.HeldProcessGroup(child).send(signal.SIGKILL)
+        if outcome == 'sent':
             cleanup_notes.append('group-signalled-while-leader-unreaped')
-        except ProcessLookupError:
+        elif outcome == 'missing':
             cleanup_notes.append('group-already-gone')
-        except OSError as error:
-            cleanup_notes.append(f'group-signal-failed: {error}')
+        else:
+            cleanup_notes.append(f'group-signal-{outcome}: {detail}')
         return {'pgid': child.pid if hasattr(child, 'pid') else child,
                 'probe': 'runtime-bypass',
                 'status': md.CLEANUP_VERIFIED}
@@ -408,6 +404,194 @@ def census_unavailable_control(md):
     return result
 
 
+def census_snapshot_race_control(md):
+    """A member appears between two complete group snapshots.
+
+    ``PROC_PGRP_ONLY`` enumerates the group directly, so there is no per-pid
+    getpgid snapshot window.  The remaining race is a fork between two
+    snapshots: the first sees only the zombie leader, the second sees the
+    descendant.  Accepting either snapshot alone would report empty; the
+    stable pair must report GROUP_NOT_EMPTY and never PASS.
+    """
+    child = _zombie_child()
+    leader = child.pid
+    race = {'status': None}
+    delivered = []
+    error = None
+    snapshot_pids = iter([[leader], [leader, 424244], [leader, 424244],
+                          [leader, 424244], [leader], [leader]])
+
+    def next_snapshot(*_args):
+        return set(next(snapshot_pids, [leader]))
+
+    def record_group(*args, **_kwargs):
+        if len(args) > 1 and args[1] != 0:
+            delivered.append(args)
+        raise PermissionError('sandbox denies group signals')
+
+    try:
+        with patch.object(md, '_darwin_group_pids', side_effect=next_snapshot), \
+                patch.object(md.os, 'killpg', side_effect=record_group):
+            race = md.probe_process_group(child)
+    except Exception as exc:  # a crash must not count as the expected finding
+        error = f'{type(exc).__name__}: {exc}'
+    finally:
+        if child.returncode is None:
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    status = (race or {}).get('status')
+    result = {'mode': 'census-snapshot', 'processTreeCleanup': status,
+              'topLevel': md.cleanup_status({'processTreeCleanup': status}),
+              'deliveredSignalCalls': len(delivered), 'error': error}
+    result['passed'] = bool(
+        error is None and race is not None
+        and status == md.CLEANUP_GROUP_NOT_EMPTY
+        and result['topLevel'] == md.CLEANUP_UNVERIFIED_STATUS
+        and delivered)
+    return result
+
+
+def census_descendant_control(md):
+    """A stable pair that includes the descendant must report it."""
+    snapshots = iter([[900], [900, 424244], [900, 424244], [900, 424244], [900, 424244]])
+
+    def next_members(*_args):
+        return set(next(snapshots, [900, 424244]))
+
+    try:
+        with patch.object(md, '_darwin_group_pids', side_effect=next_members):
+            members = md.live_group_members(900)
+        error = None
+    except Exception as exc:
+        members = None
+        error = f'{type(exc).__name__}: {exc}'
+    result = {'mode': 'census-descendant',
+              'members': None if members is None else sorted(members), 'error': error}
+    result['passed'] = bool(error is None and members == {900, 424244})
+    return result
+
+
+def census_unstable_control(md):
+    """Two complete snapshots that disagree cannot prove a stable membership."""
+    alternating = iter([[900, 424244], [900, 424245]] * 4)
+
+    def next_unstable(*_args):
+        return set(next(alternating, [900, 424245]))
+
+    try:
+        with patch.object(md, '_darwin_group_pids', side_effect=next_unstable):
+            members = md.live_group_members(900)
+        error = None
+    except Exception as exc:
+        members = None
+        error = f'{type(exc).__name__}: {exc}'
+    result = {'mode': 'census-unstable',
+              'members': None if members is None else sorted(members), 'error': error}
+    result['passed'] = bool(error is None and members is None)
+    return result
+
+
+def census_truncated_control(md):
+    """A full libproc buffer is truncation; never a complete group."""
+    class FullBufferLibrary:
+        def __init__(self):
+            self.calls = []
+
+        def proc_listpids(self, kind, typeinfo, buffer, size):
+            self.calls.append((kind, typeinfo, size))
+            if buffer is None:
+                return 2832
+            buffer[0] = 424242
+            return size
+
+    library = FullBufferLibrary()
+    try:
+        returned = md._darwin_group_pids(900, library=library)
+        error = None
+    except Exception as exc:
+        returned = None
+        error = f'{type(exc).__name__}: {exc}'
+    result = {'mode': 'census-truncated',
+              'returnedPids': None if returned is None else len(returned),
+              'calls': library.calls, 'error': error}
+    result['passed'] = bool(
+        error is None and returned is None and library.calls[:1] == [(2, 900, 0)])
+    return result
+
+
+def census_enumeration_failure_control(md):
+    """An unavailable enumeration is not an empty group."""
+    child = _zombie_child()
+    try:
+        with patch.object(md, '_darwin_group_pids', return_value=None), \
+                patch.object(md.os, 'killpg', side_effect=PermissionError('denied')):
+            probe = md.probe_process_group(child)
+        error = None
+    except Exception as exc:
+        probe = {'status': None}
+        error = f'{type(exc).__name__}: {exc}'
+    finally:
+        if child.returncode is None:
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    status = probe.get('status')
+    result = {'mode': 'census-enumeration', 'processTreeCleanup': status,
+              'topLevel': md.cleanup_status({'processTreeCleanup': status}), 'error': error}
+    result['passed'] = bool(error is None and status == md.CLEANUP_BLOCKED
+                            and result['topLevel'] == md.CLEANUP_UNVERIFIED_STATUS)
+    return result
+
+
+def signal_entry_control(md):
+    """The single entry refuses a reaped leader and still sends while held."""
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'])
+    child.wait(timeout=10)
+    held = md.HeldProcessGroup(child)
+    calls = []
+
+    def deny(*args, **_kwargs):
+        calls.append(args)
+        raise PermissionError('denied')
+
+    try:
+        with patch.object(md.os, 'killpg', side_effect=deny), \
+                patch.object(md.os, 'kill', side_effect=deny):
+            group_outcome = held.send(signal.SIGTERM)
+            leader_outcome = held.kill_leader(signal.SIGKILL)
+        error = None
+    except Exception as exc:
+        group_outcome = leader_outcome = (None, None)
+        error = f'{type(exc).__name__}: {exc}'
+
+    held_child = subprocess.Popen(['sleep', '30'], start_new_session=True)
+    try:
+        held_outcome = md.HeldProcessGroup(held_child).send(signal.SIGTERM)
+        held_child.wait(timeout=10)
+    except Exception as exc:
+        held_outcome = (None, None)
+        error = error or f'{type(exc).__name__}: {exc}'
+    finally:
+        if held_child.returncode is None:
+            try:
+                held_child.kill()
+                held_child.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    result = {'mode': 'signal-entry',
+              'groupOutcome': group_outcome[0], 'leaderOutcome': leader_outcome[0],
+              'killCalls': len(calls), 'heldOutcome': held_outcome[0],
+              'heldReaped': held_child.returncode is not None, 'error': error}
+    result['passed'] = bool(
+        error is None and group_outcome[0] == 'refused'
+        and leader_outcome[0] == 'refused' and not calls
+        and held_outcome[0] == 'sent' and held_child.returncode is not None)
+    return result
+
+
 def reap_state_control(md, output):
     """A leader reported REAPED must not get a bare ``child.kill()``.
 
@@ -506,18 +690,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--mode', choices=('clean', 'leak', 'ignore', 'blocked', 'status',
-                                           'eperm-live-member', 'identity-lost', 'census-unavailable', 'reap-state',
-                                           'wiring', 'runtime-negative', 'all'),
+                                           'eperm-live-member', 'identity-lost', 'census-unavailable',
+                                           'census-snapshot', 'census-descendant', 'census-unstable',
+                                           'census-truncated', 'census-enumeration', 'signal-entry',
+                                           'reap-state', 'wiring', 'runtime-negative', 'all'),
                         default='all')
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
+    global md
     md = load_session_domain()
     results = []
     modes = ('clean', 'leak', 'ignore') if args.mode == 'all' else (
         () if args.mode in ('status', 'runtime-negative', 'blocked', 'wiring',
-                            'eperm-live-member', 'identity-lost',
-                            'census-unavailable', 'reap-state') else (args.mode,))
+                            'eperm-live-member', 'identity-lost', 'census-unavailable',
+                            'census-snapshot', 'census-descendant', 'census-unstable',
+                            'census-truncated', 'census-enumeration', 'signal-entry',
+                            'reap-state') else (args.mode,))
     for mode in modes:
         result = run_fixture(md, output, mode)
         results.append(result)
@@ -536,6 +725,30 @@ def main():
         print(json.dumps(result, ensure_ascii=False), flush=True)
     if args.mode in ('census-unavailable', 'all'):
         result = census_unavailable_control(md)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('census-snapshot', 'all'):
+        result = census_snapshot_race_control(md)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('census-descendant', 'all'):
+        result = census_descendant_control(md)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('census-unstable', 'all'):
+        result = census_unstable_control(md)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('census-truncated', 'all'):
+        result = census_truncated_control(md)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('census-enumeration', 'all'):
+        result = census_enumeration_failure_control(md)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+    if args.mode in ('signal-entry', 'all'):
+        result = signal_entry_control(md)
         results.append(result)
         print(json.dumps(result, ensure_ascii=False), flush=True)
     if args.mode in ('reap-state', 'all'):

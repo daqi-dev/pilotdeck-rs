@@ -74,14 +74,26 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 它的 pid/pgid 不会被复用，`os.killpg(pgid, 0)` 仍指向本次 `start_new_session` 的组，
 探测与 SIGTERM/SIGKILL 都在回收之前完成，最后才 `wait()`。macOS 上组内只剩僵尸 leader 时
 `killpg(pgid, 0)` 返回 `EPERM`；`EPERM` 只说明「没有本进程可发信号的成员」，不能排除
-权限受限的活后代，所以**不再**用 `kill(leaderPid, 0)` 直接判空：另用
-`libproc.proc_listpids` + `os.getpgid`（Linux 用 `/proc`）做**不依赖 ps、不依赖发信号权限**的
-活成员普查，普查为空且未回收 leader 仍在才记 `VERIFIED`；普查不可用、或 leader 探测被拒
-记 `BLOCKED` 且不发信号。组内仍有存活成员记 `GROUP_NOT_EMPTY` 并只向该组 SIGTERM
-（5 s 有界等待后仍不空则只对该组 SIGKILL）；leader 已被他人回收或平台无法证明归属时
-记 `NOT_VERIFIED` 且不发信号。本证明的对象只是 launcher 进程组；后代自行 `setsid` /
-`detached` 逃出该组后不在 `VERIFIED` 范围内，登记为 P2 边界跟进，不把 `VERIFIED`
-表述为「所有后代均无残留」。只有 `processTreeCleanup=VERIFIED` 才允许顶层
+权限受限的活后代，所以**不再**用 `kill(leaderPid, 0)` 直接判空。macOS 改用
+`libproc.proc_listpids(PROC_PGRP_ONLY, pgid, …)` 一次枚举该组当前成员：不再做「全局 pid
+快照后逐个 `getpgid`」，成员在枚举与查询之间 fork 同组后代再退出而漏掉的窗口因此不存在。
+libproc 返回的字节数等于缓冲容量即视为截断（XNU 按容量复制），实现分配余量、只接受严格
+小于容量且 4 字节对齐的写，满缓冲继续增长重试，重试仍满返回「不可核验」。两次完整组快照
+必须一致，成员在两次快照之间变化同样不可核验。枚举失败、截断、快照变化、leader 探测被拒
+一律 `BLOCKED`、不发信号；只有两次完整一致且除未回收 leader 外无成员才记 `VERIFIED`。
+Linux 的 `/proc` 回退仍是逐 pid `getpgid`，任一查询失败即不可核验（该平台不会在僵尸语义
+未立时走到普查）。组内仍有存活成员记 `GROUP_NOT_EMPTY` 并只向该组 SIGTERM（5 s 有界等待
+后仍不空则只对该组 SIGKILL）；leader 已被他人回收或平台无法证明归属时记 `NOT_VERIFIED`
+且不发信号。所有实际信号（生产主路径、辅助清理、Node 探针、controls）都走同一个持有检查
+入口：Python 是 `HeldProcessGroup`，只有 `waitid(WNOWAIT)` 仍证明 leader 为 `RUNNING` 或
+`EXITED`（未回收僵尸）时才发送，`REAPED`/`UNSUPPORTED` 一律拒绝；Node 在 spawn 后、任何
+await 前注册 `exit` 监听，`signalHeldGroup` / `signalHeldChild` 在 `exit` 事件后拒绝，
+`term-early` 钉住「leader 在等待期间退出则 `signalRefused`」。signal-0 只作观察，不投递。
+本证明的对象只是 launcher 进程组，且只到**最后一次完整组快照的观察时刻**：两次快照一致
+证明这两个时刻组内没有未计入的活成员；之后新 fork 的后代不在该时刻的证明内（这是观察
+边界，不是把不完整普查当成空）。后代自行 `setsid` / `detached` 逃出该组后也不在
+`VERIFIED` 范围内，登记为 P2 边界跟进，不把 `VERIFIED` 表述为「所有后代均无残留」；
+本轮没有用任何树遍历冒称覆盖这一逃逸。只有 `processTreeCleanup=VERIFIED` 才允许顶层
 `status` / `executionStatus` 为 `PASS`；`GROUP_NOT_EMPTY` / `BLOCKED` / `NOT_VERIFIED`
 一律为 `PASS_WITH_CLEANUP_UNVERIFIED`，`freezeStatus` 为
 `BLOCKED_CLEANUP_UNVERIFIED`（只认 PASS 的冻结 / 矩阵消费者因此不会把它当通过），
@@ -89,7 +101,9 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 CI/shell 调用方也不会把它当通过。
 `controls/session_domain.py` 同批增加 `cleanup-empty-group`、
 `cleanup-leftover-grandchild`、`cleanup-probe-blocked`、`cleanup-eperm-live-member`、
-`cleanup-identity-lost` 五个行为控制，cleanup 结果计入
+`cleanup-identity-lost`、`cleanup-census-snapshot-race`、`cleanup-census-descendant`、
+`cleanup-census-unstable`、`cleanup-census-truncated`、`cleanup-census-enumeration-failure`、
+`cleanup-signal-entry-reaped`、`cleanup-signal-entry-held` 等行为控制，cleanup 结果计入
 `results.json:cleanup`，任一失败即整批 FAIL。行为 fixture
 `src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/` 的 `ignore` 孙进程先装好
 `SIG_IGN` 并写就绪标记，launcher 有界等待后才退出；源码变异负控按变异绑定期望字段，
