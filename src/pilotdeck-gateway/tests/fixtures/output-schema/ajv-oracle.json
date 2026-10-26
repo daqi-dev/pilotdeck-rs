@@ -3257,12 +3257,55 @@
       "errorText": "data must match format \"uri\""
     },
     {
+      "id": "uri/ipvfuture-upper",
+      "schema": {
+        "type": "string",
+        "format": "uri"
+      },
+      "data": "v://[V1.A]"
+    },
+    {
+      "id": "uri/ipvfuture-long-s",
+      "schema": {
+        "type": "string",
+        "format": "uri"
+      },
+      "data": "v://[v1.ſ]",
+      "errorText": "data must match format \"uri\""
+    },
+    {
+      "id": "uri/ipvfuture-kelvin",
+      "schema": {
+        "type": "string",
+        "format": "uri"
+      },
+      "data": "v://[v1.K]",
+      "errorText": "data must match format \"uri\""
+    },
+    {
       "id": "uri-reference/upper",
       "schema": {
         "type": "string",
         "format": "uri-reference"
       },
       "data": "HTTP://example.com/"
+    },
+    {
+      "id": "uri-reference/ipvfuture-upper",
+      "schema": {
+        "type": "string",
+        "format": "uri-reference"
+      },
+      "data": "//[V1.A]"
+    },
+    {
+      "id": "uri-reference/ipvfuture-long-s",
+      "schema": {
+        "type": "string",
+        "format": "uri-reference"
+      },
+      "data": "//[v1.ſ]",
+      "errorText": "data must match format \"uri-reference\""
     },
     {
       "id": "uri-reference/long-s-scheme",
@@ -3350,6 +3393,42 @@
         "format": "ipv6"
       },
       "data": "::ſ",
+      "errorText": "data must match format \"ipv6\""
+    },
+    {
+      "id": "ipv6/ipvfuture-ascii",
+      "schema": {
+        "type": "string",
+        "format": "ipv6"
+      },
+      "data": "v1.s",
+      "errorText": "data must match format \"ipv6\""
+    },
+    {
+      "id": "ipv6/ipvfuture-bare-long-s",
+      "schema": {
+        "type": "string",
+        "format": "ipv6"
+      },
+      "data": "v1.ſ",
+      "errorText": "data must match format \"ipv6\""
+    },
+    {
+      "id": "ipv6/ipvfuture-long-s",
+      "schema": {
+        "type": "string",
+        "format": "ipv6"
+      },
+      "data": "::v1.ſ",
+      "errorText": "data must match format \"ipv6\""
+    },
+    {
+      "id": "ipv6/ipvfuture-bracket-long-s",
+      "schema": {
+        "type": "string",
+        "format": "ipv6"
+      },
+      "data": "[v1.ſ]",
       "errorText": "data must match format \"ipv6\""
     },
     {

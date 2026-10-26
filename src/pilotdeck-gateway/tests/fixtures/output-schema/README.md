@@ -13,7 +13,9 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **904** cases. Each case is either:
+count of **913** cases (the #829 rounds added 26 of them; the unit test
+`formats_follow_ajv_formats` rows are counted separately). Each case is
+either:
 
 - `compileError`: `getValidator` threw (the SDK does this in `tools/list`);
 - `compileErrorPrefix`: same, but only the V8 portion is stable (invalid
@@ -59,8 +61,26 @@ regexes compile with `/i` and no `/u` (measured via a `RegExp` construction
 proxy), so their case folding is ASCII-only. The port folds the haystack the
 same way (`(?i)` plus masking U+017F/U+212A, the only non-ASCII code points
 whose simple case fold is an ASCII letter); uppercase schemes and `{VAR}`
-stay valid while `ſ`/`K`/`İ` stay invalid. `ipv6` needs no mask because its
-`[0-9a-f]` class contains neither `s` nor `k`.
+stay valid while `ſ`/`K`/`İ` stay invalid. `İ`/`ı` need no mask even as
+regression pins rather than masked cases: V8's non-`/u` canonicalization
+only ever maps ASCII, and Rust's simple folding implements only the common
+(`C`) mappings, while U+0130/U+0131 have just Turkic (`T`) mappings — so
+neither engine folds them, and the `i-with-dot` goldens would catch a
+folding-table change on either side. The mask itself is a local, temporary
+copy of `tools/builtin/bash/permissions.rs`'s helper (#772 is not on `main`
+yet, and its `pub(super)` helper cannot be imported here); it moves to the
+shared `js_value.rs` function once #772 lands.
+
+The `ipvfuture-*` cases pin fix-r1's review follow-up. ajv-formats' `ipv6`
+regex has **no** `[Vv][0-9a-f]+\.[a-z0-9…]` IPvFuture branch at all — that
+branch lives only inside the bracketed-host part of the `uri` and
+`uri-reference` regexes, which the port already masks — so `ipv6` needs no
+mask: every class it does have (`[0-9a-f]` and decimal IPv4) contains
+neither `s` nor `k`, and `v1.s`/`v1.ſ`/`::v1.ſ`/`[v1.ſ]` all stay invalid.
+For `uri`/`uri-reference` the IPvFuture suffix class `[a-z0-9…]` is just as
+fold-sensitive as the scheme class: `v://[V1.A]` and `//[V1.A]` stay valid
+(ASCII folding) while `v://[v1.ſ]` and `v://[v1.K]` (U+212A) stay invalid —
+the same haystack mask covers this position too.
 
 `deep-pattern/*`, `deep-pattern-properties/*`, and `deep-format-regex/*`
 cover 10000 / 100000 nested capturing, noncapturing, and lookahead groups,
