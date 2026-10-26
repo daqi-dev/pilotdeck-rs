@@ -419,7 +419,9 @@ async fn execute(
                 ])),
             ));
         }
-        Err(FetchError::Other(message)) => {
+        // TS `webFetch.ts:316-320` wraps only the message; `name` stays on the
+        // thrown error and is not part of the tool error details.
+        Err(FetchError::Other { message, .. }) => {
             return Err(tool_error(
                 "tool_execution_failed",
                 concat("web_fetch failed: ", &message),
