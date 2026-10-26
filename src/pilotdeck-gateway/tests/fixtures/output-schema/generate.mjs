@@ -87,8 +87,19 @@ globalThis.RegExp = nativeRegExp;
 // the one full format compiled with /iu; `byte` is a function wrapping a
 // module-private /gm regex (not readable from outside), pinned behaviorally
 // by the goldens instead.
+// fix-r1: the `require` is not a second module instance. ajv-formats ships no
+// `exports` map, so the provider's `import 'ajv-formats'` falls back to
+// `main: dist/index.js`, which `require`s `./formats` through the one
+// CommonJS cache this `require` also uses. Resolving the plugin from the
+// provider's own directory — the same lookup its import performs — and
+// comparing the returned objects proves the identity at runtime, and the
+// version seen from there is pinned to the 3.0.1 asserted above.
 const require = createRequire(import.meta.url);
 const {fullFormats} = require(path.join(baseline, 'node_modules/ajv-formats/dist/formats.js'));
+const providerRequire = createRequire(providerPath);
+assert.equal(providerRequire('ajv-formats/package.json').version, formatsPackage.version);
+assert.equal(providerRequire('ajv-formats').get('url'), fullFormats.url);
+assert.equal(providerRequire('ajv-formats').get('byte'), fullFormats.byte);
 assert.equal(typeof fullFormats.url, 'object');
 assert.equal(fullFormats.url.flags, 'iu', 'url must stay /iu');
 assert.equal(typeof fullFormats.byte, 'function');
@@ -440,8 +451,12 @@ for (const [id, schema, data] of [
   ['url/long-s-scheme-mixed', {type: 'string', format: 'url'}, 'Httpſ://example.com/a'],
   ['url/long-s-host', {type: 'string', format: 'url'}, 'http://eſample.com/'],
   ['url/long-s-tld', {type: 'string', format: 'url'}, 'http://example.ſom/'],
-  ['url/kelvin-host', {type: 'string', format: 'url'}, 'http://eK.example.com/'],
+  ['url/kelvin-host', {type: 'string', format: 'url'}, 'http://eKample.com/'],
   ['url/dotless-i-host', {type: 'string', format: 'url'}, 'http://eıample.com/'],
+  // fix-r1: İ (U+0130) folds onto `i` under /iu, but no fold-sensitive
+  // position contains `i`; the host/TLD classes also contain it literally,
+  // so it stays valid — pinned so a folding change on either side turns red.
+  ['url/i-with-dot-host', {type: 'string', format: 'url'}, 'http://eİample.com/'],
   ['url/long-s-private', {type: 'string', format: 'url'}, 'HTTPſ://192.168.1.1/x'],
   ['url/long-s-not-scheme', {type: 'string', format: 'url'}, 'ſhttp://example.com/'],
   ['url/ligature-st-scheme', {type: 'string', format: 'url'}, 'httpﬆ://example.com/a'],
@@ -450,9 +465,17 @@ for (const [id, schema, data] of [
   // U+0085 is not one), and `test` succeeds when any single full line is a
   // base64 value: `aGVsbG8=\r!!` passes on its first line while
   // `aGVsbG8\r!!`, with no valid line, fails.
+  // fix-r1: `\r\n` is two terminators, and the empty line between them is a
+  // full line of its own — the zero-length base64 matches it, so
+  // `aGVsbG8\r\n!!`, `!!\r\n!!` and even `\r\n` alone are valid
+  // (arbitration on Node v22.22.0; collapsing `\r\n` into one terminator,
+  // the reviewer's proposed fix, would diverge from V8).
   ['byte/cr-tail', {type: 'string', format: 'byte'}, 'aGVsbG8=\r'],
   ['byte/cr-head', {type: 'string', format: 'byte'}, '\raGVsbG8='],
   ['byte/crlf-tail', {type: 'string', format: 'byte'}, 'aGVsbG8=\r\n'],
+  ['byte/crlf-any-line', {type: 'string', format: 'byte'}, 'aGVsbG8\r\n!!'],
+  ['byte/crlf-only', {type: 'string', format: 'byte'}, '\r\n'],
+  ['byte/crlf-bad-lines', {type: 'string', format: 'byte'}, '!!\r\n!!'],
   ['byte/ls-tail', {type: 'string', format: 'byte'}, 'aGVsbG8= '],
   ['byte/ps-tail', {type: 'string', format: 'byte'}, 'aGVsbG8= '],
   ['byte/nel-tail', {type: 'string', format: 'byte'}, 'aGVsbG8=\u0085'],

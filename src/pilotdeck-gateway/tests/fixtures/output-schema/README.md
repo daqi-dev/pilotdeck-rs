@@ -13,7 +13,7 @@ three files that determine the behaviour (`providerSha256`, `ajvSha256`,
 `formatsSha256`). The generator pins their observed hashes and versions,
 binds the clean baseline commit with `bindSourceTree`, and records the
 `McpClient.ts` import closure. Replay uses `baseline::oracle` and an exact
-count of **932** cases (the #829 rounds added 26 of them and #834 another 19;
+count of **936** cases (the #829 rounds added 26 of them and #834 another 23;
 the unit test `formats_follow_ajv_formats` rows are counted separately). Each
 case is
 either:
@@ -92,12 +92,18 @@ is valid. `url` is also the only format the port hand-lowers instead of
 running a `(?i)` regex, so it folds ſ onto the ASCII-lowered haystack rather
 than masking it — the host/TLD classes contain both spellings literally, and
 the other non-ASCII folds (İ onto `i`, K onto `k`) hit no fold-sensitive
-position in `url` (measured: `/i/iu` does not fold ı and ﬆ never folds).
+position in `url` (measured: `/i/iu` does not fold ı and ﬆ never folds), so
+the `kelvin-host` / `i-with-dot-host` / `dotless-i-host` goldens all stay
+valid and would turn red if either engine's folding table changed.
 `byte` is the one `/m` format: its `/gm` anchors match around every
 ECMAScript line terminator (`\n`, `\r`, U+2028, U+2029; U+0085 is not one —
 measured on Node 22.22.0), and `test` succeeds when any single full line is a
 base64 value (`aGVsbG8=\r!!` is valid on its first line; `aGVsbG8\r!!`, with
-no valid line, is not). Rust's `(?m)` only recognizes `\n`, so the port
+no valid line, is not). `\r\n` is two terminators, and the empty line between
+them is a full line of its own — the zero-length base64 matches it, so
+`aGVsbG8\r\n!!`, `!!\r\n!!` and even `\r\n` alone are valid (#834 fix-r1
+arbitration on Node v22.22.0: collapsing `\r\n` into one terminator would
+diverge from V8). Rust's `(?m)` only recognizes `\n`, so the port
 splits the haystack on all four terminators instead of using `(?m)`.
 
 `deep-pattern/*`, `deep-pattern-properties/*`, and `deep-format-regex/*`

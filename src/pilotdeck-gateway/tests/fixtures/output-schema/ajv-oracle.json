@@ -3515,7 +3515,7 @@
         "type": "string",
         "format": "url"
       },
-      "data": "http://eK.example.com/"
+      "data": "http://eKample.com/"
     },
     {
       "id": "url/dotless-i-host",
@@ -3524,6 +3524,14 @@
         "format": "url"
       },
       "data": "http://eıample.com/"
+    },
+    {
+      "id": "url/i-with-dot-host",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://eİample.com/"
     },
     {
       "id": "url/long-s-private",
@@ -3575,6 +3583,30 @@
         "format": "byte"
       },
       "data": "aGVsbG8=\r\n"
+    },
+    {
+      "id": "byte/crlf-any-line",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "aGVsbG8\r\n!!"
+    },
+    {
+      "id": "byte/crlf-only",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "\r\n"
+    },
+    {
+      "id": "byte/crlf-bad-lines",
+      "schema": {
+        "type": "string",
+        "format": "byte"
+      },
+      "data": "!!\r\n!!"
     },
     {
       "id": "byte/ls-tail",
