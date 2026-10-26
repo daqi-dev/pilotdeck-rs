@@ -2409,7 +2409,11 @@ fn regex_format_valid(text: &str) -> Option<bool> {
 /// `(?m)` only recognizes `\n`. `test` succeeds when any single full line is
 /// a base64 value (`aGVsbG8=\r!!` passes on its first line while
 /// `aGVsbG8\r!!`, with no valid line, fails), so split on all four
-/// terminators and accept on the first matching line.
+/// terminators and accept on the first matching line. `\r\n` is two
+/// terminators, and the empty line between them is a full line of its own:
+/// the zero-length base64 matches it, so `aGVsbG8\r\n!!` and even `\r\n`
+/// alone are valid (#834 arbitration — collapsing `\r\n` into one terminator
+/// would diverge from V8).
 fn byte_valid(text: &str) -> bool {
     text.split(['\n', '\r', '\u{2028}', '\u{2029}'])
         .any(|line| formats().byte.is_match(line))
@@ -3972,6 +3976,10 @@ mod tests {
             ("url", "http://example.\u{17f}om/", Some(true)),
             ("url", "http://e\u{212a}ample.com/", Some(true)),
             ("url", "http://e\u{131}ample.com/", Some(true)),
+            // fix-r1: İ (U+0130) folds onto `i`, but no fold-sensitive
+            // position contains `i` and the host/TLD classes keep İ
+            // literally, so it stays valid.
+            ("url", "http://e\u{130}ample.com/", Some(true)),
             ("url", "HTTP\u{17f}://192.168.1.1/x", Some(false)),
             ("url", "\u{17f}http://example.com/", Some(false)),
             ("url", "http\u{fb06}://example.com/a", Some(false)),
@@ -4023,6 +4031,13 @@ mod tests {
             ("byte", "aGVsbG8=\r", Some(true)),
             ("byte", "\raGVsbG8=", Some(true)),
             ("byte", "aGVsbG8=\r\n", Some(true)),
+            // fix-r1: `\r\n` is two terminators and the empty line between
+            // them is a full line of its own, so the zero-length base64
+            // makes these valid — collapsing `\r\n` into one terminator
+            // (the reviewer's proposed fix) would diverge from V8.
+            ("byte", "aGVsbG8\r\n!!", Some(true)),
+            ("byte", "\r\n", Some(true)),
+            ("byte", "!!\r\n!!", Some(true)),
             ("byte", "aGVsbG8=\u{2028}", Some(true)),
             ("byte", "aGVsbG8=\u{2029}", Some(true)),
             ("byte", "aGVsbG8=\u{85}", Some(false)),
@@ -4211,7 +4226,7 @@ mod tests {
             JsValue::Array(cases) => cases,
             other => panic!("cases must be an array: {other:?}"),
         };
-        assert_eq!(cases.len(), 932);
+        assert_eq!(cases.len(), 936);
         for (key, expected) in [
             ("sdk", "1.29.0"),
             ("ajv", "8.20.0"),

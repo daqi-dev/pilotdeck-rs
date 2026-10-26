@@ -111,6 +111,17 @@ MUTANTS = [
      b'        .any(|line| formats().byte.is_match(line))',
      b'        .all(|line| formats().byte.is_match(line))',
      True),
+    # fix-r1: the reviewer's proposed "fix" — collapse \r\n into a single
+    # terminator before splitting — diverges from V8: the empty line between
+    # \r and \n is a full line of its own, so the \r\n unit rows and the
+    # byte/crlf-any-line / byte/crlf-bad-lines oracle cases must flip red.
+    ('byte-crlf-one-terminator',
+     b'    text.split([\'\\n\', \'\\r\', \'\\u{2028}\', \'\\u{2029}\'])\n'
+     b'        .any(|line| formats().byte.is_match(line))',
+     b'    text.replace("\\r\\n", "\\r")\n'
+     b'        .split([\'\\n\', \'\\r\', \'\\u{2028}\', \'\\u{2029}\'])\n'
+     b'        .any(|line| formats().byte.is_match(line))',
+     True),
 ]
 selected = sys.argv[2:] or [name for name, _old, _new, _oracle in MUTANTS]
 
