@@ -18,6 +18,7 @@ CHECK = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = CHECK
 SPEC.loader.exec_module(CHECK)
 PRODUCTION_UNSUPPORTED = dict(CHECK.UNSUPPORTED)
+PRODUCTION_UNSUPPORTED_SIGNALS = dict(CHECK.UNSUPPORTED_SIGNALS)
 
 
 class ScannerControls(unittest.TestCase):
@@ -38,6 +39,9 @@ class ScannerControls(unittest.TestCase):
         self.allowlist = patch.dict(CHECK.UNSUPPORTED, {}, clear=True)
         self.allowlist.start()
         self.addCleanup(self.allowlist.stop)
+        signals = patch.dict(CHECK.UNSUPPORTED_SIGNALS, {}, clear=True)
+        signals.start()
+        self.addCleanup(signals.stop)
 
     def write(self, body):
         self.script.write_text(self.base + body)
@@ -47,7 +51,7 @@ class ScannerControls(unittest.TestCase):
         with redirect_stdout(output):
             code = CHECK.check(self.root, anchors_only=anchors_only, environ=env or {})
         report = output.getvalue()
-        self.assertEqual(code, expected, report)
+        self.assertEqual(code, expected, f'{label}\n{report}')
         if label:
             print(f'CONTROL {label} exit={code}\n{report}', end='')
         return report
@@ -143,6 +147,7 @@ class ScannerControls(unittest.TestCase):
 import os
 assert os.environ.get('CARGO_TARGET_DIR')
 mutants = [('clock-pending-snapshot', source, 'before', '')]
+cases = []
 for name, path, pattern, replacement in mutants:
     content = path.read_text()
     changed, count = re.subn(pattern, replacement, content, flags=re.S)
@@ -157,6 +162,7 @@ for name, path, pattern, replacement in mutants:
         reason = PRODUCTION_UNSUPPORTED[name]
         self.assertTrue(reason.strip())
         CHECK.UNSUPPORTED[name] = reason
+        CHECK.UNSUPPORTED_SIGNALS[name] = PRODUCTION_UNSUPPORTED_SIGNALS[name]
         for anchors_only in (False, True):
             with self.subTest(anchors_only=anchors_only):
                 report = self.run_check(env=env, anchors_only=anchors_only,
@@ -166,9 +172,11 @@ for name, path, pattern, replacement in mutants:
         self.assertIn('MISSING_ENV CARGO_TARGET_DIR', self.run_check(
             1, anchors_only=False, label='sequential-regex-missing-environment'))
         del CHECK.UNSUPPORTED[name]
+        del CHECK.UNSUPPORTED_SIGNALS[name]
         self.assertIn('unsupported regex consumer', self.run_check(
             1, env=env, label='sequential-regex-exception-removed'))
         CHECK.UNSUPPORTED[name] = reason
+        CHECK.UNSUPPORTED_SIGNALS[name] = PRODUCTION_UNSUPPORTED_SIGNALS[name]
         self.run_check(env=env, anchors_only=False, label='sequential-regex-restored')
         other = self.fixtures / 'sample/negative.py'
         other.write_text(self.script.read_text())
@@ -467,6 +475,91 @@ mutants = [('sample', 'alias.rs', 'before', 'after')]
         other.write_text('before')
         self.run_check(label='rebound-path-restored')
 
+    def test_snapshot_unmodeled_writes_cannot_fall_back_to_basename(self):
+        other = self.root / 'src/other.rs'
+        other.write_text('missing')
+        prefix = "other = root / 'src/other.rs'\noriginals = {'alias.rs': source.read_text()}\n"
+        table = "mutants = [('sample', 'alias.rs', 'before', 'after')]\n"
+        self.write(prefix + table)
+        self.run_check(label='snapshot-write-original')
+        for mapping in ('originals', 'snapshots', 'self.originals', 'self.snapshots'):
+            for update in (
+                f"{mapping}.update({{'alias.rs': other.read_text()}})",
+                f"{mapping}.setdefault('alias.rs', other.read_text())",
+                f"{mapping}.clear()", f"{mapping}.pop('alias.rs')", f"{mapping}.popitem()",
+                f"{mapping}.__setitem__('alias.rs', 'before')", f"{mapping}.__delitem__('alias.rs')",
+                f"{mapping}['alias.rs'] += 'before'", f"del {mapping}['alias.rs']",
+                f"{mapping} |= {{'alias.rs': 'before'}}", f"del {mapping}",
+                f"{mapping}: dict = {{'alias.rs': 'before'}}",
+            ):
+                with self.subTest(update=update):
+                    self.write(prefix + update + '\n' + table)
+                    self.assertIn('unsupported snapshot', self.run_check(1, label='snapshot-unmodeled-write'))
+        for mapping in ('snapshots', 'self.originals', 'self.snapshots'):
+            self.write(prefix + f"{mapping}['alias.rs'] = other.read_text()\n" + table)
+            self.assertIn('unsupported snapshot', self.run_check(1, label='snapshot-unmodeled-assignment'))
+        for mapping in ('self.originals', 'self.snapshots'):
+            self.write(prefix + f"{mapping} = {{'alias.rs': other.read_text()}}\n" + table)
+            self.assertIn('unsupported snapshot', self.run_check(1, label='snapshot-attribute-binding'))
+        for mapping in ('originals', 'snapshots'):
+            self.write(prefix + f"alias = {mapping}\nalias.update({{'alias.rs': other.read_text()}})\n" + table)
+            self.assertIn('mapping escape', self.run_check(1, label='snapshot-alias-write'))
+            self.write(prefix + f"shared = {{'alias.rs': source.read_text()}}\n{mapping} = shared\n" + table)
+            self.assertIn('mapping initializer', self.run_check(1, label='snapshot-shared-initializer'))
+        self.write(prefix + table)
+        self.run_check(label='snapshot-write-restored')
+
+    def test_snapshot_pop_only_allows_unused_key_removal(self):
+        prefix = "originals = {'alias.rs': source.read_text(), 'unused.rs': source.read_text()}\n"
+        table = "mutants = [('sample', 'alias.rs', 'before', 'after')]\n"
+        self.write(prefix + "originals.pop('unused.rs', None)\n" + table)
+        self.run_check(label='snapshot-unused-pop-original')
+        self.write(prefix + "originals.pop('alias.rs', None)\n" + table)
+        self.assertIn('removed snapshot key', self.run_check(1, label='snapshot-removed-target'))
+        self.write(prefix + "originals.pop('alias.rs', None)\n" + table.replace("'before'", "originals['alias.rs']").replace("'alias.rs', originals", 'source, originals'))
+        self.assertIn('removed snapshot key', self.run_check(1, label='snapshot-removed-value'))
+        for removal in ("other = originals.pop('unused.rs', None)\n",
+                        "originals.pop(key, None)\n", "originals.pop('unused.rs', 'value')\n",
+                        "originals.pop('unused.rs', default=None)\n"):
+            self.write(prefix + removal + table)
+            self.assertIn('unsupported snapshot mapping method', self.run_check(1, label='snapshot-pop-unknown-shape'))
+        self.write(prefix + "originals.pop('alias.rs', None)\noriginals['alias.rs'] = source.read_text()\n" + table)
+        self.run_check(label='snapshot-pop-reassigned-restored')
+        for statement in ("originals.pop('alias.rs', None); value = originals['alias.rs']\n",
+                          "originals.pop('alias.rs', None); originals['alias.rs'] = source.read_text()\n",
+                          "originals['alias.rs'] = source.read_text(); value = originals['alias.rs']\n"):
+            self.write(prefix + statement + table)
+            self.assertIn('same-line snapshot update', self.run_check(1, label='snapshot-same-line-order'))
+        self.write(prefix + table)
+        self.run_check(label='snapshot-order-restored')
+
+    def test_snapshot_target_follows_rebased_transform_chain(self):
+        other = self.root / 'src/other.rs'
+        other.write_text(' before ')
+        prefix = """other = root / 'src/other.rs'
+originals = {'alias.rs': source.read_text()}
+originals['alias.rs'] = other.read_text()
+originals['alias.rs'] = originals['alias.rs'].strip()
+originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
+"""
+        table = "mutants = [('sample', 'alias.rs', originals['alias.rs'], 'after')]\n"
+        self.write(prefix + table)
+        anchors, _, _ = CHECK.extract(self.script, self.root)
+        self.assertEqual(anchors[0].path, other, 'snapshot-transform-latest-read-path')
+        self.assertEqual(anchors[0].before, 'before', 'snapshot-transform-current-value')
+        self.run_check(label='snapshot-chain-original')
+        # Keep the old source matching so a stale path would silently pass.
+        table = "mutants = [('sample', 'alias.rs', 'before', 'after')]\n"
+        self.write(prefix + table)
+        other.write_text('missing')
+        self.assertIn('src/other.rs expected=1 actual=0', self.run_check(1, label='snapshot-chain-wrong-source'))
+        other.write_text(' before ')
+        self.run_check(label='snapshot-chain-restored')
+        self.write(prefix + "originals['alias.rs'] = 'before'\n" + table)
+        self.assertIn('unsupported snapshot origin', self.run_check(1, label='snapshot-chain-lost-origin'))
+        self.write(prefix + table)
+        self.run_check(label='snapshot-chain-origin-restored')
+
     def test_environment_gaps_fail_strict_mode_only(self):
         self.write("mutants = [('sample', source, 'before', 'after')]\nassert os.environ.get('PDRS_BASELINE')\nassert env['CARGO_TARGET_DIR']\n")
         self.assertIn('MISSING_ENV PDRS_BASELINE', self.run_check(1, anchors_only=False, label='missing-environment'))
@@ -509,6 +602,26 @@ mutants = [('sample', 'alias.rs', 'before', 'after')]
         self.assertIn('MISSING_ENV CARGO_HOME', self.run_check(1, anchors_only=False, label='fallback-is-not-assignment'))
         self.write(table + "env['CARGO_HOME'] = 'cache'\nenv.get('CARGO_HOME', '')\n")
         self.run_check(anchors_only=False, label='assigned-env-restored')
+
+    def test_keyword_environment_keys_and_empty_setdefault_are_required(self):
+        table = "mutants = [('sample', source, 'before', 'after')]\n"
+        for function in ('os.getenv', 'os.environ.get', 'os.environ.setdefault'):
+            default_name = 'value' if function.endswith('setdefault') else 'default'
+            for key in ("'CARGO_TARGET_DIR'", "key='CARGO_TARGET_DIR'"):
+                for default in ('', f', {default_name}=None', f", {default_name}=''", f', {default_name}=unknown'):
+                    with self.subTest(function=function, key=key, default=default):
+                        self.write(table + f'{function}({key}{default})\n')
+                        self.assertIn('MISSING_ENV CARGO_TARGET_DIR', self.run_check(
+                            1, anchors_only=False, label=f'keyword-environment-required-{function}'))
+                        self.run_check(anchors_only=False, env={'CARGO_TARGET_DIR': 'supplied'},
+                                       label='keyword-environment-supplied')
+                self.write(table + f"{function}({key}, {default_name}='cache')\n")
+                self.run_check(anchors_only=False, label='keyword-environment-default-restored')
+        self.write(table + "os.environ.setdefault('CARGO_TARGET_DIR', '')\n")
+        self.assertIn('MISSING_ENV CARGO_TARGET_DIR', self.run_check(
+            1, anchors_only=False, label='empty-setdefault-required'))
+        self.write(table + "os.environ.setdefault('CARGO_TARGET_DIR', 'cache')\nos.environ.get(key='CARGO_TARGET_DIR')\n")
+        self.run_check(anchors_only=False, label='setdefault-assignment-restored')
 
     def test_unknown_script_and_partial_table_fail_closed(self):
         self.run_check()
@@ -558,6 +671,7 @@ mutants = [('sample', 'alias.rs', 'before', 'after')]
         self.assertIn('unsupported mutation table update', self.run_check(1))
 
     def test_allowlist_is_explicit_and_stale_entries_fail(self):
+        self.write("raise RuntimeError('must not run')\n")
         CHECK.UNSUPPORTED['sample/negative.py'] = 'synthetic unsupported format'
         self.assertIn('UNSUPPORTED sample/negative.py: synthetic unsupported format', self.run_check())
         CHECK.UNSUPPORTED['gone/negative.py'] = 'stale entry'
@@ -572,16 +686,63 @@ mutants = [('sample', 'alias.rs', 'before', 'after')]
                 self.assertTrue(reason.strip())
                 script = self.fixtures / name
                 script.parent.mkdir(parents=True, exist_ok=True)
-                script.write_text("raise RuntimeError('must not run')\n")
+                signals = PRODUCTION_UNSUPPORTED_SIGNALS.get(name, set())
+                body = ''.join(f'{value} = []\n' if kind == 'table' else f'{value}()\n'
+                               for kind, value in (signal.split(':') for signal in sorted(signals)))
+                body += "raise RuntimeError('must not run')\n"
+                script.write_text(body)
                 CHECK.UNSUPPORTED[name] = reason
+                if signals:
+                    CHECK.UNSUPPORTED_SIGNALS[name] = signals
                 self.run_check(label=f'allowlist-present-{name}')
                 script.unlink()
                 self.assertIn('stale/empty', self.run_check(1, label=f'allowlist-missing-{name}'))
-                script.write_text("raise RuntimeError('must not run')\n")
+                script.write_text(body)
                 self.run_check(label=f'allowlist-restored-{name}')
                 print(f'ALLOWLIST {name}: present=0 missing=1 restored=0')
                 script.unlink()
                 del CHECK.UNSUPPORTED[name]
+                CHECK.UNSUPPORTED_SIGNALS.pop(name, None)
+
+    def test_helper_exemption_cannot_hide_mutation_signals(self):
+        name = 'sample/negative.py'
+        CHECK.UNSUPPORTED[name] = 'helper without mutation definitions'
+        self.write("raise RuntimeError('must not execute')\n")
+        self.run_check(label='signal-free-helper-original')
+        bodies = [f"{table} = [('sample', source, 'before', 'after')]\n" for table in sorted(CHECK.TABLES)]
+        bodies += ["mutation('sample', source, 'before', 'after')\n", "mutate('sample', source, 'before', 'after')\n"]
+        for body in bodies:
+            self.write(body)
+            self.assertIn('unsupported exemption signals', self.run_check(1, label='helper-hidden-mutation'))
+        self.write("raise RuntimeError('must not execute')\n")
+        self.run_check(label='signal-free-helper-restored')
+
+    def test_registered_exemption_signals_are_exact_and_stale_checked(self):
+        for name, signals in PRODUCTION_UNSUPPORTED_SIGNALS.items():
+            with self.subTest(name=name):
+                self.move_script(name)
+                CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
+                CHECK.UNSUPPORTED_SIGNALS[name] = signals
+                fragments = {signal: (f'{value} = []\n' if kind == 'table' else f'{value}()\n')
+                             for signal in signals for kind, value in [signal.split(':')]}
+                body = ''.join(fragments.values())
+                self.write(body)
+                self.run_check(label=f'exemption-signals-original-{name}')
+                for signal in signals:
+                    self.write(''.join(fragment for key, fragment in fragments.items() if key != signal))
+                    self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-removed'))
+                self.write(body + 'mutation()\n')
+                self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-added'))
+                self.write(body)
+                del CHECK.UNSUPPORTED_SIGNALS[name]
+                self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-unregistered'))
+                CHECK.UNSUPPORTED_SIGNALS[name] = signals
+                del CHECK.UNSUPPORTED[name]
+                self.assertIn('stale UNSUPPORTED_SIGNALS', self.run_check(1, label='exemption-signal-stale'))
+                CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
+                self.run_check(label=f'exemption-signals-restored-{name}')
+                del CHECK.UNSUPPORTED[name]
+                del CHECK.UNSUPPORTED_SIGNALS[name]
 
     def test_each_row_exception_has_a_paired_stale_control(self):
         self.script.unlink()
@@ -737,7 +898,7 @@ mutants = [('sample', 'alias.rs', 'before', 'after')]
         override = "mutant_anchor = {'sample': ('location', 'example.rs:1:1')}\n"
         self.source.write_text(before)
         self.write(table + override)
-        self.run_check(label='unwrap-start-original')
+        self.assertIn('unsupported location helper', self.run_check(1, label='unverified-literal-location'))
         self.write(table.replace("'unwrap()'", "'prefix.unwrap()'") + override)
         self.assertIn('unwrap must start', self.run_check(1, label='shifted-unwrap-start'))
         self.source.write_text('prefix.' + before)
@@ -749,9 +910,9 @@ mutants = [('sample', 'alias.rs', 'before', 'after')]
         self.write("source = root / 'outside.rs'\n" + table + override)
         self.assertIn('inside rust workspace', self.run_check(1, label='location-outside-rust'))
         self.write(table + override.replace("'example.rs:1:1'", 'None'))
-        self.assertIn('location anchor must be', self.run_check(1, label='unverified-derived-location'))
-        self.write(table + override)
-        self.run_check(label='unwrap-start-restored')
+        self.assertIn('unsupported location helper', self.run_check(1, label='unverified-derived-location'))
+        self.write(table + "mutant_anchor = {'sample': ('message', 'specific panic')}\n")
+        self.run_check(label='message-anchor-restored')
 
     def test_single_line_abort_anchor_is_unique(self):
         self.source.write_text('timer.abort();\n')
@@ -762,11 +923,8 @@ mutants = [('sample', 'alias.rs', 'before', 'after')]
         self.source.write_text('timer.abort();\n')
         self.run_check(label='timer-abort-restored')
 
-    def test_turn_submit_derived_location_is_bound_to_helper_and_source(self):
-        self.move_script('turn-submit/negative.py')
+    def submit_location_parts(self):
         before = 'unwrap_or_else(|poisoned| poisoned.into_inner())'
-        original = '// prefix\n    ' + before + '\n'
-        self.source.write_text(original)
         helper = '''def unwrap_site(anchor_source, before, original):
     """The helper is inspected, never executed."""
     assert before, 'a location anchor needs the mutation span'
@@ -787,6 +945,63 @@ for name, before, after, case, marker, capability in selected:
     if anchor_kind == 'location':
         anchor = unwrap_site(target, before, target_original)
 '''
+        return before, setup, helper, consumer
+
+    def test_turn_submit_frozen_location_rejects_unique_span_line_drift(self):
+        self.move_script('turn-submit/negative.py')
+        before, setup, helper, consumer = self.submit_location_parts()
+        body = (setup + helper + consumer).replace("('location', None)", "('location', 'example.rs:1:1')")
+        self.source.write_text(before)
+        self.write(body)
+        self.run_check(label='literal-location-verified-original')
+        # before is still unique; only its real source location has moved.
+        self.source.write_text('// inserted line\n' + before)
+        self.assertEqual(self.source.read_text().count(before), 1)
+        self.assertIn('location anchor differs from span: expected=example.rs:2:1',
+                      self.run_check(1, label='frozen-location-line-drift'))
+        without_helper = body.replace(helper, '').replace('unwrap_site(target, before, target_original)', "'example.rs:1:1'")
+        self.write(without_helper)
+        self.assertIn('unsupported location helper', self.run_check(1, label='frozen-location-no-helper'))
+        self.write(body.replace("'example.rs:1:1'", 'None'))
+        self.run_check(label='derived-location-after-drift')
+        self.source.write_text(before)
+        self.write(body)
+        self.run_check(label='literal-location-restored')
+
+    def test_turn_submit_override_maps_reject_rebinding_and_mutation(self):
+        self.move_script('turn-submit/negative.py')
+        before, setup, helper, consumer = self.submit_location_parts()
+        self.source.write_text(before)
+        body = setup + helper + consumer
+        self.write(body)
+        self.run_check(label='override-maps-original')
+        for mapping in ('mutant_anchor', 'mutant_source'):
+            for suffix in (
+                f'{mapping} = {{}}', f'def {mapping}():\n    pass',
+                f'def unrelated({mapping}):\n    pass', f'from elsewhere import {mapping}',
+                f'{mapping}.update({{}})', f"{mapping}['sample'] = None", f'del {mapping}',
+                f"del {mapping}['sample']", f'{mapping} |= {{}}',
+                f"{mapping}.setdefault('sample', None)",
+                f"alias = {mapping}\nalias['sample'] = ('message', 'stale')",
+                f"get_override = {mapping}.get",
+            ):
+                self.write(body + suffix + '\n')
+                self.assertIn(mapping, self.run_check(1, label='override-map-rebound-after-consumer'))
+            # A single declaration after its first consumer is no safer.
+            declaration = next(line for line in setup.splitlines(True) if line.startswith(mapping + ' ='))
+            self.write(body.replace(declaration, '') + declaration)
+            self.assertIn('read before declaration', self.run_check(1, label='override-map-declared-after-read'))
+            shared = declaration.replace(mapping + ' =', 'shared =') + f'{mapping} = shared\n'
+            self.write(body.replace(declaration, shared) + "shared['sample'] = ('message', 'stale')\n")
+            self.assertIn('literal mapping', self.run_check(1, label='override-map-shared-initializer'))
+        self.write(body)
+        self.run_check(label='override-maps-restored')
+
+    def test_turn_submit_derived_location_is_bound_to_helper_and_source(self):
+        self.move_script('turn-submit/negative.py')
+        before, setup, helper, consumer = self.submit_location_parts()
+        original = '// prefix\n    ' + before + '\n'
+        self.source.write_text(original)
         body = setup + helper + consumer
         self.write(body)
         self.run_check(label='derived-location-original')
