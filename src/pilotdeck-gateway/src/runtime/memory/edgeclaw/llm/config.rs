@@ -518,7 +518,15 @@ pub fn sanitize_headers(headers: Option<&JsValue>) -> Option<JsObject> {
         if let JsValue::String(text) = value
             && !trimmed(Some(text)).is_empty()
         {
-            out.insert(key, JsValue::String(text.clone()));
+            // `next[key] = value` is a plain assignment: `__proto__` routes to
+            // the `Object.prototype` setter (a no-op for a string value) and
+            // never becomes an own key. `JSON.parse`-built records can carry
+            // one, unlike an object literal. Contrast [`to_string_record`],
+            // whose `Object.fromEntries` defines own data properties and so
+            // keeps the key.
+            if !key.equals_str("__proto__") {
+                out.insert(key, JsValue::String(text.clone()));
+            }
         }
     }
     (!out.is_empty()).then_some(out)
@@ -745,9 +753,15 @@ pub fn resolve_api_key(
         .and_then(|auth| auth.get("apiKey"))
         && super::super::storage::js_truthy(api_key)
     {
-        let value = trimmed(Some(&JsString::from_utf16(
-            crate::js_value::to_string_units(api_key).unwrap_or_default(),
-        )));
+        // `String(auth.apiKey)` throws for an object whose `toString` shadows
+        // `Object.prototype.toString` (a too-deep array join reports the
+        // shared stack bound instead); the conversion error must survive
+        // instead of collapsing into the no-key fallback below.
+        let units =
+            crate::js_value::to_string_units_checked(api_key).map_err(|error| ConfigError {
+                message: JsString::from(error.message()),
+            })?;
+        let value = trimmed(Some(&JsString::from_utf16(units)));
         if !value.is_empty() {
             return Ok(value);
         }

@@ -229,6 +229,45 @@ cases = [
         value
     }''',
      'open_claw_resolve_does_not_hold_lock_across_io'),
+    # #851 P1-1: sanitizeHeaders' plain `next[key] = value` must not turn a
+    # JSON.parse-built own `__proto__` into an own property (a plain
+    # assignment routes the key to the Object.prototype setter).
+    # oracle: sanitizeHeaders #366 keeps only `Authorization`, #367 only-proto
+    # is undefined; resolveSelection #368/#369 headers drop `__proto__`.
+    ('sanitize-proto-kept', config,
+     '''            if !key.equals_str("__proto__") {
+                out.insert(key, JsValue::String(text.clone()));
+            }''',
+     '''            {
+                out.insert(key, JsValue::String(text.clone()));
+            }''',
+     'llm_config_matches_ts'),
+    # #851 P1-2: `String(auth.apiKey)` must keep its conversion error instead
+    # of coercing objects to "[object Object]".
+    # oracle: resolveApiKey #372/#373 expect $error "Cannot convert object to
+    # primitive value"; #374 plain object stays "[object Object]".
+    ('api-key-unchecked-string', config,
+     '''        let units =
+            crate::js_value::to_string_units_checked(api_key).map_err(|error| ConfigError {
+                message: JsString::from(error.message()),
+            })?;''',
+     '''        let units = crate::js_value::to_string_units(api_key).unwrap_or_default();''',
+     'llm_config_matches_ts'),
+    # #851 contrast: toStringRecord rebuilds with Object.fromEntries, which
+    # defines own data properties, so it must KEEP an own `__proto__` —
+    # unifying it with sanitizeHeaders drops the key.
+    # oracle: resolveOpenClawModelConfig #371 and buildLlmConfig #370 headers
+    # keep `__proto__`.
+    ('to-string-record-drops-proto', config,
+     '''        let text = trimmed(entry.as_string());
+        if !text.is_empty() {
+            out.insert(key.clone(), JsValue::String(text));
+        }''',
+     '''        let text = trimmed(entry.as_string());
+        if !text.is_empty() && !key.equals_str("__proto__") {
+            out.insert(key.clone(), JsValue::String(text));
+        }''',
+     'llm_config_matches_ts'),
 ]
 
 names = [case[0] for case in cases]
