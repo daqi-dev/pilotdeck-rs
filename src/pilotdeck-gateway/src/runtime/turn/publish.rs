@@ -314,13 +314,13 @@ impl TurnPublisher {
     /// record+enqueue. Hosts must use this entry point instead of calling the
     /// underlying coordinator's emit directly during an active publication.
     pub fn emit(&self, event: &JsValue) -> bool {
-        let _pump = self.pump.lock().unwrap();
+        let _pump = lock(&self.pump);
         self.coordinator
             .emit(&self.publication.run.session_key, event)
     }
     /// Already-derived pump events, serialized with external emits and finish.
     pub fn gateway_event(&self, event: JsValue) -> bool {
-        let _pump = self.pump.lock().unwrap();
+        let _pump = lock(&self.pump);
         self.enqueue_gateway_event(event)
     }
     fn enqueue_gateway_event(&self, event: JsValue) -> bool {
@@ -344,7 +344,7 @@ impl TurnPublisher {
         event: &JsValue,
         forward_subagent_text: bool,
     ) -> ProjectionResult<()> {
-        let _pump = self.pump.lock().unwrap();
+        let _pump = lock(&self.pump);
         let run_id = String::from_utf16_lossy(self.publication.run.run_id.units());
         for event in projector.project(&GatewayAgentEventProjectionInput {
             event,
@@ -359,13 +359,13 @@ impl TurnPublisher {
     /// Already-started durable appends still settle; events completing after
     /// close cannot re-open live delivery. The owned pump drains separately.
     pub fn close_live(&self) {
-        let _pump = self.pump.lock().unwrap();
+        let _pump = lock(&self.pump);
         lock(&self.publication.state).closed = true;
         self.publication.changed.notify_waiters();
     }
     pub async fn finish(&self) {
         let writes = {
-            let _pump = self.pump.lock().unwrap();
+            let _pump = lock(&self.pump);
             let deferred = {
                 let mut state = lock(&self.publication.state);
                 if state.finishing {
@@ -383,7 +383,7 @@ impl TurnPublisher {
         };
         self.publication.wait_for(&writes).await;
         {
-            let _pump = self.pump.lock().unwrap();
+            let _pump = lock(&self.pump);
             lock(&self.publication.state).closed = true;
         }
         self.publication.changed.notify_waiters();
@@ -394,7 +394,7 @@ impl TurnPublisher {
             tokio::pin!(notified);
             notified.as_mut().enable();
             let trailing = {
-                let _pump = self.pump.lock().unwrap();
+                let _pump = lock(&self.pump);
                 let mut state = lock(&self.publication.state);
                 if let Some(event) = state.queue.pop_front() {
                     return Some(event);
@@ -407,7 +407,7 @@ impl TurnPublisher {
             };
             if let Some(writes) = trailing {
                 self.publication.wait_for(&writes).await;
-                let _pump = self.pump.lock().unwrap();
+                let _pump = lock(&self.pump);
                 self.coordinator.retain_terminal(
                     &self.publication.run.session_key,
                     &self.publication.run.run_id,

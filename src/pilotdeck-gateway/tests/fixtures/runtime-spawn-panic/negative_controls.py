@@ -30,6 +30,8 @@ construction = 'durable_construction_panic_releases_fifo_and_all_waiters'
 reservation = 'initial_snapshot_construction_panic_releases_all_reservations'
 # Every mutant has its own test and runtime assertion anchor. No compile failures count.
 mutants = [
+    ('pump-poison-unwrap', pub, re.escape('pub fn emit(&self, event: &JsValue) -> bool {\n        let _pump = lock(&self.pump);'), 'pub fn emit(&self, event: &JsValue) -> bool {\n        let _pump = self.pump.lock().unwrap();', 'pump_poison_does_not_disable_publication', 'PoisonError'),
+    ('durable-construction', pub, re.escape('Err(_) if !state.failure_published =>'), 'Err(_) if false && !state.failure_published =>', construction, 'construction complete visible trace'),
     ('shared-join', mcp, r'let outcome = task.await.unwrap_or_else\(\|error\| \{.*?\n        \}\);', 'let outcome = task.await.unwrap();', shared, 'shared failure:'),
     ('shared-retain', mcp, r'sender.send_replace\(Some\(outcome\)\);', 'drop((sender, outcome));', shared, 'shared failure:'),
     ('shared-owned-payload', mcp, re.escape('.or_else(|| payload.downcast_ref::<String>().map(String::as_str))'), '', payload, 'panic payload'),
@@ -44,7 +46,7 @@ mutants = [
     ('durable-poison-cleanup', pub, re.escape('let mut state = lock(&publication.state);'), 'let mut state = publication.state.lock().unwrap();', 'durable_poisoned_state_cleans_pending_and_wakes_all', 'spawn completion deadline'),
     ('durable-poison-wait', pub, re.escape('if lock(&self.state).pending.is_disjoint(writes)'), 'if self.state.lock().unwrap().pending.is_disjoint(writes)', 'durable_poisoned_state_cleans_pending_and_wakes_all', 'PoisonError'),
     ('durable-poison-enqueue', pub, re.escape('mutex.lock().unwrap_or_else(|poison| poison.into_inner())'), 'mutex.lock().unwrap()', 'durable_poisoned_state_cleans_pending_and_wakes_all', 'PoisonError'),
-    ('durable-construction', pub, re.escape('let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));'), 'let future: Result<_, Box<dyn std::any::Any + Send>> = Ok(registry.append(&self.run, &event));', construction, 'injected construction panic'),
+    ('durable-construction-catch', pub, re.escape('let future = catch_unwind(AssertUnwindSafe(|| registry.append(&self.run, &event)));'), 'let future: Result<_, Box<dyn std::any::Any + Send>> = Ok(registry.append(&self.run, &event));', construction, 'injected construction panic'),
     ('durable-construction-fifo', pub, re.escape('let _ = previous.await;'), 'drop(previous);', construction, 'construction successor cannot overtake pending predecessor'),
     ('durable-payload-cleanup', pub, r'(?P<cleanup>            let mut state = lock\(&publication.state\);.*?let _ = done.send\(\(\)\);\n)            drop\(panic_payload\);', r'            drop(panic_payload);\n\g<cleanup>', 'durable_panic_payload_drop_runs_after_cleanup', 'spawn completion deadline'),
     ('background-construction', background, r'let initial_snapshot = std::panic::catch_unwind\(std::panic::AssertUnwindSafe\(\|\| \{(?P<body>.*?)\n        \}\)\);', r'let initial_snapshot: Result<_, Box<dyn std::any::Any + Send>> = Ok({\g<body>\n        });', reservation, 'injected construction panic'),
