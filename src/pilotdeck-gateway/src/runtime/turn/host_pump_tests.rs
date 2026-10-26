@@ -332,6 +332,19 @@ async fn host_pump_final_orders_behind_the_reserved_slot() {
         .unwrap()
         .unwrap();
     assert_eq!(rx.try_recv().unwrap(), host_event("batch_b"));
+    // #855: the channel is empty now, so a final that bypassed its reserved
+    // predecessor K would send e on this very poll. Drive the final's callback
+    // once without polling the pump: correct code keeps F parked on K's done,
+    // which only the pump's own next poll (the :885 re-check) can fire by
+    // completing and dropping K.
+    std::future::poll_fn(|cx| {
+        assert!(
+            final_call.as_mut().poll(cx).is_pending(),
+            "#855: the final must stay parked behind the pump's reserved slot"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
     assert!(rx.try_recv().is_err(), "e still waits for the pump's slot");
     assert_pending(&mut task).await; // woke, re-checked stopped, published nothing
     // Activity probe, armed before the final publishes (the non-module send
@@ -349,16 +362,17 @@ async fn host_pump_final_orders_behind_the_reserved_slot() {
     assert_eq!(rx.try_recv().unwrap(), host_event("final_batch"));
     assert_pending(&mut probe).await;
     assert_eq!(
-        rx.try_recv().unwrap(),
+        rx.try_recv()
+            .expect("#855: the probe batch must publish at the pre-final deadline"),
         host_event("probe_batch"),
         "the probe's batch publishes at the pre-final deadline, not 500 ms later"
     );
-    // The stopped pump never drains again.
+    // The stopped pump never drains again; the closing advance polls the pump
+    // itself, so a mutant that still ticks after the stop fails here instead
+    // of hiding behind an unpolled future.
     drop(probe);
     queue_host_events(&inner, &[host_event("never_drained")]);
-    tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_secs(10)).await;
-    tokio::task::yield_now().await;
+    advance(&mut task, 10_000).await;
     assert!(rx.try_recv().is_err());
     assert_eq!(inner.drains.lock().unwrap().len(), 1);
 }
