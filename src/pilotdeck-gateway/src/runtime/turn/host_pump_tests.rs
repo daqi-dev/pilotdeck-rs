@@ -296,10 +296,10 @@ async fn host_pump_stops_before_dispose_closes_port() {
 }
 
 /// #855: a final arriving while the pump holds a reserved send slot and waits
-/// in delivery.wait() (live.rs:884) publishes strictly behind that slot, and
+/// in delivery.wait() (live.rs:908) publishes strictly behind that slot, and
 /// the pump's post-wake re-check keeps the turn closed without refreshing the
 /// activity deadline. The module-deadline probe at the end is what turns the
-/// "remove the :885 stopped re-check" mutant red: the probe captures its
+/// "remove the :909 stopped re-check" mutant red: the probe captures its
 /// deadline at forward() entry before the non-module final send refreshes
 /// activity, so correct code keeps the pre-final deadline and publishes the
 /// captured batch as soon as the final's slot completes.
@@ -314,7 +314,7 @@ async fn host_pump_final_orders_behind_the_reserved_slot() {
     let mut module_call = handler.module_call(JsValue::Null);
     assert_pending(&mut module_call).await;
     // At the tick deadline the pump reserves K behind M2 and parks in
-    // delivery.wait() — the exact live.rs:884 state the final must meet.
+    // delivery.wait() — the exact live.rs:908 state the final must meet.
     advance(&mut task, 499).await;
     advance(&mut task, 1).await;
     // The final arrives while the pump is waiting on its reserved slot: it
@@ -325,7 +325,7 @@ async fn host_pump_final_orders_behind_the_reserved_slot() {
     assert_pending(&mut final_call).await;
     assert_eq!(rx.try_recv().unwrap(), host_event("batch_a"));
     assert!(rx.try_recv().is_err(), "the final's batch waits behind K");
-    // Completing M2 wakes the pump; the :885 re-check keeps it closed. Its
+    // Completing M2 wakes the pump; the :909 re-check keeps it closed. Its
     // reserved slot K hands the chain to F, so e publishes only now.
     timeout(Duration::from_secs(5), module_call)
         .await
@@ -335,7 +335,7 @@ async fn host_pump_final_orders_behind_the_reserved_slot() {
     // #855: the channel is empty now, so a final that bypassed its reserved
     // predecessor K would send e on this very poll. Drive the final's callback
     // once without polling the pump: correct code keeps F parked on K's done,
-    // which only the pump's own next poll (the :885 re-check) can fire by
+    // which only the pump's own next poll (the :909 re-check) can fire by
     // completing and dropping K.
     std::future::poll_fn(|cx| {
         assert!(
