@@ -29,7 +29,7 @@ struct Handler {
     drains: Mutex<std::collections::VecDeque<Result<Vec<JsObject>, HostError>>>,
     /// Leaves the input_accepted callback pending forever, so a received final
     /// stays unapplied and only the host's bounded cancel exit can surface it.
-    block_input_accepted: bool,
+    block_model_request_started: bool,
     /// Leaves the model_event callback pending forever. Non-lifecycle events
     /// are applied too, so the application queue (final included) cannot grow
     /// past it; the final is received but can never be applied.
@@ -41,7 +41,7 @@ struct Handler {
     /// Rejects input_accepted in validate_event: a legal lifecycle payload an
     /// inner handler refuses, to prove the StreamHandler wrapper forwards the
     /// inner contract's rejection instead of silently skipping it.
-    reject_input_accepted: bool,
+    reject_model_request_started: bool,
 }
 
 impl HostHandler for Handler {
@@ -61,7 +61,8 @@ impl HostHandler for Handler {
             .get("payload")
             .and_then(|payload| payload.get("type"))
             .cloned();
-        let block = (self.block_input_accepted && payload_type == Some("input_accepted".into()))
+        let block = (self.block_model_request_started
+            && payload_type == Some("model_request_started".into()))
             || (self.block_model_event && payload_type == Some("model_event".into()))
             || (self.block_turn_failed && payload_type == Some("turn_failed".into()));
         self.events.lock().unwrap().push(event);
@@ -79,10 +80,12 @@ impl HostHandler for Handler {
     }
 
     fn validate_event(&self, payload: &JsValue) -> Result<EventGuard, HostError> {
-        if self.reject_input_accepted && payload.get("type") == Some(&"input_accepted".into()) {
+        if self.reject_model_request_started
+            && payload.get("type") == Some(&"model_request_started".into())
+        {
             return Err(HostError::new(
                 HostErrorKind::Protocol,
-                "inner rejected input_accepted",
+                "inner rejected model_request_started",
             ));
         }
         Ok(EventGuard::default())
@@ -198,7 +201,7 @@ async fn persisted_failure(turn: &mut dyn LiveTurn) -> String {
             .unwrap()
             .as_str()
         {
-            "turn_started" | "input_accepted" | "agent_status" => {}
+            "turn_started" | "input_accepted" | "agent_status" | "model_request_started" => {}
             "turn_failed" => {
                 message = event
                     .get("error")
@@ -209,7 +212,8 @@ async fn persisted_failure(turn: &mut dyn LiveTurn) -> String {
             "turn_completed" => {
                 assert_eq!(
                     event.get("result").unwrap().get("type"),
-                    Some(&"error".into())
+                    Some(&"error".into()),
+                    "integrity failure terminal must be error"
                 );
                 assert_eq!(
                     next(turn).await.unwrap(),
@@ -330,8 +334,8 @@ fn assert_aborted_turn(event: &JsValue, turn: &str) {
 #[tokio::test]
 async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
     let expected = [
-        r#"{"type":"turn_started","sessionId":"session","turnId":"turn"}"#,
-        r#"{"type":"input_accepted","sessionId":"session","turnId":"turn","inputId":"input"}"#,
+        r#"{"type":"model_request_started","sessionId":"session","turnId":"turn"}"#,
+        r#"{"type":"model_event","sessionId":"session","turnId":"turn","inputId":"input"}"#,
         r#"{"type":"model_event","sessionId":"session","event":{"type":"text_delta","text":"hello"}}"#,
     ].map(|value| parse_json(value).unwrap());
     let terminal = parse_json(r#"{"result":{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1},"messages":[]}"#).unwrap();
@@ -378,7 +382,8 @@ async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
 async fn event_queued_in_the_completing_poll_precedes_execution_error() {
     let (tx, rx) = mpsc::channel(1);
     let event =
-        parse_json(r#"{"type":"turn_started","sessionId":"session","turnId":"turn"}"#).unwrap();
+        parse_json(r#"{"type":"model_request_started","sessionId":"session","turnId":"turn"}"#)
+            .unwrap();
     let sent = event.clone();
     let mut turn = stream(
         Box::pin(async move {
@@ -417,7 +422,7 @@ async fn failed_handler_event_is_not_published() {
         Box::pin(async move {
             deliver(
                 &handler,
-                &parse_json(r#"{"type":"turn_started"}"#).unwrap(),
+                &parse_json(r#"{"type":"model_request_started"}"#).unwrap(),
                 false,
             )
             .await?;
@@ -487,9 +492,10 @@ async fn event_after_the_authoritative_terminal_fails_closed() {
     )
     .unwrap();
     let started =
-        parse_json(r#"{"type":"turn_started","sessionId":"session","turnId":"turn"}"#).unwrap();
+        parse_json(r#"{"type":"model_request_started","sessionId":"session","turnId":"turn"}"#)
+            .unwrap();
     let accepted =
-        parse_json(r#"{"type":"input_accepted","sessionId":"session","turnId":"turn"}"#).unwrap();
+        parse_json(r#"{"type":"model_event","sessionId":"session","turnId":"turn"}"#).unwrap();
     let handler = Arc::new(StreamHandler {
         inner: Arc::new(Handler::default()),
         events: tx,
@@ -513,11 +519,11 @@ async fn event_after_the_authoritative_terminal_fails_closed() {
     );
     assert_eq!(
         next(&mut turn).await.unwrap().unwrap().get("type"),
-        Some(&"turn_started".into())
+        Some(&"model_request_started".into())
     );
     assert_eq!(
         next(&mut turn).await.unwrap().unwrap().get("type"),
-        Some(&"input_accepted".into())
+        Some(&"model_event".into())
     );
     let completed = next(&mut turn).await.unwrap().unwrap();
     assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
@@ -671,12 +677,12 @@ async fn host_normal_lifecycle_streams_events_and_projects_authoritative_final_o
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    // turn_started, input_accepted, three intermediates and the applied final;
+    // Three loop intermediates and the applied final;
     // the sidecar's own turn_completed never reaches the handler either: the
     // host suppresses it (host/execution.rs, mirroring
     // agentLoopSidecarClient.ts:680-684), so the session-level rejection of a
     // turn_completed is only reachable through direct construction.
-    assert_eq!(handler.events.lock().unwrap().len(), 6);
+    assert_eq!(handler.events.lock().unwrap().len(), 4);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
@@ -705,7 +711,7 @@ async fn host_early_failure_completes_after_host_input_accepted() {
         "the error terminal still retains the turn messages"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    assert_eq!(handler.events.lock().unwrap().len(), 4);
+    assert_eq!(handler.events.lock().unwrap().len(), 3);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
@@ -739,7 +745,7 @@ async fn host_second_turn_failed_from_finalization_failure_is_accepted() {
         "the error terminal still retains the turn messages"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    assert_eq!(handler.events.lock().unwrap().len(), 5);
+    assert_eq!(handler.events.lock().unwrap().len(), 3);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
@@ -760,33 +766,31 @@ async fn host_max_turns_terminal_completes_without_turn_failed() {
     assert_eq!(result.get("type"), Some(&"max_turns".into()));
     assert_eq!(result.get("stopReason"), Some(&"max_turns".into()));
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    assert_eq!(handler.events.lock().unwrap().len(), 4);
+    assert_eq!(handler.events.lock().unwrap().len(), 2);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
 async fn inner_validation_rejection_fails_the_stream_before_application() {
-    // The wrapper must keep the inner handler's validate_event semantics: an
-    // inner handler that rejects a legal lifecycle payload (a module-side
-    // contract the same handler would enforce when given to HostClient
-    // directly) must also reject it through the LiveSession path — the event
-    // is not applied, not published, and the turn fails closed with the
-    // inner error.
+    // An inner rejection of the first loop event must survive wrapping and prevent application.
     let handler = Arc::new(Handler {
-        reject_input_accepted: true,
+        reject_model_request_started: true,
         ..Handler::default()
     });
-    let session = session("live-normal", handler.clone()).await;
+    let session = session("live-payload", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     let error = persisted_failure(turn.as_mut()).await;
-    assert!(error.contains("inner rejected input_accepted"), "{error}");
+    assert!(
+        error.contains("inner rejected model_request_started"),
+        "{error}"
+    );
     // input_accepted was never applied to the module-side handler...
     {
         let applied = handler.events.lock().unwrap();
         assert!(
             !applied.iter().any(|event| {
                 event.get("payload").and_then(|payload| payload.get("type"))
-                    == Some(&"input_accepted".into())
+                    == Some(&"model_request_started".into())
             }),
             "the inner-rejected event must not be applied"
         );
@@ -797,17 +801,9 @@ async fn inner_validation_rejection_fails_the_stream_before_application() {
 
 #[tokio::test]
 async fn cancel_exit_success_without_delivered_input_accepted_is_rejected() {
-    // The pending input_accepted callback keeps the received success final
-    // unapplied; after cancellation the host's bounded cancel exit
-    // (POST_CANCEL_EXIT_TIMEOUT, host/execution.rs) stops applying events and
-    // returns that already-validated final anyway. The consumer never received
-    // input_accepted, so it must not be told the turn succeeded: TS reads the
-    // final only after yielding every earlier event
-    // (agentLoopSidecarClient.ts:552-683), and submit.rs only commits accepted
-    // input when it sees input_accepted. Fail closed instead of accepting on
-    // the receive-path fact.
+    // The first loop callback never completes; cancellation cannot justify a success final from receive-side evidence alone.
     let handler = Arc::new(Handler {
-        block_input_accepted: true,
+        block_model_request_started: true,
         ..Handler::default()
     });
     let (session, final_received) =
@@ -830,13 +826,9 @@ async fn cancel_exit_success_without_delivered_input_accepted_is_rejected() {
 
 #[tokio::test]
 async fn queued_turn_failed_dropped_by_the_cancel_exit_is_rejected() {
-    // The pending input_accepted callback also holds back turn_failed and the
-    // error final. The hook observed them at receive time, but the consumer
-    // never did, so the error terminal would reach submit without its
-    // turn_failed and the failure code would degrade. TS only publishes the
-    // final after yielding turn_failed; fail closed.
+    // A blocked loop prefix hides a queued turn_failed and error final; the delivered prefix cannot justify that final.
     let handler = Arc::new(Handler {
-        block_input_accepted: true,
+        block_model_request_started: true,
         ..Handler::default()
     });
     let (session, final_received) =
@@ -859,16 +851,7 @@ async fn queued_turn_failed_dropped_by_the_cancel_exit_is_rejected() {
 
 #[tokio::test]
 async fn cancel_exit_success_without_input_accepted_rejects_the_relaxed_path() {
-    // P2 negative control: this test really reaches the host's cancel exit
-    // (host/execution.rs:296-302), unlike the three lifecycle negative
-    // controls whose finals are applied normally. turn_started is delivered;
-    // a non-lifecycle model_event blocks the application callback forever, so
-    // the success final is received into known_terminal but can never be
-    // applied, and input_accepted is never sent at all. When the abort's
-    // POST_CANCEL_EXIT_TIMEOUT expires the host returns that received final.
-    // The session must reject it: a future relaxation of the form "a terminal
-    // returned by the cancel exit skips the lifecycle check" must not turn
-    // this green.
+    // The model_event callback remains pending forever; bounded cancellation must reject the received success final.
     let handler = Arc::new(Handler {
         block_model_event: true,
         ..Handler::default()
@@ -895,11 +878,11 @@ async fn cancel_exit_success_without_input_accepted_rejects_the_relaxed_path() {
     let applied = handler.events.lock().unwrap();
     assert_eq!(
         applied.len(),
-        2,
+        1,
         "turn_started completed; the blocked model_event entered its callback; no final"
     );
     assert_eq!(
-        applied[1]
+        applied[0]
             .get("payload")
             .and_then(|payload| payload.get("type")),
         Some(&"model_event".into())
@@ -909,15 +892,7 @@ async fn cancel_exit_success_without_input_accepted_rejects_the_relaxed_path() {
 
 #[tokio::test]
 async fn received_turn_failed_dropped_after_delivered_input_accepted_is_rejected() {
-    // Isolated negative control for finish()'s second gate
-    // (StreamIntegrity::observe_terminal on the receive-path instance): the
-    // consumer is delivered turn_started then input_accepted, but the received
-    // turn_failed never completes its application and is dropped by the
-    // bounded cancel exit together with the queued success final. The delivered
-    // prefix alone would accept success (it ends at InputAccepted); only the
-    // receive-path contradiction rejects it. Every other rejection test is
-    // already caught by the delivered prefix, so deleting that second gate must
-    // turn this test red while the rest of the suite stays green.
+    // A loop prefix was delivered, but the received turn_failed remains pending. The queued success final contradicts receipt and omits a delivered frame.
     let handler = Arc::new(Handler {
         block_turn_failed: true,
         ..Handler::default()
@@ -956,8 +931,7 @@ async fn received_turn_failed_dropped_after_delivered_input_accepted_is_rejected
     assert_eq!(
         types,
         vec![
-            Some("turn_started".into()),
-            Some("input_accepted".into()),
+            Some("model_request_started".into()),
             Some("turn_failed".into())
         ],
         "turn_failed entered its callback and stayed parked; the final never ran"
@@ -967,15 +941,7 @@ async fn received_turn_failed_dropped_after_delivered_input_accepted_is_rejected
 
 #[tokio::test]
 async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
-    // P2 (opus concurrency): the host's cancel deadline is wall-clock, but its
-    // execution future is only polled from next(). A consumer that spends
-    // longer than POST_CANCEL_EXIT_TIMEOUT handling a delivered event must not
-    // cause already-queued legal lifecycle events to be dropped: TS has no
-    // post-cancel timer (agentLoopSidecarClient.ts:931-958; the accepted-diffs
-    // entry at specs/gateway-parity/accepted-diffs.md:876 records the same) and
-    // yields the final only after every earlier event, so this turn projects
-    // success rather than a lifecycle error. No handler callback is blocked;
-    // the stall is purely the consumer's.
+    // A stalled consumer still receives every loop frame before the final; timeout does not discard deliverable work.
     let handler = Arc::new(Handler::default());
     let (session, final_received) =
         session_with_final("live-cancel-slow-consumer", handler.clone()).await;
@@ -1014,6 +980,7 @@ async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
             "turn_started",
             "input_accepted",
             "model_event",
+            "model_request_started",
             "turn_completed"
         ]
     );
@@ -1091,13 +1058,9 @@ async fn slow_consumer_still_receives_a_ready_error_terminal() {
 
 #[tokio::test]
 async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
-    // The slow consumer lets the post-cancel deadline expire while the pending
-    // input_accepted application is genuinely blocked (Handler::block_*): no
-    // catch-up scheduling turn can finish it. The bounded exit must surface the
-    // received final, fail the lifecycle check, and dispose exactly once
-    // without waiting for the callback.
+    // A delivered loop prefix is followed by a permanently blocked suffix. Cancellation must fail closed even though the prefix alone could justify success.
     let handler = Arc::new(Handler {
-        block_input_accepted: true,
+        block_model_request_started: true,
         ..Handler::default()
     });
     let (session, final_received) =
@@ -1144,15 +1107,11 @@ async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
 }
 
 #[tokio::test]
-async fn cancel_request_with_truly_missing_input_accepted_is_still_rejected() {
-    // Negative control (a): the peer never sends input_accepted, so the
-    // success final is missing a required lifecycle event no matter that a
-    // cancellation request was made. A cancellation flag must not rescue it.
-    // The round-1 implementation accepted this final (fake pass); the strict
-    // delivered-prefix check rejects it (and the receive-path gate would too).
+async fn cancel_request_with_missing_loop_prefix_is_still_rejected() {
+    // A success final without any loop prefix remains invalid after cancellation.
     let handler = Arc::new(Handler::default());
     let (session, final_received) =
-        session_with_final("live-missing-accepted", handler.clone()).await;
+        session_with_final("live-missing-loop-prefix", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
@@ -1170,11 +1129,11 @@ async fn cancel_request_with_truly_missing_input_accepted_is_still_rejected() {
 }
 
 #[tokio::test]
-async fn missing_lifecycle_is_rejected_without_cancellation() {
+async fn missing_loop_prefix_is_rejected_without_cancellation() {
     // Negative control (c) through the production path: the same peer without
     // any cancellation request.
     let handler = Arc::new(Handler::default());
-    let session = session("live-missing-accepted", handler.clone()).await;
+    let session = session("live-missing-loop-prefix", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
@@ -1270,7 +1229,7 @@ async fn events_after_a_violation_settle_to_none_even_when_buffered() {
         Box::pin(async move {
             deliver(
                 &handler,
-                &parse_json(r#"{"type":"turn_started"}"#).unwrap(),
+                &parse_json(r#"{"type":"model_request_started"}"#).unwrap(),
                 false,
             )
             .await?;
@@ -1279,22 +1238,17 @@ async fn events_after_a_violation_settle_to_none_even_when_buffered() {
             // the host receive path. Events after it are never received.
             Err(handler
                 .validate_event(&parse_json(r#"{"type":"turn_started"}"#).unwrap())
-                .expect_err("second turn_started must violate"))
+                .expect_err("host lifecycle must violate"))
         }),
         rx,
         integrity,
     );
     assert_eq!(
         next(&mut turn).await.unwrap().unwrap().get("type"),
-        Some(&"turn_started".into())
+        Some(&"model_request_started".into())
     );
     let error = next(&mut turn).await.unwrap_err();
-    assert!(
-        error
-            .message
-            .contains("turn_started after the turn already opened"),
-        "{error:?}"
-    );
+    assert!(error.message.contains("host lifecycle event"), "{error:?}");
     assert_eq!(next(&mut turn).await.unwrap(), None);
     assert_eq!(next(&mut turn).await.unwrap(), None);
 }
@@ -1324,20 +1278,21 @@ async fn a_final_with_unobserved_lifecycle_is_rejected() {
 }
 
 #[tokio::test]
-async fn host_stream_rejects_events_before_turn_started_and_releases_the_host() {
+async fn host_stream_rejects_empty_loop_prefix_and_releases_the_host() {
     let handler = Arc::new(Handler::default());
-    let (session, children) = session_tracking_children("turn-completed", handler.clone()).await;
+    let (session, children) =
+        session_tracking_children("live-missing-loop-prefix", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    // The adversarial peer streams text_delta events with no turn_started;
-    // the first delivered event must fail the turn closed.
+    // The peer sends a valid module final with no loop prefix; finish must fail closed.
     let error = persisted_failure(turn.as_mut()).await;
-    assert!(error.contains("before turn_started"), "{error:?}");
+    assert!(
+        error.contains("terminal without proper lifecycle"),
+        "{error:?}"
+    );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    // The violation is caught by the receive-path hook before application, so
-    // the inner handler never applied (and the host never ACKed) the illegal
-    // event, and the dropped execution's detached cleanup still disposed the
-    // handler exactly once.
+    // The final reaches the handler, but the session cannot publish success.
+    // Execution cleanup still disposes the handler exactly once.
     timeout(Duration::from_secs(5), async {
         while handler.disposed.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
@@ -1350,8 +1305,13 @@ async fn host_stream_rejects_events_before_turn_started_and_releases_the_host() 
     let child = *children.lock().unwrap().first().unwrap();
     assert_reaped(child).await;
     assert!(
-        handler.events.lock().unwrap().is_empty(),
-        "a violating event must not be applied to the module-side handler"
+        handler
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|event| event.get("final") == Some(&JsValue::Bool(true))),
+        "only the module final may apply before prefix rejection"
     );
     // The active turn slot was released with the violation.
     let replacement = session.submit(input(), options());
@@ -1392,7 +1352,7 @@ async fn incomplete_compaction_final_yields_original_messages_then_none() {
     assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     // The incomplete compaction final is aborted before the handler sees it.
-    assert_eq!(handler.events.lock().unwrap().len(), 3);
+    assert_eq!(handler.events.lock().unwrap().len(), 1);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
 
@@ -1433,8 +1393,8 @@ async fn cancel_with_a_full_aborted_result_projects_the_peer_terminal_once() {
     // The authoritative terminal is projected exactly once, then closed.
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
-    // turn_started, input_accepted, model_event and the applied final.
-    assert_eq!(handler.events.lock().unwrap().len(), 4);
+    // The loop model_event and the applied final.
+    assert_eq!(handler.events.lock().unwrap().len(), 2);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
     // The sidecar process itself was released, not just the stream.
     let child = *children.lock().unwrap().first().unwrap();
@@ -1445,13 +1405,10 @@ async fn cancel_with_a_full_aborted_result_projects_the_peer_terminal_once() {
 async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
     let handler = Arc::new(Handler::default());
     let (session, children) =
-        session_tracking_children("live-duplicate-start", handler.clone()).await;
+        session_tracking_children("live-duplicate-sequence", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     let error = persisted_failure(turn.as_mut()).await;
-    assert!(
-        error.contains("turn_started after the turn already opened"),
-        "{error}"
-    );
+    assert!(error.contains("sequence mismatch"), "{error}");
     // The peer also streams a legal model_event after the violating one; it
     // is never even received once the hook failed, and nothing may surface
     // after the stream has failed closed.
@@ -1590,6 +1547,10 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
         let received = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(received.get("messages"), Some(&input_messages()));
         assert_eq!(received.get("turnId"), Some(&turn_id));
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+            Some(&"model_request_started".into())
+        );
         let completed = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
         let result = completed.get("result").unwrap();
@@ -1598,7 +1559,7 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
         assert_eq!(next(turn.as_mut()).await.unwrap(), None);
         let handlers = handlers.lock().unwrap();
         assert_eq!(
-            handlers.last().unwrap().events.lock().unwrap()[1]
+            handlers.last().unwrap().events.lock().unwrap()[0]
                 .get("payload")
                 .unwrap()
                 .get("receivedPayload"),
@@ -1746,11 +1707,8 @@ fn buffered_handler(
 async fn host_buffer_failures_cut_off_later_events_and_terminals() {
     for (bad_event, expected) in [
         (None, "host drain failed"),
-        (
-            Some("turn_started"),
-            "turn_started after the turn already opened",
-        ),
-        (Some("input_accepted"), "input_accepted out of order"),
+        (Some("turn_started"), "host lifecycle event"),
+        (Some("input_accepted"), "host lifecycle event"),
         (
             Some("turn_completed"),
             "sidecar turn_completed must not reach",
@@ -1761,8 +1719,8 @@ async fn host_buffer_failures_cut_off_later_events_and_terminals() {
             let integrity = handler.integrity.clone();
             let mut turn = stream(
                 Box::pin(async move {
-                    deliver(&handler, &host_event("turn_started"), false).await?;
-                    deliver(&handler, &host_event("input_accepted"), false).await?;
+                    deliver(&handler, &host_event("model_request_started"), false).await?;
+                    deliver(&handler, &host_event("model_event"), false).await?;
                     if let Some(kind) = bad_event {
                         queue_host_events(&inner, &[host_event(kind)]);
                     } else {
@@ -1808,11 +1766,11 @@ async fn host_buffer_failures_cut_off_later_events_and_terminals() {
             );
             assert_eq!(
                 next(&mut turn).await.unwrap(),
-                Some(host_event("turn_started"))
+                Some(host_event("model_request_started"))
             );
             assert_eq!(
                 next(&mut turn).await.unwrap(),
-                Some(host_event("input_accepted"))
+                Some(host_event("model_event"))
             );
             let error = next(&mut turn).await.unwrap_err();
             assert!(error.message.contains(expected), "{error:?}");
@@ -1823,8 +1781,8 @@ async fn host_buffer_failures_cut_off_later_events_and_terminals() {
 }
 
 #[tokio::test]
-async fn host_buffer_before_turn_started_fails_closed() {
-    for kind in ["model_event", "input_accepted"] {
+async fn host_buffer_lifecycle_leak_fails_closed() {
+    for kind in ["turn_started", "input_accepted"] {
         let (inner, handler, rx) = buffered_handler(4);
         let integrity = handler.integrity.clone();
         let mut turn = stream(
@@ -1833,7 +1791,7 @@ async fn host_buffer_before_turn_started_fails_closed() {
                 let error = handler.module_call(JsValue::Null).await.unwrap_err();
                 assert!(error.message.contains("Stream integrity violation"));
                 assert_eq!(
-                    deliver(&handler, &host_event("turn_started"), false)
+                    deliver(&handler, &host_event("model_request_started"), false)
                         .await
                         .unwrap_err()
                         .message,
@@ -1868,8 +1826,8 @@ async fn assert_pending<T>(future: &mut HostFuture<T>) {
 #[tokio::test]
 async fn host_buffer_batches_wait_for_reserved_wire_order() {
     let (inner, handler, mut rx) = buffered_handler(8);
-    let started = host_event("turn_started");
-    let accepted = host_event("input_accepted");
+    let started = host_event("model_request_started");
+    let accepted = host_event("model_event");
     let first = [host_event("module_first_a"), host_event("module_first_b")];
     let second = [host_event("module_second_a"), host_event("module_second_b")];
     let _started_guard = handler.validate_event(&started).unwrap();
@@ -1928,9 +1886,9 @@ async fn host_buffer_batches_wait_for_reserved_wire_order() {
 async fn host_error_cuts_off_prevalidated_and_backpressured_deliveries() {
     for pending_send in [false, true] {
         let (inner, handler, mut rx) = buffered_handler(1);
-        let started = host_event("turn_started");
+        let started = host_event("model_request_started");
         deliver(&handler, &started, false).await.unwrap(); // fill the channel
-        let accepted = host_event("input_accepted");
+        let accepted = host_event("model_event");
         let _accepted_guard = handler.validate_event(&accepted).unwrap();
         let mut pending = if pending_send {
             let mut future = handler.event(wire(&accepted, false));
@@ -2094,7 +2052,7 @@ async fn non_final_event_object_payload_is_applied_and_forwarded() {
 #[tokio::test]
 async fn aborted_execution_releases_validated_wire_reservations() {
     let inner = Arc::new(Handler {
-        block_input_accepted: true,
+        block_model_event: true,
         ..Handler::default()
     });
     let (events, mut rx) = mpsc::channel(16);
@@ -2117,7 +2075,7 @@ async fn aborted_execution_releases_validated_wire_reservations() {
                 result = &mut run => panic!("application must remain pending: {result:?}"),
                 _ = tokio::task::yield_now() => {}
             }
-            if final_received.load(Ordering::SeqCst) && inner.events.lock().unwrap().len() == 2 {
+            if final_received.load(Ordering::SeqCst) && inner.events.lock().unwrap().len() == 1 {
                 break;
             }
         }
@@ -2125,12 +2083,9 @@ async fn aborted_execution_releases_validated_wire_reservations() {
     .await
     .expect("host must validate the queued events before abort");
     let reserved = handler.forwarding.lock().unwrap().wire.len();
-    assert_eq!(reserved, 3);
-    assert_eq!(inner.events.lock().unwrap().len(), 2); // input_accepted is pending
-    assert_eq!(
-        rx.try_recv().unwrap().0.get("type"),
-        Some(&"turn_started".into())
-    );
+    assert_eq!(reserved, 2);
+    assert_eq!(inner.events.lock().unwrap().len(), 1); // model_event is pending
+    assert!(rx.try_recv().is_err());
     // Construct a real host-buffered callback behind the queued wire slots.
     let module_event = host_event("after_aborted_execution");
     queue_host_events(&inner, std::slice::from_ref(&module_event));
@@ -2156,7 +2111,7 @@ async fn aborted_execution_releases_validated_wire_reservations() {
     assert!(rx.try_recv().is_err());
     assert_reaped(child).await;
     println!(
-        "queued=3; module blocked before abort; module/wire/final progressed after abort; wire=0"
+        "queued=2; module blocked before abort; module/wire/final progressed after abort; wire=0"
     );
 }
 
@@ -2164,8 +2119,8 @@ async fn aborted_execution_releases_validated_wire_reservations() {
 async fn discarded_middle_wire_reservation_preserves_delivery_order() {
     for reserve_successor_first in [true, false] {
         let (_, handler, mut rx) = buffered_handler(8);
-        let first = host_event("turn_started");
-        let middle = host_event("input_accepted");
+        let first = host_event("model_request_started");
+        let middle = host_event("model_event");
         let last = host_event("model_event");
         let first_guard = handler.validate_event(&first).unwrap();
         let middle_guard = handler.validate_event(&middle).unwrap();
@@ -2208,11 +2163,9 @@ async fn discarded_middle_wire_reservation_preserves_delivery_order() {
 #[tokio::test]
 async fn discarded_middle_wire_reservation_preserves_pending_module_order() {
     let (inner, handler, mut rx) = buffered_handler(8);
-    let first = host_event("turn_started");
+    let first = host_event("model_request_started");
     let first_guard = handler.validate_event(&first).unwrap();
-    let middle_guard = handler
-        .validate_event(&host_event("input_accepted"))
-        .unwrap();
+    let middle_guard = handler.validate_event(&host_event("model_event")).unwrap();
     let last = host_event("module_after_discard");
     queue_host_events(&inner, std::slice::from_ref(&last));
     let mut last_call = handler.module_call(JsValue::Null);
@@ -2243,11 +2196,9 @@ async fn discarded_middle_wire_reservation_preserves_pending_module_order() {
 #[tokio::test]
 async fn discarded_middle_wire_reservation_keeps_predecessor_when_successor_is_cancelled() {
     let (inner, handler, mut rx) = buffered_handler(8);
-    let first = host_event("turn_started");
+    let first = host_event("model_request_started");
     let first_guard = handler.validate_event(&first).unwrap();
-    let middle_guard = handler
-        .validate_event(&host_event("input_accepted"))
-        .unwrap();
+    let middle_guard = handler.validate_event(&host_event("model_event")).unwrap();
     queue_host_events(&inner, &[host_event("cancelled_module")]);
     let mut cancelled_call = handler.module_call(JsValue::Null);
     assert_pending(&mut cancelled_call).await;
@@ -2292,8 +2243,8 @@ fn discarded_delivery_chain_drops_without_a_runtime_or_recursion() {
 #[tokio::test]
 async fn discarded_event_guards_release_only_their_own_reservation() {
     let (inner, handler, mut rx) = buffered_handler(8);
-    let started = host_event("turn_started");
-    let accepted = host_event("input_accepted");
+    let started = host_event("model_request_started");
+    let accepted = host_event("model_event");
     let first = handler.validate_event(&started).unwrap();
     let second = handler.validate_event(&accepted).unwrap();
     drop(second); // a later queue entry must not remove the earlier reservation
@@ -2747,6 +2698,10 @@ async fn live_input_reads_current_history_on_every_submit() {
         let mut turn = session.submit(input(), turn_options(text)).unwrap();
         next(turn.as_mut()).await.unwrap();
         next(turn.as_mut()).await.unwrap().unwrap();
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+            Some(&"model_request_started".into())
+        );
         let completed = next(turn.as_mut()).await.unwrap().unwrap();
         let messages = completed.get("messages").unwrap();
         assert_eq!(
@@ -2919,6 +2874,12 @@ async fn live_recording_matrix(phase: usize, action: &str) {
     let mut turn = session.submit(input(), options()).unwrap();
     for _ in 0..phase {
         next(turn.as_mut()).await.unwrap().unwrap();
+    }
+    if phase == 2 {
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+            Some(&"model_request_started".into())
+        );
     }
     {
         let mut waiting = turn.next();
@@ -3442,3 +3403,244 @@ async fn sidecar_payload_embedded_reader_matches_ts() {
 
 #[path = "forward_tests.rs"]
 mod forwarding;
+
+struct DeterministicModel;
+impl crate::host::modules::model::ModelExecution for DeterministicModel {
+    fn prepare(
+        &self,
+        input: crate::host::modules::model::PrepareInput,
+    ) -> crate::host::modules::model::ModelFuture<crate::host::modules::model::PreparedInvocation>
+    {
+        Box::pin(async move {
+            Ok(crate::host::modules::model::PreparedInvocation::new(
+                input.request,
+                "test".into(),
+                "deterministic".into(),
+            ))
+        })
+    }
+    fn stream(
+        &self,
+        _: crate::host::modules::model::StreamInput,
+    ) -> crate::host::modules::model::ModelFuture<Box<dyn crate::host::modules::model::ModelStream>>
+    {
+        Box::pin(async {
+            Ok(
+                Box::new(DeterministicEvents(std::collections::VecDeque::from([
+                    parse_json(
+                        r#"{"type":"request_started","provider":"test","model":"deterministic"}"#,
+                    )
+                    .unwrap(),
+                    parse_json(r#"{"type":"message_start","role":"assistant"}"#).unwrap(),
+                    parse_json(r#"{"type":"text_delta","text":"hello"}"#).unwrap(),
+                    parse_json(r#"{"type":"message_end","finishReason":"stop"}"#).unwrap(),
+                ]))) as Box<dyn crate::host::modules::model::ModelStream>,
+            )
+        })
+    }
+}
+struct DeterministicEvents(std::collections::VecDeque<JsValue>);
+impl crate::host::modules::model::ModelStream for DeterministicEvents {
+    fn next(&mut self) -> crate::host::modules::model::StreamFuture<'_, Option<JsValue>> {
+        Box::pin(async { Ok(self.0.pop_front()) })
+    }
+}
+struct RealSidecarHandler {
+    model: crate::host::modules::model::Handler,
+    events: Mutex<Vec<JsValue>>,
+}
+impl HostHandler for RealSidecarHandler {
+    fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
+        self.model.call(call)
+    }
+    fn event(&self, event: JsValue) -> HostFuture<()> {
+        self.events.lock().unwrap().push(event);
+        Box::pin(async { Ok(()) })
+    }
+    fn dispose(&self) -> HostFuture<()> {
+        self.model.dispose()
+    }
+}
+async fn real_sidecar_case(mode: &str) {
+    let baseline = std::path::PathBuf::from(
+        std::env::var_os("PDRS_BASELINE").expect("fixed PDRS_BASELINE required"),
+    );
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/turn-runner/oracle.json"
+    ));
+    let JsValue::Array(rows) = oracle.get("sidecar").unwrap() else {
+        panic!("sidecar rows")
+    };
+    let row = rows
+        .iter()
+        .find(|r| r.get("name") == Some(&mode.into()))
+        .unwrap();
+    let evidence = std::env::var_os("PDRS_STREAM_EVIDENCE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join(format!("real-sidecar-{mode}-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(evidence.join("home")).unwrap();
+    let mut command = Command::new("node");
+    command
+        .args(["--import"])
+        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/turn-runner/sidecar.mts"
+        ))
+        .arg(&baseline)
+        .arg(mode)
+        .arg(&evidence)
+        .current_dir(&evidence)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("HOME", evidence.join("home"));
+    let client = HostClient::spawn(
+        &mut command,
+        None,
+        Limits {
+            handshake_timeout: Duration::from_secs(15),
+            execution_timeout: Some(Duration::from_secs(20)),
+            ..Limits::default()
+        },
+    )
+    .await
+    .unwrap();
+    let pid = client.child_id().unwrap();
+    let handler = Arc::new(RealSidecarHandler {
+        model: crate::host::modules::model::Handler::with_ports(
+            Arc::new(DeterministicModel),
+            None,
+            Default::default(),
+        ),
+        events: Mutex::new(vec![]),
+    });
+    let initial = Mutex::new(Some(client));
+    let inner = handler.clone();
+    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
+        let client = initial.lock().unwrap().take().unwrap();
+        let inner = inner.clone();
+        Box::pin(async move {
+            Ok((
+                Box::pin(async move { Ok(client) }) as HostFuture<HostClient>,
+                inner as Arc<dyn HostHandler>,
+                test_lease(),
+            ))
+        })
+    });
+    let mut config = options().as_object().unwrap().clone();
+    for (key,value) in parse_json(r#"{"provider":"test","model":"deterministic","tools":[],"hostModules":{"model":{"methods":["prepare","stream_next","close_stream"]}}}"#).unwrap().as_object().unwrap().entries() {config.insert(key.clone(),value.clone());}
+    config.insert("cwd".into(), evidence.to_string_lossy().as_ref().into());
+    let mut turn = session
+        .submit(
+            parse_json(r#"{"type":"text","text":"probe"}"#).unwrap(),
+            JsValue::Object(config),
+        )
+        .unwrap();
+    let mut events = Vec::new();
+    while let Some(event) = next(turn.as_mut()).await.unwrap() {
+        events.push(event);
+    }
+    assert_reaped(pid).await;
+    let types = event_types(&events);
+    std::fs::write(
+        evidence.join("host-types.json"),
+        serde_json::to_vec_pretty(&types).unwrap(),
+    )
+    .unwrap();
+    if matches!(mode, "success" | "completed-warning") {
+        assert_eq!(
+            handler.events.lock().unwrap()[0]
+                .get("payload")
+                .unwrap()
+                .get("type"),
+            Some(&"model_request_started".into()),
+            "real sidecar begins with loop event"
+        );
+        let JsValue::Array(expected) = row.get("hostEvents").unwrap() else {
+            panic!("host events")
+        };
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|v| v.as_string().unwrap().to_utf8().unwrap())
+            .collect();
+        assert_eq!(types, expected, "real sidecar full host sequence");
+        assert_eq!(
+            events.last().unwrap().get("result").unwrap().get("type"),
+            Some(&"success".into()),
+            "real sidecar success terminal"
+        );
+    } else {
+        assert_eq!(
+            row.get("terminal"),
+            Some(&if mode == "early-final" {
+                "success".into()
+            } else {
+                "error".into()
+            }),
+            "TS failure/early-final boundary observation"
+        );
+        assert_eq!(
+            &types[types.len() - 3..],
+            ["agent_status", "turn_failed", "turn_completed"],
+            "integrity rejection catch order"
+        );
+        assert_eq!(
+            events.last().unwrap().get("result").unwrap().get("type"),
+            Some(&"error".into()),
+            "integrity rejection must not publish success"
+        );
+        let error = events[events.len() - 2]
+            .get("error")
+            .unwrap()
+            .get("message")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap();
+        assert!(
+            error.contains(if mode == "early-final" {
+                "terminal without proper lifecycle"
+            } else {
+                "sequence"
+            }),
+            "integrity rejection reason: {error}"
+        );
+    }
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap(),
+        None,
+        "real sidecar exactly one terminal"
+    );
+}
+#[tokio::test]
+#[ignore = "requires fixed PDRS_BASELINE and Node/tsx"]
+async fn real_ts_sidecar_stream_starts_with_loop_events() {
+    real_sidecar_case("success").await;
+}
+#[tokio::test]
+#[ignore = "requires fixed PDRS_BASELINE and Node/tsx"]
+async fn real_ts_sidecar_completed_warning() {
+    real_sidecar_case("completed-warning").await;
+}
+#[tokio::test]
+#[ignore = "requires fixed PDRS_BASELINE and Node/tsx"]
+async fn real_ts_sidecar_gap() {
+    real_sidecar_case("gap").await;
+}
+#[tokio::test]
+#[ignore = "requires fixed PDRS_BASELINE and Node/tsx"]
+async fn real_ts_sidecar_duplicate() {
+    real_sidecar_case("duplicate").await;
+}
+#[tokio::test]
+#[ignore = "requires fixed PDRS_BASELINE and Node/tsx"]
+async fn real_ts_sidecar_early_final() {
+    real_sidecar_case("early-final").await;
+}
+#[test]
+#[ignore = "requires fixed PDRS_BASELINE and Node/tsx"]
+fn stream_integrity_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("turn-runner");
+}

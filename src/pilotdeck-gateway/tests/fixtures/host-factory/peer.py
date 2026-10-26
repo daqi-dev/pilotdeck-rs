@@ -3,7 +3,7 @@
 
 Modes:
   success          full handshake, then one successful turn
-  hold             full handshake, turn_started/input_accepted, then wait forever
+  hold             full handshake, model_request_started, then wait forever
   handshake-reject hello answered with an error, then exit
   handshake-hang   record the pid and never answer hello
   exit             exit before the handshake
@@ -73,16 +73,12 @@ session, turn = execute["sessionId"], execute["turnId"]
 messages = execute["payload"].get("messages", [])
 if mode == "hold":
     send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=0, final=False,
-              **identity, payload=dict(type="turn_started", sessionId=session, turnId=turn)))
-    send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=1, final=False,
-              **identity, payload=dict(type="input_accepted", sessionId=session, turnId=turn)))
+              **identity, payload=dict(type="model_request_started", sessionId=session, turnId=turn)))
     while True:
         time.sleep(1)
 send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=0, final=False,
-          **identity, payload=dict(type="turn_started", sessionId=session, turnId=turn)))
-send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=1, final=False,
-          **identity, payload=dict(type="input_accepted", sessionId=session, turnId=turn)))
-send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=2, final=True,
+          **identity, payload=dict(type="model_request_started", sessionId=session, turnId=turn)))
+send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=1, final=True,
           outcome="completed", **identity,
           payload=dict(result=dict(type="success", sessionId=session, turnId=turn,
                                   stopReason="completed", turns=1), messages=messages)))

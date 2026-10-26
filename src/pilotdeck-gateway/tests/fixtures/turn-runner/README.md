@@ -111,3 +111,12 @@ runner 负控默认25项（两个 terminal 分支分别变异，每个锚点 cou
 `LiveSessionAdapter::new/with_interaction` 显式接收会话的 `Arc<Recorder>` 与当前 history 读取函数，factory 接收同一个 Arc，组装 model/tool durable ports 时必须复用它。submit 接原始 text/blocks；执行配置与 syntheticMessages 来自 options，history→accepted→synthetic 的组装由 TurnInput 共用。`input-synthetic-null` 是真实 TS 新行，原有行与 sourceSha256 保持，已有 ignored `runner_regenerates_identically` 覆盖重生成。
 
 `input_negative.py` 将12个源码变异逐项绑定测试名和断言，使用公共 mutating_sources/run_owned/wait_for_slot，要求调用方设置 CARGO_TARGET_DIR。旧 live factory 负控参数锚点及 recording text-value 作用域已同步。第 2 条 Recording/真实 active slot 共持与 I/O pending 矩阵仍未交付，不能用输入测试或 runner 测试 guard 代替。
+
+
+## pr5d AgentLoop 流完整性
+
+真实 sidecar 首帧是 model_request_started；StreamIntegrity 不再要求宿主 start/accept。success/max_turns 需要 loop 前缀，error 需要 loop 前缀及 failure；收到/交付计数不等时非 aborted final 失败。HostClient 保留 sequence 严格校验和 wire 非final completed 抑制，绕过这一层泄漏到 session 的 completed 仍失败。
+
+`sidecar` 的 success/completed-warning 行由 `live_stream_tests.rs` 真实 Node 进程测试逐项比较 `hostEvents`。此投影仅覆盖宿主 lifecycle + 全部 loop，排除 pr5e 的 session 外壳/setup/hooks；原始完整事件仍在生成目录。gap/duplicate 比较错误终态与收尾尾序列，不声称已交付前缀完全一致；其摘要排除与错误终止竞态的 instructions_loaded，完整 raw 不过滤。early-final 保留 TS success 原值，Rust拒绝，见 A7.2-TURN-EARLYFINAL-001-R1。
+
+真实测试（ignored，显式执行）使用 `PDRS_BASELINE` 与 Node 22.22.0；过滤 `runtime::turn::live::stream_tests::real_ts_sidecar` 并加 `--include-ignored --test-threads=1`。`stream_integrity_regenerates_identically` 覆盖整个 turn-runner 金样。`sidecar.mts` 的直接执行模式是 Rust用的透明 stdio代理，只变异传输帧，真实 AgentLoop与确定性Rust model port不被替换。错误探针、正常流和completed后的warning都保留独占wire记录。

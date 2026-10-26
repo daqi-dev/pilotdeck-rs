@@ -193,7 +193,7 @@ for(const def of definitions) {
   const runner=new TurnRunner(loop,ctx.writer,undefined,now,undefined,{cwd:output,transcriptPath:'',collectFileArtifacts:false},{eventRecorder:recorder});
   const events:any[]=[];
   for await(const event of runner.run({sessionId:'s',turnId:'t',messages:[],input:{type:'text',text:'probe'}}))events.push(event);
-  forward.push({...def,result:r,events,transcript:ctx.bytes(),consumption:{test:`forward_${def.name}`,scope:def.name==='completed'?'strict guard retained; end-to-end pending pr5d':'real TurnRunner + sidecarStatusMessage, StreamHandler/LiveTurnStream replay'}});
+  forward.push({...def,result:r,events,transcript:ctx.bytes(),consumption:{test:`forward_${def.name}`,scope:def.name==='completed'?'leaked completed rejected; real wire suppression covered by real_ts_sidecar_completed_warning':'real TurnRunner + sidecarStatusMessage, StreamHandler/LiveTurnStream replay'}});
 }
 // A status writer is an explicit predecessor: neither next nor return overtakes it.
 for(const name of ['status_cancel','status_drop']) {
@@ -331,7 +331,9 @@ for(const row of matrix) row.consumption = matrixConsumers[row.name]
   : {status:'仅记录，由 pr3 消费',plannedTest:`live_runner_${row.name.replaceAll('-','_')}`,scope:'LiveSessionAdapter + AgentLoop host integration'};
 for(const row of matrix) if (/^invalid-result-(session|number|array|missing-turn|missing-session|turn-undefined)-/.test(row.name))
   row.consumption = {status:'差异已登记，非 TS 对齐',test:matrixConsumers[row.name],scope:'raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001'};
-for(const row of sidecar) row.consumption = {status:'仅记录，由 pr3 消费',plannedTest:`live_sidecar_${row.name.replaceAll('-','_')}`,scope:'real TS sidecar + Rust host; approved differences require separate acceptance'};
+for(const row of sidecar) row.consumption = ['success','gap','duplicate','early-final','completed-warning'].includes(row.name)
+  ? {test:row.name==='success'?'real_ts_sidecar_stream_starts_with_loop_events':`real_ts_sidecar_${row.name.replaceAll('-','_')}`,scope:row.name==='early-final'?'TS accepts final alone; Rust rejects per A7.2-TURN-EARLYFINAL-001':(['success','completed-warning'].includes(row.name)?'full host lifecycle + all loop events; session setup/hooks reserved for pr5e':'terminal/error suffix only; received prefix is not compared')}
+  : {status:'existing cancellation/drop coverage',plannedTest:`live_sidecar_${row.name.replaceAll('-','_')}`,scope:'real TS sidecar observation; no lifecycle ownership change'};
 verifyConsumers([...matrix,...sidecar,...forward], ['runner_tests.rs','live_stream_tests.rs','forward_tests.rs'].map(file=>join(dirname(fileURLToPath(import.meta.url)),'../../../src/runtime/turn',file)));
 assertBaseline(root);
 writeFileSync(join(output,'oracle.json'), JSON.stringify({sourceCommit,sourceSha256,matrix,recorderCases,sidecar,forward},null,2)+'\n',{flag:'wx'});
