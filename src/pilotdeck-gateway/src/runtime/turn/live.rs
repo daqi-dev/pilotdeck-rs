@@ -31,14 +31,14 @@
 //!
 //! It does not claim dropped-frame or duplicate-frame detection.
 
-use super::runner::TurnInput;
+use super::runner::{Recording, RecordingAction, TurnInput, TurnRunner};
 use crate::{
     host::{
         Cancellation, EventGuard, ExecuteRequest, ExecuteResult, HostClient, HostError,
         HostErrorKind, HostFuture, HostHandler, ReconnectObservation,
     },
     runtime::{
-        project::{DisposeFuture, RuntimeError, RuntimeResult},
+        project::{DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult},
         session::{LiveSession, LiveTurn, SessionNext},
     },
     storage::recorder::Recorder,
@@ -46,10 +46,15 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity, parse_json};
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
-type TurnHost = (HostClient, Arc<dyn HostHandler>);
-type PreparedHost = (HostClient, Arc<dyn HostHandler>, Option<JsObject>);
+type TurnHost = (HostClient, Arc<dyn HostHandler>, Arc<RuntimeLease>);
+type PreparedHost = (
+    HostClient,
+    Arc<dyn HostHandler>,
+    Arc<RuntimeLease>,
+    Option<JsObject>,
+);
 type TurnHostFactory =
     dyn Fn(ExecutionIdentity, Arc<Recorder>) -> HostFuture<PreparedHost> + Send + Sync;
 
@@ -106,8 +111,8 @@ impl LiveSessionAdapter {
             host_factory: Arc::new(move |_, recorder| {
                 let host = host_factory(recorder);
                 Box::pin(async move {
-                    let (client, handler) = host.await?;
-                    Ok((client, handler, None))
+                    let (client, handler, lease) = host.await?;
+                    Ok((client, handler, lease, None))
                 })
             }),
             state: Arc::default(),
@@ -132,8 +137,9 @@ impl LiveSessionAdapter {
                 let host = factory(identity.clone(), recorder);
                 Box::pin(async move {
                     let host = host.await?;
+                    let lease = Arc::new(host.lease);
                     let handler = super::interaction::InteractionTurn::bind(
-                        host.lease,
+                        lease.clone(),
                         &identity,
                         host.router,
                         host.input,
@@ -143,6 +149,7 @@ impl LiveSessionAdapter {
                     Ok((
                         host.client,
                         Arc::new(handler) as Arc<dyn HostHandler>,
+                        lease,
                         Some(manifest),
                     ))
                 })
@@ -169,7 +176,9 @@ impl LiveSession for LiveSessionAdapter {
             }
             state.active = Some(cancellation.clone());
         }
-        let active = ActiveTurn(self.state.clone());
+        let active = Arc::new(ActiveTurn(self.state.clone()));
+        let owner = active.clone();
+        let (recording_sender, recording_ready) = oneshot::channel();
         let host_factory = self.host_factory.clone();
         let recorder = self.recorder.clone();
         let identity = request.identity.clone();
@@ -181,15 +190,23 @@ impl LiveSession for LiveSessionAdapter {
         let (events, receiver) = mpsc::channel(1);
         Ok(Box::new(LiveTurnStream {
             execution: Some(Box::pin(async move {
-                let (client, inner, manifest) = tokio::select! {
+                let (client, inner, lease, manifest) = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
                     }
                     // select constructs every branch before polling; keep the
                     // factory call lazy so a pre-cancel never creates resources.
-                    host = async { host_factory(request.identity.clone(), recorder).await } => host?,
+                    host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,
                 };
+                let runner = TurnRunner::new(
+                    recorder,
+                    lease,
+                    request.identity.session_id.clone(),
+                    request.identity.turn_id.clone(),
+                );
+                // Transfer the actual driver before any host event can arrive.
+                let _ = recording_sender.send(Recording::new(runner, owner));
                 if let Some(manifest) = manifest {
                     for (key, value) in manifest.entries() {
                         request.payload.insert(key.clone(), value.clone());
@@ -212,6 +229,10 @@ impl LiveSession for LiveSessionAdapter {
             integrity,
             delivered: StreamIntegrity::new(),
             active: Some(active),
+            recording_ready,
+            recording: None,
+            pending_event: None,
+            accepted: false,
         }))
     }
 
@@ -253,13 +274,21 @@ struct LiveTurnStream {
     // Lifecycle actually delivered to the consumer. finish() requires this
     // prefix to justify the terminal, like TS's pull-based final ordering.
     delivered: StreamIntegrity,
-    // Release the active slot after the final/error is delivered, or on drop.
-    active: Option<ActiveTurn>,
+    // The last stream/runner/blocking-write owner releases the real slot.
+    active: Option<Arc<ActiveTurn>>,
+    recording_ready: oneshot::Receiver<Recording>,
+    recording: Option<Recording>,
+    // A cancelled next drops only its borrow, never the transition or payload.
+    pending_event: Option<(JsValue, bool)>,
+    accepted: bool,
 }
 
 impl LiveTurn for LiveTurnStream {
     fn next(&mut self) -> SessionNext<'_> {
         Box::pin(async move {
+            if self.pending_event.is_some() {
+                return self.settle_recording().await;
+            }
             let mut delivered = None;
             if let Some(execution) = self.execution.as_mut() {
                 let mut settled = None;
@@ -279,19 +308,21 @@ impl LiveTurn for LiveTurnStream {
                 }
             }
             if let Some(event) = delivered {
-                return self.publish(event);
+                return self.record_event(event, false).await;
             }
             // execute may have queued an event in the very poll that completed
             // it, after select already polled recv. Keep its result for next().
             if let Ok(event) = self.events.try_recv() {
-                return self.publish(event);
+                return self.record_event(event, false).await;
             }
             match self.result.take() {
-                Some(result) => {
-                    let result = self.finish(result);
-                    self.active.take();
-                    result
-                }
+                Some(result) => match self.finish(result) {
+                    Ok(Some(event)) => self.record_event(event, true).await,
+                    result => {
+                        self.release();
+                        result
+                    }
+                },
                 None => Ok(None),
             }
         })
@@ -299,6 +330,87 @@ impl LiveTurn for LiveTurnStream {
 }
 
 impl LiveTurnStream {
+    fn release(&mut self) {
+        self.execution.take();
+        self.result.take();
+        self.events.close();
+        while self.events.try_recv().is_ok() {}
+        self.recording_ready.close();
+        let _ = self.recording_ready.try_recv();
+        self.recording.take();
+        self.active.take();
+    }
+
+    async fn record_event(
+        &mut self,
+        event: JsValue,
+        terminal: bool,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        if let Ok(recording) = self.recording_ready.try_recv() {
+            self.recording = Some(recording);
+        }
+        let action = match event.get("type").and_then(JsValue::as_string) {
+            Some(kind) if kind.equals_str("turn_started") => Some(RecordingAction::Start),
+            Some(kind) if kind.equals_str("input_accepted") => {
+                Some(RecordingAction::Accept(self.input.clone()))
+            }
+            // Early failure/abort without accepted input belongs to the failure
+            // integration slice. Preserve its existing terminal handling here.
+            _ if terminal && self.accepted => Some(RecordingAction::Complete(
+                event.get("result").cloned().unwrap_or(JsValue::Undefined),
+            )),
+            _ => None,
+        };
+        if let (Some(recording), Some(action)) = (self.recording.as_mut(), action) {
+            if let Err(error) = recording.begin(action) {
+                self.release();
+                return Err(RuntimeError::new(error.to_string()));
+            }
+            self.pending_event = Some((event, terminal));
+            return self.settle_recording().await;
+        }
+        if terminal {
+            self.release();
+            Ok(Some(event))
+        } else {
+            self.publish(event)
+        }
+    }
+
+    async fn settle_recording(&mut self) -> Result<Option<JsValue>, RuntimeError> {
+        let outcome = self
+            .recording
+            .as_mut()
+            .expect("pending event owns recording")
+            .settle()
+            .await;
+        let (event, terminal) = self.pending_event.take().expect("pending event");
+        // A successful await may still be the runner's failure transition.
+        // Only the requested committed transition can acknowledge this payload.
+        let outcome = outcome.and_then(|events| {
+            if events.len() == 1 && events[0].get("type") == event.get("type") {
+                Ok(())
+            } else {
+                Err(crate::storage::recorder::RecorderError::State(
+                    "Recording did not commit the pending transition.".into(),
+                ))
+            }
+        });
+        if let Err(error) = outcome {
+            self.release();
+            return Err(RuntimeError::new(error.to_string()));
+        }
+        if event.get("type") == Some(&"input_accepted".into()) {
+            self.accepted = true;
+        }
+        if terminal {
+            self.release();
+            Ok(Some(event))
+        } else {
+            self.publish(event)
+        }
+    }
+
     /// Record an applied event as delivered and hand it to the consumer.
     /// Delivered order is a prefix of the receive order the hook already
     /// validated, so this cannot fail on the production path; propagating the

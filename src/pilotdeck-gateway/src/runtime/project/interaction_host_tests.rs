@@ -125,7 +125,14 @@ fn identity() -> ExecutionIdentity {
     }
 }
 fn wire_options() -> JsValue {
-    parse_json(r#"{"sessionId":"session","turnId":"turn","runId":"run"}"#).unwrap()
+    wire_options_for("turn")
+}
+fn wire_options_for(turn: &str) -> JsValue {
+    crate::metadata::object([
+        ("sessionId", "session".into()),
+        ("turnId", turn.into()),
+        ("runId", "run".into()),
+    ])
 }
 async fn client(mode: &str) -> Result<HostClient, HostError> {
     client_with_close_timeout(mode, Limits::default().close_timeout).await
@@ -521,7 +528,7 @@ async fn host_drop_stream_immediately_resubmits_same_session_before_old_dispose(
     let mut next = session
         .submit(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
-            wire_options(),
+            wire_options_for("next"),
         )
         .unwrap();
     let event = bounded(next.next()).await.unwrap().unwrap();
@@ -619,15 +626,20 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
     let owner = registry.clone();
     let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
         let client = clients.lock().unwrap().pop_front().unwrap();
-        let lease = owner.acquire(None).unwrap();
+        let lease = Arc::new(owner.acquire(None).unwrap());
+        let mut turn_identity = identity();
+        if !bound.lock().unwrap().is_empty() {
+            turn_identity.turn_id = "next".into();
+        }
         let bound = bound.clone();
         let mut input = options();
         input.steer_recorder = Some(records.clone());
         Box::pin(async move {
             let turn =
-                InteractionTurn::bind(lease, &identity(), router(&identity()), input).await?;
+                InteractionTurn::bind(lease.clone(), &turn_identity, router(&turn_identity), input)
+                    .await?;
             bound.lock().unwrap().push(turn.ports().steer.unwrap());
-            Ok((client, Arc::new(turn) as Arc<dyn HostHandler>))
+            Ok((client, Arc::new(turn) as Arc<dyn HostHandler>, lease))
         })
     });
     let mut first = session
@@ -650,7 +662,7 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
     let mut next = session
         .submit(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
-            wire_options(),
+            wire_options_for("next"),
         )
         .unwrap();
     let mut next_event = next.next();
@@ -682,7 +694,7 @@ async fn host_dispose_timeout_resubmit_waits_for_old_recorder() {
     let mut next = session
         .submit(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
-            wire_options(),
+            wire_options_for("next"),
         )
         .unwrap();
     let mut next_event = next.next();
@@ -1069,4 +1081,21 @@ async fn host_next_turn_surfaces_the_pending_hook_discard_notice() {
     );
     bounded(second.dispose()).await.unwrap();
     bounded(registry.dispose()).await.unwrap();
+}
+
+#[tokio::test]
+async fn recording_shared_lease_outlives_handler_cleanup() {
+    let scratch = Scratch::new();
+    let registry = interaction_registry(&scratch);
+    let lease = Arc::new(registry.acquire(None).unwrap());
+    let runtime = lease.runtime().clone();
+    let turn = InteractionTurn::bind(lease.clone(), &identity(), router(&identity()), options())
+        .await
+        .unwrap();
+    bounded(turn.dispose()).await.unwrap(); // Must not wait for the recorder's Arc.
+    registry.invalidate(None);
+    assert_eq!(runtime.lease_count(), 1, "shared recorder lease remains");
+    drop(lease);
+    bounded(runtime.wait_disposed()).await.unwrap();
+    assert_eq!(runtime.lease_count(), 0);
 }

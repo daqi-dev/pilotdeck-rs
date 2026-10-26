@@ -201,58 +201,71 @@ fn fresh_router(
 
 #[tokio::test]
 async fn factory_assembles_fresh_handlers_for_next_turn() {
-    assert_fresh_handlers(false).await;
+    assert_fresh_handlers(false, false).await;
 }
 
 #[tokio::test]
 async fn factory_assembles_fresh_handlers_for_new_generation_with_same_identity() {
-    assert_fresh_handlers(true).await;
+    assert_fresh_handlers(true, true).await;
 }
 
-async fn assert_fresh_handlers(reload: bool) {
+#[tokio::test]
+async fn factory_assembles_fresh_handlers_after_reload_in_same_adapter() {
+    assert_fresh_handlers(true, false).await;
+}
+
+async fn assert_fresh_handlers(reload: bool, repeat_identity: bool) {
     let scratch = Scratch::new();
     let registry = Arc::new(interaction_registry(&scratch));
     let saved = Arc::new(Mutex::new(Vec::<(Arc<Probe>, model::Handler)>::new()));
     let observed = Arc::new(Mutex::new(Vec::new()));
-    let session = LiveSessionAdapter::with_interaction(test_recorder(), Vec::new, {
-        let registry = registry.clone();
-        let saved = saved.clone();
-        let observed = observed.clone();
-        move |identity, _| {
-            let lease = registry.acquire(None).unwrap();
-            let mut saved = saved.lock().unwrap();
-            let current = Arc::new(Probe {
-                identity,
-                stamp: format!("{:p}/{}", Arc::as_ptr(lease.runtime()), saved.len()),
-                signal: Cancellation::new(),
-                observed: observed.clone(),
-            });
-            let router = fresh_router(&current, saved.last());
-            saved.push((current.clone(), router.model.clone()));
-            let mut input = options();
-            input.signal = current.signal.clone();
-            input.switches.plan_todo = true;
-            Box::pin(async move {
-                Ok(InteractionHost {
-                    client: client("live-fresh-router").await?,
-                    lease,
-                    router,
-                    input,
+    let make_session = || {
+        LiveSessionAdapter::with_interaction(test_recorder(), Vec::new, {
+            let registry = registry.clone();
+            let saved = saved.clone();
+            let observed = observed.clone();
+            move |identity, _| {
+                let lease = registry.acquire(None).unwrap();
+                let mut saved = saved.lock().unwrap();
+                let current = Arc::new(Probe {
+                    identity,
+                    stamp: format!("{:p}/{}", Arc::as_ptr(lease.runtime()), saved.len()),
+                    signal: Cancellation::new(),
+                    observed: observed.clone(),
+                });
+                let router = fresh_router(&current, saved.last());
+                saved.push((current.clone(), router.model.clone()));
+                let mut input = options();
+                input.signal = current.signal.clone();
+                input.switches.plan_todo = true;
+                Box::pin(async move {
+                    Ok(InteractionHost {
+                        client: client("live-fresh-router").await?,
+                        lease,
+                        router,
+                        input,
+                    })
                 })
-            })
-        }
-    });
+            }
+        })
+    };
+    let mut session = make_session();
     let initial = registry.resolve(None).unwrap();
     for round in 0..2 {
         if reload && round == 1 {
             bounded(registry.reload()).await.unwrap();
+            // A re-created session has a fresh recorder; durable turn IDs may
+            // not be restarted in the previous session's transcript.
+            if repeat_identity {
+                session = make_session();
+            }
             assert!(!Arc::ptr_eq(&initial, &registry.resolve(None).unwrap()));
         } else {
             assert!(Arc::ptr_eq(&initial, &registry.resolve(None).unwrap()));
         }
         // Reload deliberately repeats the exact identity: identity equality
         // alone cannot prove that a handler belongs to the leased generation.
-        let turn_id = if reload || round == 0 {
+        let turn_id = if repeat_identity || round == 0 {
             "first"
         } else {
             "next"

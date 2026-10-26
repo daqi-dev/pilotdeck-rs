@@ -59,7 +59,7 @@ pub struct InteractionPorts {
     pub steer: Option<TurnSteer>,
 }
 struct Owned {
-    lease: RuntimeLease,
+    lease: Arc<RuntimeLease>,
     contribution: Option<PluginSessionContributionLease>,
     session_steer: Option<SessionSteer>,
 }
@@ -85,11 +85,12 @@ impl InteractionTurn {
     /// A new outer router containing cloned old handlers is not sufficient.
     /// This binder cannot validate the provenance of those opaque host ports.
     pub async fn bind(
-        lease: RuntimeLease,
+        lease: impl Into<Arc<RuntimeLease>>,
         identity: &ExecutionIdentity,
         mut router: ModuleRouter,
         mut input: InteractionTurnInput,
     ) -> Result<Self, HostError> {
+        let lease = lease.into();
         let executor = Handle::try_current()
             .map_err(|_| ModuleError::new("Turn binding requires a Tokio runtime."))?;
         let context = lease
@@ -314,7 +315,11 @@ impl InteractionTurn {
                 {
                     errors.push(error.to_string());
                 }
-                if let Err(error) = owned.lease.release().await {
+                // Another owner may still be recording the terminal. Waiting
+                // for it here would cycle through HostClient's disposal wait.
+                if let Ok(mut lease) = Arc::try_unwrap(owned.lease)
+                    && let Err(error) = lease.release().await
+                {
                     errors.push(error.to_string());
                 }
                 if errors.is_empty() {

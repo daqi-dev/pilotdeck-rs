@@ -95,6 +95,12 @@ fn options() -> JsValue {
     parse_json(r#"{"sessionId":"session","turnId":"turn","runId":"run","operationId":"operation","requestId":"request"}"#).unwrap()
 }
 
+fn turn_options(turn: &str) -> JsValue {
+    let mut fields = options().as_object().unwrap().clone();
+    fields.insert("turnId".into(), turn.into());
+    JsValue::Object(fields)
+}
+
 fn input() -> JsValue {
     parse_json(r#"{"type":"text","text":"original\ud800"}"#).unwrap()
 }
@@ -132,6 +138,10 @@ fn stream(
         integrity,
         delivered: StreamIntegrity::new(),
         active: None,
+        recording_ready: oneshot::channel().1,
+        recording: None,
+        pending_event: None,
+        accepted: false,
     }
 }
 
@@ -219,15 +229,19 @@ async fn wait_for_final(final_received: &AtomicBool) {
 }
 
 fn assert_aborted(event: &JsValue) {
+    assert_aborted_turn(event, "turn");
+}
+
+fn assert_aborted_turn(event: &JsValue, turn: &str) {
     assert_eq!(event.get("type"), Some(&"turn_completed".into()));
     assert_eq!(event.get("sessionId"), Some(&"session".into()));
-    assert_eq!(event.get("turnId"), Some(&"turn".into()));
+    assert_eq!(event.get("turnId"), Some(&turn.into()));
     assert_eq!(event.get("messages"), Some(&input_messages()));
     let result = event.get("result").unwrap();
     for (key, expected) in [
         ("type", "aborted".into()),
         ("sessionId", "session".into()),
-        ("turnId", "turn".into()),
+        ("turnId", turn.into()),
         ("stopReason", "aborted_streaming".into()),
         ("turns", JsValue::Number(0.0)),
         ("usage", JsValue::Object(JsObject::new())),
@@ -511,7 +525,7 @@ async fn session_with_final(
                 Some(client) => client,
                 None => spawn_client(&mode).await?,
             };
-            Ok((client, handler as Arc<dyn HostHandler>))
+            Ok((client, handler as Arc<dyn HostHandler>, test_lease()))
         })
     });
     (session, final_received)
@@ -535,7 +549,7 @@ async fn session_tracking_children(
             if let Some(pid) = client.child_id() {
                 tracked.lock().unwrap().push(pid);
             }
-            Ok((client, handler as Arc<dyn HostHandler>))
+            Ok((client, handler as Arc<dyn HostHandler>, test_lease()))
         })
     });
     (adapter, children)
@@ -1408,7 +1422,7 @@ async fn dropping_an_active_stream_disposes_its_host_handler() {
     .await
     .expect("dropping execute must dispose its handler");
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
-    let mut second = session.submit(input(), options()).unwrap();
+    let mut second = session.submit(input(), turn_options("second")).unwrap();
     assert!(next(second.as_mut()).await.unwrap().is_some());
 }
 
@@ -1482,7 +1496,7 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
             let client = spawn_client("live-payload").await?;
             let handler = Arc::new(Handler::default());
             created.lock().unwrap().push(handler.clone());
-            Ok((client, handler as Arc<dyn HostHandler>))
+            Ok((client, handler as Arc<dyn HostHandler>, test_lease()))
         })
     });
     for number in 1_u32..=2 {
@@ -1570,7 +1584,7 @@ async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
         .unwrap();
     assert_aborted(&next(first.as_mut()).await.unwrap().unwrap());
     assert_eq!(next(first.as_mut()).await.unwrap(), None);
-    let mut second = session.submit(input(), options()).unwrap();
+    let mut second = session.submit(input(), turn_options("second")).unwrap();
     // A new turn must reach the sidecar instead of inheriting the old abort.
     for event_type in ["turn_started", "input_accepted", "model_event"] {
         assert_eq!(
@@ -1584,7 +1598,7 @@ async fn abort_is_per_turn_and_dispose_rejects_future_turns() {
         .unwrap();
     session.dispose().await.unwrap();
     assert!(session.submit(input(), options()).is_err());
-    assert_aborted(&next(second.as_mut()).await.unwrap().unwrap());
+    assert_aborted_turn(&next(second.as_mut()).await.unwrap().unwrap(), "second");
     assert_eq!(next(second.as_mut()).await.unwrap(), None);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 2);
 }
@@ -2622,6 +2636,7 @@ async fn live_input_reads_current_history_on_every_submit() {
                 Ok((
                     spawn_client("live-payload").await?,
                     Arc::new(Handler::default()) as Arc<dyn HostHandler>,
+                    test_lease(),
                 ))
             })
         },
@@ -2632,7 +2647,7 @@ async fn live_input_reads_current_history_on_every_submit() {
         ))
         .unwrap();
         *history.lock().unwrap() = vec![message.clone()];
-        let mut turn = session.submit(input(), options()).unwrap();
+        let mut turn = session.submit(input(), turn_options(text)).unwrap();
         next(turn.as_mut()).await.unwrap();
         let accepted = next(turn.as_mut()).await.unwrap().unwrap();
         let messages = accepted
@@ -2687,3 +2702,295 @@ fn live_input_nullish_synthetic_is_empty() {
         assert_eq!(request.payload.get("messages"), Some(&input_messages()));
     }
 }
+
+fn test_lease() -> Arc<RuntimeLease> {
+    use crate::runtime::project::{ProjectRuntimeRegistry, ResourceBundle};
+    let registry = ProjectRuntimeRegistry::new(
+        std::env::temp_dir(),
+        Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+    );
+    Arc::new(registry.acquire(None).unwrap())
+}
+
+/// The gate is inside the production blocking append, not an owner test guard.
+struct RecordingStore {
+    disk: crate::storage::JsonlTranscriptStore,
+    kind: &'static str,
+    fail: bool,
+    attempts: AtomicUsize,
+    gate: Mutex<Option<(oneshot::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+}
+impl crate::storage::TranscriptStore for RecordingStore {
+    fn append(
+        &self,
+        key: &crate::storage::TranscriptKey,
+        entry: &JsValue,
+    ) -> crate::storage::StoreResult<()> {
+        if entry.get("type") == Some(&self.kind.into()) {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            if let Some((entered, release)) = self.gate.lock().unwrap().take() {
+                let _ = entered.send(());
+                release
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("test must release blocking I/O");
+            }
+            if self.fail && self.attempts.load(Ordering::SeqCst) == 1 {
+                return Err(std::io::Error::other("recording write failed").into());
+            }
+        }
+        self.disk.append(key, entry)
+    }
+    fn read(
+        &self,
+        key: &crate::storage::TranscriptKey,
+        limit: Option<u64>,
+    ) -> crate::storage::StoreResult<crate::storage::TranscriptRead> {
+        self.disk.read(key, limit)
+    }
+}
+
+fn assert_recording_pending<F: std::future::Future + ?Sized>(
+    future: std::pin::Pin<&mut F>,
+    reason: &str,
+) {
+    use std::task::{Context, Waker};
+    assert!(
+        future
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending(),
+        "{reason}"
+    );
+}
+
+async fn live_recording_matrix(phase: usize, action: &str) {
+    use crate::{
+        runtime::project::{ProjectRuntimeRegistry, ResourceBundle},
+        storage::{JsonlTranscriptStore, TranscriptKey},
+    };
+    let oracle_action = if action == "failure" {
+        "cancel"
+    } else {
+        action
+    };
+    let name = format!("{}-{oracle_action}", ["start", "accept", "complete"][phase]);
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/live-recording/oracle.json"
+    ));
+    let JsValue::Array(rows) = oracle.get("matrix").unwrap() else {
+        panic!("matrix")
+    };
+    let row = rows
+        .iter()
+        .find(|r| r.get("name") == Some(&name.as_str().into()))
+        .unwrap();
+    let root = std::env::temp_dir().join(format!("pdrs-live-recording-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let key = TranscriptKey {
+        project_root: root.clone(),
+        pilot_home: root.join("home"),
+        session_id: "session".into(),
+        transcript_path: root.join("session.jsonl"),
+    };
+    let registry = Arc::new(ProjectRuntimeRegistry::new(
+        &root,
+        Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+    ));
+    let runtime = registry.resolve(None).unwrap();
+    let (entered, mut entry) = oneshot::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    let store = Arc::new(RecordingStore {
+        disk: JsonlTranscriptStore::new(),
+        kind: ["turn_started", "accepted_input", "turn_result"][phase],
+        fail: action == "failure",
+        attempts: AtomicUsize::new(0),
+        gate: Mutex::new(Some((entered, wait))),
+    });
+    let recorder = Arc::new(Recorder::new(store.clone(), key.clone()));
+    let owner = registry.clone();
+    let session = LiveSessionAdapter::new(recorder, Vec::new, move |_| {
+        let lease = Arc::new(owner.acquire(None).unwrap());
+        Box::pin(async move {
+            Ok((
+                spawn_client("live-payload").await?,
+                Arc::new(Handler::default()) as Arc<dyn HostHandler>,
+                lease,
+            ))
+        })
+    });
+    let mut turn = session.submit(input(), options()).unwrap();
+    for _ in 0..phase {
+        next(turn.as_mut()).await.unwrap().unwrap();
+    }
+    {
+        let mut waiting = turn.next();
+        timeout(Duration::from_secs(15), async {
+            tokio::select! { biased;
+                _ = &mut entry => {},
+                result = &mut waiting => panic!("recording gate must precede delivery: {result:?}"),
+            }
+        })
+        .await
+        .expect("append must enter the gate");
+    } // Cancel only next's borrow. The same driver must remain owned.
+    let count = || {
+        std::fs::read_to_string(&key.transcript_path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| parse_json(line).unwrap().get("type") == Some(&store.kind.into()))
+            .count()
+    };
+    let active = || session.state.lock().unwrap().active.is_some();
+    let rejected = || session.submit(input(), options()).is_err();
+    assert_eq!(
+        row.get("before").unwrap().get("active"),
+        Some(&JsValue::Number(f64::from(active())))
+    );
+    assert_eq!(count(), 0, "write awaits release");
+    assert_eq!(store.attempts.load(Ordering::SeqCst), 1, "one I/O entered");
+    assert!(active(), "stream owns real active slot");
+    for _ in 0..2 {
+        let mut waiting = turn.next();
+        assert_recording_pending(waiting.as_mut(), "pending predecessor");
+    } // A second cancelled waiter cannot restart or discard the first write.
+    assert!(rejected(), "pending write blocks resubmit");
+    let mut disposal = Box::pin(registry.dispose());
+    if action == "dispose" {
+        session.dispose().await.unwrap();
+        assert!(rejected(), "disposed session rejects admission");
+        assert_recording_pending(disposal.as_mut(), "factory waits for I/O");
+    }
+    if action == "drop" || action == "dispose" {
+        drop(turn);
+        assert!(active(), "worker owns active slot");
+        assert_eq!(runtime.lease_count(), 1, "worker retains lease");
+        assert!(rejected(), "worker blocks resubmit");
+        if action == "dispose" {
+            assert_recording_pending(disposal.as_mut(), "factory waits for worker");
+        }
+        release.send(()).unwrap();
+    } else if action == "failure" {
+        release.send(()).unwrap();
+        let error = next(turn.as_mut()).await.unwrap_err();
+        assert!(error.message.contains(if phase == 0 {
+            "recording write failed"
+        } else {
+            "Recording did not commit"
+        }));
+        assert_eq!(
+            next(turn.as_mut()).await.unwrap(),
+            None,
+            "failed stream closes"
+        );
+        drop(turn);
+    } else {
+        release.send(()).unwrap();
+        let event = next(turn.as_mut()).await.unwrap().unwrap();
+        assert_eq!(event.get("type"), row.get("event"), "same transition event");
+        let mut expected = JsObject::new();
+        expected.insert("type".into(), row.get("event").unwrap().clone());
+        expected.insert("sessionId".into(), "session".into());
+        expected.insert("turnId".into(), "turn".into());
+        if phase == 1 {
+            let request = parse_execute_request(&input(), &options(), vec![])
+                .unwrap()
+                .0;
+            expected.insert("receivedPayload".into(), JsValue::Object(request.payload));
+        } else if phase == 2 {
+            expected.insert("result".into(), parse_json(r#"{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1}"#).unwrap());
+            expected.insert("messages".into(), input_messages());
+        }
+        assert_eq!(
+            event,
+            JsValue::Object(expected),
+            "original payload survives cancelled next"
+        );
+        assert_eq!(store.attempts.load(Ordering::SeqCst), 1, "one I/O");
+        if phase == 2 {
+            assert!(!active(), "EOF stream releases slot");
+            assert_eq!(
+                next(turn.as_mut()).await.unwrap(),
+                None,
+                "terminal delivered once"
+            );
+        } else {
+            assert!(rejected(), "runner still owns live slot");
+        }
+        drop(turn);
+    }
+    // The worker owns the slot until append returns; explicit release above
+    // is the progress condition, timeout only fails the test (never unlocks).
+    timeout(Duration::from_secs(15), async {
+        while active() || runtime.lease_count() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("write and final active owner must exit");
+    assert_eq!(runtime.lease_count(), 0, "write exited");
+    let writes = usize::from(action != "failure" || phase == 2);
+    assert_eq!(count(), writes, "one durable write");
+    if action != "failure" {
+        assert_eq!(
+            row.get("after").unwrap().get("writes"),
+            Some(&JsValue::Number(count() as f64))
+        );
+    }
+    if action == "dispose" {
+        assert!(
+            session.submit(input(), turn_options("next")).is_err(),
+            "disposed session stays closed"
+        );
+        assert_eq!(row.get("replacementStarted"), Some(&JsValue::Bool(false)));
+    } else {
+        let mut replacement = session.submit(input(), turn_options("next")).unwrap();
+        let event = next(replacement.as_mut()).await.unwrap().unwrap();
+        assert_eq!(
+            event.get("type"),
+            Some(&"turn_started".into()),
+            "fresh turn starts"
+        );
+        if action != "failure" {
+            assert_eq!(row.get("replacementStarted"), Some(&JsValue::Bool(true)));
+        }
+        drop(replacement);
+    }
+    timeout(Duration::from_secs(15), &mut disposal)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        runtime.state(),
+        crate::runtime::project::RuntimeState::Disposed
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+macro_rules! live_recording_case {
+    ($name:ident, $phase:literal, $action:literal) => {
+        #[tokio::test]
+        async fn $name() {
+            live_recording_matrix($phase, $action).await;
+        }
+    };
+}
+live_recording_case!(live_recording_start_cancel, 0, "cancel");
+live_recording_case!(live_recording_start_drop, 0, "drop");
+live_recording_case!(live_recording_start_resubmit, 0, "resubmit");
+live_recording_case!(live_recording_start_dispose, 0, "dispose");
+live_recording_case!(live_recording_accept_cancel, 1, "cancel");
+live_recording_case!(live_recording_accept_drop, 1, "drop");
+live_recording_case!(live_recording_accept_resubmit, 1, "resubmit");
+live_recording_case!(live_recording_accept_dispose, 1, "dispose");
+live_recording_case!(live_recording_complete_cancel, 2, "cancel");
+live_recording_case!(live_recording_complete_drop, 2, "drop");
+live_recording_case!(live_recording_complete_resubmit, 2, "resubmit");
+live_recording_case!(live_recording_complete_dispose, 2, "dispose");
+#[test]
+#[ignore = "requires fixed PDRS_BASELINE with installed TS dependencies"]
+fn live_recording_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("live-recording");
+}
+
+live_recording_case!(live_recording_accept_failure, 1, "failure");
+live_recording_case!(live_recording_complete_failure, 2, "failure");
+
+live_recording_case!(live_recording_start_failure, 0, "failure");
