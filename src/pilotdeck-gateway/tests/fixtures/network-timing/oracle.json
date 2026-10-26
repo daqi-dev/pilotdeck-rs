@@ -2,7 +2,11 @@
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "sourceSha256": {
     "src/network/fetch.ts": "e59bb07b424fa57d2b8906103260386d6f92ca326709ce9cd3e1c25f19e92b7f",
-    "src/tool/builtin/web/urlFetcher.ts": "ee76a642317c3b8cccb0612c60c11db07b2bf6b327f715c424ceab99bb783069"
+    "src/tool/builtin/web/urlFetcher.ts": "ee76a642317c3b8cccb0612c60c11db07b2bf6b327f715c424ceab99bb783069",
+    "src/mcp/client/McpClient.ts": "d99e1494bd2e7a28f967e23d8de2e03ce1a019ae33ebc8c917e680c4915a4e91",
+    "src/extension/hooks/execution/HttpHookExecutor.ts": "04de2a286ca38996d636fcc56258c6bbdef58d9bbdf9e5c6a50372bc13213bd9",
+    "src/extension/hooks/execution/parseHookOutput.ts": "86ed968c0d92ef9dadaef09b82b225f201d39796bcd30b8c620e06597a1c1b21",
+    "src/agent/sub/BackgroundSubagentRuntime.ts": "52815d8217a4ac8eefe7dde040e0987688181adfb78de79d8ca8732c15d83c07"
   },
   "node": "v22.22.0",
   "dependencies": [
@@ -15,7 +19,11 @@
         "lib/web/fetch/index.js": "d7652962f1eb65cc6763529f0f588bd7595eff67ab3a3591ee7728e8198e8996",
         "lib/web/fetch/body.js": "9c0a4cc04cfbad2b4f48c56c9e4b2ed01ad9fe1eda9aff406ef4411a8d6921cd",
         "lib/web/fetch/request.js": "b4b36815f3c0d082ab8f413a27085f0b197f8cdf04880db15bf7d1f0084d780a",
-        "lib/web/fetch/response.js": "0c376c359711217831d095d8139fb62b290c77dca1fe93e708d1b081074812fc"
+        "lib/web/fetch/response.js": "0c376c359711217831d095d8139fb62b290c77dca1fe93e708d1b081074812fc",
+        "lib/dispatcher/agent.js": "ed53043a5af941bc245fdbbbefa5b1f24a89ba6beee6acdbec7e9e4f64032852",
+        "lib/dispatcher/client.js": "ddc9b0602c9d6b6ba2b03b6e597a48f0b3f3360eeb342b2a10e18707fa2fb6d8",
+        "lib/dispatcher/client-h1.js": "f71f420351d418cac04e5c4fbb5dcad1e8ecf36f5dc70ecf497e5cbbab8860c3",
+        "../@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js": "728ae66a1cdeb8bfabc4c0fe2b94ec1e4f7a5575d6c8d269be04229a8f858577"
       }
     }
   ],
@@ -2654,6 +2662,6677 @@
         "parentGap": 0,
         "parentRegisteredFirst": false,
         "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_get/headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_get/headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_get/headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_get/headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "mcp_get/headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "mcp_get/headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "mcp_get/headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "mcp_get/headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "mcp_get/headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 10000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "mcp_get/headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 10000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "mcp_get/headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 10000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "mcp_get/headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 10000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_get/body/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_get/body/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_get/body/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_get/body/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "mcp_get/body/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "mcp_get/body/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "mcp_get/body/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "mcp_get/body/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "mcp_get/body/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "mcp_get/body/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "mcp_get/body/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "mcp_get/body/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_get/redirect-hop/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_get/redirect-hop/fulfilled/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_get/redirect-hop/fulfilled/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_get/redirect-hop/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "mcp_get/redirect-hop/rejected/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "mcp_get/redirect-hop/rejected/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "mcp_get/redirect-hop/rejected/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "mcp_get/redirect-hop/rejected/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "mcp_get/redirect-hop/idle/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 10000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "mcp_get/redirect-hop/idle/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 10000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "mcp_get/redirect-hop/idle/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 10000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "mcp_get/redirect-hop/idle/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 10000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_get/retry-status/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_get/retry-status/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_get/retry-status/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_get/retry-status/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_get/retry-error/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_get/retry-error/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_get/retry-error/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_get/retry-error/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_post/headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_post/headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_post/headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_post/headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "mcp_post/headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "mcp_post/headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "mcp_post/headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "mcp_post/headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "mcp_post/headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request timed out after 60000ms.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "mcp_post/headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "mcp_post/headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "mcp_post/headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request timed out after 60000ms.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_post/body/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_post/body/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_post/body/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_post/body/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "mcp_post/body/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "mcp_post/body/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "mcp_post/body/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "mcp_post/body/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "mcp_post/body/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "mcp_post/body/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "mcp_post/body/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "mcp_post/body/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_post/redirect-hop/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_post/redirect-hop/fulfilled/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_post/redirect-hop/fulfilled/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_post/redirect-hop/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "mcp_post/redirect-hop/rejected/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "mcp_post/redirect-hop/rejected/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "mcp_post/redirect-hop/rejected/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "mcp_post/redirect-hop/rejected/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "mcp_post/redirect-hop/idle/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request timed out after 60000ms.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "mcp_post/redirect-hop/idle/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "mcp_post/redirect-hop/idle/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "mcp_post/redirect-hop/idle/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request timed out after 60000ms.",
+        "delivery": "throw",
+        "content": null,
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "hooks/headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "return",
+        "content": "FIRST",
+        "hook": {
+          "stdout": "FIRST",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "hooks/headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "hooks/headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "hooks/headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "return",
+        "content": "FIRST",
+        "hook": {
+          "stdout": "FIRST",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "hooks/headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "fetch failed",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "fetch failed",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "hooks/headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "hooks/headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "hooks/headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "fetch failed",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "fetch failed",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "hooks/headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "fetch failed",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "fetch failed",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "hooks/headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "hooks/headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "hooks/headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "fetch failed",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "fetch failed",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "hooks/body/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "return",
+        "content": "FIRST",
+        "hook": {
+          "stdout": "FIRST",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "hooks/body/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "hooks/body/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "hooks/body/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "return",
+        "content": "FIRST",
+        "hook": {
+          "stdout": "FIRST",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "hooks/body/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "terminated",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "terminated",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "hooks/body/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "hooks/body/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "hooks/body/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "terminated",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "terminated",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "hooks/body/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "terminated",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "terminated",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "hooks/body/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "hooks/body/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "hooks/body/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "terminated",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "terminated",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "hooks/redirect-hop/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "return",
+        "content": "FIRST",
+        "hook": {
+          "stdout": "FIRST",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "hooks/redirect-hop/fulfilled/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "hooks/redirect-hop/fulfilled/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "hooks/redirect-hop/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "return",
+        "content": "FIRST",
+        "hook": {
+          "stdout": "FIRST",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "hooks/redirect-hop/rejected/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "fetch failed",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "fetch failed",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "hooks/redirect-hop/rejected/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "hooks/redirect-hop/rejected/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "hooks/redirect-hop/rejected/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "fetch failed",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "fetch failed",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "hooks/redirect-hop/idle/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "fetch failed",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "fetch failed",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "hooks/redirect-hop/idle/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "hooks/redirect-hop/idle/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "hooks/redirect-hop/idle/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": "fetch failed",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "fetch failed",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "background/headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "background/headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "background/headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "background/headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "background/headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "background/headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "background/headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "background/headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "background/headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "background/headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "background/headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "background/headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "background/body/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "background/body/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "background/body/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "background/body/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "background/body/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "failed",
+          "error": "terminated",
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "background/body/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "background/body/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "background/body/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "failed",
+          "error": "terminated",
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "background/body/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "failed",
+          "error": "terminated",
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "background/body/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "background/body/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "body",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "background/body/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "terminated",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "failed",
+          "error": "terminated",
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 600000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected watchdog"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "background/redirect-hop/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "background/redirect-hop/fulfilled/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "background/redirect-hop/fulfilled/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "background/redirect-hop/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "background/redirect-hop/rejected/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "background/redirect-hop/rejected/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "background/redirect-hop/rejected/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "background/redirect-hop/rejected/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "completion",
+        "requested": 20,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "fixture-injected completion"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "background/redirect-hop/idle/continuation-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "background/redirect-hop/idle/parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "background/redirect-hop/idle/tie-parent-first",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "redirect-hop",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "background/redirect-hop/idle/tie-parent-last",
+      "requests": [
+        "/start",
+        "/next"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 2
+      },
+      "timing": {
+        "target": "watchdog",
+        "requested": 60000,
+        "effective": 40,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline request timeout"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "background/retry-status/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "background/retry-status/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "background/retry-status/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "retry-status",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "background/retry-status/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "background/retry-error/fulfilled/continuation-first",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 5,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "background/retry-error/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": -5,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "background/retry-error/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "retries": 0,
+        "calls": 1
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": true,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "retry-error",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "background/retry-error/fulfilled/tie-parent-last",
+      "requests": [
+        "/start",
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "retries": 1,
+        "calls": 2
+      },
+      "timing": {
+        "target": "retry",
+        "requested": 500,
+        "effective": 20,
+        "parentGap": 0,
+        "parentRegisteredFirst": false,
+        "source": "baseline retry timer"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "web_fetch/io-headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "web_fetch/io-headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "web_fetch/io-headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "web_fetch/io-headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "web_fetch/io-headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "web_fetch/io-headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "web_fetch/io-headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "web_fetch/io-headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "web_fetch/io-headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "web_fetch/io-headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "web_fetch/io-headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "web_fetch",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "web_fetch/io-headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "fetch_redirect/io-headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "fetch_redirect/io-headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/io-headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/io-headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "fetch_redirect/io-headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "TypeError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "fetch_redirect/io-headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/io-headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/io-headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "fetch_redirect/io-headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "fetch_redirect/io-headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "fetch_redirect/io-headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "fetch_redirect",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "fetch_redirect/io-headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "AbortError",
+        "message": "This operation was aborted",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_get/io-headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_get/io-headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_get/io-headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_get/io-headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "mcp_get/io-headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "mcp_get/io-headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "mcp_get/io-headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "mcp_get/io-headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "mcp_get/io-headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "mcp_get/io-headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "mcp_get/io-headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "mcp_get",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "mcp_get/io-headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "mcp_post/io-headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "mcp_post/io-headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "mcp_post/io-headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "mcp_post/io-headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "mcp_post/io-headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "fetch failed",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "mcp_post/io-headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "mcp_post/io-headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "mcp_post/io-headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "mcp_post/io-headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "mcp_post/io-headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "mcp_post/io-headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "mcp_post",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "mcp_post/io-headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "hooks/io-headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "return",
+        "content": "FIRST",
+        "hook": {
+          "stdout": "FIRST",
+          "stderr": "",
+          "exitCode": 0,
+          "outcome": "success",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "hooks/io-headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "hooks/io-headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "hooks/io-headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "hooks/io-headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "fetch failed",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "fetch failed",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "hooks/io-headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "hooks/io-headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "hooks/io-headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "hooks/io-headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "hooks/io-headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "hooks/io-headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "hooks",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "hooks/io-headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": "This operation was aborted",
+        "delivery": "return",
+        "content": "",
+        "hook": {
+          "stdout": "",
+          "stderr": "This operation was aborted",
+          "outcome": "non_blocking_error",
+          "output": {
+            "type": "sync"
+          }
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "continuation-first",
+      "id": "background/io-headers/fulfilled/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": null,
+        "message": null,
+        "delivery": "ok",
+        "content": "FIRST",
+        "task": {
+          "status": "completed",
+          "error": null,
+          "ended": true,
+          "stopped": false
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "parent-first",
+      "id": "background/io-headers/fulfilled/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-first",
+      "id": "background/io-headers/fulfilled/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "fulfilled",
+      "order": "tie-parent-last",
+      "id": "background/io-headers/fulfilled/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseStart",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "continuation-first",
+      "id": "background/io-headers/rejected/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network retry aborted.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "parent-first",
+      "id": "background/io-headers/rejected/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-first",
+      "id": "background/io-headers/rejected/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "rejected",
+      "order": "tie-parent-last",
+      "id": "background/io-headers/rejected/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "onResponseError",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "continuation-first",
+      "id": "background/io-headers/idle/continuation-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "continuation-first"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "parent-first",
+      "id": "background/io-headers/idle/parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "parent-first"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-first",
+      "id": "background/io-headers/idle/tie-parent-first",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-first"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "io-headers",
+      "event": "idle",
+      "order": "tie-parent-last",
+      "id": "background/io-headers/idle/tie-parent-last",
+      "requests": [
+        "/start"
+      ],
+      "observable": {
+        "name": "NetworkFetchError",
+        "message": "Network request aborted by parent signal.",
+        "delivery": "throw",
+        "content": null,
+        "task": {
+          "status": "cancelled",
+          "error": null,
+          "ended": true,
+          "stopped": true
+        },
+        "calls": 1,
+        "retries": 0
+      },
+      "io": {
+        "transport": "loopback-undici",
+        "gate": "peer-request",
+        "order": "tie-parent-last"
+      }
+    },
+    {
+      "path": "background",
+      "phase": "lifecycle",
+      "event": "pending-stop",
+      "order": "ordered",
+      "id": "background/lifecycle/pending-stop/ordered",
+      "observable": {
+        "calls": 0,
+        "status": "cancelled",
+        "error": null,
+        "ended": true,
+        "stopped": true,
+        "pendingAfterStop": false,
+        "afterStop": null,
+        "endedUnchanged": null
+      }
+    },
+    {
+      "path": "background",
+      "phase": "lifecycle",
+      "event": "settled-fulfilled",
+      "order": "ordered",
+      "id": "background/lifecycle/settled-fulfilled/ordered",
+      "observable": {
+        "calls": 1,
+        "status": "completed",
+        "error": null,
+        "ended": true,
+        "stopped": false,
+        "pendingAfterStop": false,
+        "afterStop": null,
+        "endedUnchanged": null
+      }
+    },
+    {
+      "path": "background",
+      "phase": "lifecycle",
+      "event": "settled-rejected",
+      "order": "ordered",
+      "id": "background/lifecycle/settled-rejected/ordered",
+      "observable": {
+        "calls": 1,
+        "status": "failed",
+        "error": "fixture child failure",
+        "ended": true,
+        "stopped": false,
+        "pendingAfterStop": false,
+        "afterStop": null,
+        "endedUnchanged": null
+      }
+    },
+    {
+      "path": "background",
+      "phase": "lifecycle",
+      "event": "running-uncooperative",
+      "order": "ordered",
+      "id": "background/lifecycle/running-uncooperative/ordered",
+      "observable": {
+        "calls": 1,
+        "status": "cancelled",
+        "error": null,
+        "ended": true,
+        "stopped": true,
+        "pendingAfterStop": true,
+        "afterStop": {
+          "status": "cancelled",
+          "ended": true,
+          "error": null
+        },
+        "endedUnchanged": true
       }
     }
   ]

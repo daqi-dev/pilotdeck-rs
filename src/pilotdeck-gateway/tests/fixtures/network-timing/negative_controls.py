@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Owned, bounded source mutations. Product files must match HEAD on entry.
 
-Each selected original test passes, the mutated test must fail its oracle
-assertion (not compilation), then the same test passes after guarded restore.
+Each selected original test passes, the mutated test must fail its bound behavior
+assertion or explicit impossible-branch guard (not compilation), then the same test passes after guarded restore.
 No other writers/cargo are allowed in this worktree during this script.
 """
 import difflib
@@ -21,6 +21,18 @@ out.mkdir(parents=True, exist_ok=False)
 network = root / 'src/pilotdeck-gateway/src/runtime/network.rs'
 web = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/network.rs'
 cases = [
+    ('io-as-microtask', network,
+     "            timer: None,\n            microtask: false,",
+     "            timer: None,\n            microtask: true,",
+     ['background_io_headers_fulfilled_tie_parent_last']),
+    ('io-parent-abort', network,
+     '        if aborted && parent_at.is_none() {\n            return Poll::Ready(Exchange::Aborted);',
+     '        if aborted && parent_at.is_none() {\n            return Poll::Ready(Exchange::Timeout { before_abort: false });',
+     [f'fetch_redirect_io_headers_{event}_{order}' for event in ['fulfilled', 'rejected', 'idle'] for order in ['parent_first', 'tie_parent_first', 'tie_parent_last']]),
+    ('io-parent-abort-background', network,
+     '        if aborted && parent_at.is_none() {\n            return Poll::Ready(Exchange::Aborted);',
+     '        if aborted && parent_at.is_none() {\n            return Poll::Ready(Exchange::Timeout { before_abort: false });',
+     [f'background_io_headers_{event}_{order}' for event in ['fulfilled', 'rejected', 'idle'] for order in ['parent_first', 'tie_parent_first', 'tie_parent_last']]),
     ('parent-first', network, 'let response_before_parent = parent_at.is_none_or(|at| {',
      'let response_before_parent = true || parent_at.is_none_or(|at| {',
      ['fetch_redirect_headers_rejected_parent_first']),
@@ -61,6 +73,73 @@ cases = [
      'return Poll::Ready(Exchange::Timeout {\n                before_abort: aborted && timeout_before_parent,\n            });',
      'return Poll::Ready(Exchange::Aborted);', ['*']),
 ]
+background = root / 'src/pilotdeck-gateway/src/runtime/background.rs'
+cases += [
+    ('background-stop-signal', background,
+     '        entry.controller.cancel_synchronously();',
+     '        // negative control: stop did not signal the running child',
+     ['background_headers_fulfilled_parent_first', 'background_headers_fulfilled_tie_parent_first',
+      'background_retry_status_fulfilled_parent_first', 'background_retry_error_fulfilled_tie_parent_first',
+      'background_retry_error_fulfilled_parent_first'] +
+     [f'background_headers_{event}_{order}' for event in ['rejected', 'idle'] for order in ['parent_first', 'tie_parent_first']] +
+     [f'background_redirect_hop_{event}_{order}' for event in ['fulfilled', 'rejected', 'idle'] for order in ['parent_first', 'tie_parent_first']]),
+    ('background-stop-sync', background,
+     '        entry.controller.cancel_synchronously();',
+     '        entry.controller.cancel_at(tokio::time::Instant::now());',
+     ['background_retry_status_fulfilled_tie_parent_first', 'background_retry_error_fulfilled_tie_parent_first']),
+    ('background-pending', background,
+     '                if task.status == TaskStatus::Cancelled {\n                    None',
+     '                if false && task.status == TaskStatus::Cancelled {\n                    None',
+     ['background_lifecycle_pending_stop_ordered']),
+    ('background-wait', background,
+     '        let mut done = entry.done.subscribe();\n        let _ = done.wait_for(|done| *done).await;',
+     '        let mut done = entry.done.subscribe();\n        let _ = &mut done; // negative control: skipped child completion',
+     ['background_lifecycle_running_uncooperative_ordered']),
+    ('background-done', background,
+     '            entry.done.send_replace(true);',
+     '            entry.done.send_replace(false);',
+     ['background_lifecycle_pending_stop_ordered']),
+    ('background-ended', background,
+     '        task.ended_at = Some((self.now)());',
+     '        // negative control: stop omitted ended_at',
+     ['background_lifecycle_running_uncooperative_ordered']),
+    ('background-ended-stable', background,
+     '                if task.ended_at.is_none() {',
+     '                if true {',
+     ['background_lifecycle_running_uncooperative_ordered']),
+    ('background-completed', background,
+     '                            task.status = TaskStatus::Completed;',
+     '                            task.status = TaskStatus::Running;',
+     ['background_lifecycle_settled_fulfilled_ordered']),
+    ('background-error', background,
+     '                            task.error = Some(message);',
+     '                            task.error = Some("wrong child failure".into());',
+     ['background_lifecycle_settled_rejected_ordered']),
+]
+assertion_anchors = {
+    'io-parent-abort': 'no fixture timeout',
+    'background-pending': 'pending stop must not start child',
+    'background-wait': 'stop_and_wait must remain pending until child settles',
+    'background-completed': 'registry did not settle after child completion',
+    'background-done': 'background done notification deadline',
+}
+# Full-suite controls still bind a concrete test and its exact oracle anchor;
+# an unrelated red test must never satisfy their negative result.
+required_failures = {
+    'matrix-parent-abort': 'fetch_redirect/headers/fulfilled/parent-first',
+    'matrix-response': 'background/headers/fulfilled/continuation-first',
+    'matrix-frame': 'background/body/fulfilled/continuation-first',
+    'matrix-timeout': 'background/headers/idle/continuation-first',
+}
+
+def assert_required_failure(name, log):
+    if name in required_failures:
+        cell = required_failures[name]
+        test = cell.replace('/', '_').replace('-', '_')
+        pattern = (r"thread '" + re.escape(test) + r"'[^\n]*\n" +
+                   re.escape('assertion `left == right` failed: network timing cell: ' + cell) + r'\n')
+        assert re.search(pattern, log), (name, 'bound test/anchor must fail', test, cell)
+
 if sys.argv[2:]:
     selected = set(sys.argv[2:])
     cases = [case for case in cases if case[0] in selected]
@@ -101,7 +180,8 @@ for name, path, old, new, tests in cases:
         path.write_text(changed)
         for index, test in enumerate(tests):
             code, log = run(f'{name}-{index}-negative', test)
-            assert code == 101 and ('test result: FAILED.' in log if test == '*' else f"{test.split('::')[-1]} ..." in log and 'test result: FAILED. 0 passed; 1 failed' in log) and (f'left: Other({list(map(ord, "wrong outer retry message"))})' in log and f'right: Other({list(map(ord, "Network retry aborted."))})' in log and 'assertion `left == right` failed' in log if test.startswith('web_tools::') else 'assertion `left == right` failed: network timing cell:' in log), (name, 'not an oracle assertion failure', code)
+            assert code == 101 and ('test result: FAILED.' in log if test == '*' else f"{test.split('::')[-1]} ..." in log and 'test result: FAILED. 0 passed; 1 failed' in log) and (f'left: Other({list(map(ord, "wrong outer retry message"))})' in log and f'right: Other({list(map(ord, "Network retry aborted."))})' in log and 'assertion `left == right` failed' in log if test.startswith('web_tools::') else assertion_anchors.get(name, 'assertion `left == right` failed: network timing cell:') in log), (name, 'not an oracle assertion failure', code)
+            assert_required_failure(name, log)
             for line in log.splitlines():
                 if '{"id":' in line:
                     row = json.loads(line[line.index('{"id":'):])
@@ -111,6 +191,6 @@ for name, path, old, new, tests in cases:
     for index, test in enumerate(tests):
         code, log = run(f'{name}-{index}-restored', test)
         assert code == 0 and (f'{expected_passes} passed; 0 failed' if test == '*' else '1 passed; 0 failed') in log, (name, 'restored', code)
-    summary.append({'name': name, 'tests': tests, 'killed': True, 'restoredPass': True, 'sourceSha256': hashlib.sha256(original.encode()).hexdigest(), 'killedCells': sorted(killed_cells)})
+    summary.append({'name': name, 'tests': tests, 'requiredFailure': required_failures.get(name), 'assertionAnchor': assertion_anchors.get(name, 'assertion `left == right` failed: network timing cell:'), 'killed': True, 'restoredPass': True, 'sourceSha256': hashlib.sha256(original.encode()).hexdigest(), 'killedCells': sorted(killed_cells)})
     print(f'{name}: {len(tests)} test selections rejected, restored PASS', flush=True)
 save('summary.json', json.dumps(summary, indent=2) + '\n')

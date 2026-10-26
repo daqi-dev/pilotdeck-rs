@@ -1,119 +1,91 @@
-# Network cancellation timing fixture (#456 pr1)
+# Network cancellation timing fixture (#456 pr1 / pr2)
 
-100 格来自固定 TS cc7c4e6 + Node v22.22.0 的实际执行；`oracle.json`
-保留 name、message、delivery、content、calls、retries 与请求路径。产品源码仅增加账本注释，不改变行为。
+固定 TS cc7c4e6 + Node v22.22.0 的真实执行共336格，沿用同一个生成器、金样、差异表和反向守卫。
+当前Rust接线184格：129对齐、55差异；MCP GET/POST及hooks的152格已有TS金样，Rust私有入口未接线，**本包尚未完成**。
+产品源码、公开接口和行为不变，产品修复归#752。原始证据与逐格状态见本树 `_tmp/20261026-issue-456b/RESULT.md`。
 
-| 路径 | 阶段 | 完成源 | 时机 | 格数 |
-|---|---|---|---|---|
-| web_fetch | headers / body / redirect-hop | fulfilled / rejected / idle | continuation-first / parent-first / tie-parent-first / tie-parent-last | 36 |
-| web_fetch | retry-status / retry-error | fulfilled | 同上 | 8 |
-| fetch_redirect | headers / body / text-body / redirect-hop | fulfilled / rejected / idle | 同上 | 48 |
-| fetch_redirect | retry-status / retry-error | fulfilled | 同上 | 8 |
+| 路径 | timer headers/body/redirect | timer retry-status/error | io-headers | lifecycle | TS合计 | Rust已接线 |
+|---|---:|---:|---:|---:|---:|---:|
+| web_fetch | 36 | 8 | 12 | 0 | 56 | 56 |
+| fetch_redirect（另含text-body） | 48 | 8 | 12 | 0 | 68 | 68 |
+| mcp_get | 36 | 8 | 12 | 0 | 56 | 0 |
+| mcp_post | 36 | 0 | 12 | 0 | 48 | 0 |
+| hooks | 36 | 0 | 12 | 0 | 48 | 0 |
+| background | 36 | 8 | 12 | 4 | 60 | 60 |
 
-`delay()` 自身没有独立 rejected/idle 完成源：拒绝来自父取消；对应不适用格
-不能算已测。MCP、hooks、background、真实 socket `ExchangeFuture::io` 就绪交错
-是 pr2，未测。这里的 `io(pending())` 仅表示永不完成，不表示真实 I/O 就绪证据。
+普通阶段各为fulfilled/rejected/idle × continuation-first/parent-first/tie-parent-first/tie-parent-last。
+retry阶段只含fulfilled × 四时机：delay拒绝来自父取消，无独立rejected/idle完成源。
+hooks无自身retry，MCP POST不重试，这些均不适用，不算已测。
 
-## 真实入口和注入边界
+## 真实入口与边界
 
-- web_fetch：`src/tool/builtin/web/urlFetcher.ts:261` 的
-  `getURLMarkdownContent`，默认 hook 经 `:98` 调真正的 `networkFetch`；不替换 hook。
-  外层 hop timeout 与内层 request timeout 都是 60000ms；GET 重试2次、base500/cap5000。
-  首跳302 body故意永不完成，下一跳必须可达。cache仅为本次探针的空内存实例。
-- fetch_redirect：baseline **installed Undici** `fetch`（8.3.0，独立依赖哈希在金样中），
-  自动 follow，最终 `arrayBuffer()` / `text()`；不冒充 Node 内置 fetch。
-  `fetch_redirect::follow` 本身不拥有 headers 取消或重试：裸 headers/hop 的
-  Rust 注入 transport 用已测注册序调共享 dispatcher；这些格验证 traversal，
-  不能据此声称 hooks/MCP 等真实 caller 已覆盖。
-- retry 组合：真实 `networkFetch(Undici.fetch → follow)`。成功重试返回302后再到200。
-  Rust 外层只调一次真实 `network_fetch`，`FollowingTransport` 调原 `follow`；
-  所有嵌套响应都已就绪，才用 microtask（分支断言禁止隐藏timer/I/O）。
-  这不代表 helper 有自带重试，也不覆盖所有 caller 的重试布局。
-- 注入在 Undici dispatcher：`onRequestStart/onResponseStart/onResponseData/onResponseEnd/onResponseError`，
-  真实 fetch promise、redirect、body 和 NetworkFetchError 逻辑照常执行。
-  dispatcher只允许 `https://fixture.test`，没有 socket、外网、用户配置或密钥。
+TS路径和行号相对固定基线根：
 
-## 时钟、同刻与原始证据
+- web_fetch：`src/tool/builtin/web/urlFetcher.ts:261` 的真实 `getURLMarkdownContent`，默认hook经`:98`调用`networkFetch`；hop/request各60000ms，GET retry2/base500/cap5000。
+- fetch_redirect：baseline installed Undici 8.3.0的真实fetch/follow/text或arrayBuffer。裸follow不拥有headers取消或retry；retry组合是networkFetch(Undici.fetch→follow)，Rust真实network_fetch包真实follow。不能将它泛称所有caller已覆盖。
+- MCP：`src/mcp/client/McpClient.ts:183-199` buildTransport提供的真实fetch closure，经SDK保存的`_fetch`调用；GET10000ms、POST60000ms，GET retry1/base500/cap5000，POST无retry。只覆盖HTTP adapter，未做SDK握手、事件流或会话生命周期。
+- hooks：`src/extension/hooks/execution/HttpHookExecutor.ts:9,18,27,35`真实execute，既有fetchImpl端口注入installed Undici；POST→text→parseHookOutput。signal贯穿body；无自身retry/timeout。完整返回对象保留为observable.hook，并核stdout/stderr投影，不把返回non_blocking_error伪称throw。
+- background：`src/agent/sub/BackgroundSubagentRuntime.ts:45,63-80,102-116`真start/run/stop/stopAndWait；指定child调用networkFetch(GET,timeout60000,retry1/base500/cap5000)。这组参数属于指定child，不是所有后台任务的网络策略。网络结果和task.status/error/ended/stopped分别观察。
 
-Node 原生 timer（不是假 timer 队列）。目标完成20ms；idle target40ms；父为目标±5ms或同刻。
-为了有界运行，web idle headers 的60000ms timer压到40ms，其他60000ms watchdog压到1000ms；
-retry500ms压到20ms；body/裸headers的600000ms是 **fixture-injected watchdog**，压到40ms。
-`timing.source` 逐格区分真实 retry/hop timer 与注入的 watchdog/completion。
-裸 `fetch_redirect` 非 retry 的16个 idle 格全部使用注入 watchdog，其中14格对齐、
-body/text-body 的两个 tie-parent-first 格为已知差异。这里的14格“对齐”只证明两侧
-在同造超时下行为一致，不证明真实裸 fetch 的超时语义。
+Rust web/background调用公开真实实现；私有fetch_redirect/network经`#[path]`编译原文件。
+background timer的redirect首跳ready、末跳after元数据保留；断言禁止将timer隐藏于io/microtask。
+MCP `network_fetch_continuing_with`、hooks `execute_with`是private；本包未增加产品文件测试接线，不能用共享helper冒充caller已回放。
 
-固定基线实测 `createLongTimeoutOptions()` 返回 headersTimeout/bodyTimeout=600000：
-`src/cli/proxy.ts:149-157`，常量来自 `src/model/streaming/streamModel.ts:56`，
-Agent 安装点在 `src/cli/proxy.ts:111,134-137`。但本 probe 替换 global dispatcher，
-web body 也未经过这个真实 Client timer，因此同样标为注入 watchdog。
-去掉注入后，headers/body/text-body/redirect-hop 四路径在80ms观察窗都保持 pending，
-没有注册600000 timer，父取消后均为 AbortError；原始实测在本轮交付的
-`fix-r1/watchdog-source.log`。这是有界观测，不把80ms外推为所有生产 transport 永久等待。
-无夹具超时的真实无限等待/父取消语义，以及真实 Agent 长超时，均留 pr2（#752）。
-原始 requested/effective 值都保留，Rust 暂停时钟使用原逻辑60000/600000/500ms。
-这些注入验证顺序与归一化，不验证实际网络超时时长或 libuv socket 相位。
+## timer、真实I/O、生命周期
 
-每个候选忙等55ms使目标和父timer均overdue；接受前核实际
-`_idleStart + _idleTimeout` 差值与注册顺序，跨tick候选丢弃重跑（最多10次）。
-生成器再次独立验证这些原值以及实际callback顺序；缺格、错序、错deadline都拒绝。
-每格有3s宿主上限，整probe180s；所有自有timer在finally回收。
+Timer probe在Undici dispatcher注入完成/body事件，真实fetch promise、redirect和错误归一化照常执行。
+原生Node timer保留requested/effective/_idleStart/_idleTimeout及注册序；完成20ms、retry500→20、idle watchdog→40，其他真实request/hop watchdog→1000。
+父deadline为目标±5ms或同刻；忙等55ms后按真实deadline和注册序筛候选，跨tick重跑最多10次。
+每格3s、整probe180s，finally回收自有timer。Rust暂停时钟使用原始逻辑时长。
 
-生成器将绝对timer原值、timeline写入输出目录 `raw.ndjson`，丢弃候选及Node告警写
-`probe.stderr.log`。金样只移除绝对timer/timeline，保留已核验的相对deadline/注册顺序、
-全部结果与请求记录。绝对uptime不可逐字节重现，不能伪称固定值。
-TS commit/源码hash及installed Undici六个文件hash在生成前后验证。
+`timing.source`区分baseline retry timer、baseline request/hop timeout和fixture-injected completion/watchdog。
+裸fetch_redirect idle及hooks idle、所有headers后body idle使用注入600000ms watchdog；不能据此宣称真实Agent600000ms超时已测。
+真实request idle已测MCP GET10000、POST/background60000；headers后networkFetch移除父监听，仍单独测body。
+redirect首跳body故意不结束而下一跳必须到达。pr1无watchdog80ms观测只证明观察窗内pending，原记录见pr1 RESULT。
+
+`io.mts`用真实Undici Agent与127.0.0.1 HTTP server，URL仅fixture.test并在transport层映射回环。
+真实onResponseStart/onResponseError到达后设门；idle只见peer-request、没有响应。C=release并排空真实续体后abort；
+P=abort排空后release；PF/PL=同JS栈abort/release两序，**不是libuv同毫秒timer**。
+trace守卫核真实peer、wire、唯一gate/release/parent、顺序及child-settled/retry-armed见证。
+Rust用真实Hyper socket先取得结果，再由poll门控制ExchangeFuture::io与父取消；显式3s有界等待，最终回收server/driver。
+
+四个background生命周期格：pending stop不运行child；fulfilled/rejected settled后stop=false且终态不变；
+不合作child收到stop后stopAndWait仍Pending，释放gate后才完成。保存afterStop与endedUnchanged，Rust释放前两次核Pending。
+这些是有界观测与显式收尾，未把永不释放的任务宣称可自动结束。
+
+## 生成与重生成
+
+sourceSha256覆盖六份入口源文件，dependency fingerprint覆盖九个Undici文件与SDK streamableHttp一项。
+生成前后核固定commit、源码与依赖哈希。raw.ndjson保留绝对timer/timeline/trace；oracle只移除这些绝对或调度诊断记录，保留全部语义观察。
+生成器目录recursive:true、三个输出文件flag:'wx'；已有证据拒绝覆盖。
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
+export TSX_DISABLE_CACHE=1
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/network-timing/generate.mts /fresh/output
+export CARGO_TARGET_DIR="$PWD/_build/cargo-target"
+scripts/cargo-slots.sh
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test network_timing
+# 同样先检查cargo槽位；TMPDIR可指定证据目录中的scratch
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test network_timing \
+  network_timing_regenerates_identically -- --ignored --exact
 ```
 
-目录recursive创建，三个输出文件都用`flag:'wx'`，已有原始证据不覆盖。
-复采两次须`cmp`两份oracle；默认忽略的
-`network_timing_regenerates_identically` 会重新运行生成器并严格比较oracle字节。
+既有默认ignore的重生成守卫复用同一network-timing fixture，重新调用生成器并逐字节比较全部336格。
+默认136通过=129对齐+6overdue+1差异守卫；56忽略=55已知差异+1重生成守卫。忽略不等于已批准或阶段通过。
 
-## Rust回放和已登记差异
+## 差异与负控
 
-`tests/network_timing.rs` 每格独立测试，严格比较六个observable字段。
-私有 `fetch_redirect.rs` / `network.rs` 通过 `#[path]` 编译原文件，未复制实现、
-未改公开接口；web使用实际公开 `UrlFetcher`。错误映射只来自真实typed outcome：
-web `FetchError::Other` 没有name，观察为null，绝不根据message补造类型。
-额外六个overdue测试验证“父事件已送达，但先注册续体仍先行”的晚poll分支。
+known_differences.json是TS原值/Rust当前原值/category/test的单一维护表。现55格=pr1的38+background body6+web io错误类型11。
+四个原001账本字节不变；只新增POST-HEADERS-PARENT-002、ERROR-CLASS-002未批准条目。
+每格严格TS断言并独立ignore；默认反向守卫逐格重放Rust并核TS原值、TS≠Rust、ignore集合/理由和函数格ID绑定。
+改变差异表现或修复后仍保留ignore都会失败；不改产品来迁就期望。
 
-本次62格对齐、38格严格差异（34格web、4格redirect）。
-`known_differences.json` 是 TS 原值/Rust 当前实际值/所属类别的单一维护表；
-四类按当前逐格原值分为错误类型23、headers后取消5、同刻完成/超时6、重试同刻4，
-不是早期评审摘要的24/10/2/2。四份 `specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-*-001.md`
-由这张表生成逐格清单，状态均为「已知未对齐（未批准，待人批）」；修复归 #752。
-各格独立 ignore 仍严格断言 TS 值。非跳过守卫 `known_differences_remain_exact_and_ignored`
-核对 ignore 集合/理由、函数与格id绑定、TS与oracle相同、Rust实际与表相同、TS≠Rust；
-差异被修复或红的原因改变都要求同步清表/解除ignore，不能静默遗留跳过。
-默认结果为62对齐+6overdue+1守卫=69通过，38差异+1重生成守卫=39忽略。
-这些ignore不是已批准差异，不表示本阶段通过。
+`negative_controls.py /fresh/evidence [control...]`临时变异产品源码，要求独占树；使用mutating_sources验证HEAD、锁和恢复，
+cargo均经wait_for_slot/run_owned，正控→预期测试断言失败→恢复正控。每项绑定测试名与断言锚点，编译失败不算。
+新增background signal/同步取消/未启动/等待完成/done/ended/完成态/错误内容负控，及真实I/O完成源和同步取消结果负控。
+四组整矩阵负控实际失败格清单在summary.json；逐格关键覆盖见交付negative-coverage.json。
 
-```sh
-CARGO_TARGET_DIR="$PWD/_build/cargo-target" cargo test --offline --manifest-path src/Cargo.toml \
-  -p pilotdeck-gateway --test network_timing -- --test-threads=1
-# 真正重新生成（需要PDRS_BASELINE）：
-CARGO_TARGET_DIR="$PWD/_build/cargo-target" cargo test --offline --manifest-path src/Cargo.toml \
-  -p pilotdeck-gateway --test network_timing network_timing_regenerates_identically -- --ignored --exact
-```
-
-## 负控
-
-`negative_controls.py /fresh/evidence` 对原始产品源码临时变异；必须独占本树、
-无其他cargo或写者。使用 `negative_process.mutating_sources` 验证HEAD并负责恢复，
-`wait_for_slot` 排队，`run_owned` 有界运行和回收进程。每项正控先绿，变异后必须是
-oracle assertion失败（编译失败不算），恢复后同一用例再绿。覆盖父先、同刻两序、
-status/error retry tie、message、retry次数、body内容、body取消的name/delivery。
-另有四组全矩阵变异补齐逐格覆盖：已对齐的43个父先/同刻关键格都有实际oracle失败与恢复证据；覆盖索引在交付目录negative-coverage.json。已知差异格原实现即红，按任务第4条保持ignore，不将其包装成正控通过。
-
-`negative_observations.mts <raw.ndjson>` 则对原始采集记录内存变异，25组守卫逐条
-拒绝并复验原始100格；它不写TS源码、金样或原始证据。
-
-补充负控 `retry-outer-parent-message` 精确变异 web/network.rs 的
-`Timeout { .. }` / `outer.parent` 文案，复用 `web_tools::web_fetch_hop_timeout_during_retry_uses_retry_abort_message`；
-默认矩阵通过数由测试源声明数减 ignore 数计算。共享 `negative_oracle_guard.py` 已登记 network-timing。
-差异表 Rust 值的变异必须使非跳过守卫转红，恢复后转绿（交付 `fix-r1/table-negative/`）。
+`negative_observations.mts <raw.ndjson>`只改内存中的原始记录，每条新增守卫、新源码/依赖项和每个新增矩阵项均有负控；
+每次拒绝变异后重新验证原始完整336格。原始TS文件、金样和记录不被该脚本改写。
