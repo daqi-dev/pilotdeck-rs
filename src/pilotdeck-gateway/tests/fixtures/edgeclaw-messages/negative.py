@@ -15,8 +15,11 @@ bytes are restored in ``finally``. ``mutating_sources`` demands that the gateway
 product tree match the baseline, so an uncommitted authoring tree is refused;
 the coordinator runs this once after committing (item 11 of the task).
 
-A surviving mutant does not abort the run: every case is executed, then the
-script prints KILLED/SURVIVED and exits 1 when anything survived. For an
+Every anchor is checked against the baseline bytes before the unmutated suite
+runs: a stale anchor is a harness defect, not a surviving mutant, so it prints
+``STALE ANCHOR`` and exits 2 (same rule as #772 fix-r2). A surviving mutant
+does not abort the run: every case is executed, then the script prints
+KILLED/SURVIVED and exits 1 when anything survived. For an
 uncommitted authoring tree, ``NEGATIVE_BASELINE=$(git stash create)`` can name a
 dangling commit of the current worktree so the same script can prove 1-2
 samples without committing. The default remains HEAD. ``NEGATIVE_ONLY=a,b``
@@ -181,6 +184,24 @@ def assertion_failure(log):
 killed, survived = [], []
 with mutating_sources(root, sorted({path for _, path, _, _, _ in cases}),
                       baseline=baseline) as originals:
+    # A product line that this list did not follow used to be reported as
+    # SURVIVED (`AssertionError: (name, 0)`), hiding a broken control behind
+    # the same label as a real surviving mutant. Refuse before compiling.
+    sources = {path: data.decode() for path, data in originals.items()}
+    stale = []
+    for name, path, before, _after, _test in cases:
+        count = sources[path].count(before)
+        if count != 1:
+            stale.append((name, path.relative_to(root).as_posix(), count))
+    if stale:
+        report = '\n'.join(
+            f'STALE ANCHOR {name}: {count} matches in {relative}'
+            for name, relative, count in stale) + '\n'
+        (out / 'stale-anchors.log').write_text(report)
+        print(report, end='', flush=True)
+        print('STALE ANCHORS: negative.py is out of sync with messages.rs; refusing to run',
+              flush=True)
+        sys.exit(2)
     base_cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                 '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_messages']
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
@@ -196,7 +217,6 @@ with mutating_sources(root, sorted({path for _, path, _, _, _ in cases}),
         reason = None
         try:
             source = originals[path].decode()
-            assert source.count(before) == 1, (name, source.count(before))
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             path.write_text(source.replace(before, after))
             try:

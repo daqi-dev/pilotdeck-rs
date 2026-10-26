@@ -3,7 +3,9 @@
 
 Every case must compile and fail a narrowed runtime oracle assertion; the
 script restores the original bytes in ``finally`` and never touches
-``oracle.json``.
+``oracle.json``. Every anchor is checked against the baseline bytes before the
+unmutated suite runs: a stale anchor is a harness defect, not a surviving
+mutant, so it prints ``STALE ANCHOR`` and exits 2 (same rule as #772 fix-r2).
 
 A failed cell does not abort the matrix. Like ``edgeclaw-messages/negative.py``
 the script first runs the unmutated suite once and requires exit code 0 (so an
@@ -148,6 +150,24 @@ def assertion_failure(log, anchor):
 killed, survived = [], []
 with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
                       baseline=baseline) as originals:
+    # A product line that this list did not follow used to be reported as
+    # SURVIVED (`AssertionError: (name, 0)`), hiding a broken control behind
+    # the same label as a real surviving mutant. Refuse before compiling.
+    sources = {path: data.decode() for path, data in originals.items()}
+    stale = []
+    for name, path, before, _after, _test, _anchor in cases:
+        count = sources[path].count(before)
+        if count != 1:
+            stale.append((name, path.relative_to(root).as_posix(), count))
+    if stale:
+        report = '\n'.join(
+            f'STALE ANCHOR {name}: {count} matches in {relative}'
+            for name, relative, count in stale) + '\n'
+        (out / 'stale-anchors.log').write_text(report)
+        print(report, end='', flush=True)
+        print('STALE ANCHORS: negative.py is out of sync with helpers.rs; refusing to run',
+              flush=True)
+        sys.exit(2)
     base_cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
                 '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_retrieval_helpers']
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
@@ -163,7 +183,6 @@ with mutating_sources(root, sorted({path for _, path, _, _, _, _ in cases}),
         reason = None
         try:
             source = originals[path].decode()
-            assert source.count(before) == 1, (name, source.count(before))
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
             path.write_text(source.replace(before, after))
             try:
