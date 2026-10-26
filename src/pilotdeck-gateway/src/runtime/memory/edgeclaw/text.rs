@@ -536,7 +536,7 @@ pub fn parse_raw_recall_sections(value: &JsString) -> CleanedRecallSections {
                  current: Option<RecallSection>,
                  buffer: &mut Vec<JsString>| {
         if let Some(section) = current {
-            let content = trim_js(&join_lines(buffer.iter()));
+            let content = trim_js(&join_lines(buffer.iter().map(JsString::units)));
             if !content.is_empty() {
                 match section {
                     RecallSection::User => sections.user_profile.push(content),
@@ -706,7 +706,7 @@ fn replace_pair(units: &[u16], from: u16, to: u16) -> Vec<u16> {
 
 /// `String.prototype.toLowerCase` (locale-independent), reusing the catalog
 /// projection's canonical case mapper.
-fn lowercase(value: &JsString) -> JsString {
+pub(crate) fn lowercase(value: &JsString) -> JsString {
     crate::model_catalog::lower(value, &LanguageIdentifier::UNKNOWN, false)
 }
 
@@ -718,20 +718,20 @@ fn without_space(units: &[u16]) -> Vec<u16> {
         .collect()
 }
 
-fn contains(haystack: &[u16], needle: &[u16]) -> bool {
+pub(crate) fn contains(haystack: &[u16], needle: &[u16]) -> bool {
     needle.is_empty()
         || haystack
             .windows(needle.len())
             .any(|window| window == needle)
 }
 
-fn starts_with(value: &JsString, prefix: &str) -> bool {
+pub(crate) fn starts_with(value: &JsString, prefix: &str) -> bool {
     value
         .units()
         .starts_with(&prefix.encode_utf16().collect::<Vec<_>>())
 }
 
-fn trim_js(value: &JsString) -> JsString {
+pub(crate) fn trim_js(value: &JsString) -> JsString {
     JsString::from_utf16(js_trim_units(value.units()).to_vec())
 }
 
@@ -743,18 +743,18 @@ fn concat(parts: &[&JsString]) -> JsString {
     JsString::from_utf16(units)
 }
 
-fn join_lines<'a>(parts: impl Iterator<Item = &'a JsString>) -> JsString {
+pub(crate) fn join_lines<'a>(parts: impl IntoIterator<Item = &'a [u16]>) -> JsString {
     let mut units = Vec::new();
-    for (i, part) in parts.enumerate() {
+    for (i, part) in parts.into_iter().enumerate() {
         if i > 0 {
             units.push(u16::from(b'\n'));
         }
-        units.extend(part.units());
+        units.extend(part);
     }
     JsString::from_utf16(units)
 }
 
-fn join_text(parts: &[JsString], separator: &str) -> JsString {
+pub(crate) fn join_text(parts: &[JsString], separator: &str) -> JsString {
     let mut units = Vec::new();
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
@@ -796,7 +796,7 @@ fn line_starts_with(value: &JsString, prefix: &str) -> bool {
     false
 }
 
-fn json_text(units: &[u16]) -> String {
+pub(crate) fn json_text(units: &[u16]) -> String {
     let mut out = String::with_capacity(units.len());
     for unit in char::decode_utf16(units.iter().copied()) {
         match unit {

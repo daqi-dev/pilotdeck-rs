@@ -95,6 +95,27 @@ export async function collect(baseline: string) {
     [{content: {content: {content: {content: {content: {content: 'seven'}}}}}}, 0],
   ]) add('extract', 'extractTextFromObject', [value, depth], (m as any).extractTextFromObject(value, depth));
 
+  // Depth boundary: `depth > 5` is checked on entry to extractTextFromContent
+  // (message-utils.ts:133-135), while extractTextFromObject at depth 5 still
+  // returns its own `text` (:102-121). A wrapper at depth 5 extracts, one at
+  // depth 6 does not, so lowering MAX_CONTENT_EXTRACTION_DEPTH (:13) to 4
+  // changes the depth-5 observations.
+  const arrays = (inner: any, n: number) => {
+    for (let i = 0; i < n; i += 1) inner = [inner];
+    return inner;
+  };
+  const objects = (inner: any, n: number) => {
+    for (let i = 0; i < n; i += 1) inner = {content: inner};
+    return inner;
+  };
+  for (const depth of [3, 4, 5, 6, 7]) {
+    one('extract', 'extractTextFromContent', arrays(`s${depth}`, depth));
+    one('extract', 'extractTextFromContent', arrays({type: 'text', text: `t${depth}`}, depth));
+  }
+  for (const n of [4, 5, 6, 7]) {
+    one('extract', 'extractTextFromContent', objects({type: 'text', text: `o${n}`}, n));
+  }
+
   // -- injected memory context ---------------------------------------------
   const header = 'You are using retrieved ClawXMemory file memories for this turn.';
   const legacy = 'You are using multi-level memory indexes for this turn.';
@@ -263,6 +284,11 @@ export async function collect(baseline: string) {
     '第一段\n\n第二段', '用户需要帮助\n\n答案\n\nProject state maintained by X',
     '先想\n\n>\n- agent: a\nhost: h\nworkspace: w\nos: o',
     '  a  \n\n\n b <think>x</think> c ',
+    'a<think>one</think>keep<think>two</think>b',
+    'a<thinking>one</thinking>keep<thinking>two</thinking>b',
+    'a<think>one</think>keep<thinking>two</thinking>b',
+    '</think><think>one</think>keep<think>two</think>b',
+    '</thinking><thinking>one</thinking>keep<thinking>two</thinking>b',
   ]) one('thinking', 'stripAssistantThinking', value);
 
   // -- commands / session ---------------------------------------------------
@@ -429,6 +455,93 @@ export async function collect(baseline: string) {
     one('edge', 'extractTextFromContent', value);
     add('edge', 'stripLeadingSenderPrefix', [value, []],
       (m as any).stripLeadingSenderPrefix(value, []));
+  }
+
+  // -- JS non-Unicode `/i` Canonicalize boundaries --------------------------
+  // V8 22 folds Σ/σ/ς and µ/Μ, but not LONG S, KELVIN SIGN, ß/ẞ, İ/i or ı/I.
+  // Every ASCII literal pattern below therefore needs ASCII-only folding.
+  const boundary = {
+    longS: '\u017F', kelvin: '\u212A', dotlessI: '\u0131', dottedI: '\u0130',
+    sharpS: '\u00DF', capSharpS: '\u1E9E', capSigma: '\u03A3',
+    sigma: '\u03C3', finalSigma: '\u03C2', micro: '\u00B5', mu: '\u03BC',
+  };
+  for (const [name, value] of Object.entries(boundary)) {
+    one('case-fold', 'normalizeSenderHint', `A${value}B${name}`);
+  }
+  for (const value of ['ΑΣ', 'Σ', 'ΑΣ Α', 'İstanbul', 'STRASSE', 'straße', 'µ/μ']) {
+    one('case-fold', 'normalizeSenderHint', value);
+  }
+  const quotedBoundary = [
+    '[Chat messages since your last reply - for context]old[Current message - respond to this]new',
+    '[Chat me\u017F\u017Fages since your last reply - for context]old[Current message - respond to this]new',
+    '[Chat messages since your last reply - for context]old[Current me\u017F\u017Fage - re\u017Fpond to this]new',
+    '[Chat messages since your last reply - for context]old[Current message - respond to thi\u017F]new',
+    '[Chat messages since your last reply - for context]old[Current message - respond to thi\u212A]new',
+    '[CHAT MESSAGES SINCE YOUR LAST REPLY - FOR CONTEXT]old[CURRENT MESSAGE - RESPOND TO THIS]new',
+  ];
+  for (const value of quotedBoundary) {
+    one('case-fold', 'stripQuotedContextBlocks', value);
+    one('case-fold', 'extractCurrentMessageSegment', value);
+  }
+  for (const value of [
+    '[Current message - respond to this]first[Current message - respond to this]last',
+    '[Current message - respond to this]only',
+    '[Current message - respond to this]',
+  ]) one('case-fold', 'extractCurrentMessageSegment', value);
+  for (const value of [
+    'x\nTo send an image back, foo\ny',
+    'x\nTo \u017Fend an image back, foo\ny',
+    'x\nTO SEND AN IMAGE BACK, foo\ny',
+    '[media attached: x] hi',
+    '[med\u0130a attached: x] hi',
+    '[MEDIA ATTACHED: x] hi',
+  ]) one('case-fold', 'stripAttachmentScaffolding', value);
+  for (const value of [
+    'session status', '\u017Fession status', 'ses\u017Fion status', 'sess\u0130on status',
+    'SESSION STATUS', 'Project state maintained by Agent',
+    'Project \u017Ftate maintained by Agent', 'PROJECT STATE MAINTAINED BY AGENT',
+    'git status: clean', 'git \u017Ftatus: clean', 'GIT STATUS: CLEAN',
+    'agent: a\nhost: h\nworkspace: w\nos: o',
+    'agent: a\nho\u017Ft: h\nworkspace: w\nos: o',
+    'AGENT: a\nHOST: h\nWORKSPACE: w\nOS: o',
+  ]) {
+    for (const fn of ['lineLooksLikePluginNoise', 'startsWithPluginStateLine', 'countPluginStateMarkers']) {
+      one('case-fold', fn, value);
+    }
+  }
+  for (const value of [
+    'System: note\nreal', 'Sy\u017Ftem: note\nreal', '\u017Fystem: note\nreal', 'SYSTEM: note\nreal',
+  ]) one('case-fold', 'stripInjectedMemoryContext', value);
+  for (const value of [
+    '<think>hidden</think>answer', '<thin\u212A>hidden</thin\u212A>answer',
+    '<THINK>hidden</THINK>answer', 'a<thin\u212Aing>h</thin\u212Aing>b',
+  ]) one('case-fold', 'stripAssistantThinking', value);
+  for (const value of [
+    'System: [2026-10-22] note\nreal', 'Sy\u017Ftem: [2026-10-22] note\nreal',
+    '[x for context]\nreal', '[x for conte\u017Ft]\nreal', '[X FOR CONTEXT]\nreal',
+    '[Current message - respond to this]\nreal', '[Current me\u017F\u017Fage - respond to this]\nreal',
+    '[message_id:abc]\nreal', '[me\u017F\u017Fage_id:abc]\nreal', '[MESSAGE_ID:abc]\nreal',
+  ]) one('case-fold', 'stripLeadingMessageEnvelopeLines', value);
+  for (const value of [
+    'Sender (untrusted metadata): ```json\n{"sender":"Alice"}\n```\nhello',
+    '\u017Fender (untrusted metadata): ```json\n{"sender":"Alice"}\n```\nhello',
+    'Sender (untrusted metadata): ```j\u017Fon\n{"sender":"Alice"}\n```\nhello',
+    'Sender (untrusted metadata): ```JSON\n{"sender":"Alice"}\n```\nhello',
+    'SENDER (UNTRUSTED METADATA): ```json\n{"sender":"Alice"}\n```\nhello',
+  ]) one('case-fold', 'collectSenderHints', value);
+  for (const value of [
+    'A new session was started via /new or /reset.\nRun your Session Startup sequence now',
+    'A new session was started via /new or /reset.\nRun your Se\u017F\u017Fion Startup sequence now',
+    'A new session was started via /new or /reset.\nRUN YOUR SESSION STARTUP SEQUENCE NOW',
+  ]) one('case-fold', 'isSessionStartupMarkerText', value);
+  for (const [value, hints] of [
+    ['A\u0130lice: hi', ['ali\u0307ce']],
+    ['\u017Falice: hi', ['\u017Falice']],
+    ['ΑΣ: hi', ['ας']],
+    ['Σ: hi', ['σ']],
+  ] as const) {
+    add('case-fold', 'stripLeadingSenderPrefix', [value, hints],
+      (m as any).stripLeadingSenderPrefix(value, hints));
   }
 
   assert.ok(cases.length > 300, `only ${cases.length} cases`);

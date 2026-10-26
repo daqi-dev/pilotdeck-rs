@@ -317,6 +317,11 @@ fn normalize_matches_ts() {
 }
 
 #[test]
+fn case_fold_matches_ts() {
+    replay(&["case-fold"]);
+}
+
+#[test]
 fn code_unit_edges_match_ts() {
     replay(&["edge"]);
 }

@@ -9,10 +9,10 @@
 `/fixture/home`，时钟冻结在 `2026-10-22T00:00:00.000Z`。`message-utils.ts` 不读
 `Math.random`；混合字符串语料用固定种子的 LCG，重复生成字节一致。
 
-覆盖 2294 个观测（含 80 条确定性混合字符串，逐函数对拍）：
+覆盖 2424 个观测（含 80 条确定性混合字符串，逐函数对拍）：
 
 - 文本抽取：type 白名单/黑名单、`message_text`、优先键与列表键、去重、
-  深度 5 边界、孤立代理；
+  深度 3/4/5/6 的数组与对象链边界、孤立代理；
 - `stripInjectedMemoryContext` 的 canonical / legacy / recall 三段、
   CRLF、缺失 footer、`System:` 前导行；
 - `compactWhitespace`、`normalizePluginNoiseProbe` 的 JS `\s`（含
@@ -24,6 +24,11 @@
   当前消息信封（320/321 单元、120/121 标签、emoji 计码单元）；
 - 前导 @ 提及、信封噪声行全集、slash / bang 命令、session marker；
 - thinking 块（`</think>`、成对、属性、贪心多段、中文元推理）；
+- 大小写折叠边界：JS 非 Unicode `/i` 的 `Canonicalize` 不把 ſ、K
+  (U+212A)、ß/ẞ、İ/i、ı/I 折到 ASCII，Σ/σ/ς 与 µ/Μ 则互折；每个
+  `(?i)` 正则与 `ci_eq`/`starts_with_ci`/`find_ci` 都有对应观测；
+- 两个 `[Current message - respond to this]` 时 `extractCurrentMessageSegment`
+  取最后一个（TS `lastIndexOf`）；
 - inspect 的 canonical / nested / tool call / toolUseResult / isMeta 等
   拒绝分支，`normalizeMessages` 的 `captureStrategy × includeAssistant ×
   maxMessageChars` 组合；
@@ -51,8 +56,12 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-messages/negative.py /tmp/edgeclaw-messages-negative
 ```
 
-`negative.py` 有 11 条可逆负控（深度、插件阈值、session 阈值、sender hint
+`negative.py` 有 15 条可逆负控（深度、插件阈值、session 阈值、sender hint
 前导空格、前瞻、媒体行最后一个 `]`、toolCall、bang 空白、时间戳年份宽度、
-last_turn 切片、thinking 贪心），每条要求编译成功且运行时断言转红。新增
+last_turn 切片、thinking 贪心、大小写 canonicalize / 正则 / ci_eq、当前消息
+取第一个标记），每条要求编译成功且运行时断言转红。脚本不会在第一个存活
+变异体处中止：它逐个跑完，最后打印 KILLED/SURVIVED，有存活即退出 1。新增
 文件在提交前不在 HEAD，`mutating_sources` 会拒绝运行；脚本由协调者在提交
 后执行，cargo 使用调用方传入的 `CARGO_TARGET_DIR`，未设置时提前报错。
+作者树可用 `NEGATIVE_BASELINE=$(git stash create)` 指向当前工作树的悬空
+提交来跑样本，默认仍是 `HEAD`。
