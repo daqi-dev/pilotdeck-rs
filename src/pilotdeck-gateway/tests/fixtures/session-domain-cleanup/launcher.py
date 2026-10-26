@@ -25,6 +25,10 @@ import sys
 import time
 
 READY_TIMEOUT = 10
+# Every fixture grandchild self-terminates.  The controls never signal a bare
+# pid after the launcher was reaped, so an unkilled leak must be bounded by the
+# fixture itself; 20 s still exceeds the probe's 5 s TERM + 5 s KILL windows.
+LINGER_SECONDS = 20
 
 
 def main():
@@ -39,14 +43,15 @@ def main():
     ready = args.child_pid_file.with_name(args.child_pid_file.name + '.ready')
     if args.mode == 'leak':
         grandchild = subprocess.Popen(
-            ['sleep', '60'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ['sleep', str(LINGER_SECONDS)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     elif args.mode == 'ignore':
         code = ('import os,signal,sys,time\n'
                 'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
                 'tmp = sys.argv[1] + ".tmp"\n'
                 'open(tmp, "w").write("ready")\n'
                 'os.replace(tmp, sys.argv[1])\n'
-                'time.sleep(60)\n')
+                f'time.sleep({LINGER_SECONDS})\n')
         grandchild = subprocess.Popen(
             [sys.executable, '-I', '-c', code, str(ready)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
