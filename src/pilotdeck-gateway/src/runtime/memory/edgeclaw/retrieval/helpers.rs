@@ -12,7 +12,7 @@
 //! the process locale here. JavaScript strings stay [`JsString`] (UTF-16 code
 //! units) end to end.
 
-use super::text::{hash_text, now_iso_at};
+use super::text::{hash_text, join_text, join_text_refs, now_iso_at};
 use crate::js_value::to_string_units;
 use crate::project_files::node_compare_utf16;
 use crate::runtime::memory::{js_is_space_unit, js_trim_units};
@@ -102,23 +102,7 @@ fn join_lines(lines: &[JsString]) -> JsString {
 }
 
 fn concat(parts: &[&JsString]) -> JsString {
-    let mut units = Vec::new();
-    for part in parts {
-        units.extend(part.units());
-    }
-    JsString::from_utf16(units)
-}
-
-fn join_text(parts: &[JsString], separator: &str) -> JsString {
-    let separator: Vec<u16> = separator.encode_utf16().collect();
-    let mut units = Vec::new();
-    for (index, part) in parts.iter().enumerate() {
-        if index > 0 {
-            units.extend(&separator);
-        }
-        units.extend(part.units());
-    }
-    JsString::from_utf16(units)
+    join_text_refs(parts.iter().copied(), "")
 }
 
 // -- reasoning-loop.ts:54-112 ----------------------------------------------

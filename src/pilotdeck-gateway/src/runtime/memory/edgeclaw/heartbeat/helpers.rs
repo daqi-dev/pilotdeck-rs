@@ -8,7 +8,7 @@
 use crate::project_files::{node_collator, node_compare_utf16, node_locale};
 use crate::runtime::memory::edgeclaw::{
     messages::{MemoryMessage, MemoryRole},
-    storage::L0SessionRecord,
+    storage::{L0SessionRecord, js_truthy},
     text,
 };
 use icu_collator::CollatorBorrowed;
@@ -48,7 +48,9 @@ pub fn has_new_content(previous: &[MemoryMessage], incoming: &[MemoryMessage]) -
 }
 
 /// Rebuild the typed message list stored in an `L0SessionRecord.messages`
-/// wire array. The heartbeat only sees normalized user/assistant turns.
+/// wire array. Storage keeps every non-empty string role (`sqlite.ts:145`),
+/// so comparison/merge preserve it; only [`derive_focus_turns`] filters the
+/// final focus selection down to `user`.
 pub fn messages_from_value(value: &JsValue) -> Vec<MemoryMessage> {
     let JsValue::Array(items) = value else {
         return Vec::new();
@@ -57,13 +59,7 @@ pub fn messages_from_value(value: &JsValue) -> Vec<MemoryMessage> {
         .iter()
         .filter_map(|item| {
             let role = item.get("role").and_then(JsValue::as_string)?;
-            let role = if role.equals_str("user") {
-                MemoryRole::User
-            } else if role.equals_str("assistant") {
-                MemoryRole::Assistant
-            } else {
-                return None;
-            };
+            let role = MemoryRole::from_js(role);
             let content = item.get("content").and_then(JsValue::as_string)?.clone();
             let msg_id = item.get("msgId").and_then(JsValue::as_string).cloned();
             Some(MemoryMessage {
@@ -257,11 +253,10 @@ pub fn build_general_project_shortlist(catalog: &[JsValue], text_value: &JsStrin
     for project in catalog {
         let project_name = field_string(project, "projectName");
         let description = field_string(project, "description");
-        let haystack = text::lowercase(&concat(&[
-            &project_name,
-            &JsString::from(" "),
-            &description,
-        ]));
+        let haystack = text::lowercase(&text::join_text_refs(
+            [&project_name, &JsString::from(" "), &description],
+            "",
+        ));
         let exact = usize::from(text::contains(
             lowered_text.units(),
             text::lowercase(&project_name).units(),
@@ -303,7 +298,7 @@ pub fn build_general_project_shortlist(catalog: &[JsValue], text_value: &JsStrin
             ("source", JsValue::String(source.into())),
             (
                 "matchedText",
-                JsValue::String(join_value_refs(&matched, ", ")),
+                JsValue::String(text::join_text_refs(matched.iter().copied(), ", ")),
             ),
         ]);
         rows.push(ShortlistRow {
@@ -360,10 +355,10 @@ pub fn build_candidate_memory_preview(candidate: &JsValue) -> JsString {
     let name = field_string(candidate, "name");
     let description = field_string(candidate, "description");
     let mut lines = vec![
-        concat(&[&JsString::from("# "), &name]),
+        text::join_text_refs([&JsString::from("# "), &name], ""),
         JsString::default(),
-        concat(&[&JsString::from("type: "), &candidate_type]),
-        concat(&[&JsString::from("description: "), &description]),
+        text::join_text_refs([&JsString::from("type: "), &candidate_type], ""),
+        text::join_text_refs([&JsString::from("description: "), &description], ""),
     ];
     if candidate_type.equals_str("feedback") {
         let rule = first_truthy(&[
@@ -411,7 +406,7 @@ pub fn build_candidate_memory_preview(candidate: &JsValue) -> JsString {
             lines.push(JsString::default());
             lines.push(JsString::from(format!("## {title}")));
             for item in normalized {
-                lines.push(concat(&[&JsString::from("- "), &item]));
+                lines.push(text::join_text_refs([&JsString::from("- "), &item], ""));
             }
         }
         if let Some(summary) = candidate.get("summary").and_then(JsValue::as_string)
@@ -433,10 +428,13 @@ pub fn build_candidate_memory_preview(candidate: &JsValue) -> JsString {
     if preview.len_utf16() <= 3000 {
         preview
     } else {
-        concat(&[
-            &JsString::from_utf16(preview.units()[..3000].to_vec()),
-            &JsString::from("..."),
-        ])
+        text::join_text_refs(
+            [
+                &JsString::from_utf16(preview.units()[..3000].to_vec()),
+                &JsString::from("..."),
+            ],
+            "",
+        )
     }
 }
 
@@ -554,14 +552,17 @@ pub fn build_index_trace_id(
     started_at: &JsString,
     l0_ids: &[JsString],
 ) -> JsString {
-    let joined = join_value_refs(&l0_ids.iter().collect::<Vec<_>>(), ",");
-    let seed = join_values(&[
-        session_key.clone(),
-        JsString::from(":"),
-        started_at.clone(),
-        JsString::from(":"),
-        joined,
-    ]);
+    let joined = text::join_text_refs(l0_ids.iter(), ",");
+    let seed = text::join_text_refs(
+        [
+            session_key,
+            &JsString::from(":"),
+            started_at,
+            &JsString::from(":"),
+            &joined,
+        ],
+        "",
+    );
     JsString::from(format!("index_trace_{}", text::hash_text(&seed)))
 }
 
@@ -586,10 +587,13 @@ pub fn preview_text(value: &JsString, max_chars: usize) -> JsString {
     if normalized.len_utf16() <= max_chars {
         normalized
     } else {
-        concat(&[
-            &JsString::from_utf16(normalized.units()[..max_chars].to_vec()),
-            &JsString::from("..."),
-        ])
+        text::join_text_refs(
+            [
+                &JsString::from_utf16(normalized.units()[..max_chars].to_vec()),
+                &JsString::from("..."),
+            ],
+            "",
+        )
     }
 }
 
@@ -623,7 +627,7 @@ pub fn infer_storage_kind(record_type: &JsString, relative_path: &JsString) -> &
 /// `exposeStoredRelativePath`: global records are exposed under `global/`.
 pub fn expose_stored_relative_path(scope: &JsString, relative_path: &JsString) -> JsString {
     if scope.equals_str("global") {
-        concat(&[&JsString::from("global/"), relative_path])
+        text::join_text_refs([&JsString::from("global/"), relative_path], "")
     } else {
         relative_path.clone()
     }
@@ -686,21 +690,55 @@ pub fn list_detail(
     )
 }
 
+/// Why `String(entry.value ?? "")` throws in `kvDetail`. TS lets the
+/// conversion error escape the pure constructor, so the Rust port returns it
+/// instead of panicking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KvValueError {
+    /// `RangeError: Maximum call stack size exceeded` (too-deep array join).
+    StackOverflow,
+    /// `TypeError: Cannot convert object to primitive value`.
+    NotPrimitive,
+}
+
+impl KvValueError {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::StackOverflow => "RangeError",
+            Self::NotPrimitive => "TypeError",
+        }
+    }
+
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::StackOverflow => crate::js_value::StackOverflow::MESSAGE,
+            Self::NotPrimitive => crate::js_value::ToStringError::NOT_PRIMITIVE,
+        }
+    }
+
+    fn from_conversion(error: crate::js_value::ToStringError) -> Self {
+        match error {
+            crate::js_value::ToStringError::StackOverflow => Self::StackOverflow,
+            crate::js_value::ToStringError::NotPrimitive => Self::NotPrimitive,
+        }
+    }
+}
+
 pub fn kv_detail(
     key: &str,
     label: &str,
     entries: &[JsValue],
     label_i18n: Option<&JsValue>,
-) -> JsValue {
+) -> Result<JsValue, KvValueError> {
     let entries = entries
         .iter()
         .map(|entry| {
             let units = match entry.get("value") {
                 None | Some(JsValue::Undefined) | Some(JsValue::Null) => Vec::new(),
-                Some(value) => crate::js_value::to_string_units(value)
-                    .expect("String(value) does not overflow"),
+                Some(value) => crate::js_value::to_string_units_checked(value)
+                    .map_err(KvValueError::from_conversion)?,
             };
-            JsValue::Object(fields(vec![
+            Ok(JsValue::Object(fields(vec![
                 ("label", JsValue::String(field_string(entry, "label"))),
                 (
                     "value",
@@ -709,16 +747,16 @@ pub fn kv_detail(
                         true,
                     )),
                 ),
-            ]))
+            ])))
         })
-        .collect();
-    detail(
+        .collect::<Result<Vec<_>, KvValueError>>()?;
+    Ok(detail(
         "kv",
         key,
         label,
         label_i18n,
         vec![("entries", JsValue::Array(entries))],
-    )
+    ))
 }
 
 pub fn json_detail(
@@ -747,7 +785,7 @@ fn detail(
     detail.insert("key".into(), JsValue::String(key.into()));
     detail.insert("label".into(), JsValue::String(label.into()));
     if let Some(label_i18n) = label_i18n
-        && truthy(label_i18n)
+        && js_truthy(label_i18n)
     {
         detail.insert("labelI18n".into(), label_i18n.clone());
     }
@@ -804,7 +842,7 @@ pub fn create_step(
         ("outputSummaryI18n", "outputSummaryI18n"),
     ] {
         if let Some(value) = options.get(source)
-            && truthy(value)
+            && js_truthy(value)
         {
             step.insert(target.into(), value.clone());
         }
@@ -871,16 +909,6 @@ pub fn create_batch_trace(
 
 // -- JS value helpers -------------------------------------------------------
 
-fn truthy(value: &JsValue) -> bool {
-    match value {
-        JsValue::Undefined | JsValue::Null => false,
-        JsValue::Bool(value) => *value,
-        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
-        JsValue::String(value) => !value.is_empty(),
-        JsValue::Array(_) | JsValue::Object(_) => true,
-    }
-}
-
 fn field_string(value: &JsValue, key: &str) -> JsString {
     value
         .get(key)
@@ -899,28 +927,4 @@ fn fields(entries: Vec<(&str, JsValue)>) -> JsObject {
         object.insert(key.into(), value);
     }
     object
-}
-
-fn concat(parts: &[&JsString]) -> JsString {
-    let mut units = Vec::new();
-    for part in parts {
-        units.extend_from_slice(part.units());
-    }
-    JsString::from_utf16(units)
-}
-
-fn join_values(parts: &[JsString]) -> JsString {
-    let refs: Vec<&JsString> = parts.iter().collect();
-    join_value_refs(&refs, "")
-}
-
-fn join_value_refs(parts: &[&JsString], separator: &str) -> JsString {
-    let mut units = Vec::new();
-    for (index, part) in parts.iter().enumerate() {
-        if index > 0 {
-            units.extend(separator.encode_utf16());
-        }
-        units.extend_from_slice(part.units());
-    }
-    JsString::from_utf16(units)
 }

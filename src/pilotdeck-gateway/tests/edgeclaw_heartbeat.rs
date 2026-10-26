@@ -1,11 +1,11 @@
 //! Real TS oracle for A6.6-edgeclaw-12 heartbeat helpers.
 use pilotdeck_gateway::runtime::memory::edgeclaw::heartbeat::helpers::{
-    build_candidate_memory_preview, build_candidate_routing_query, build_general_project_shortlist,
-    build_index_trace_id, common_prefix_length, create_batch_trace, create_step,
-    derive_focus_turns, expose_stored_relative_path, flatten_batch_messages, has_new_content,
-    infer_storage_kind, json_detail, kv_detail, list_detail, merge_session_messages,
-    messages_from_value, normalize_trigger, note_detail, preview_text, same_message, text_detail,
-    tokenize_search_text,
+    KvValueError, build_candidate_memory_preview, build_candidate_routing_query,
+    build_general_project_shortlist, build_index_trace_id, common_prefix_length,
+    create_batch_trace, create_step, derive_focus_turns, expose_stored_relative_path,
+    flatten_batch_messages, has_new_content, infer_storage_kind, json_detail, kv_detail,
+    list_detail, merge_session_messages, messages_from_value, normalize_trigger, note_detail,
+    preview_text, same_message, text_detail, tokenize_search_text,
 };
 use pilotdeck_gateway::runtime::memory::edgeclaw::messages::MemoryMessage;
 use pilotdeck_gateway::runtime::memory::edgeclaw::storage::L0SessionRecord;
@@ -297,6 +297,30 @@ fn call(case: &JsValue, clock_ms: i64) -> JsValue {
                 &entries,
                 label_i18n(case, 3).as_ref(),
             )
+            .expect("this oracle case does not throw")
+        }
+        "kvDetailCatching" => {
+            let entries: Vec<JsValue> = items(arg(case, 2)).iter().map(decode).collect();
+            match kv_detail(
+                text_arg(case, 0).to_utf8().unwrap().as_str(),
+                text_arg(case, 1).to_utf8().unwrap().as_str(),
+                &entries,
+                label_i18n(case, 3).as_ref(),
+            ) {
+                Ok(value) => {
+                    let mut envelope = JsObject::new();
+                    envelope.insert("ok".into(), value);
+                    JsValue::Object(envelope)
+                }
+                Err(error) => {
+                    let mut thrown = JsObject::new();
+                    thrown.insert("name".into(), JsValue::String(error.name().into()));
+                    thrown.insert("message".into(), JsValue::String(error.message().into()));
+                    let mut envelope = JsObject::new();
+                    envelope.insert("thrown".into(), JsValue::Object(thrown));
+                    JsValue::Object(envelope)
+                }
+            }
         }
         "jsonDetail" => json_detail(
             text_arg(case, 0).to_utf8().unwrap().as_str(),
@@ -349,18 +373,22 @@ fn heartbeat_helpers_match_ts() {
     let oracle = oracle();
     let clock_ms = oracle.get("clockMs").unwrap().as_number().unwrap() as i64;
     let mut failures = Vec::new();
+    let mut total = 0;
     for case in items(oracle.get("cases").unwrap()) {
+        // The depth probe pins both observations in its own test: TS succeeds
+        // at 2001 containers while Rust's shared 2000 bound reports
+        // RangeError (A6-JSVALUE-DEPTH-001, registered divergence).
+        let group = case.get("group").unwrap().as_string().unwrap();
+        if group.equals_str("detail-depth") {
+            continue;
+        }
+        total += 1;
         let actual = call(case, clock_ms);
         let expected = decode(case.get("expected").unwrap());
         if wire(&actual) != wire(&expected) {
             failures.push(format!(
                 "{}/{}: expected {} got {}",
-                case.get("group")
-                    .unwrap()
-                    .as_string()
-                    .unwrap()
-                    .to_utf8()
-                    .unwrap(),
+                group.to_utf8().unwrap(),
                 name(case),
                 wire(&expected),
                 wire(&actual)
@@ -371,8 +399,66 @@ fn heartbeat_helpers_match_ts() {
         failures.is_empty(),
         "{} of {} heartbeat cases differ:\n{}",
         failures.len(),
-        items(oracle.get("cases").unwrap()).len(),
+        total,
         failures.join("\n")
+    );
+}
+
+#[test]
+fn kv_detail_depth_error_is_reported_not_panicking() {
+    let oracle = oracle();
+    let mut checked = 0;
+    for case in items(oracle.get("cases").unwrap()) {
+        if !name(case).eq("kvDetailDepthProbe") {
+            continue;
+        }
+        let depth = arg(case, 0).as_number().unwrap() as usize;
+        let expected = decode(case.get("expected").unwrap());
+        let ts_value = expected
+            .get("tsValue")
+            .and_then(JsValue::as_string)
+            .expect("real TS observation");
+        assert_eq!(
+            ts_value.to_utf8().unwrap(),
+            "1",
+            "real TS String(nested {depth})"
+        );
+
+        let mut value = JsValue::String("1".into());
+        for _ in 0..depth {
+            value = JsValue::Array(vec![value]);
+        }
+        let mut entry = JsObject::new();
+        entry.insert("label".into(), JsValue::String("deep".into()));
+        entry.insert("value".into(), value);
+        let result = kv_detail("k", "L", &[JsValue::Object(entry)], None);
+        if depth <= 2000 {
+            let detail = result.expect("containers below the shared bound convert");
+            let value = detail
+                .get("entries")
+                .and_then(|entries| match entries {
+                    JsValue::Array(items) => items.first(),
+                    _ => None,
+                })
+                .and_then(|entry| entry.get("value"))
+                .and_then(JsValue::as_string)
+                .expect("kv entry value");
+            assert_eq!(value.to_utf8().unwrap(), "1");
+        } else {
+            let error = result.expect_err(
+                "A6-JSVALUE-DEPTH-001: Rust's shared 2000-container bound rejects 2001",
+            );
+            assert_eq!(error, KvValueError::StackOverflow);
+            assert_eq!(
+                (error.name(), error.message()),
+                ("RangeError", "Maximum call stack size exceeded")
+            );
+        }
+        checked += 1;
+    }
+    assert!(
+        checked >= 3,
+        "oracle carries the 1999/2000/2001 depth probes"
     );
 }
 

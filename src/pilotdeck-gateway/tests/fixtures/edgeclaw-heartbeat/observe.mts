@@ -68,6 +68,19 @@ export async function collect(baseline: string) {
     cases.push({group, fn, args: enc(args), expected: enc(clean(expected))});
   const call = (group: string, fn: string, ...args: any[]) =>
     add(group, fn, args, m[fn](...args));
+  // `kvDetail` is a pure constructor that lets `String(value)` throw; pin both
+  // the returned detail and the JS error name/message.
+  const callCatching = (group: string, fn: string, ...args: any[]) => {
+    const target = fn === 'kvDetailCatching' ? 'kvDetail' : fn;
+    let expected: any;
+    try {
+      expected = {ok: m[target](...args)};
+    } catch (error) {
+      const thrown = error as Error;
+      expected = {thrown: {name: thrown.name, message: thrown.message}};
+    }
+    add(group, fn, args, expected);
+  };
 
   // -- messages -------------------------------------------------------------
   const msg = (role: string, content: string, msgId?: string) =>
@@ -79,6 +92,12 @@ export async function collect(baseline: string) {
     [u('x'), u('x')], [u('x'), u('y')], [u('x'), a('x')], [a('x'), a('x')],
     [msg('user', 'x', 'm1'), msg('user', 'x', 'm2')], [u(''), u('')],
     [u('产品🚀'), u('产品🚀')], [u('a\ud800b'), u('a\ud800b')],
+    // ChatRole is any string; comparison keeps the role.
+    [msg('system', 'x'), msg('system', 'x')],
+    [msg('system', 'x'), msg('user', 'x')],
+    [msg('system', 'x'), msg('system', 'y')],
+    [msg('tool', 'x'), msg('tool', 'x')],
+    [msg('developer', 'x'), msg('developer', 'x')],
   ];
   for (const [left, right] of sameCases) call('messages', 'sameMessage', left, right);
 
@@ -90,6 +109,8 @@ export async function collect(baseline: string) {
     [[u('a'), a('b')], [u('a'), a('b'), u('c')]],
     [[u('a')], [msg('user', 'a', 'm1')]],
     [[u('产品')], [u('产品')]],
+    [[msg('system', 'a')], [msg('system', 'a'), u('q')]],
+    [[msg('system', 'a')], [msg('system', 'b')]],
   ];
   for (const [previous, incoming] of newCases) call('messages', 'hasNewContent', previous, incoming);
 
@@ -209,6 +230,11 @@ export async function collect(baseline: string) {
     [[u('a'), a('b')], [u('a'), a('b'), u('c')]],
     [[msg('user', 'a', 'm1')], [msg('user', 'a', 'm1')]],
     [[msg('user', 'a', 'm1')], [msg('user', 'a', 'm2')]],
+    // Non-user/assistant roles participate in the common prefix.
+    [[msg('system', 'A')], [msg('system', 'A'), u('q')]],
+    [[msg('system', 'A'), u('q')], [msg('system', 'B'), u('q')]],
+    [[msg('tool', 'x')], [msg('tool', 'x')]],
+    [[msg('developer', 'x')], [u('x')]],
   ];
   for (const [previous, incoming] of mergeCases) {
     call('merge', 'commonPrefixLength', previous, incoming);
@@ -236,6 +262,28 @@ export async function collect(baseline: string) {
   }
   call('flatten', 'flattenBatchMessages', sessions);
   focusCase([u('a'), a('b')], sessions);
+  // P1-1: the same user text under different system prompts is not a shared
+  // prefix, so the second session's user turn is still a new focus turn.
+  const roleSessions = [
+    session('role-1', '2026-10-20T00:00:00.000Z', [msg('system', 'A'), u('question')]),
+    session('role-2', '2026-10-21T00:00:00.000Z', [msg('system', 'B'), u('question')]),
+  ];
+  const roleSeeds = [
+    [],
+    [msg('system', 'A'), u('question')],
+    [msg('system', 'A'), u('question'), a('answer')],
+  ];
+  for (const seed of roleSeeds) {
+    call('flatten', 'flattenBatchMessages', roleSessions, seed);
+    focusCase(seed, roleSessions);
+  }
+  // Duplicate ids still use `Map.set` semantics after a role-preserving merge.
+  const duplicateRoleSessions = [
+    session('role-dup', '2026-10-20T00:00:00.000Z', [msg('tool', 't'), u('one')]),
+    session('role-dup', '2026-10-21T00:00:00.000Z', [msg('system', 'S'), u('two')]),
+  ];
+  call('flatten', 'flattenBatchMessages', duplicateRoleSessions, []);
+  focusCase([], duplicateRoleSessions);
 
   // -- trace ids / trigger / preview ---------------------------------------
   const traceIdCases: Array<[string, string, string[]]> = [
@@ -303,6 +351,34 @@ export async function collect(baseline: string) {
   ];
   call('detail', 'kvDetail', 'k', 'L', kvEntries);
   call('detail', 'kvDetail', 'k', 'L', [], i18n);
+  // `String(entry.value ?? "")` throws for a wire object with an own
+  // `toString` (JSON cannot hold a callable) and joins arrays through the
+  // same conversion.
+  for (const value of [
+    {toString: null},
+    [{toString: null}],
+    [1, [{toString: null}]],
+    {toString: 'not callable'},
+  ]) {
+    callCatching('detail', 'kvDetailCatching', 'k', 'L', [{label: 'throw', value}]);
+  }
+  callCatching('detail', 'kvDetailCatching', 'k', 'L', [
+    {label: 'plain', value: {a: 1}},
+    {label: 'nullish', value: null},
+  ]);
+  // 2001 containers are TS-success / Rust-RangeError under the already
+  // registered A6-JSVALUE-DEPTH-001 shared-bound divergence. Store only the
+  // depth and the real TS value so the oracle itself stays shallow.
+  const nested = (depth: number) => {
+    let value: any = '1';
+    for (let index = 0; index < depth; index += 1) value = [value];
+    return value;
+  };
+  for (const depth of [1999, 2000, 2001]) {
+    const detail = m.kvDetail('k', 'L', [{label: 'deep', value: nested(depth)}]);
+    add('detail-depth', 'kvDetailDepthProbe', [depth],
+        {depth, tsValue: detail.entries[0].value});
+  }
   call('detail', 'jsonDetail', 'k', 'L', {'\\u0041': '\\u0042', nested: ['\\u0043', 1, null]});
   call('detail', 'jsonDetail', 'k', 'L', undefined);
   call('detail', 'jsonDetail', 'k', 'L', null, i18n);

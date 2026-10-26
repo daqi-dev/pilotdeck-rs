@@ -200,9 +200,8 @@ fn call(case: &JsValue) -> JsValue {
             let mut object = JsObject::new();
             object.insert(
                 "role".into(),
-                info.role.map_or(JsValue::Undefined, |role| {
-                    JsValue::String(role.as_str().into())
-                }),
+                info.role
+                    .map_or(JsValue::Undefined, |role| JsValue::String(role.as_string())),
             );
             object.insert("content".into(), JsValue::String(info.content));
             object.insert("hasToolCalls".into(), JsValue::Bool(info.has_tool_calls));

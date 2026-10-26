@@ -88,13 +88,7 @@ fn text(v: &JsValue) -> String {
         .unwrap_or_default()
 }
 fn truthy(v: &JsValue) -> bool {
-    match v {
-        JsValue::Undefined | JsValue::Null => false,
-        JsValue::Bool(b) => *b,
-        JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
-        JsValue::String(s) => !s.units().is_empty(),
-        _ => true,
-    }
+    super::js_truthy(v)
 }
 fn array(v: &JsValue) -> Result<&[JsValue]> {
     if let JsValue::Array(a) = v {
