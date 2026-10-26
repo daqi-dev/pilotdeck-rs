@@ -14,7 +14,8 @@ out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/storage/recorder.rs'
 env = os.environ.copy()
-env['CARGO_TARGET_DIR'] = str(root / '_build/cargo-target')
+if not env.get('CARGO_TARGET_DIR'):
+    raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
            '-p', 'pilotdeck-gateway', '--test', 'recorder_completion']
 # Scope first, then require one indentation-independent statement anchor.

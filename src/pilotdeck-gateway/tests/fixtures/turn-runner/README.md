@@ -97,3 +97,11 @@ runner 负控默认25项（两个 terminal 分支分别变异，每个锚点 cou
 `loop-{missing,undefined,null}-message` 三格记录 TS JSON 结果及 statusTextOwn/statusTextUndefined。TS live 对象有 text:undefined，但 wire JSON 省略；Rust agent_status 按 wire 形状省略 text，保留 null。failureMessageUndefined 标记让 Rust 回放恢复真实 Undefined 输入，turn_failed.error 保留原始输入；detail 的 undefined 字段同样省略。
 
 三套负控共用 `_negative_common.py` 的 scoped/unscoped mutate 与有界 cargo run，仍各自使用 negative_process 的 mutating_sources；所有变异要求运行时断言失败，恢复正控后才记录通过。当前 runner 负控 25 项，recorder 10 项，recording 31 项。使用本树 target：`CARGO_TARGET_DIR=/Users/da/ws/pilotdeck-rs/_build/wt-741c/_build/cargo-target`。既有 ignored `runner_regenerates_identically` 覆盖扩展后的完整 fixture。
+
+## pr4 独立修复（完整接线留 pr5）
+
+新增32个 malformed result 金样格（每种 idle/step）和3个 loop_failed 后 complete 再失败格。TS catch 确实重复写第二条 status，Rust 保留该行为；Undefined 和非字符串 turnId 文案逐字节对拍，缺身份/非法 session 的关闭策略见 A7.2-TURN-INVALID-RESULT-001-R1。字段级 Undefined sessionId、prototype/getter、任意组合不宣称已逐格验证。旧金样原值保留。
+
+真实 sidecar 新增 dispose-before 行（连接/模型调用为0）；live 的预取消 factory 用例消费 abort-before/dispose-before 的连接数，使用两种真实 adapter 构造器核 factory 零调用。另测 pending factory 的 abort/dispose/drop，以及两次取消 next 借用后继续同一前驱。这里只对齐“不得创建连接”，不声称 Rust synthesized aborted terminal 与 TS 无终态一致。旧 Python peer 协议未改，StreamIntegrity 未放松。
+
+四套负控都要求调用方显式提供 CARGO_TARGET_DIR，不能覆盖为别树 target。runner 31项；新 live_negative.py 3项（eager factory、factory 优先、忽略 pending cancel）。它们使用 mutating_sources/run_owned/wait_for_slot，未提交的新源码遇到 baseline 拒绝须交协调者提交后运行，不建立副本仓库或第二构建目录。既有 ignored runner_regenerates_identically 覆盖新金样并需显式运行。

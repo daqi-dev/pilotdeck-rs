@@ -3819,6 +3819,3572 @@
       }
     },
     {
+      "name": "invalid-result-undefined-idle",
+      "rawResultUndefined": true,
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Cannot read properties of undefined (reading 'turnId')",
+          "detail": {
+            "message": "Cannot read properties of undefined (reading 'turnId')",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Cannot read properties of undefined (reading 'turnId')"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Cannot read properties of undefined (reading 'turnId')"
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Cannot read properties of undefined (reading 'turnId')\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Cannot read properties of undefined (reading 'turnId')\",\"detail\":{\"message\":\"Cannot read properties of undefined (reading 'turnId')\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_undefined_idle",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-undefined-step",
+      "rawResultUndefined": true,
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Cannot read properties of undefined (reading 'turnId')",
+          "detail": {
+            "message": "Cannot read properties of undefined (reading 'turnId')",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Cannot read properties of undefined (reading 'turnId')"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Cannot read properties of undefined (reading 'turnId')"
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Cannot read properties of undefined (reading 'turnId')\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Cannot read properties of undefined (reading 'turnId')\",\"detail\":{\"message\":\"Cannot read properties of undefined (reading 'turnId')\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_undefined_step",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-missing-session-idle",
+      "rawResult": {
+        "type": "success",
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_missing_session_idle",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-missing-session-step",
+      "rawResult": {
+        "type": "success",
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_missing_session_step",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-missing-turn-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_missing_turn_idle",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-missing-turn-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_missing_turn_step",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-turn-number-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": 42,
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn 42 has not started.",
+          "detail": {
+            "message": "Durable turn 42 has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn 42 has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn 42 has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn 42 has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn 42 has not started.\",\"detail\":{\"message\":\"Durable turn 42 has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_number_idle",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-number-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": 42,
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn 42 has not started.",
+          "detail": {
+            "message": "Durable turn 42 has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn 42 has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn 42 has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn 42 has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn 42 has not started.\",\"detail\":{\"message\":\"Durable turn 42 has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_number_step",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-null-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": null,
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn null has not started.",
+          "detail": {
+            "message": "Durable turn null has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn null has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn null has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn null has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn null has not started.\",\"detail\":{\"message\":\"Durable turn null has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_null_idle",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-null-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": null,
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn null has not started.",
+          "detail": {
+            "message": "Durable turn null has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn null has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn null has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn null has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn null has not started.\",\"detail\":{\"message\":\"Durable turn null has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_null_step",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-bool-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": false,
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn false has not started.",
+          "detail": {
+            "message": "Durable turn false has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn false has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn false has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn false has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn false has not started.\",\"detail\":{\"message\":\"Durable turn false has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_bool_idle",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-bool-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": false,
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn false has not started.",
+          "detail": {
+            "message": "Durable turn false has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn false has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn false has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn false has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn false has not started.\",\"detail\":{\"message\":\"Durable turn false has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_bool_step",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-array-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": [
+          "x",
+          null,
+          42
+        ],
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn x,,42 has not started.",
+          "detail": {
+            "message": "Durable turn x,,42 has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn x,,42 has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn x,,42 has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn x,,42 has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn x,,42 has not started.\",\"detail\":{\"message\":\"Durable turn x,,42 has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_array_idle",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-array-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": [
+          "x",
+          null,
+          42
+        ],
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn x,,42 has not started.",
+          "detail": {
+            "message": "Durable turn x,,42 has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn x,,42 has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn x,,42 has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn x,,42 has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn x,,42 has not started.\",\"detail\":{\"message\":\"Durable turn x,,42 has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_array_step",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-object-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": {
+          "key": "x"
+        },
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn [object Object] has not started.",
+          "detail": {
+            "message": "Durable turn [object Object] has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn [object Object] has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn [object Object] has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn [object Object] has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn [object Object] has not started.\",\"detail\":{\"message\":\"Durable turn [object Object] has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_object_idle",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-object-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": {
+          "key": "x"
+        },
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn [object Object] has not started.",
+          "detail": {
+            "message": "Durable turn [object Object] has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn [object Object] has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn [object Object] has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn [object Object] has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn [object Object] has not started.\",\"detail\":{\"message\":\"Durable turn [object Object] has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_object_step",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-coercion-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": {
+          "toString": null
+        },
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Cannot convert object to primitive value",
+          "detail": {
+            "message": "Cannot convert object to primitive value",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Cannot convert object to primitive value"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Cannot convert object to primitive value"
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Cannot convert object to primitive value\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Cannot convert object to primitive value\",\"detail\":{\"message\":\"Cannot convert object to primitive value\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_coercion_idle",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-coercion-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": {
+          "toString": null
+        },
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Cannot convert object to primitive value",
+          "detail": {
+            "message": "Cannot convert object to primitive value",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Cannot convert object to primitive value"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Cannot convert object to primitive value"
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Cannot convert object to primitive value\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Cannot convert object to primitive value\",\"detail\":{\"message\":\"Cannot convert object to primitive value\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_coercion_step",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-undefined-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "rawTurnUndefined": true,
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_turn_undefined_idle",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-turn-undefined-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "rawTurnUndefined": true,
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "s",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_turn_undefined_step",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-turn-surrogate-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": "wrong\ud800",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn wrong\ud800 has not started.",
+          "detail": {
+            "message": "Durable turn wrong\ud800 has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn wrong\ud800 has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn wrong\ud800 has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn wrong\\ud800 has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn wrong\\ud800 has not started.\",\"detail\":{\"message\":\"Durable turn wrong\\ud800 has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_surrogate_idle",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-turn-surrogate-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": "s",
+        "turnId": "wrong\ud800",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn wrong\ud800 has not started.",
+          "detail": {
+            "message": "Durable turn wrong\ud800 has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn wrong\ud800 has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn wrong\ud800 has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn wrong\\ud800 has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn wrong\\ud800 has not started.\",\"detail\":{\"message\":\"Durable turn wrong\\ud800 has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_invalid_result_turn_surrogate_step",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "invalid-result-session-number-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": 42,
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": 42,
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":42,\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":42,\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_number_idle",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-session-number-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": 42,
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": 42,
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":42,\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":42,\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":42,\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_number_step",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-session-null-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": null,
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": null,
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":null,\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":null,\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_null_idle",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-session-null-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": null,
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": null,
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":null,\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":null,\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":null,\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_null_step",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-session-bool-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": false,
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": false,
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":false,\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":false,\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_bool_idle",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-session-bool-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": false,
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": false,
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":false,\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":false,\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":false,\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_bool_step",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-session-array-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": [
+          "x",
+          null,
+          42
+        ],
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": [
+              "x",
+              null,
+              42
+            ],
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":[\"x\",null,42],\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":[\"x\",null,42],\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_array_idle",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-session-array-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": [
+          "x",
+          null,
+          42
+        ],
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": [
+              "x",
+              null,
+              42
+            ],
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":[\"x\",null,42],\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":[\"x\",null,42],\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":[\"x\",null,42],\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_array_step",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-session-object-idle",
+      "rawResult": {
+        "type": "success",
+        "sessionId": {
+          "key": "x"
+        },
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": {
+              "key": "x"
+            },
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":{\"key\":\"x\"},\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":{\"key\":\"x\"},\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_object_idle",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "invalid-result-session-object-step",
+      "rawResult": {
+        "type": "success",
+        "sessionId": {
+          "key": "x"
+        },
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": {
+              "key": "x"
+            },
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 1,
+      "closes": 2,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":{\"key\":\"x\"},\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"success\",\"sessionId\":{\"key\":\"x\"},\"turnId\":\"t\",\"stopReason\":\"completed\",\"usage\":{},\"permissionDenials\":[],\"turns\":1,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\"},\"sessionId\":{\"key\":\"x\"},\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n",
+      "consumption": {
+        "status": "差异已登记，非 TS 对齐",
+        "test": "runner_invalid_result_session_object_step",
+        "scope": "raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001"
+      }
+    },
+    {
+      "name": "loop-failed-complete-once",
+      "rawResult": {
+        "type": "error",
+        "sessionId": "s",
+        "turnId": "t",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "loop failed",
+          "detail": {
+            "message": "loop failed",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "loop failed"
+          }
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "injected write failure",
+          "detail": {
+            "message": "injected write failure",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "injected write failure"
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "injected write failure"
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 2,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"loop failed\",\"detail\":{\"message\":\"loop failed\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"injected write failure\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"injected write failure\",\"detail\":{\"message\":\"injected write failure\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_loop_failed_complete_once",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "loop-failed-invalid-idle",
+      "rawResult": {
+        "type": "error",
+        "sessionId": "s",
+        "turnId": "other",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": false,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "loop failed",
+          "detail": {
+            "message": "loop failed",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "loop failed"
+          }
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn other has not started.",
+          "detail": {
+            "message": "Durable turn other has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn other has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn other has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"loop failed\",\"detail\":{\"message\":\"loop failed\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn other has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn other has not started.\",\"detail\":{\"message\":\"Durable turn other has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_loop_failed_invalid_idle",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
+      "name": "loop-failed-invalid-step",
+      "rawResult": {
+        "type": "error",
+        "sessionId": "s",
+        "turnId": "other",
+        "stopReason": "completed",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 1,
+        "startedAt": "2026-10-26T00:00:00.000Z",
+        "completedAt": "2026-10-26T00:00:00.000Z"
+      },
+      "openStep": true,
+      "events": [
+        {
+          "type": "turn_started",
+          "sessionId": "s",
+          "turnId": "t"
+        },
+        {
+          "type": "input_accepted",
+          "sessionId": "s",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "user_prompt_submitted",
+          "sessionId": "s",
+          "turnId": "t",
+          "prompt": "probe"
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "loop failed",
+          "detail": {
+            "message": "loop failed",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "loop failed"
+          }
+        },
+        {
+          "type": "model_event",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": {
+            "type": "message_start",
+            "role": "assistant"
+          }
+        },
+        {
+          "type": "agent_status",
+          "sessionId": "s",
+          "turnId": "t",
+          "event": "turn_failed",
+          "kind": "error",
+          "text": "Durable turn other has not started.",
+          "detail": {
+            "message": "Durable turn other has not started.",
+            "code": "agent_invalid_state",
+            "severity": "error",
+            "visible": true,
+            "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+            "scope": "turn",
+            "source": "agent"
+          }
+        },
+        {
+          "type": "turn_failed",
+          "sessionId": "s",
+          "turnId": "t",
+          "error": {
+            "code": "agent_invalid_state",
+            "message": "Durable turn other has not started."
+          }
+        },
+        {
+          "type": "turn_completed",
+          "sessionId": "s",
+          "turnId": "t",
+          "result": {
+            "type": "error",
+            "sessionId": "s",
+            "turnId": "t",
+            "stopReason": "model_error",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 0,
+            "startedAt": "2026-10-26T00:00:00.000Z",
+            "completedAt": "2026-10-26T00:00:00.000Z",
+            "errors": [
+              {
+                "code": "agent_invalid_state",
+                "message": "Durable turn other has not started."
+              }
+            ]
+          }
+        }
+      ],
+      "error": null,
+      "loopCalls": 1,
+      "modelCalls": 0,
+      "returns": 1,
+      "completes": 2,
+      "closes": 3,
+      "writeAttempts": 0,
+      "transcript": "{\"type\":\"turn_started\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":1,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-1\",\"parentEntryId\":null}\n{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"probe\"}]}],\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":2,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-2\",\"parentEntryId\":\"id-1\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":3,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-3\",\"parentEntryId\":\"id-2\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"messages\":[]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":4,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-4\",\"parentEntryId\":\"id-3\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"loop failed\",\"detail\":{\"message\":\"loop failed\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-5\",\"parentEntryId\":\"id-4\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"failed\",\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":6,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-6\",\"parentEntryId\":\"id-5\"}\n{\"type\":\"turn_result\",\"result\":{\"type\":\"error\",\"sessionId\":\"s\",\"turnId\":\"t\",\"stopReason\":\"model_error\",\"usage\":{},\"permissionDenials\":[],\"turns\":0,\"startedAt\":\"2026-10-26T00:00:00.000Z\",\"completedAt\":\"2026-10-26T00:00:00.000Z\",\"errors\":[{\"code\":\"agent_invalid_state\",\"message\":\"Durable turn other has not started.\"}]},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":7,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-7\",\"parentEntryId\":\"id-6\"}\n{\"type\":\"agent_status_message\",\"event\":\"turn_failed\",\"kind\":\"error\",\"text\":\"Durable turn other has not started.\",\"detail\":{\"message\":\"Durable turn other has not started.\",\"code\":\"agent_invalid_state\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Retry the turn; if it repeats, check the gateway logs or adjust the request.\",\"scope\":\"turn\",\"source\":\"agent\"},\"sessionId\":\"s\",\"turnId\":\"t\",\"sequence\":8,\"createdAt\":\"2026-10-26T00:00:00.000Z\",\"entryId\":\"id-8\",\"parentEntryId\":\"id-7\"}\n",
+      "consumption": {
+        "status": "pr2 已消费",
+        "test": "runner_loop_failed_invalid_step",
+        "scope": "runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational"
+      }
+    },
+    {
       "name": "loop-missing-message",
       "failureError": {
         "code": "agent_invalid_state"
@@ -5277,6 +8843,28 @@
       "consumption": {
         "status": "仅记录，由 pr3 消费",
         "test": "live_sidecar_abort_after",
+        "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
+      }
+    },
+    {
+      "name": "dispose-before",
+      "connections": 0,
+      "closed": 0,
+      "modelCalls": 0,
+      "events": [
+        "session_started",
+        "setup_completed",
+        "turn_started",
+        "input_accepted",
+        "user_prompt_submitted",
+        "session_ended"
+      ],
+      "firstSidecarEvent": null,
+      "terminal": null,
+      "error": null,
+      "consumption": {
+        "status": "仅记录，由 pr3 消费",
+        "test": "live_sidecar_dispose_before",
         "scope": "real TS sidecar + Rust host; approved differences require separate acceptance"
       }
     }

@@ -73,16 +73,31 @@ function writerFor(name: string, fault = '', failures = 0) {
 const result = (type = 'success', turnId = 't') => ({type,sessionId:'s',turnId,stopReason:'completed',
   usage:{},permissionDenials:[],turns:1,startedAt:now().toISOString(),completedAt:now().toISOString()});
 const matrix:any[] = [];
-const completionCases = ['turn', 'session', 'number', 'array', 'null'].flatMap(kind =>
+const completionCases = ['turn', 'session', 'number', 'array', 'null', 'undefined',
+  'missing-session', 'missing-turn', 'turn-number', 'turn-null', 'turn-bool', 'turn-array', 'turn-object', 'turn-coercion', 'turn-undefined', 'turn-surrogate',
+  'session-number', 'session-null', 'session-bool', 'session-array', 'session-object'].flatMap(kind =>
   ['idle', 'step'].map(state => `invalid-result-${kind}-${state}`));
-const malformedResult = (name: string): any => name.includes('-number-') ? 42
-  : name.includes('-array-') ? [] : name.includes('-null-') ? null
-  : name.includes('-session-') ? {...result(), sessionId:'other'} : result('success', 'other');
+const malformedResult = (name: string): any => {
+  const kind = name.replace(/^invalid-result-/, '').replace(/-(idle|step)$/, '');
+  const values: Record<string, any> = {number:42, array:[], null:null, undefined};
+  if (Object.hasOwn(values, kind)) return values[kind];
+  const r: any = result();
+  if (kind === 'missing-session') delete r.sessionId;
+  else if (kind === 'missing-turn') delete r.turnId;
+  else if (kind === 'session') r.sessionId = 'other';
+  else if (kind === 'turn') r.turnId = 'other';
+  else {
+    const [field, type] = kind.split('-');
+    r[field === 'turn' ? 'turnId' : 'sessionId'] = {number:42, null:null, bool:false, array:['x',null,42], object:{key:'x'}, coercion:{toString:null}, undefined, surrogate:'wrong\ud800'}[type];
+  }
+  return r;
+};
+const catchCases = ['loop-failed-complete-once', 'loop-failed-invalid-idle', 'loop-failed-invalid-step'];
 for (const name of ['success','start-fails','accepted-fails','abort-before-execute','abort-after-accepted',
-  'loop-fails-twice','loop-throws','early-completed','consumer-drop','complete-once','complete-always','input-text','input-blocks','accepted-duplicate','loop-aborted-error','status-fails','loop-null-hint','input-metadata-all','input-metadata-false','input-metadata-null','input-metadata-absent','input-metadata-array','input-metadata-string','input-metadata-number','input-text-original',...completionCases,'loop-missing-message','loop-undefined-message','loop-null-message']) {
+  'loop-fails-twice','loop-throws','early-completed','consumer-drop','complete-once','complete-always','input-text','input-blocks','accepted-duplicate','loop-aborted-error','status-fails','loop-null-hint','input-metadata-all','input-metadata-false','input-metadata-null','input-metadata-absent','input-metadata-array','input-metadata-string','input-metadata-number','input-text-original',...completionCases,...catchCases,'loop-missing-message','loop-undefined-message','loop-null-message']) {
   const fault = name === 'status-fails' ? 'agent_status_message' : name === 'start-fails' ? 'turn_started' : name === 'accepted-fails' ? 'accepted_input'
-    : name.startsWith('complete-') ? 'turn_result' : '';
-  const ctx = writerFor(name, fault, name === 'complete-once' ? 1 : 99);
+    : (name.startsWith('complete-') || name==='loop-failed-complete-once') ? 'turn_result' : '';
+  const ctx = writerFor(name, fault, name.endsWith('complete-once') ? 1 : 99);
   const controller = new AbortController();
   let loopCalls=0, modelCalls=0, returns=0, completes=0, closes=0;
   let loopMessages:any[]=[];
@@ -109,12 +124,13 @@ for (const name of ['success','start-fails','accepted-fails','abort-before-execu
     loopCalls++;loopMessages=input.messages;
     try {
       if(name.startsWith('abort-')) return yield* native.run(input);
-      if(invalidResult && name.endsWith('-step')) await recorder.recordModelRequest('s','t',{request:{messages:[]}});
+      if((invalidResult || catchCases.includes(name)) && name.endsWith('-step')) await recorder.recordModelRequest('s','t',{request:{messages:[]}});
+      if(catchCases.includes(name)) yield {type:'turn_failed',sessionId:'s',turnId:'t',error:{code:'agent_invalid_state',message:'loop failed'}};
       if(messageCase) yield {type:'turn_failed',sessionId:'s',turnId:'t',error:failureError};
       if(name==='loop-aborted-error') {const {AgentRuntimeError}=await load('agent/protocol/errors.ts');throw new AgentRuntimeError('agent_aborted','injected abort');}
       if(name==='loop-throws') throw new Error('injected loop failure');
       if(['loop-fails-twice','status-fails','loop-null-hint'].includes(name)) for(let i=0;i<2;i++) yield {type:'turn_failed',sessionId:'s',turnId:'t',error:{code:'agent_invalid_state',message:'loop failed',...(name==='loop-null-hint'?{userHint:null}:{})}};
-      const r=invalidResult ? malformedResult(name) : result(messageCase || ['loop-fails-twice','status-fails','loop-null-hint'].includes(name)?'error':'success');
+      const r=name.startsWith('loop-failed-invalid-') ? result('error','other') : invalidResult ? malformedResult(name) : result(catchCases.includes(name) || messageCase || ['loop-fails-twice','status-fails','loop-null-hint'].includes(name)?'error':'success');
       if(name==='early-completed') yield {type:'turn_completed',sessionId:'s',turnId:'t',result:r};
       yield {type:'model_event',sessionId:'s',turnId:'t',event:{type:'message_start',role:'assistant'}};
       yield {type:'turn_completed',sessionId:'s',turnId:'t',result:r};
@@ -133,7 +149,7 @@ for (const name of ['success','start-fails','accepted-fails','abort-before-execu
       if(name==='abort-after-accepted' && e.type==='input_accepted')controller.abort('probe');
       if(name==='consumer-drop' && e.type==='model_event')break;
   }}catch(e:any){error=e.message;}
-  matrix.push({name,...(invalidResult?{rawResult:malformedResult(name),openStep:name.endsWith('-step')}:{}),...(messageCase?{failureError,failureMessageUndefined:Object.hasOwn(failureError,'message') && failureError.message===undefined,statusTextOwn:events.filter(e=>e.type==='agent_status').map(e=>Object.hasOwn(e,'text')),statusTextUndefined:events.filter(e=>e.type==='agent_status').map(e=>e.text===undefined)}:{}),events,error,loopCalls,modelCalls,returns,completes,closes,writeAttempts:ctx.attempts(),transcript:ctx.bytes(),...(inputCase?{rawInput,history,synthetic,loopMessages}: {}),...(name.startsWith('input-metadata-')?{submitOptions}: {})});
+  matrix.push({name,...(invalidResult?{rawResult:malformedResult(name),...(malformedResult(name)===undefined?{rawResultUndefined:true}:{}),...(name.startsWith('invalid-result-turn-undefined-')?{rawTurnUndefined:true}:{}),openStep:name.endsWith('-step')}:{}),...(catchCases.includes(name)?{rawResult:result('error',name.startsWith('loop-failed-invalid-')?'other':'t'),openStep:name.endsWith('-step')}:{}),...(messageCase?{failureError,failureMessageUndefined:Object.hasOwn(failureError,'message') && failureError.message===undefined,statusTextOwn:events.filter(e=>e.type==='agent_status').map(e=>Object.hasOwn(e,'text')),statusTextUndefined:events.filter(e=>e.type==='agent_status').map(e=>e.text===undefined)}:{}),events,error,loopCalls,modelCalls,returns,completes,closes,writeAttempts:ctx.attempts(),transcript:ctx.bytes(),...(inputCase?{rawInput,history,synthetic,loopMessages}: {}),...(name.startsWith('input-metadata-')?{submitOptions}: {})});
 }
 // Recorder completion is independently replayable in Rust, including retry state.
 const recorderCases:any[]=[];
@@ -192,11 +208,11 @@ const matrixConsumers: Record<string,string> = {
   "status-fails": "runner_best_effort_status",
   "loop-null-hint": "runner_nullish_hint"
 };
-for(const name of [...completionCases,'loop-missing-message','loop-undefined-message','loop-null-message']) matrixConsumers[name]=`runner_${name.replaceAll('-','_')}`;
+for(const name of [...completionCases,...catchCases,'loop-missing-message','loop-undefined-message','loop-null-message']) matrixConsumers[name]=`runner_${name.replaceAll('-','_')}`;
 for(const row of matrix) row.consumption = matrixConsumers[row.name]
   ? {status:row.name.startsWith('input-metadata-') || row.name==='input-text-original' ? 'pr3 端口已消费' : 'pr2 已消费',test:matrixConsumers[row.name],scope:'runner-owned events / error / JSONL; input cases also loopMessages; counters remain observational'}
   : {status:'仅记录，由 pr3 消费',test:`live_runner_${row.name.replaceAll('-','_')}`,scope:'LiveSessionAdapter + AgentLoop host integration'};
-for(const row of matrix) if (/^invalid-result-(session|number|array)-/.test(row.name))
+for(const row of matrix) if (/^invalid-result-(session|number|array|missing-turn|missing-session|turn-undefined)-/.test(row.name))
   row.consumption = {status:'差异已登记，非 TS 对齐',test:matrixConsumers[row.name],scope:'raw TS input/result retained; Rust error terminal, step/turn closure and identity asserted; A7.2-TURN-INVALID-RESULT-001'};
 for(const row of sidecar) row.consumption = {status:'仅记录，由 pr3 消费',test:`live_sidecar_${row.name.replaceAll('-','_')}`,scope:'real TS sidecar + Rust host; approved differences require separate acceptance'};
 assertBaseline(root);

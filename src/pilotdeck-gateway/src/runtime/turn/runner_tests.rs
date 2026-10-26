@@ -139,10 +139,17 @@ async fn replay(name: &str) {
         "accepted-fails" => "accepted_input",
         "accepted-duplicate" => "duplicate",
         "status-fails" => "agent_status_message",
-        "complete-once" | "complete-always" => "turn_result",
+        "complete-once" | "complete-always" | "loop-failed-complete-once" => "turn_result",
         _ => "",
     };
-    let f = Fixture::new(fault, if name == "complete-once" { 1 } else { 99 });
+    let f = Fixture::new(
+        fault,
+        if name.ends_with("complete-once") {
+            1
+        } else {
+            99
+        },
+    );
     let mut expected: Vec<_> = array(row.get("events").unwrap())
         .into_iter()
         .filter(|e| {
@@ -197,8 +204,8 @@ async fn replay(name: &str) {
             }
             events.extend(failures);
         }
-        if ["loop-fails-twice", "status-fails", "loop-null-hint"].contains(&name) {
-            for _ in 0..2 {
+        if ["loop-fails-twice", "status-fails", "loop-null-hint"].contains(&name) || name.starts_with("loop-failed-") {
+            for _ in 0..if name.starts_with("loop-failed-") { 1 } else { 2 } {
                 events.extend(advance(&mut recording, RecordingAction::LoopFailed(
                     if name == "loop-null-hint" {parse_json(r#"{"code":"agent_invalid_state","message":"loop failed","userHint":null}"#).unwrap()} else {parse_json(r#"{"code":"agent_invalid_state","message":"loop failed"}"#).unwrap()},
                 )).await?);
@@ -209,7 +216,9 @@ async fn replay(name: &str) {
         } else if name == "loop-throws" {
             RecordingAction::Fail(parse_json(r#"{"code":"agent_invalid_state","message":"injected loop failure"}"#).unwrap())
         } else {
-            let result = if let Some(raw) = row.get("rawResult") {
+            let result = if row.get("rawResultUndefined") == Some(&JsValue::Bool(true)) {
+                JsValue::Undefined
+            } else if let Some(raw) = row.get("rawResult") {
                 raw.clone()
             } else if name.starts_with("complete-") {
                 rows.iter()
@@ -230,7 +239,7 @@ async fn replay(name: &str) {
         };
         events.extend(advance(&mut recording, action).await?);
         assert!(recording.runner().unwrap().is_complete());
-        if row.get("rawResult").is_some() {
+        if row.get("rawResult").is_some() || row.get("rawResultUndefined") == Some(&JsValue::Bool(true)) {
             assert!(recording.runner().unwrap().recorder.record_model_request(&"s".into(), &"t".into(), object([])).is_err(), "invalid result must close recorder turn");
         }
         Ok(())
@@ -356,6 +365,13 @@ async fn invalid_result_difference(name: &str) {
             .get("result"),
         Some(&raw)
     );
+    let mut raw = raw;
+    if row.get("rawTurnUndefined") == Some(&JsValue::Bool(true)) {
+        let JsValue::Object(fields) = &mut raw else {
+            panic!("raw result object")
+        };
+        fields.insert("turnId".into(), JsValue::Undefined);
+    }
     let (runner, events) = runner.complete(raw).await.unwrap();
     assert!(runner.is_complete());
     assert_eq!(
@@ -441,6 +457,150 @@ case!(runner_invalid_result_null_step, "invalid-result-null-step");
 case!(runner_loop_missing_message, "loop-missing-message");
 case!(runner_loop_undefined_message, "loop-undefined-message");
 case!(runner_loop_null_message, "loop-null-message");
+
+case!(
+    runner_loop_failed_complete_once,
+    "loop-failed-complete-once"
+);
+case!(runner_loop_failed_invalid_idle, "loop-failed-invalid-idle");
+case!(runner_loop_failed_invalid_step, "loop-failed-invalid-step");
+case!(
+    runner_invalid_result_undefined_idle,
+    "invalid-result-undefined-idle"
+);
+case!(
+    runner_invalid_result_undefined_step,
+    "invalid-result-undefined-step"
+);
+case!(
+    runner_invalid_result_turn_number_idle,
+    "invalid-result-turn-number-idle"
+);
+case!(
+    runner_invalid_result_turn_number_step,
+    "invalid-result-turn-number-step"
+);
+case!(
+    runner_invalid_result_turn_null_idle,
+    "invalid-result-turn-null-idle"
+);
+case!(
+    runner_invalid_result_turn_null_step,
+    "invalid-result-turn-null-step"
+);
+case!(
+    runner_invalid_result_turn_bool_idle,
+    "invalid-result-turn-bool-idle"
+);
+case!(
+    runner_invalid_result_turn_bool_step,
+    "invalid-result-turn-bool-step"
+);
+case!(
+    runner_invalid_result_turn_array_idle,
+    "invalid-result-turn-array-idle"
+);
+case!(
+    runner_invalid_result_turn_array_step,
+    "invalid-result-turn-array-step"
+);
+case!(
+    runner_invalid_result_turn_object_idle,
+    "invalid-result-turn-object-idle"
+);
+case!(
+    runner_invalid_result_turn_object_step,
+    "invalid-result-turn-object-step"
+);
+case!(
+    runner_invalid_result_turn_coercion_idle,
+    "invalid-result-turn-coercion-idle"
+);
+case!(
+    runner_invalid_result_turn_coercion_step,
+    "invalid-result-turn-coercion-step"
+);
+macro_rules! difference_case {
+    ($test:ident, $name:literal) => {
+        #[tokio::test]
+        async fn $test() {
+            invalid_result_difference($name).await;
+        }
+    };
+}
+difference_case!(
+    runner_invalid_result_missing_session_idle,
+    "invalid-result-missing-session-idle"
+);
+difference_case!(
+    runner_invalid_result_missing_session_step,
+    "invalid-result-missing-session-step"
+);
+difference_case!(
+    runner_invalid_result_missing_turn_idle,
+    "invalid-result-missing-turn-idle"
+);
+difference_case!(
+    runner_invalid_result_missing_turn_step,
+    "invalid-result-missing-turn-step"
+);
+difference_case!(
+    runner_invalid_result_session_number_idle,
+    "invalid-result-session-number-idle"
+);
+difference_case!(
+    runner_invalid_result_session_number_step,
+    "invalid-result-session-number-step"
+);
+difference_case!(
+    runner_invalid_result_session_null_idle,
+    "invalid-result-session-null-idle"
+);
+difference_case!(
+    runner_invalid_result_session_null_step,
+    "invalid-result-session-null-step"
+);
+difference_case!(
+    runner_invalid_result_session_bool_idle,
+    "invalid-result-session-bool-idle"
+);
+difference_case!(
+    runner_invalid_result_session_bool_step,
+    "invalid-result-session-bool-step"
+);
+difference_case!(
+    runner_invalid_result_session_array_idle,
+    "invalid-result-session-array-idle"
+);
+difference_case!(
+    runner_invalid_result_session_array_step,
+    "invalid-result-session-array-step"
+);
+difference_case!(
+    runner_invalid_result_session_object_idle,
+    "invalid-result-session-object-idle"
+);
+difference_case!(
+    runner_invalid_result_session_object_step,
+    "invalid-result-session-object-step"
+);
+
+case!(
+    runner_invalid_result_turn_surrogate_idle,
+    "invalid-result-turn-surrogate-idle"
+);
+case!(
+    runner_invalid_result_turn_surrogate_step,
+    "invalid-result-turn-surrogate-step"
+);
+difference_case!(
+    runner_invalid_result_turn_undefined_idle,
+    "invalid-result-turn-undefined-idle"
+);
+difference_case!(
+    runner_invalid_result_turn_undefined_step,
+    "invalid-result-turn-undefined-step"
+);
 
 #[test]
 #[ignore = "requires Node 22 and pinned TS; spawns real sidecars"]
