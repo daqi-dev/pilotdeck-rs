@@ -3240,6 +3240,154 @@
       "errorText": "data must be object, data must match format \"email\""
     },
     {
+      "id": "uri/upper",
+      "schema": {
+        "type": "string",
+        "format": "uri"
+      },
+      "data": "HTTP://EXAMPLE.COM/"
+    },
+    {
+      "id": "uri/long-s-scheme",
+      "schema": {
+        "type": "string",
+        "format": "uri"
+      },
+      "data": "ſcheme://x/",
+      "errorText": "data must match format \"uri\""
+    },
+    {
+      "id": "uri-reference/upper",
+      "schema": {
+        "type": "string",
+        "format": "uri-reference"
+      },
+      "data": "HTTP://example.com/"
+    },
+    {
+      "id": "uri-reference/long-s-scheme",
+      "schema": {
+        "type": "string",
+        "format": "uri-reference"
+      },
+      "data": "ſ://x/",
+      "errorText": "data must match format \"uri-reference\""
+    },
+    {
+      "id": "uri-template/upper",
+      "schema": {
+        "type": "string",
+        "format": "uri-template"
+      },
+      "data": "{VAR}"
+    },
+    {
+      "id": "uri-template/long-s",
+      "schema": {
+        "type": "string",
+        "format": "uri-template"
+      },
+      "data": "{ſ}",
+      "errorText": "data must match format \"uri-template\""
+    },
+    {
+      "id": "email/long-s-local",
+      "schema": {
+        "type": "string",
+        "format": "email"
+      },
+      "data": "ſ@example.com",
+      "errorText": "data must match format \"email\""
+    },
+    {
+      "id": "email/long-s-domain",
+      "schema": {
+        "type": "string",
+        "format": "email"
+      },
+      "data": "a@ſ.com",
+      "errorText": "data must match format \"email\""
+    },
+    {
+      "id": "email/long-s-tld",
+      "schema": {
+        "type": "string",
+        "format": "email"
+      },
+      "data": "a@example.ſom",
+      "errorText": "data must match format \"email\""
+    },
+    {
+      "id": "email/kelvin-domain",
+      "schema": {
+        "type": "string",
+        "format": "email"
+      },
+      "data": "a@K.com",
+      "errorText": "data must match format \"email\""
+    },
+    {
+      "id": "email/i-with-dot",
+      "schema": {
+        "type": "string",
+        "format": "email"
+      },
+      "data": "İ@example.com",
+      "errorText": "data must match format \"email\""
+    },
+    {
+      "id": "ipv6/upper-hex",
+      "schema": {
+        "type": "string",
+        "format": "ipv6"
+      },
+      "data": "::ABCD"
+    },
+    {
+      "id": "ipv6/long-s",
+      "schema": {
+        "type": "string",
+        "format": "ipv6"
+      },
+      "data": "::ſ",
+      "errorText": "data must match format \"ipv6\""
+    },
+    {
+      "id": "json-pointer-uri-fragment/upper",
+      "schema": {
+        "type": "string",
+        "format": "json-pointer-uri-fragment"
+      },
+      "data": "#/A"
+    },
+    {
+      "id": "json-pointer-uri-fragment/long-s",
+      "schema": {
+        "type": "string",
+        "format": "json-pointer-uri-fragment"
+      },
+      "data": "#/ſ",
+      "errorText": "data must match format \"json-pointer-uri-fragment\""
+    },
+    {
+      "id": "json-pointer-uri-fragment/kelvin",
+      "schema": {
+        "type": "string",
+        "format": "json-pointer-uri-fragment"
+      },
+      "data": "#/K",
+      "errorText": "data must match format \"json-pointer-uri-fragment\""
+    },
+    {
+      "id": "json-pointer-uri-fragment/i-with-dot",
+      "schema": {
+        "type": "string",
+        "format": "json-pointer-uri-fragment"
+      },
+      "data": "#/İ",
+      "errorText": "data must match format \"json-pointer-uri-fragment\""
+    },
+    {
       "id": "pattern/word-0",
       "schema": {
         "type": "string",
