@@ -48,9 +48,13 @@ use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionC
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
-type TurnHost = (HostClient, Arc<dyn HostHandler>, Arc<RuntimeLease>);
+type TurnHost = (
+    HostFuture<HostClient>,
+    Arc<dyn HostHandler>,
+    Arc<RuntimeLease>,
+);
 type PreparedHost = (
-    HostClient,
+    HostFuture<HostClient>,
     Arc<dyn HostHandler>,
     Arc<RuntimeLease>,
     Option<JsObject>,
@@ -66,7 +70,7 @@ type TurnHostFactory =
 /// observer and plan/todo ports retain per-turn state. InteractionTurn::bind
 /// only replaces the interaction handlers; it cannot sanitize these ports.
 pub struct InteractionHost {
-    pub client: HostClient,
+    pub client: HostFuture<HostClient>,
     pub lease: crate::runtime::project::RuntimeLease,
     pub router: crate::host::modules::ModuleRouter,
     pub input: super::interaction::InteractionTurnInput,
@@ -96,7 +100,7 @@ impl Drop for ActiveTurn {
 }
 
 impl LiveSessionAdapter {
-    /// The factory must create turn-owned resources, including a fresh handler
+    /// The factory must prepare a lazy connection and turn-owned resources, including a fresh handler
     /// when its dispose implementation releases module resources.
     /// Pass the supplied recorder to model/tool durable ports; never construct
     /// a second writer. `history` reads the session's current projection.
@@ -185,6 +189,7 @@ impl LiveSession for LiveSessionAdapter {
             .insert("messages".into(), JsValue::Array(input.loop_messages()));
         let owner = active.clone();
         let (recording_sender, recording_ready) = oneshot::channel();
+        let (execute_ready, execute_wait) = oneshot::channel();
         let host_factory = self.host_factory.clone();
         let recorder = self.recorder.clone();
         let identity = request.identity.clone();
@@ -205,6 +210,8 @@ impl LiveSession for LiveSessionAdapter {
                     // factory call lazy so a pre-cancel never creates resources.
                     host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,
                 };
+                let pending_host =
+                    crate::host::TurnScope::new(inner.clone(), std::time::Duration::from_secs(5));
                 let runner = TurnRunner::new(
                     recorder,
                     lease,
@@ -224,6 +231,16 @@ impl LiveSession for LiveSessionAdapter {
                     integrity: hook_integrity,
                     forwarding: Arc::default(),
                 });
+                // No connection or execute can start until both durable gates commit.
+                if execute_wait.await.is_err() {
+                    return Ok(ExecuteResult::Aborted { terminal: None });
+                }
+                let client = tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
+                    client = client => client?,
+                };
+                pending_host.handoff();
                 client
                     .execute_cancellable(request, handler, cancellation)
                     .await
@@ -239,6 +256,9 @@ impl LiveSession for LiveSessionAdapter {
             recording: None,
             pending_event: None,
             accepted: false,
+            preflight: 0,
+            execute_ready: Some(execute_ready),
+            recorded: std::collections::VecDeque::new(),
         }))
     }
 
@@ -277,8 +297,8 @@ struct LiveTurnStream {
     // consults it so a contradiction received but dropped before delivery (for
     // example turn_failed followed by success) still fails the terminal.
     integrity: Arc<StreamIntegrity>,
-    // Lifecycle actually delivered to the consumer. finish() requires this
-    // prefix to justify the terminal, like TS's pull-based final ordering.
+    // Applied sidecar lifecycle consumed by this stream. Host preflight events
+    // do not count as evidence that the sidecar applied its own lifecycle.
     delivered: StreamIntegrity,
     // The last stream/runner/blocking-write owner releases the real slot.
     active: Option<Arc<ActiveTurn>>,
@@ -287,49 +307,85 @@ struct LiveTurnStream {
     // A cancelled next drops only its borrow, never the transition or payload.
     pending_event: Option<(JsValue, bool)>,
     accepted: bool,
+    preflight: u8,
+    execute_ready: Option<oneshot::Sender<()>>,
+    recorded: std::collections::VecDeque<JsValue>,
 }
 
 impl LiveTurn for LiveTurnStream {
     fn next(&mut self) -> SessionNext<'_> {
         Box::pin(async move {
-            if self.pending_event.is_some() {
-                return self.settle_recording().await;
-            }
-            let mut delivered = None;
-            if let Some(execution) = self.execution.as_mut() {
-                let mut settled = None;
-                tokio::select! {
-                    // Drain events already applied by the handler before returning
-                    // either the terminal or an execution error. A closed receiver
-                    // disables this arm while execute finishes cleanup.
-                    biased;
-                    Some(event) = self.events.recv() => {
-                        delivered = Some(event);
-                    }
-                    result = execution => settled = Some(result),
+            loop {
+                if self.pending_event.is_some() {
+                    return self.settle_recording().await;
                 }
-                if let Some(result) = settled {
-                    self.result = Some(result);
-                    self.execution = None;
+                if let Some(event) = self.recorded.pop_front() {
+                    return self.deliver_recorded(event);
                 }
-            }
-            if let Some(event) = delivered {
-                return self.record_event(event, false).await;
-            }
-            // execute may have queued an event in the very poll that completed
-            // it, after select already polled recv. Keep its result for next().
-            if let Ok(event) = self.events.try_recv() {
-                return self.record_event(event, false).await;
-            }
-            match self.result.take() {
-                Some(result) => match self.finish(result) {
-                    Ok(Some(event)) => self.record_event(event, true).await,
-                    result => {
-                        self.release();
-                        result
+                if self.execute_ready.is_some() && self.recording.is_some() {
+                    if self.preflight < 2 {
+                        let (kind, action) = if self.preflight == 0 {
+                            ("turn_started", RecordingAction::Start)
+                        } else {
+                            (
+                                "input_accepted",
+                                RecordingAction::Accept(self.input.clone()),
+                            )
+                        };
+                        self.preflight += 1;
+                        let event = crate::metadata::object([("type", kind.into())]);
+                        return self.begin_recording(action, event, false).await;
                     }
-                },
-                None => Ok(None),
+                    let _ = self.execute_ready.take().unwrap().send(());
+                }
+                let mut delivered = None;
+                if let Some(execution) = self.execution.as_mut() {
+                    tokio::select! {
+                        biased;
+                        recording = &mut self.recording_ready, if self.execute_ready.is_some() && self.recording.is_none() => {
+                            if let Ok(recording) = recording { self.recording = Some(recording); } else { self.execute_ready.take(); }
+                            continue;
+                        }
+                        Some(event) = self.events.recv() => delivered = Some(event),
+                        result = execution => { self.result = Some(result); self.execution = None; }
+                    }
+                }
+                if delivered.is_none() {
+                    delivered = self.events.try_recv().ok();
+                }
+                if let Some(event) = delivered {
+                    // The host already emitted these two committed lifecycle events.
+                    // Wire validation still checks the sidecar's complete sequence.
+                    if self.preflight == 2
+                        && matches!(event.get("type").and_then(JsValue::as_string), Some(kind) if kind.equals_str("turn_started") || kind.equals_str("input_accepted"))
+                    {
+                        self.delivered.observe_event(&event)?;
+                        continue;
+                    }
+                    return self.record_event(event, false).await;
+                }
+                return match self.result.take() {
+                    Some(result) => match self.finish(result) {
+                        Ok(Some(event)) => self.record_event(event, true).await,
+                        Err(error) if self.accepted => {
+                            let failure = crate::metadata::object([
+                                ("code", "agent_invalid_state".into()),
+                                ("message", error.message.as_str().into()),
+                            ]);
+                            self.begin_recording(
+                                RecordingAction::Fail(failure),
+                                JsValue::Null,
+                                true,
+                            )
+                            .await
+                        }
+                        result => {
+                            self.release();
+                            result
+                        }
+                    },
+                    None => Ok(None),
+                };
             }
         })
     }
@@ -337,6 +393,7 @@ impl LiveTurn for LiveTurnStream {
 
 impl LiveTurnStream {
     fn release(&mut self) {
+        self.execute_ready.take();
         self.execution.take();
         self.result.take();
         self.events.close();
@@ -360,20 +417,14 @@ impl LiveTurnStream {
             Some(kind) if kind.equals_str("input_accepted") => {
                 Some(RecordingAction::Accept(self.input.clone()))
             }
-            // Early failure/abort without accepted input belongs to the failure
-            // integration slice. Preserve its existing terminal handling here.
+            // Pre-cancel without a runner retains the existing abort contract.
             _ if terminal && self.accepted => Some(RecordingAction::Complete(
                 event.get("result").cloned().unwrap_or(JsValue::Undefined),
             )),
             _ => None,
         };
-        if let (Some(recording), Some(action)) = (self.recording.as_mut(), action) {
-            if let Err(error) = recording.begin(action) {
-                self.release();
-                return Err(RuntimeError::new(error.to_string()));
-            }
-            self.pending_event = Some((event, terminal));
-            return self.settle_recording().await;
+        if let (true, Some(action)) = (self.recording.is_some(), action) {
+            return self.begin_recording(action, event, terminal).await;
         }
         if terminal {
             self.release();
@@ -381,6 +432,25 @@ impl LiveTurnStream {
         } else {
             self.publish(event)
         }
+    }
+
+    async fn begin_recording(
+        &mut self,
+        action: RecordingAction,
+        event: JsValue,
+        terminal: bool,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        if let Err(error) = self
+            .recording
+            .as_mut()
+            .expect("recording driver")
+            .begin(action)
+        {
+            self.release();
+            return Err(RuntimeError::new(error.to_string()));
+        }
+        self.pending_event = Some((event, terminal));
+        self.settle_recording().await
     }
 
     async fn settle_recording(&mut self) -> Result<Option<JsValue>, RuntimeError> {
@@ -391,23 +461,19 @@ impl LiveTurnStream {
             .settle()
             .await;
         let (event, terminal) = self.pending_event.take().expect("pending event");
-        // A successful await may still be the runner's failure transition.
-        // Only the requested committed transition can acknowledge this payload.
-        let outcome = outcome.and_then(|events| {
-            if events.len() == 1 && events[0].get("type") == event.get("type") {
-                Ok(())
-            } else {
-                Err(crate::storage::recorder::RecorderError::State(
-                    "Recording did not commit the pending transition.".into(),
-                ))
+        let events = match outcome {
+            Ok(events) => events,
+            Err(error) => {
+                self.release();
+                return Err(RuntimeError::new(error.to_string()));
             }
-        });
-        if let Err(error) = outcome {
-            self.release();
-            return Err(RuntimeError::new(error.to_string()));
-        }
-        if event.get("type") == Some(&"input_accepted".into()) {
-            self.accepted = true;
+        };
+        // Completion fallback is itself a committed failure. Publish the runner's
+        // result, never the original success whose persistence failed.
+        if self.execute_ready.is_some() || events.len() != 1 || event == JsValue::Null {
+            self.recorded.extend(events);
+            let event = self.recorded.pop_front().expect("transition events");
+            return self.deliver_recorded(event);
         }
         if terminal {
             self.release();
@@ -415,6 +481,16 @@ impl LiveTurnStream {
         } else {
             self.publish(event)
         }
+    }
+
+    fn deliver_recorded(&mut self, event: JsValue) -> Result<Option<JsValue>, RuntimeError> {
+        if event.get("type") == Some(&"input_accepted".into()) {
+            self.accepted = true;
+        }
+        if event.get("type") == Some(&"turn_completed".into()) {
+            self.release();
+        }
+        Ok(Some(event))
     }
 
     /// Record an applied event as delivered and hand it to the consumer.

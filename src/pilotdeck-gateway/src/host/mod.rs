@@ -699,3 +699,5 @@ fn request_frame(method: &str, id: &JsString, payload: JsObject) -> JsValue {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use execution::TurnScope;

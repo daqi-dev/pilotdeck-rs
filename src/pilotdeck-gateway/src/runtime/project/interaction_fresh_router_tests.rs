@@ -240,7 +240,7 @@ async fn assert_fresh_handlers(reload: bool, repeat_identity: bool) {
                 input.switches.plan_todo = true;
                 Box::pin(async move {
                     Ok(InteractionHost {
-                        client: client("live-fresh-router").await?,
+                        client: Box::pin(client("live-fresh-router")),
                         lease,
                         router,
                         input,

@@ -142,6 +142,9 @@ fn stream(
         recording: None,
         pending_event: None,
         accepted: false,
+        preflight: 0,
+        execute_ready: None,
+        recorded: std::collections::VecDeque::new(),
     }
 }
 
@@ -165,6 +168,47 @@ async fn next(turn: &mut dyn LiveTurn) -> Result<Option<JsValue>, RuntimeError> 
     timeout(Duration::from_secs(15), turn.next())
         .await
         .expect("LiveTurn must make progress")
+}
+
+async fn persisted_failure(turn: &mut dyn LiveTurn) -> String {
+    let mut message = None;
+    for _ in 0..12 {
+        let event = next(turn)
+            .await
+            .unwrap()
+            .expect("failure terminal required");
+        match event
+            .get("type")
+            .and_then(JsValue::as_string)
+            .unwrap()
+            .to_utf8()
+            .unwrap()
+            .as_str()
+        {
+            "turn_started" | "input_accepted" | "agent_status" => {}
+            "turn_failed" => {
+                message = event
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(JsValue::as_string)
+                    .and_then(|s| s.to_utf8().ok())
+            }
+            "turn_completed" => {
+                assert_eq!(
+                    event.get("result").unwrap().get("type"),
+                    Some(&"error".into())
+                );
+                assert_eq!(
+                    next(turn).await.unwrap(),
+                    None,
+                    "one persisted failure terminal"
+                );
+                return message.expect("host failure retains rejection message");
+            }
+            other => panic!("unexpected event before failure: {other}"),
+        }
+    }
+    panic!("failure terminal not delivered")
 }
 
 fn event_types(events: &[JsValue]) -> Vec<String> {
@@ -525,7 +569,11 @@ async fn session_with_final(
                 Some(client) => client,
                 None => spawn_client(&mode).await?,
             };
-            Ok((client, handler as Arc<dyn HostHandler>, test_lease()))
+            Ok((
+                Box::pin(async move { Ok(client) }) as HostFuture<HostClient>,
+                handler as Arc<dyn HostHandler>,
+                test_lease(),
+            ))
         })
     });
     (session, final_received)
@@ -549,7 +597,11 @@ async fn session_tracking_children(
             if let Some(pid) = client.child_id() {
                 tracked.lock().unwrap().push(pid);
             }
-            Ok((client, handler as Arc<dyn HostHandler>, test_lease()))
+            Ok((
+                Box::pin(async move { Ok(client) }) as HostFuture<HostClient>,
+                handler as Arc<dyn HostHandler>,
+                test_lease(),
+            ))
         })
     });
     (adapter, children)
@@ -613,11 +665,16 @@ async fn host_normal_lifecycle_streams_events_and_projects_authoritative_final_o
 }
 
 #[tokio::test]
-async fn host_early_failure_completes_before_input_accepted() {
+async fn host_early_failure_completes_after_host_input_accepted() {
     let handler = Arc::new(Handler::default());
     let session = session("live-early-failure", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    for event_type in ["turn_started", "agent_status", "turn_failed"] {
+    for event_type in [
+        "turn_started",
+        "input_accepted",
+        "agent_status",
+        "turn_failed",
+    ] {
         let event = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(event.get("type"), Some(&event_type.into()), "{event_type}");
     }
@@ -704,29 +761,8 @@ async fn inner_validation_rejection_fails_the_stream_before_application() {
     });
     let session = session("live-normal", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    // turn_started's application may still be in flight when the rejection
-    // fails the execution, so only the legal prefix may precede the error.
-    let mut error = None;
-    for _ in 0..2 {
-        match next(turn.as_mut()).await {
-            Ok(Some(event)) => assert_eq!(
-                event.get("type"),
-                Some(&"turn_started".into()),
-                "only the legal prefix may be published"
-            ),
-            Ok(None) => panic!("the stream settled without the inner rejection error"),
-            Err(rejection) => {
-                error = Some(rejection);
-                break;
-            }
-        }
-    }
-    let error = error.expect("the inner rejection must fail the stream");
-    assert!(
-        error.message.contains("inner rejected input_accepted"),
-        "{error:?}"
-    );
-    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    let error = persisted_failure(turn.as_mut()).await;
+    assert!(error.contains("inner rejected input_accepted"), "{error}");
     // input_accepted was never applied to the module-side handler...
     {
         let applied = handler.events.lock().unwrap();
@@ -757,16 +793,18 @@ async fn cancel_exit_success_without_delivered_input_accepted_is_rejected() {
         block_input_accepted: true,
         ..Handler::default()
     });
-    let session = session("live-cancel-pending", handler.clone()).await;
+    let (session, final_received) =
+        session_with_final("live-cancel-pending", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
     );
+    drive_until_final_received(turn.as_mut(), &final_received).await;
     session.abort(&"user-stop".into()).unwrap();
-    let error = next(turn.as_mut()).await.unwrap_err();
+    let error = persisted_failure(turn.as_mut()).await;
     assert!(
-        error.message.contains("terminal without proper lifecycle"),
+        error.contains("terminal without proper lifecycle"),
         "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -784,16 +822,18 @@ async fn queued_turn_failed_dropped_by_the_cancel_exit_is_rejected() {
         block_input_accepted: true,
         ..Handler::default()
     });
-    let session = session("live-cancel-pending-failure", handler.clone()).await;
+    let (session, final_received) =
+        session_with_final("live-cancel-pending-failure", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
     );
+    drive_until_final_received(turn.as_mut(), &final_received).await;
     session.abort(&"user-stop".into()).unwrap();
-    let error = next(turn.as_mut()).await.unwrap_err();
+    let error = persisted_failure(turn.as_mut()).await;
     assert!(
-        error.message.contains("terminal without proper lifecycle"),
+        error.contains("terminal without proper lifecycle"),
         "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -816,16 +856,18 @@ async fn cancel_exit_success_without_input_accepted_rejects_the_relaxed_path() {
         block_model_event: true,
         ..Handler::default()
     });
-    let session = session("live-cancel-blocked-model-event", handler.clone()).await;
+    let (session, final_received) =
+        session_with_final("live-cancel-blocked-model-event", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
     );
+    drive_until_final_received(turn.as_mut(), &final_received).await;
     session.abort(&"user-stop".into()).unwrap();
-    let error = next(turn.as_mut()).await.unwrap_err();
+    let error = persisted_failure(turn.as_mut()).await;
     assert!(
-        error.message.contains("terminal without proper lifecycle"),
+        error.contains("terminal without proper lifecycle"),
         "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -863,7 +905,8 @@ async fn received_turn_failed_dropped_after_delivered_input_accepted_is_rejected
         block_turn_failed: true,
         ..Handler::default()
     });
-    let session = session("live-cancel-queued-turn-failed", handler.clone()).await;
+    let (session, final_received) =
+        session_with_final("live-cancel-queued-turn-failed", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     for event_type in ["turn_started", "input_accepted"] {
         assert_eq!(
@@ -872,10 +915,11 @@ async fn received_turn_failed_dropped_after_delivered_input_accepted_is_rejected
             "{event_type}"
         );
     }
+    drive_until_final_received(turn.as_mut(), &final_received).await;
     session.abort(&"user-stop".into()).unwrap();
-    let error = next(turn.as_mut()).await.unwrap_err();
+    let error = persisted_failure(turn.as_mut()).await;
     assert!(
-        error.message.contains("terminal without proper lifecycle"),
+        error.contains("terminal without proper lifecycle"),
         "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -921,15 +965,17 @@ async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
     let mut turn = session.submit(input(), options()).unwrap();
     let mut delivered = vec![next(turn.as_mut()).await.unwrap().unwrap()];
     assert_eq!(delivered[0].get("type"), Some(&"turn_started".into()));
-    session.abort(&"user-stop".into()).unwrap();
+    delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
+    assert_eq!(delivered[1].get("type"), Some(&"input_accepted".into()));
     // This next() is the first poll that observes the abort, so it arms the
     // cancel deadline; it delivers model_event and then the consumer stalls.
     delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
-    assert_eq!(delivered[1].get("type"), Some(&"model_event".into()));
+    assert_eq!(delivered[2].get("type"), Some(&"model_event".into()));
     // Sync point before the stall: the peer has written every frame and the
     // host has read the success final into its application queue. Without it,
     // a slow CI peer could still be in the pipe, the unpolled receive path
     // would starve, and the deadline would correctly report a timeout.
+    session.abort(&"user-stop".into()).unwrap();
     let synced = drive_until_final_received(turn.as_mut(), &final_received).await;
     assert!(
         !event_types(&synced).contains(&"turn_completed".to_owned()),
@@ -949,8 +995,8 @@ async fn slow_consumer_does_not_spend_the_cancel_exit_grace() {
         event_types(&delivered),
         [
             "turn_started",
-            "model_event",
             "input_accepted",
+            "model_event",
             "turn_completed"
         ]
     );
@@ -978,13 +1024,15 @@ async fn slow_consumer_still_receives_a_ready_error_terminal() {
     let mut turn = session.submit(input(), options()).unwrap();
     let mut delivered = vec![next(turn.as_mut()).await.unwrap().unwrap()];
     assert_eq!(delivered[0].get("type"), Some(&"turn_started".into()));
-    session.abort(&"user-stop".into()).unwrap();
+    delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
+    assert_eq!(delivered[1].get("type"), Some(&"input_accepted".into()));
     // As in the success pairing, this next() arms the cancel deadline and
     // delivers model_event before the consumer stalls.
     delivered.push(next(turn.as_mut()).await.unwrap().unwrap());
-    assert_eq!(delivered[1].get("type"), Some(&"model_event".into()));
+    assert_eq!(delivered[2].get("type"), Some(&"model_event".into()));
     // Sync point before the stall: the turn_failed and the error final are in
     // the host's application queue before the consumer stops pulling.
+    session.abort(&"user-stop".into()).unwrap();
     let synced = drive_until_final_received(turn.as_mut(), &final_received).await;
     assert!(
         !event_types(&synced).contains(&"turn_completed".to_owned()),
@@ -1001,6 +1049,7 @@ async fn slow_consumer_still_receives_a_ready_error_terminal() {
         event_types(&delivered),
         [
             "turn_started",
+            "input_accepted",
             "model_event",
             "turn_failed",
             "turn_completed"
@@ -1040,7 +1089,10 @@ async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
     );
-    session.abort(&"user-stop".into()).unwrap();
+    assert_eq!(
+        next(turn.as_mut()).await.unwrap().unwrap().get("type"),
+        Some(&"input_accepted".into())
+    );
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"model_event".into())
@@ -1048,6 +1100,7 @@ async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
     // Sync point before the stall: the success final is in the host's
     // application queue even though the blocked callback keeps it unapplied.
     // The blocked input_accepted is not deliverable, so nothing is pulled.
+    session.abort(&"user-stop".into()).unwrap();
     let synced = drive_until_final_received(turn.as_mut(), &final_received).await;
     assert!(
         synced.is_empty(),
@@ -1058,12 +1111,14 @@ async fn slow_consumer_with_a_blocked_callback_still_exits_bounded() {
     // The deadline is already past; a blocked callback must not extend it.
     // Half a fresh POST_CANCEL_EXIT_TIMEOUT is enough to prove the exit was
     // not re-armed.
-    let error = timeout(POST_CANCEL_EXIT_TIMEOUT / 2, turn.next())
-        .await
-        .expect("the cancel exit must stay bounded with a blocked callback")
-        .unwrap_err();
+    let error = timeout(
+        POST_CANCEL_EXIT_TIMEOUT / 2,
+        persisted_failure(turn.as_mut()),
+    )
+    .await
+    .expect("the cancel exit must stay bounded with a blocked callback");
     assert!(
-        error.message.contains("terminal without proper lifecycle"),
+        error.contains("terminal without proper lifecycle"),
         "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -1078,16 +1133,18 @@ async fn cancel_request_with_truly_missing_input_accepted_is_still_rejected() {
     // The round-1 implementation accepted this final (fake pass); the strict
     // delivered-prefix check rejects it (and the receive-path gate would too).
     let handler = Arc::new(Handler::default());
-    let session = session("live-missing-accepted", handler.clone()).await;
+    let (session, final_received) =
+        session_with_final("live-missing-accepted", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     assert_eq!(
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
     );
+    drive_until_final_received(turn.as_mut(), &final_received).await;
     session.abort(&"user-stop".into()).unwrap();
-    let error = next(turn.as_mut()).await.unwrap_err();
+    let error = persisted_failure(turn.as_mut()).await;
     assert!(
-        error.message.contains("terminal without proper lifecycle"),
+        error.contains("terminal without proper lifecycle"),
         "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -1105,9 +1162,9 @@ async fn missing_lifecycle_is_rejected_without_cancellation() {
         next(turn.as_mut()).await.unwrap().unwrap().get("type"),
         Some(&"turn_started".into())
     );
-    let error = next(turn.as_mut()).await.unwrap_err();
+    let error = persisted_failure(turn.as_mut()).await;
     assert!(
-        error.message.contains("terminal without proper lifecycle"),
+        error.contains("terminal without proper lifecycle"),
         "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -1131,9 +1188,9 @@ async fn success_after_observed_turn_failed_is_rejected_even_with_cancel() {
         );
     }
     session.abort(&"user-stop".into()).unwrap();
-    let error = next(turn.as_mut()).await.unwrap_err();
+    let error = persisted_failure(turn.as_mut()).await;
     assert!(
-        error.message.contains("terminal without proper lifecycle"),
+        error.contains("terminal without proper lifecycle"),
         "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -1156,9 +1213,9 @@ async fn max_turns_after_observed_turn_failed_is_rejected_even_with_cancel() {
         );
     }
     session.abort(&"user-stop".into()).unwrap();
-    let error = next(turn.as_mut()).await.unwrap_err();
+    let error = persisted_failure(turn.as_mut()).await;
     assert!(
-        error.message.contains("terminal without proper lifecycle"),
+        error.contains("terminal without proper lifecycle"),
         "{error:?}"
     );
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
@@ -1244,8 +1301,8 @@ async fn host_stream_rejects_events_before_turn_started_and_releases_the_host() 
     let mut turn = session.submit(input(), options()).unwrap();
     // The adversarial peer streams text_delta events with no turn_started;
     // the first delivered event must fail the turn closed.
-    let error = next(turn.as_mut()).await.unwrap_err();
-    assert!(error.message.contains("before turn_started"), "{error:?}");
+    let error = persisted_failure(turn.as_mut()).await;
+    assert!(error.contains("before turn_started"), "{error:?}");
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     // The violation is caught by the receive-path hook before application, so
@@ -1361,30 +1418,10 @@ async fn host_duplicate_lifecycle_event_fails_the_stream_closed() {
     let (session, children) =
         session_tracking_children("live-duplicate-start", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    // The second turn_started fails the receive hook, and the host cancels the
-    // first event's in-flight application, so its publication races the
-    // violation: only the violation error is guaranteed.
-    let mut error = None;
-    for _ in 0..2 {
-        match next(turn.as_mut()).await {
-            Ok(Some(event)) => assert_eq!(
-                event.get("type"),
-                Some(&"turn_started".into()),
-                "only the legal prefix may be published"
-            ),
-            Ok(None) => panic!("the stream settled without the violation error"),
-            Err(violation) => {
-                error = Some(violation);
-                break;
-            }
-        }
-    }
-    let error = error.expect("the violation must fail the stream");
+    let error = persisted_failure(turn.as_mut()).await;
     assert!(
-        error
-            .message
-            .contains("turn_started after the turn already opened"),
-        "{error:?}"
+        error.contains("turn_started after the turn already opened"),
+        "{error}"
     );
     // The peer also streams a legal model_event after the violating one; it
     // is never even received once the hook failed, and nothing may surface
@@ -1496,7 +1533,11 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
             let client = spawn_client("live-payload").await?;
             let handler = Arc::new(Handler::default());
             created.lock().unwrap().push(handler.clone());
-            Ok((client, handler as Arc<dyn HostHandler>, test_lease()))
+            Ok((
+                Box::pin(async move { Ok(client) }) as HostFuture<HostClient>,
+                handler as Arc<dyn HostHandler>,
+                test_lease(),
+            ))
         })
     });
     for number in 1_u32..=2 {
@@ -1518,7 +1559,7 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
         let started = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(started.get("type"), Some(&"turn_started".into()));
         let received = next(turn.as_mut()).await.unwrap().unwrap();
-        assert_eq!(received.get("receivedPayload"), Some(&payload));
+        assert_eq!(received.get("messages"), Some(&input_messages()));
         assert_eq!(received.get("turnId"), Some(&turn_id));
         let completed = next(turn.as_mut()).await.unwrap().unwrap();
         assert_eq!(completed.get("type"), Some(&"turn_completed".into()));
@@ -1527,6 +1568,13 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
         assert_eq!(result.get("turnId"), Some(&turn_id));
         assert_eq!(next(turn.as_mut()).await.unwrap(), None);
         let handlers = handlers.lock().unwrap();
+        assert_eq!(
+            handlers.last().unwrap().events.lock().unwrap()[1]
+                .get("payload")
+                .unwrap()
+                .get("receivedPayload"),
+            Some(&payload)
+        );
         assert_eq!(handlers.len(), number as usize);
         assert_eq!(handlers.last().unwrap().disposed.load(Ordering::SeqCst), 1);
     }
@@ -2647,7 +2695,7 @@ async fn live_input_reads_current_history_on_every_submit() {
         |_| {
             Box::pin(async {
                 Ok((
-                    spawn_client("live-payload").await?,
+                    Box::pin(spawn_client("live-payload")) as HostFuture<HostClient>,
                     Arc::new(Handler::default()) as Arc<dyn HostHandler>,
                     test_lease(),
                 ))
@@ -2662,12 +2710,9 @@ async fn live_input_reads_current_history_on_every_submit() {
         *history.lock().unwrap() = vec![message.clone()];
         let mut turn = session.submit(input(), turn_options(text)).unwrap();
         next(turn.as_mut()).await.unwrap();
-        let accepted = next(turn.as_mut()).await.unwrap().unwrap();
-        let messages = accepted
-            .get("receivedPayload")
-            .unwrap()
-            .get("messages")
-            .unwrap();
+        next(turn.as_mut()).await.unwrap().unwrap();
+        let completed = next(turn.as_mut()).await.unwrap().unwrap();
+        let messages = completed.get("messages").unwrap();
         assert_eq!(
             messages,
             &JsValue::Array(vec![
@@ -2729,7 +2774,8 @@ fn test_lease() -> Arc<RuntimeLease> {
 struct RecordingStore {
     disk: crate::storage::JsonlTranscriptStore,
     kind: &'static str,
-    fail: bool,
+    fail: usize,
+    completes: AtomicUsize,
     attempts: AtomicUsize,
     gate: Mutex<Option<(oneshot::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
 }
@@ -2739,6 +2785,9 @@ impl crate::storage::TranscriptStore for RecordingStore {
         key: &crate::storage::TranscriptKey,
         entry: &JsValue,
     ) -> crate::storage::StoreResult<()> {
+        if entry.get("type") == Some(&"turn_result".into()) {
+            self.completes.fetch_add(1, Ordering::SeqCst);
+        }
         if entry.get("type") == Some(&self.kind.into()) {
             self.attempts.fetch_add(1, Ordering::SeqCst);
             if let Some((entered, release)) = self.gate.lock().unwrap().take() {
@@ -2747,7 +2796,7 @@ impl crate::storage::TranscriptStore for RecordingStore {
                     .recv_timeout(Duration::from_secs(10))
                     .expect("test must release blocking I/O");
             }
-            if self.fail && self.attempts.load(Ordering::SeqCst) == 1 {
+            if self.attempts.load(Ordering::SeqCst) <= self.fail {
                 return Err(std::io::Error::other("recording write failed").into());
             }
         }
@@ -2814,7 +2863,8 @@ async fn live_recording_matrix(phase: usize, action: &str) {
     let store = Arc::new(RecordingStore {
         disk: JsonlTranscriptStore::new(),
         kind: ["turn_started", "accepted_input", "turn_result"][phase],
-        fail: action == "failure",
+        fail: usize::from(action == "failure"),
+        completes: AtomicUsize::new(0),
         attempts: AtomicUsize::new(0),
         gate: Mutex::new(Some((entered, wait))),
     });
@@ -2824,7 +2874,7 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         let lease = Arc::new(owner.acquire(None).unwrap());
         Box::pin(async move {
             Ok((
-                spawn_client("live-payload").await?,
+                Box::pin(spawn_client("live-payload")) as HostFuture<HostClient>,
                 Arc::new(Handler::default()) as Arc<dyn HostHandler>,
                 lease,
             ))
@@ -2883,12 +2933,22 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         release.send(()).unwrap();
     } else if action == "failure" {
         release.send(()).unwrap();
-        let error = next(turn.as_mut()).await.unwrap_err();
-        assert!(error.message.contains(if phase == 0 {
-            "recording write failed"
+        if phase == 0 {
+            assert!(
+                next(turn.as_mut())
+                    .await
+                    .unwrap_err()
+                    .message
+                    .contains("recording write failed")
+            );
         } else {
-            "Recording did not commit"
-        }));
+            let error = persisted_failure(turn.as_mut()).await;
+            assert!(error.contains(if phase == 1 {
+                "Failed to record accepted input."
+            } else {
+                "recording write failed"
+            }));
+        }
         assert_eq!(
             next(turn.as_mut()).await.unwrap(),
             None,
@@ -2904,10 +2964,7 @@ async fn live_recording_matrix(phase: usize, action: &str) {
         expected.insert("sessionId".into(), "session".into());
         expected.insert("turnId".into(), "turn".into());
         if phase == 1 {
-            let request = parse_execute_request(&input(), &options(), vec![])
-                .unwrap()
-                .0;
-            expected.insert("receivedPayload".into(), JsValue::Object(request.payload));
+            expected.insert("messages".into(), input_messages());
         } else if phase == 2 {
             expected.insert("result".into(), parse_json(r#"{"type":"success","sessionId":"session","turnId":"turn","stopReason":"completed","turns":1}"#).unwrap());
             expected.insert("messages".into(), input_messages());
@@ -3149,3 +3206,6 @@ async fn live_history_slot_matrix() {
 fn live_history_regenerates_identically() {
     crate::test_baseline::regenerates_identically("live-history");
 }
+
+#[path = "gates_tests.rs"]
+mod gates_tests;

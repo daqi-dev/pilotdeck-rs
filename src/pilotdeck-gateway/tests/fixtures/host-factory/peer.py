@@ -64,6 +64,9 @@ send(response(capabilities, **binding, payload=dict(
     capabilitiesVersion="v1", methods=[dict(name="execute", profiles=["streaming"])])))
 execute = read()
 assert execute["method"] == "execute"
+if pid_file:
+    with open(f"{pid_file}.{os.getpid()}.execute", "x", encoding="utf-8") as out:
+        out.write("execute\n")
 send(response(execute, requestId=execute["requestId"], streamId="stream"))
 identity = {key: execute[key] for key in ("runId", "operationId", "requestId")}
 session, turn = execute["sessionId"], execute["turnId"]

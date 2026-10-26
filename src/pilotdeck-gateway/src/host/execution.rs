@@ -69,7 +69,7 @@ fn terminal_result(event: Arc<Frame>, aborted: bool, progress: &mut Progress) ->
 }
 
 /// Own callbacks and their cleanup together: abort alone is not a join barrier.
-pub(super) struct TurnScope {
+pub(crate) struct TurnScope {
     callbacks: JoinSet<Completed>,
     handler: Option<Arc<dyn HostHandler>>,
     runtime: tokio::runtime::Handle,
@@ -78,7 +78,7 @@ pub(super) struct TurnScope {
     pub(super) dispose_gate: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 impl TurnScope {
-    pub(super) fn new(handler: Arc<dyn HostHandler>, timeout: Duration) -> Self {
+    pub(crate) fn new(handler: Arc<dyn HostHandler>, timeout: Duration) -> Self {
         Self {
             callbacks: JoinSet::new(),
             handler: Some(handler),
@@ -90,6 +90,11 @@ impl TurnScope {
             dispose_gate: None,
         }
     }
+    /// Transfer an unexecuted handler to the execution scope exactly once.
+    pub(crate) fn handoff(mut self) {
+        self.handler.take();
+    }
+
     /// Test hook: an in-flight callback that never completes.
     #[cfg(test)]
     pub(super) fn spawn_pending_callback_for_test(&mut self) {
