@@ -12,7 +12,7 @@ export async function probeSidecar(root: string, output: string) {
   const {createDefaultPermissionContext}=await load('permission/index.ts');
   const rows:any[]=[];
   mkdirSync(join(output,'home'),{recursive:true});
-  for(const name of ['success','gap','duplicate','early-final','drop','abort-before','abort-after']) {
+  for(const name of ['success','gap','duplicate','early-final','drop','abort-before','abort-after','dispose-before']) {
     const connect=createStdioAgentLoopSidecarConnectionFactory({command:process.execPath,
       args:['--import',join(root,'node_modules/tsx/dist/loader.mjs'),join(root,'src/cli/pilotdeck-agent-loop-sidecar.ts')],
       cwd:output,env:{PATH:process.env.PATH,HOME:join(output,'home')},killTimeoutMs:1000});
@@ -52,6 +52,7 @@ export async function probeSidecar(root: string, output: string) {
     try {
       for await(const event of session.submit({type:'text',text:'probe'},{turnId:'t'})) {
         events.push(event);
+        if(name==='dispose-before' && event.type==='turn_started')await session.dispose();
         if(name==='abort-before' && event.type==='turn_started')session.abort('probe');
         if(name==='abort-after' && event.type==='input_accepted')session.abort('probe');
         if(name==='drop' && event.type==='model_event')break;

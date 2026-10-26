@@ -204,14 +204,25 @@ impl TurnRunner {
             // A7.2-TURN-INVALID-RESULT-001).
             let message = match &result {
                 JsValue::Null => "Cannot read properties of null (reading 'turnId')".into(),
+                JsValue::Undefined => {
+                    "Cannot read properties of undefined (reading 'turnId')".into()
+                }
                 JsValue::Object(fields) => match fields.get("turnId") {
-                    Some(JsValue::String(turn)) if turn != &self.turn => JsString::from_utf16(
-                        "Durable turn "
-                            .encode_utf16()
-                            .chain(turn.units().iter().copied())
-                            .chain(" has not started.".encode_utf16())
-                            .collect(),
-                    ),
+                    Some(turn)
+                        if !matches!(turn, JsValue::Undefined)
+                            && turn != &JsValue::String(self.turn.clone()) =>
+                    {
+                        match crate::js_value::to_string_units_checked(turn) {
+                            Ok(units) => JsString::from_utf16(
+                                "Durable turn "
+                                    .encode_utf16()
+                                    .chain(units)
+                                    .chain(" has not started.".encode_utf16())
+                                    .collect(),
+                            ),
+                            Err(error) => error.message().into(),
+                        }
+                    }
                     _ => "Turn result identity mismatch.".into(),
                 },
                 _ => "Turn result identity mismatch.".into(),
@@ -273,6 +284,8 @@ impl TurnRunner {
         if let JsValue::Object(fields) = &mut result {
             fields.insert("errors".into(), JsValue::Array(vec![error.clone()]));
         }
+        // TS TurnRunner catch writes another status even after a loop failure.
+        // failure_status deduplicates only loop failures, never this catch.
         let status = self.status(&error).await;
         self.phase = Phase::Completed;
         let events = vec![

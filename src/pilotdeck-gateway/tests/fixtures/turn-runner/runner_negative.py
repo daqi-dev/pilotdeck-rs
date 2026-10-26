@@ -14,7 +14,8 @@ out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/turn/runner.rs'
 env = os.environ.copy()
-env['CARGO_TARGET_DIR'] = str(root / '_build/cargo-target')
+if not env.get('CARGO_TARGET_DIR'):
+    raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
            '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::runner::tests']
 mutations = [
@@ -42,6 +43,12 @@ mutations = [
     ('status-undefined-detail', 'status', [('].into_iter().filter(|(_, value)| !matches!(value, JsValue::Undefined)))', '].into_iter())')]),
     ('status-null-text', 'status', [('.filter(|(_, field)| !matches!(field, JsValue::Undefined))', '.filter(|(_, field)| !matches!(field, JsValue::Undefined | JsValue::Null))')]),
     ('status-undefined-text', 'status', [('.filter(|(_, field)| !matches!(field, JsValue::Undefined))', '.filter(|_| true)')]),
+    ('catch-status-must-repeat', 'fail_inner', [('let status = self.status(&error).await;', 'let status = if self.failure_status { self.event("skipped_status", []) } else { self.status(&error).await };')]),
+    ('undefined-result-message', 'complete', [("Cannot read properties of undefined (reading 'turnId')", 'wrong undefined result')]),
+    ('nonstring-turn-message', 'complete', [('Some(turn)', 'Some(turn @ JsValue::String(_))')]),
+    ('undefined-turn-dedup', 'complete', [('!matches!(turn, JsValue::Undefined)', 'true')]),
+    ('turn-surrogate-lossy', 'complete', [('.chain(units)', '.chain(String::from_utf16_lossy(&units).encode_utf16())')]),
+    ('turn-coercion-error', 'complete', [('Err(error) => error.message().into(),', 'Err(_) => "wrong coercion error".into(),')]),
     ('best-effort-status', 'status', [('.await;', '.await.expect("mutant status failure");')]),
 ]
 

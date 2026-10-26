@@ -488,8 +488,8 @@ async fn session_with_final(
     mode: &str,
     handler: Arc<Handler>,
 ) -> (LiveSessionAdapter, Arc<AtomicBool>) {
-    // Pre-connect the first test client so abort-before-execute still exercises
-    // HostClient's cleanup. Later turns must create their own connection.
+    // Pre-connect to expose final_received before execution starts. Tests of
+    // pre-cancel use lazy factories; later turns create their own connection.
     let client = spawn_client(mode).await.unwrap();
     let final_received = client.final_received();
     let initial = Mutex::new(Some(client));
@@ -1255,14 +1255,19 @@ async fn host_stream_rejects_events_before_turn_started_and_releases_the_host() 
 #[tokio::test]
 async fn abort_before_execute_yields_original_messages_then_none() {
     let handler = Arc::new(Handler::default());
-    let session = session("cancel-pre-execute", handler.clone()).await;
+    let (session, children) =
+        session_tracking_children("cancel-pre-execute", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
     session.abort(&"pre-cancel".into()).unwrap();
     assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert!(handler.events.lock().unwrap().is_empty());
-    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 0);
+    assert!(
+        children.lock().unwrap().is_empty(),
+        "no sidecar may be created"
+    );
 }
 
 #[tokio::test]
@@ -2264,4 +2269,176 @@ async fn embedded_final_uses_js_truthiness() {
         }
         assert_eq!(rx.try_recv().unwrap(), payload);
     }
+}
+
+// The TS rows constrain connection creation only. Rust's existing synthesized
+// aborted terminal differs from TS (A7.2-TURN-ABORT-001, still unapproved).
+async fn pre_cancelled_factory(dispose: bool, interaction: bool) {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/turn-runner/oracle.json"
+    ));
+    let JsValue::Array(rows) = oracle.get("sidecar").unwrap() else {
+        panic!("sidecar rows")
+    };
+    let row = rows
+        .iter()
+        .find(|row| {
+            row.get("name")
+                == Some(
+                    &if dispose {
+                        "dispose-before"
+                    } else {
+                        "abort-before"
+                    }
+                    .into(),
+                )
+        })
+        .unwrap();
+    assert_eq!(row.get("connections"), Some(&JsValue::Number(0.0)));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let called = calls.clone();
+    let session = if interaction {
+        LiveSessionAdapter::with_interaction(move |_| {
+            called.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                Err(HostError::new(
+                    HostErrorKind::Callback,
+                    "factory must not run",
+                ))
+            })
+        })
+    } else {
+        LiveSessionAdapter::new(move || {
+            called.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                Err(HostError::new(
+                    HostErrorKind::Callback,
+                    "factory must not run",
+                ))
+            })
+        })
+    };
+    let mut turn = session.submit(input(), options()).unwrap();
+    if dispose {
+        session.dispose().await.unwrap();
+    } else {
+        session.abort(&"pre-cancel".into()).unwrap();
+    }
+    assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
+    assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "factory call must be lazy");
+    assert!(session.state.lock().unwrap().active.is_none());
+    assert_eq!(session.submit(input(), options()).is_err(), dispose);
+}
+#[tokio::test]
+async fn live_factory_pre_aborted() {
+    pre_cancelled_factory(false, false).await;
+}
+#[tokio::test]
+async fn live_factory_pre_disposed() {
+    pre_cancelled_factory(true, false).await;
+}
+#[tokio::test]
+async fn live_interaction_factory_pre_aborted() {
+    pre_cancelled_factory(false, true).await;
+}
+#[tokio::test]
+async fn live_interaction_factory_pre_disposed() {
+    pre_cancelled_factory(true, true).await;
+}
+
+async fn pending_factory(action: u8) {
+    use std::task::{Context, Poll, Waker};
+    struct Finished(Arc<AtomicUsize>);
+    impl Drop for Finished {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    let finished = Arc::new(AtomicUsize::new(0));
+    let called = calls.clone();
+    let dropped = finished.clone();
+    let (release, wait) = tokio::sync::oneshot::channel::<()>();
+    let receiver = Mutex::new(Some(wait));
+    let session = LiveSessionAdapter::new(move || {
+        called.fetch_add(1, Ordering::SeqCst);
+        let wait = receiver
+            .lock()
+            .unwrap()
+            .take()
+            .expect("factory called once");
+        let guard = Finished(dropped.clone());
+        Box::pin(async move {
+            let _guard = guard;
+            wait.await
+                .expect("test releases or cancels the owned factory");
+            Err(HostError::new(HostErrorKind::Callback, "factory finished"))
+        })
+    });
+    let mut turn = session.submit(input(), options()).unwrap();
+    // No timer resolves this predecessor. Poll each borrowed next once, then
+    // cancel that waiter. Both must keep the same owned factory and active slot.
+    for _ in 0..2 {
+        let mut waiter = turn.next();
+        assert!(matches!(
+            waiter
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        drop(waiter);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(finished.load(Ordering::SeqCst), 0);
+        assert!(session.submit(input(), options()).is_err());
+    }
+    match action {
+        0 | 1 => {
+            if action == 0 {
+                session.abort(&"pending".into()).unwrap();
+            } else {
+                session.dispose().await.unwrap();
+            }
+            // next() helper bounds cancellation at fifteen seconds; the factory
+            // never receives release, so cancellation is the only exit.
+            assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
+            assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+            assert!(release.send(()).is_err(), "pending factory was dropped");
+        }
+        2 => {
+            drop(turn);
+            assert!(release.send(()).is_err());
+        }
+        _ => {
+            release.send(()).unwrap();
+            assert!(
+                next(turn.as_mut())
+                    .await
+                    .unwrap_err()
+                    .message
+                    .contains("factory finished")
+            );
+            assert_eq!(next(turn.as_mut()).await.unwrap(), None);
+        }
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(finished.load(Ordering::SeqCst), 1);
+    assert!(session.state.lock().unwrap().active.is_none());
+    assert_eq!(session.submit(input(), options()).is_err(), action == 1);
+}
+#[tokio::test]
+async fn live_factory_pending_abort() {
+    pending_factory(0).await;
+}
+#[tokio::test]
+async fn live_factory_pending_dispose() {
+    pending_factory(1).await;
+}
+#[tokio::test]
+async fn live_factory_pending_drop() {
+    pending_factory(2).await;
+}
+#[tokio::test]
+async fn live_factory_cancelled_waiter_resumes() {
+    pending_factory(3).await;
 }

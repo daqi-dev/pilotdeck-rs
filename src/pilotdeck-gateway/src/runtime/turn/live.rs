@@ -162,10 +162,12 @@ impl LiveSession for LiveSessionAdapter {
             execution: Some(Box::pin(async move {
                 let (client, inner, manifest) = tokio::select! {
                     biased;
-                    host = host_factory(request.identity.clone()) => host?,
                     _ = cancellation.cancelled() => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
                     }
+                    // select constructs every branch before polling; keep the
+                    // factory call lazy so a pre-cancel never creates resources.
+                    host = async { host_factory(request.identity.clone()).await } => host?,
                 };
                 if let Some(manifest) = manifest {
                     for (key, value) in manifest.entries() {
