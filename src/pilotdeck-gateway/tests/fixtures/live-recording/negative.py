@@ -3,11 +3,8 @@
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import Case, run_cases
 root = Path(__file__).resolve().parents[5]
-out = Path(sys.argv[1]).resolve(); out.mkdir(parents=True, exist_ok=False)
-env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR'): raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
 live = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 runner = live.with_name('runner.rs'); driver = live.with_name('runner_recording.rs'); interaction = live.with_name('interaction.rs')
 controls = [
@@ -36,29 +33,32 @@ for phase, kind, field in [('start','turn_started','sessionId'),('accept','input
  new = injection + old if phase == 'complete' else old + injection
  for action in ['cancel', 'resubmit']:
   controls.append((f'payload-fields-{phase}-{action}', live, old, new, f'live_recording_{phase}_{action}', 'original payload survives cancelled next'))
-if sys.argv[2:]:
- selected = set(sys.argv[2:])
- assert selected <= {c[0] for c in controls}
- controls = [c for c in controls if c[0] in selected]
-def run(name, test='live_recording_'):
- slots=wait_for_slot(root/'scripts/cargo-slots.sh', timeout=900)
- (out/f'{name}.slots.log').write_text(slots.stdout+slots.stderr)
- r=run_owned(['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',test,'--','--test-threads=1'],cwd=root,env=env,timeout=900)
- (out/f'{name}.log').write_text(r.stdout+r.stderr)
- return r
-summary=[]
-with mutating_sources(root, [live,runner,driver,interaction], baseline=env.get('PDRS_NEGATIVE_BASELINE','HEAD')) as originals:
- assert run('positive').returncode==0
- assert run('positive-shared','recording_shared_lease').returncode==0
+def mutate(source, scope, replacements):
+ for old,new in replacements:
+  assert source.count(old)==1,(old,source.count(old))
+  source=source.replace(old,new,1)
+ return source
+
+def full_test(test):
+ prefix = 'runtime::project::factory::tests::interaction_host::' if test == 'recording_shared_lease_outlives_handler_cleanup' else 'runtime::turn::live::stream_tests::'
+ return prefix + test
+
+def audit():
  for name,path,old,new,test,anchor in controls:
-  source=originals[path].decode(); assert source.count(old)==1,(name,source.count(old))
-  path.write_text(source.replace(old,new,1))
-  r=run(name,test); output=r.stdout+r.stderr
-  assert r.returncode!=0 and 'test result: FAILED' in output and 'panicked at' in output,(name,output[-2000:])
-  assert f'::{test} ... FAILED' in output and anchor in output,(name,'wrong failure',output[-2000:])
-  path.write_bytes(originals[path])
-  summary.append({'mutation':name,'test':test,'assertion':anchor,'runtimeRed':True})
-  print(name,'runtime RED',flush=True)
- assert run('restored').returncode==0
- assert run('restored-shared','recording_shared_lease').returncode==0
-(out/'summary.json').write_text(json.dumps({'controls':summary,'restoredPass':True},indent=2)+'\n')
+  mutate(path.read_text(),None,[(old,new)])
+ return [{'mutation':n,'test':full_test(t),'assertion':a} for n,_,_,_,t,a in controls]
+
+if sys.argv[1:]==['--audit']:
+ print(json.dumps(audit(),indent=2));raise SystemExit()
+env=os.environ.copy()
+if not env.get('CARGO_TARGET_DIR'): raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',CARGO_PROFILE_TEST_DEBUG='line-tables-only',CARGO_TERM_QUIET='false')
+out=Path(sys.argv[1]).resolve();out.mkdir(parents=True,exist_ok=False)
+if sys.argv[2:]:
+ selected=set(sys.argv[2:])
+ unknown=selected-{c[0] for c in controls}
+ if unknown: raise SystemExit(f'unknown controls: {sorted(unknown)}')
+ controls=[c for c in controls if c[0] in selected]
+raise SystemExit(run_cases(root,
+ [Case(n,p,old,new,full_test(test),anchor) for n,p,old,new,test,anchor in controls],
+ out,env,mutate,baseline=env.get('PDRS_NEGATIVE_BASELINE','HEAD')))

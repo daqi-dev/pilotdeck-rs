@@ -3,7 +3,7 @@
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_suite import Case, run_cases
 from _negative_common import mutate
 root=Path(__file__).resolve().parents[5]
 base=root/'src/pilotdeck-gateway/src/runtime/turn'
@@ -103,8 +103,12 @@ cases = [
     ('text-falsy', base / 'runner.rs',
      'present(event.get("text"))', 'present(event.get("text")).filter(super::submit::truthy)',
      'loop_status', test_prefix + 'forward_status_text_false', 'forward durable callback/complete'),
+    # Omitting null from the temporary status is equivalent: the writer drops
+    # both null and missing detail. Wrap the input instead, so a nonempty object
+    # incorrectly reaches the transcript; keep the original test/assertion.
     ('detail-null', base / 'runner.rs',
-     '(detail, &mut status)', '(detail.filter(|v| **v != JsValue::Null), &mut status)',
+     'status.insert("detail".into(), detail.clone());',
+     'status.insert("detail".into(), if *detail == JsValue::Null { object([("value", detail.clone())]) } else { detail.clone() });',
      'loop_status', test_prefix + 'forward_status_detail_null', 'forward durable callback/complete'),
     ('status-pending-retained', base / 'live.rs',
      'if self.pending_event.is_some() {', 'if self.pending_event.take().is_some() {',
@@ -129,20 +133,11 @@ if not env.get('CARGO_TARGET_DIR'): raise SystemExit('CARGO_TARGET_DIR must be s
 env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',CARGO_PROFILE_TEST_DEBUG='line-tables-only',CARGO_TERM_QUIET='false')
 out=Path(sys.argv[1]);out.mkdir(parents=True,exist_ok=False)
 selected=cases[:2] if sys.argv[2:]==['--sample'] else cases
-audit()
-command=['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib']
-def run(label,test):
-    slot=wait_for_slot(root/'scripts/cargo-slots.sh',timeout=900)
-    (out/(label+'.slots.log')).write_text(slot.stdout+slot.stderr)
-    result=run_owned(command+[test,'--','--exact','--nocapture'],cwd=root,env=env,timeout=180)
-    (out/(label+'.log')).write_text(result.stdout+result.stderr)
-    return result
-with mutating_sources(root,list({row[1] for row in selected})+[base/'forward_tests.rs']) as originals:
-    for name,path,old,new,scope,test,anchor in selected:
-        assert run(name+'-positive',test).returncode==0,name
-        path.write_text(mutate(originals[path].decode(),scope,[(old,new)]))
-        result=run(name+'-negative',test);log=result.stdout+result.stderr
-        assert result.returncode!=0 and 'test result: FAILED' in log and test+' ... FAILED' in log and 'panicked at' in log and any(a in log for a in (anchor if isinstance(anchor,list) else [anchor])),(name,'must fail at bound runtime assertion')
-        path.write_bytes(originals[path])
-        assert run(name+'-restored',test).returncode==0,name
-(out/'summary.json').write_text(json.dumps({'passed':[row[0] for row in selected]},indent=2)+'\n')
+if sys.argv[2:] and sys.argv[2:] != ['--sample']:
+    names=set(sys.argv[2:])
+    unknown=names-{row[0] for row in cases}
+    if unknown: raise SystemExit(f'unknown controls: {sorted(unknown)}')
+    selected=[row for row in cases if row[0] in names]
+raise SystemExit(run_cases(root,
+    [Case(n,p,old,new,test,anchor,scope) for n,p,old,new,scope,test,anchor in selected],
+    out,env,mutate,timeout=180,baseline=env.get('PDRS_NEGATIVE_BASELINE','HEAD')))
