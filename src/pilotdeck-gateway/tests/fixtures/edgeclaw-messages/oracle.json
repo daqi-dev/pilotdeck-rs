@@ -2941,6 +2941,86 @@
       "expected": "text @not-leading"
     },
     {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@a @b  hi"
+      ],
+      "expected": "hi"
+    },
+    {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@a﻿@b hi"
+      ],
+      "expected": "hi"
+    },
+    {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@a\t@b\n@c x"
+      ],
+      "expected": "x"
+    },
+    {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@a@b"
+      ],
+      "expected": ""
+    },
+    {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@a."
+      ],
+      "expected": ""
+    },
+    {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@-a"
+      ],
+      "expected": ""
+    },
+    {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@å x"
+      ],
+      "expected": "@å x"
+    },
+    {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@a_b-c.d x"
+      ],
+      "expected": "x"
+    },
+    {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@a @b x"
+      ],
+      "expected": "x"
+    },
+    {
+      "group": "mentions",
+      "fn": "stripLeadingMentions",
+      "args": [
+        "@a\r\n@b  tail"
+      ],
+      "expected": "tail"
+    },
+    {
       "group": "envelope-lines",
       "fn": "stripLeadingMessageEnvelopeLines",
       "args": [
@@ -4301,6 +4381,1098 @@
         "new session was started via /new or /reset."
       ],
       "expected": false
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/help"
+      ],
+      "expected": "help"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/HELP:"
+      ],
+      "expected": "help"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/helpx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/commands"
+      ],
+      "expected": "commands"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/COMMANDS:"
+      ],
+      "expected": "commands"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/commandsx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/skill"
+      ],
+      "expected": "skill"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/SKILL:"
+      ],
+      "expected": "skill"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/skillx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/status"
+      ],
+      "expected": "status"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/STATUS:"
+      ],
+      "expected": "status"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/statusx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/allowlist"
+      ],
+      "expected": "allowlist"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/ALLOWLIST:"
+      ],
+      "expected": "allowlist"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/allowlistx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/approve"
+      ],
+      "expected": "approve"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/APPROVE:"
+      ],
+      "expected": "approve"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/approvex"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/context"
+      ],
+      "expected": "context"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/CONTEXT:"
+      ],
+      "expected": "context"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/contextx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/whoami"
+      ],
+      "expected": "whoami"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/WHOAMI:"
+      ],
+      "expected": "whoami"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/whoamix"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/id"
+      ],
+      "expected": "id"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/ID:"
+      ],
+      "expected": "id"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/idx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/subagents"
+      ],
+      "expected": "subagents"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/SUBAGENTS:"
+      ],
+      "expected": "subagents"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/subagentsx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/config"
+      ],
+      "expected": "config"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/CONFIG:"
+      ],
+      "expected": "config"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/configx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/debug"
+      ],
+      "expected": "debug"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/DEBUG:"
+      ],
+      "expected": "debug"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/debugx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/usage"
+      ],
+      "expected": "usage"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/USAGE:"
+      ],
+      "expected": "usage"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/usagex"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/tts"
+      ],
+      "expected": "tts"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/TTS:"
+      ],
+      "expected": "tts"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/ttsx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/voice"
+      ],
+      "expected": "voice"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/VOICE:"
+      ],
+      "expected": "voice"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/voicex"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/stop"
+      ],
+      "expected": "stop"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/STOP:"
+      ],
+      "expected": "stop"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/stopx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/restart"
+      ],
+      "expected": "restart"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/RESTART:"
+      ],
+      "expected": "restart"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/restartx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock-telegram"
+      ],
+      "expected": "dock-telegram"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/DOCK-TELEGRAM:"
+      ],
+      "expected": "dock-telegram"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock-telegramx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock_telegram"
+      ],
+      "expected": "dock_telegram"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/DOCK_TELEGRAM:"
+      ],
+      "expected": "dock_telegram"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock_telegramx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock-discord"
+      ],
+      "expected": "dock-discord"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/DOCK-DISCORD:"
+      ],
+      "expected": "dock-discord"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock-discordx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock_discord"
+      ],
+      "expected": "dock_discord"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/DOCK_DISCORD:"
+      ],
+      "expected": "dock_discord"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock_discordx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock-slack"
+      ],
+      "expected": "dock-slack"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/DOCK-SLACK:"
+      ],
+      "expected": "dock-slack"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock-slackx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock_slack"
+      ],
+      "expected": "dock_slack"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/DOCK_SLACK:"
+      ],
+      "expected": "dock_slack"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/dock_slackx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/activation"
+      ],
+      "expected": "activation"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/ACTIVATION:"
+      ],
+      "expected": "activation"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/activationx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/send"
+      ],
+      "expected": "send"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/SEND:"
+      ],
+      "expected": "send"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/sendx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/reset"
+      ],
+      "expected": "reset"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/RESET:"
+      ],
+      "expected": "reset"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/resetx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/new"
+      ],
+      "expected": "new"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/NEW:"
+      ],
+      "expected": "new"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/newx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/think"
+      ],
+      "expected": "think"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/THINK:"
+      ],
+      "expected": "think"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/thinkx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/thinking"
+      ],
+      "expected": "thinking"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/THINKING:"
+      ],
+      "expected": "thinking"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/thinkingx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/t"
+      ],
+      "expected": "t"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/T:"
+      ],
+      "expected": "t"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/tx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/verbose"
+      ],
+      "expected": "verbose"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/VERBOSE:"
+      ],
+      "expected": "verbose"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/verbosex"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/v"
+      ],
+      "expected": "v"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/V:"
+      ],
+      "expected": "v"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/vx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/reasoning"
+      ],
+      "expected": "reasoning"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/REASONING:"
+      ],
+      "expected": "reasoning"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/reasoningx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/reason"
+      ],
+      "expected": "reason"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/REASON:"
+      ],
+      "expected": "reason"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/reasonx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/elevated"
+      ],
+      "expected": "elevated"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/ELEVATED:"
+      ],
+      "expected": "elevated"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/elevatedx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/elev"
+      ],
+      "expected": "elev"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/ELEV:"
+      ],
+      "expected": "elev"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/elevx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/exec"
+      ],
+      "expected": "exec"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/EXEC:"
+      ],
+      "expected": "exec"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/execx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/model"
+      ],
+      "expected": "model"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/MODEL:"
+      ],
+      "expected": "model"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/modelx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/models"
+      ],
+      "expected": "models"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/MODELS:"
+      ],
+      "expected": "models"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/modelsx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/queue"
+      ],
+      "expected": "queue"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/QUEUE:"
+      ],
+      "expected": "queue"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/queuex"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/bash"
+      ],
+      "expected": "bash"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/BASH:"
+      ],
+      "expected": "bash"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/bashx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/compact"
+      ],
+      "expected": "compact"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/COMPACT:"
+      ],
+      "expected": "compact"
+    },
+    {
+      "group": "commands",
+      "fn": "parseLeadingSlashCommand",
+      "args": [
+        "/compactx"
+      ],
+      "expected": {
+        "$undefined": true
+      }
     },
     {
       "group": "tools",

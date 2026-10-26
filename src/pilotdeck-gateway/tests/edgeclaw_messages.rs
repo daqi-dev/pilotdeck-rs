@@ -15,6 +15,8 @@ use pilotdeck_gateway::runtime::memory::edgeclaw::messages::{
     strip_untrusted_sender_metadata, strip_user_noise,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 #[path = "common/baseline.rs"]
 mod baseline;
@@ -324,6 +326,50 @@ fn case_fold_matches_ts() {
 #[test]
 fn code_unit_edges_match_ts() {
     replay(&["edge"]);
+}
+
+/// 4 MiB of leading `@a ` mentions must normalize in bounded time. The ratio
+/// is the assertion: a per-mention whole-string re-encode is quadratic, so 4x
+/// input costs ~16x work. The channel deadline is only a watchdog that keeps
+/// a regressed run from hanging the suite (the fixed pass is a few seconds in
+/// a debug build); it is deliberately loose instead of a machine-specific
+/// time limit.
+#[test]
+fn leading_mentions_scale_is_linear() {
+    fn normalize(bytes: usize) -> Duration {
+        let mut body = String::with_capacity(bytes + 16);
+        while body.len() + 4 <= bytes {
+            body.push_str("@a ");
+        }
+        body.push_str("hello");
+        let mut raw = JsObject::new();
+        raw.insert("role".into(), JsValue::String("user".into()));
+        raw.insert("content".into(), JsValue::String(body.as_str().into()));
+        let started = Instant::now();
+        let message = normalize_transcript_message(&JsValue::Object(raw), true, 4000.0)
+            .expect("normalized user message");
+        assert_eq!(message.content.to_utf8().unwrap(), "hello");
+        started.elapsed()
+    }
+
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send((normalize(1 << 20), normalize(4 << 20)));
+    });
+    let (small, large) = match receiver.recv_timeout(Duration::from_secs(60)) {
+        Ok(times) => times,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("mentions-scale/1-4 MiB input did not finish within the 60 s watchdog")
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("mentions-scale/normalization worker panicked")
+        }
+    };
+    assert!(
+        large <= small * 8 + Duration::from_millis(250),
+        "mentions-scale/4 MiB {large:?} vs 1 MiB {small:?} is not linear"
+    );
+    println!("mentions-scale: 1 MiB {small:?}, 4 MiB {large:?}");
 }
 
 #[test]
