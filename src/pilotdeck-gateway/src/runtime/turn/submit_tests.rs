@@ -1003,7 +1003,10 @@ async fn unavailable_capabilities_are_explicitly_refused() {
             .await
             .unwrap();
     }
-    assert!(selected > 0, "submit capability filter must match at least one scenario");
+    assert!(
+        selected > 0,
+        "submit capability filter must match at least one scenario"
+    );
 }
 
 #[test]
