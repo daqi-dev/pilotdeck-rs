@@ -9,12 +9,12 @@
 | absolute-normal | 绝对路径词法规范化 | 原路径全部相等 |
 | absolute-deleted | 与 absolute-normal 相同 | 同结果，不能先读 cwd |
 | project-relative-deleted | ENOENT uv_cwd | toolResultsDir 的相对 projectRoot 传播错误 |
-| join-relative-normal | `logs/s/subagents/kid.jsonl` | **保留既有差异**：Rust 原来绝对化，本包不改正常输出 |
+| join-relative-normal | `logs/s/subagents/kid.jsonl` | **保留既有差异**：Rust 原来绝对化，登记 `A6.2-TRANSCRIPT-SUBAGENT-RELATIVE-001`（未批准，非已接受差异） |
 | join-relative-deleted | `logs/s/subagents/kid.jsonl` | 保留原 fallback，不能让 path.join 入口新报错 |
 
 `project-relative-deleted` 的 TS 原入口可能先在 project-id 计算中读取 cwd，Rust 的项目布局由宿主提供；这里对齐入口可见错误，不声称内部失败阶段相同。当前测试不改写 store key 的 projectRoot/pilotHome。
 
-正常主 storage 两种 layout（主侧链和嵌套默认侧链）都比对完整路径。相对 Default 分支原有 TS/Rust 差异只记录，不在本包修正；`relativeSubagentPath` 也不扩展。
+正常主 storage 两种 layout（主侧链和嵌套默认侧链）都比对完整路径。相对 Default 分支原有 TS/Rust 差异见 [A6.2-TRANSCRIPT-SUBAGENT-RELATIVE-001](../../../../../specs/gateway-parity/diffs/A6.2-TRANSCRIPT-SUBAGENT-RELATIVE-001.md)，只登记，不在本包修正；该格改写 expected 后通过只表示 Rust 既有行为未变，不表示 TS 对齐，也不增加判分豁免。`relativeSubagentPath` 也不扩展。
 
 重生成：设置 `PDRS_BASELINE` 到只读基线，运行 `node --disable-warning=ExperimentalWarning --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/transcript-resolve/generate.mts <新目录>`。生成器使用 recursive mkdir 和 `flag:'wx'`。Rust ignored 守卫为 `transcript_resolve_regenerates_identically`，通过现有 `baseline::regenerates_identically("transcript-resolve")` 要求 oracle 字节一致。
 

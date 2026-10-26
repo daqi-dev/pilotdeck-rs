@@ -76,8 +76,9 @@ fn matrix(name: &str, test: &str) {
         .unwrap()["outcome"]
         .clone();
     if name == "join-relative-normal" {
-        // Existing Rust behavior absolutizes this path.join branch. Preserve
-        // it in this narrow fix; the TS fixture explicitly records the gap.
+        // A6.2-TRANSCRIPT-SUBAGENT-RELATIVE-001 (unapproved, not accepted).
+        // Preserve Rust's existing absolute path.join result in this narrow
+        // fix; this adjusted expectation does not establish TS parity.
         expected["transcriptPath"] = json!("<root>/cwd/logs/s/subagents/kid.jsonl");
     }
     let original_cwd = std::env::current_dir().unwrap();
