@@ -553,7 +553,9 @@ async fn status_receipt(success: bool) {
         4,
         "status callback cannot release successor"
     );
-    let receipt = receipt.unwrap().expect("status owns durable receipt");
+    let receipt = receipt
+        .unwrap()
+        .expect("#741 pr5c status awaits durable receipt: status owns durable receipt");
     if success {
         receipt.send(()).unwrap();
     } else {
