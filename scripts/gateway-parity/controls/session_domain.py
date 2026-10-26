@@ -62,6 +62,7 @@ read = session_domain_module.read
 require = session_domain_module.require
 validate_calibration = session_domain_module.validate_calibration
 probe_process_group = session_domain_module.probe_process_group
+wait_exit_unreaped = session_domain_module.wait_exit_unreaped
 cleanup_status = session_domain_module.cleanup_status
 CLEANUP_VERIFIED = session_domain_module.CLEANUP_VERIFIED
 CLEANUP_GROUP_NOT_EMPTY = session_domain_module.CLEANUP_GROUP_NOT_EMPTY
@@ -355,34 +356,37 @@ def cleanup_controls(output):
         except OSError:
             return False
 
-    def force_empty(pgid):
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(pgid, sig)
-            except ProcessLookupError:
-                return True
-            except OSError:
-                return False
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                if group_empty(pgid):
-                    return True
-                time.sleep(.05)
-        return group_empty(pgid)
+    def force_known_member(pgid, pid):
+        """Last resort: only a known live pid proven to still be in the group."""
+        if pid is None:
+            return
+        try:
+            if os.getpgid(pid) != pgid:
+                return
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
-    # 1. A reaped leader with no descendants: killpg(pgid, 0) must raise ESRCH.
+    # 1. Leader exits as an unreaped zombie; empty group -> VERIFIED.
     child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
-    child.wait(timeout=10)
-    probe = probe_process_group(child.pid)
+    probe = probe_process_group(child, wait=10)
+    if child.returncode is None:
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
     check('cleanup-empty-group', probe['status'] == CLEANUP_VERIFIED
+          and probe.get('leaderUnreaped') is True and probe.get('leaderReaped') is True
           and cleanup_status({'processTreeCleanup': probe['status']}) == 'PASS',
-          f"status={probe['status']} top={cleanup_status({'processTreeCleanup': probe['status']})}",
+          f"status={probe['status']} top={cleanup_status({'processTreeCleanup': probe['status']})} "
+          f"leaderUnreaped={probe.get('leaderUnreaped')} leaderReaped={probe.get('leaderReaped')}",
           probe=probe)
 
     # 2. The launcher exits while a sleep grandchild stays in its group.  The
-    # probe must report GROUP_NOT_EMPTY, SIGTERM that group, and the top level
-    # must not claim PASS.  The grandchild's stdio is /dev/null so a parent
-    # capture pipe cannot stay open if cleanup fails.
+    # probe waits with WNOWAIT (leader stays a zombie, pgid cannot be reused),
+    # reports GROUP_NOT_EMPTY, SIGTERMs that group, and reaps last.  The top
+    # level must not claim PASS.  The grandchild's stdio is /dev/null so a
+    # parent capture pipe cannot stay open if cleanup fails.
     marker = output / 'leaky-grandchild.pid'
     code = ("import subprocess,sys;"
             "p=subprocess.Popen(['sleep','60'],stdout=subprocess.DEVNULL,"
@@ -390,41 +394,52 @@ def cleanup_controls(output):
             "open(sys.argv[1],'w').write(str(p.pid))")
     child = subprocess.Popen([sys.executable, '-I', '-c', code, str(marker)],
                              start_new_session=True)
-    child.wait(timeout=10)
-    probe = probe_process_group(child.pid)
+    probe = probe_process_group(child, wait=10)
     top = cleanup_status({'processTreeCleanup': probe['status']})
     grandchild = int(marker.read_text()) if marker.is_file() else None
     grandchild_gone = grandchild is not None and not _pid_alive(grandchild)
-    empty = group_empty(child.pid)
-    if not empty:
-        force_empty(child.pid)
-    if not group_empty(child.pid) and grandchild is not None:
-        # Last resort for the control's own known PID; the production probe has
-        # no pid list and reports GROUP_NOT_EMPTY instead of guessing.
-        try:
-            os.kill(grandchild, signal.SIGKILL)
-        except OSError:
-            pass
-        force_empty(child.pid)
+    if not group_empty(child.pid):
+        force_known_member(child.pid, grandchild)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not group_empty(child.pid):
+            time.sleep(.05)
     check('cleanup-leftover-grandchild',
           probe['status'] == CLEANUP_GROUP_NOT_EMPTY and top == CLEANUP_UNVERIFIED_STATUS
           and grandchild_gone and group_empty(child.pid),
           f"status={probe['status']} top={top} grandchildGone={grandchild_gone} "
           f"groupEmpty={group_empty(child.pid)}", probe=probe)
 
-    # 3. An inaccessible probe is BLOCKED and never a PASS.
-    with patch('session_domain.os.killpg', side_effect=PermissionError('denied')):
-        blocked = probe_process_group(999999)
-    blocked_top = cleanup_status({'processTreeCleanup': blocked['status']})
+    # 3. An inaccessible probe is BLOCKED and never a PASS.  Both killpg and
+    # the leader kill(pid, 0) are denied, so the probe cannot mistake a sandbox
+    # denial for "only the zombie leader remains".
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
+    state = wait_exit_unreaped(child.pid, 10)
+    blocked = {'status': None}
+    error = None
+    if state == 'EXITED':
+        try:
+            with patch.object(os, 'killpg', side_effect=PermissionError('denied')), \
+                    patch.object(os, 'kill', side_effect=PermissionError('denied')):
+                blocked = probe_process_group(child)
+        except Exception as exc:  # a removed BLOCKED branch must be visible
+            error = f'{type(exc).__name__}: {exc}'
+    else:
+        error = f'leader state {state}'
+    if child.returncode is None:
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    blocked_top = cleanup_status({'processTreeCleanup': blocked.get('status')})
     check('cleanup-probe-blocked',
-          blocked['status'] == CLEANUP_BLOCKED and blocked_top == CLEANUP_UNVERIFIED_STATUS,
-          f"status={blocked['status']} top={blocked_top}", probe=blocked)
+          blocked.get('status') == CLEANUP_BLOCKED and blocked_top == CLEANUP_UNVERIFIED_STATUS
+          and error is None,
+          f"status={blocked.get('status')} top={blocked_top} error={error}", probe=blocked)
 
     report = {'status': 'PASS' if all(row['passed'] for row in results) else 'FAIL',
               'scope': 'cleanup probe behavior controls; not native evidence', 'cases': results}
     save(output / 'cleanup-controls.json', report)
     return report
-
 
 def _pid_alive(pid):
     try:

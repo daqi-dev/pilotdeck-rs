@@ -8,16 +8,22 @@ does not mutate source; the post-commit source mutation controls are in
 Modes:
   clean  - reaped leader, empty group -> VERIFIED / PASS
   leak   - reaped leader, sleep grandchild -> GROUP_NOT_EMPTY / non-PASS
-  ignore - grandchild ignores SIGTERM -> GROUP_NOT_EMPTY / non-PASS, then SIGKILL
-  blocked - killpg denied -> BLOCKED / non-PASS
+  ignore - grandchild ignores SIGTERM (bounded ready handshake) -> GROUP_NOT_EMPTY /
+           non-PASS, then SIGKILL
+  blocked - killpg and leader kill denied -> BLOCKED / non-PASS
   status - status mapping for VERIFIED / GROUP_NOT_EMPTY / BLOCKED / NOT_VERIFIED
+  wiring - drive session_domain.main()'s real cleanup tail with a non-empty
+           group; pin status / executionStatus / freezeStatus / exit 2
   runtime-negative - replace probe at runtime with VERIFIED; the leaky fixture must
                      then look accepted (old behavior), and the real probe must
                      still report GROUP_NOT_EMPTY afterwards
   all    - every mode above (default)
 """
 import argparse
+import contextlib
+import copy
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -66,19 +72,23 @@ def group_empty(pgid):
         return False
 
 
-def force_kill(pgid):
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(pgid, sig)
-        except ProcessLookupError:
-            return
-        except OSError:
-            return
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            if group_empty(pgid):
-                return
-            time.sleep(.05)
+def force_known_member(pgid, pid):
+    """Kill only a known live pid proven to still be inside *pgid*.
+
+    After run_fixture reaped the leader, the bare pgid may be reused, so a
+    group signal is no longer an ownership proof.  ``getpgid(pid) == pgid``
+    proves this live pid is still our member; a reused pid elsewhere is left
+    alone.
+    """
+    if pid is None:
+        return False
+    try:
+        if os.getpgid(pid) != pgid:
+            return False
+        os.kill(pid, signal.SIGKILL)
+        return True
+    except OSError:
+        return False
 
 
 def run_fixture(md, output, mode):
@@ -90,15 +100,10 @@ def run_fixture(md, output, mode):
     audit = md.run_fixture(folder, ROOT, command=command)
     grandchild = int(pid_file.read_text()) if pid_file.is_file() else None
     if not group_empty(audit['pgid']):
-        force_kill(audit['pgid'])
-    if not group_empty(audit['pgid']) and grandchild is not None:
-        # Last resort for the fixture's own known PID; production reports
-        # GROUP_NOT_EMPTY rather than guessing an unowned pid.
-        try:
-            os.kill(grandchild, signal.SIGKILL)
-        except OSError:
-            pass
-        force_kill(audit['pgid'])
+        force_known_member(audit['pgid'], grandchild)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not group_empty(audit['pgid']):
+            time.sleep(.05)
     result = {
         'mode': mode,
         'processTreeCleanup': audit['processTreeCleanup'],
@@ -108,6 +113,10 @@ def run_fixture(md, output, mode):
         'grandchildPid': grandchild,
         'grandchildAlive': bool(grandchild and pid_alive(grandchild)),
         'groupEmptyAfterRun': group_empty(audit['pgid']),
+        'launcherExitCode': audit.get('exitCode'),
+        'launcherStatus': audit.get('status'),
+        'leaderReapState': audit.get('leaderReapState'),
+        'fixtureReadError': audit.get('fixtureReadError'),
     }
     if mode == 'clean':
         expected = audit['processTreeCleanup'] == md.CLEANUP_VERIFIED
@@ -124,6 +133,69 @@ def run_fixture(md, output, mode):
     return result
 
 
+def wiring_control(md, output):
+    """Drive main()'s real cleanup tail with an unverified group.
+
+    Only the expensive collection steps are replaced (fixture run, calibration
+    validation, controls, hashes, frozen check).  The tail that maps
+    ``processTreeCleanup`` to ``status`` / ``executionStatus`` / ``freezeStatus``
+    and chooses the exit code runs unchanged, so a regression at
+    ``session_domain.py`` ``overall = cleanup_status(audit)`` turns this red
+    instead of only breaking a helper-level unit test.
+    """
+    script = output / 'wiring-apparatus'
+    (script / 'controls').mkdir(parents=True, exist_ok=False)
+    (script / 'controls/session_domain.py').write_text(
+        "def run_all(*_args, **_kwargs):\n"
+        "    return {'status': 'PASS'}\n")
+    folder = output / 'wiring-run'
+    audit = {'exitCode': 0, 'launcherAndFixtureReaped': True,
+             'processTreeCleanup': md.CLEANUP_GROUP_NOT_EMPTY,
+             'pid': 1, 'pgid': 1}
+    patched = {
+        'SCRIPT': script,
+        'E1_SOURCES': (),
+        'run_fixture': lambda *_a, **_k: copy.deepcopy(audit),
+        'validate_calibration': lambda *_a, **_k: {
+            'groups': [], 'expectedCases': [], 'executedCases': [],
+            'repeats': md.REPEATS, 'measurements': 0, 'oracle': {},
+            'rounds': [], 'controls': [], 'unstableGroups': [],
+            'sidecar': {}, 'connections': {}, 'surfaces': {},
+            'sourceManifest': '', 'evidenceSha256': {}},
+        'hashes': lambda: {'wiring': 'fixed'},
+        'frozen_check': lambda: {'exitCode': 0, 'stdout': '', 'stderr': ''},
+        'baseline_dependency_hashes': lambda _baseline: {},
+        'install_shutdown': lambda: None,
+        'parity_lock': lambda **_kwargs: contextlib.nullcontext(),
+    }
+    saved = {name: getattr(md, name) for name in patched}
+    captured = io.StringIO()
+    try:
+        for name, value in patched.items():
+            setattr(md, name, value)
+        with patch.object(sys, 'argv', [
+                'session_domain.py', '--suite', 'calibrate',
+                '--output', str(folder), '--baseline', str(folder / 'baseline')]), \
+                contextlib.redirect_stdout(captured):
+            code = md.main()
+        report = json.loads((folder / 'report.json').read_text())
+    finally:
+        for name, value in saved.items():
+            setattr(md, name, value)
+    expected = {
+        'status': md.CLEANUP_UNVERIFIED_STATUS,
+        'executionStatus': md.CLEANUP_UNVERIFIED_STATUS,
+        'cleanupStatus': md.CLEANUP_GROUP_NOT_EMPTY,
+        'freezeStatus': md.CLEANUP_UNVERIFIED_FREEZE,
+        'returncode': 2,
+    }
+    observed = {key: report.get(key) for key in expected if key != 'returncode'}
+    observed['returncode'] = code
+    result = {'mode': 'wiring', **observed, 'passed': observed == expected,
+              'stdout': captured.getvalue()}
+    return result
+
+
 def runtime_negative(md, output):
     """Show the branch is load-bearing without editing source.
 
@@ -136,8 +208,12 @@ def runtime_negative(md, output):
     bypass.mkdir(parents=True, exist_ok=False)
     old_probe = md.probe_process_group
     audit = None
-    md.probe_process_group = lambda pgid: {'pgid': pgid, 'probe': 'runtime-bypass',
-                                           'status': md.CLEANUP_VERIFIED}
+    bypass_accepted = False
+    bypass_result = {}
+    md.probe_process_group = lambda child: {
+        'pgid': child.pid if hasattr(child, 'pid') else child,
+        'probe': 'runtime-bypass',
+        'status': md.CLEANUP_VERIFIED}
     try:
         audit = md.run_fixture(bypass, ROOT, command=[
             sys.executable, '-I', str(LAUNCHER), '--output', str(bypass / 'six-cells'),
@@ -148,8 +224,18 @@ def runtime_negative(md, output):
                          'topLevel': md.cleanup_status(audit)}
     finally:
         md.probe_process_group = old_probe
+        pid_file = bypass / 'grandchild.pid'
+        grandchild = int(pid_file.read_text()) if pid_file.is_file() else None
         if audit is not None:
-            force_kill(audit['pgid'])
+            force_known_member(audit['pgid'], grandchild)
+        elif grandchild is not None:
+            # No audit: the group id is unknown, but the fixture's own live pid
+            # can still be proven before it is signalled.
+            try:
+                os.getpgid(grandchild)  # raises ESRCH if it already exited
+                os.kill(grandchild, signal.SIGKILL)
+            except OSError:
+                pass
     real = run_fixture(md, output / 'runtime-negative-real', 'leak')
     result = {'mode': 'runtime-negative',
               'bypassAcceptedLeak': bypass_accepted,
@@ -163,20 +249,73 @@ def runtime_negative(md, output):
 
 
 def blocked_control(md):
-    """An inaccessible probe is BLOCKED and maps to the non-PASS status."""
+    """An inaccessible probe is BLOCKED and maps to the non-PASS status.
+
+    Two denial shapes matter: a ``PermissionError`` (macOS sandbox / EPERM) and
+    a plain ``OSError`` (the generic fail-closed branch).  Both must end in
+    BLOCKED, never PASS and never a crash-only pass.
+    """
+    cases = []
+    error = None
     try:
-        with patch.object(md.os, 'killpg', side_effect=PermissionError('denied')):
-            probe = md.probe_process_group(999999)
-        status = probe['status']
-        top = md.cleanup_status({'processTreeCleanup': status})
-        error = None
+        for name, killpg_error, kill_error in (
+                ('permission-denied', PermissionError('denied'), PermissionError('denied')),
+                ('oserror-denied', OSError('denied'), None)):
+            probe = _blocked_case(md, killpg_error, kill_error)
+            status = probe.get('status')
+            top = md.cleanup_status({'processTreeCleanup': status})
+            cases.append({'case': name, 'processTreeCleanup': status, 'topLevel': top,
+                          'passed': status == md.CLEANUP_BLOCKED
+                                    and top == md.CLEANUP_UNVERIFIED_STATUS})
     except Exception as exc:  # a removed BLOCKED branch must be visible, not a crash-only pass
-        status = None
-        top = None
         error = f'{type(exc).__name__}: {exc}'
-    return {'mode': 'blocked', 'processTreeCleanup': status, 'topLevel': top,
-            'error': error,
-            'passed': status == md.CLEANUP_BLOCKED and top == md.CLEANUP_UNVERIFIED_STATUS}
+    passed = error is None and len(cases) == 2 and all(row['passed'] for row in cases)
+    return {'mode': 'blocked',
+            'processTreeCleanup': cases[0]['processTreeCleanup'] if cases else None,
+            'topLevel': cases[0]['topLevel'] if cases else None,
+            'error': error, 'cases': cases, 'passed': passed}
+
+
+def _blocked_case(md, killpg_error, kill_error=None):
+    child = _zombie_child()
+    patches = [patch.object(md.os, 'killpg', side_effect=killpg_error)]
+    if kill_error is not None:
+        patches.append(patch.object(md.os, 'kill', side_effect=kill_error))
+    try:
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            return md.probe_process_group(child)
+    finally:
+        if child.returncode is None:
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+
+
+def _zombie_child():
+    """Spawn a new-session child and leave it an unreaped zombie."""
+    import subprocess
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
+    if md_wait(child.pid, 10) != 'EXITED':
+        child.wait(timeout=5)
+        raise RuntimeError('fixture leader did not exit')
+    return child
+
+
+def md_wait(pid, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            info = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+        except ChildProcessError:
+            return 'REAPED'
+        if info is not None:
+            return 'EXITED'
+        if time.monotonic() >= deadline:
+            return 'RUNNING'
+        time.sleep(.02)
 
 
 def status_controls(md):
@@ -198,7 +337,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--mode', choices=('clean', 'leak', 'ignore', 'blocked', 'status',
-                                           'runtime-negative', 'all'),
+                                           'wiring', 'runtime-negative', 'all'),
                         default='all')
     args = parser.parse_args()
     output = args.output.resolve()
@@ -206,7 +345,7 @@ def main():
     md = load_session_domain()
     results = []
     modes = ('clean', 'leak', 'ignore') if args.mode == 'all' else (
-        () if args.mode in ('status', 'runtime-negative', 'blocked') else (args.mode,))
+        () if args.mode in ('status', 'runtime-negative', 'blocked', 'wiring') else (args.mode,))
     for mode in modes:
         result = run_fixture(md, output, mode)
         results.append(result)
@@ -223,6 +362,10 @@ def main():
         for result in status_controls(md):
             results.append({'mode': 'status', **result})
             print(json.dumps(results[-1], ensure_ascii=False), flush=True)
+    if args.mode in ('wiring', 'all'):
+        result = wiring_control(md, output)
+        results.append(result)
+        print(json.dumps(result, ensure_ascii=False), flush=True)
     status = 'PASS' if all(result['passed'] for result in results) else 'FAIL'
     summary = {'status': status, 'output': str(output), 'results': results}
     (output / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
