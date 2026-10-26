@@ -14,15 +14,22 @@
 oracle 与宿主环境无关。cache case 在同一个模块实例上先坏 JSON 再写合法
 JSON，记录两次返回值，锁定「首次失败后永久 null」。
 
-覆盖 366 个观测：openclaw 缺失 / 坏 JSON / primary 命中与不命中（含按
+覆盖 378 个观测：openclaw 缺失 / 坏 JSON / primary 命中与不命中（含按
 `id` / `name` 命中，且 name 命中的模型可以不是首个模型）/ provider
 或 model 缺失 / headers 合并与 trim（数组 headers 被 `isRecord` 拒绝）/
 整数 provider 名按 JS 键序回退（raw JSON 文本里 `10` 在 `2` 前）；
 `buildLlmConfig` 的默认值、六条 env 回退、options 覆盖、modelRef、openclaw
-选择命中与不命中、apiKey 环境变量名字面量；extractor 的 `sanitizeHeaders`（含数组记录）、`resolveAgentPrimaryModel`、
+选择命中与不命中、apiKey 环境变量名字面量；extractor 的 `sanitizeHeaders`（含数组记录、
+`JSON.parse` 造出的自有 `__proto__` 键——普通赋值把它路由进
+`Object.prototype` setter，不成为自有属性，只有 `__proto__` 时返回
+`undefined`；对照 openclaw `toStringRecord` / `buildLlmConfig` 展开均保留该
+键）、`resolveAgentPrimaryModel`、
 `parseModelRef`、`looksLikeEnvVarName`、`resolveSelection`（api/baseUrl/
-headers 覆盖与尾斜杠）、`resolveApiKey`（直接值 / 环境变量名 / runtime
-resolver）、`mergeIndexingSettings`（含 NaN / Infinity / -0 语义）与工厂
+headers 覆盖与尾斜杠、headers 里的自有 `__proto__` 被丢弃）、
+`resolveApiKey`（直接值 / 环境变量名 / runtime resolver，其中
+`{toString:null}`（直接对象或数组内）让 `String()` 抛
+`Cannot convert object to primitive value`，普通对象转成
+`"[object Object]"`）、`mergeIndexingSettings`（含 NaN / Infinity / -0 语义）与工厂
 `resolveMemoryLlm` / `memoryApiTypeForProtocol`。
 
 生成两次并核字节（从仓库根目录运行）：

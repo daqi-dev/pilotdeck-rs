@@ -9788,6 +9788,362 @@
         "apiKey": " KEY ",
         "apiType": "openai-completions"
       }
+    },
+    {
+      "fn": "sanitizeHeaders",
+      "args": [
+        {
+          "__proto__": "secret",
+          "Authorization": " token "
+        }
+      ],
+      "expected": {
+        "Authorization": " token "
+      }
+    },
+    {
+      "fn": "sanitizeHeaders",
+      "args": [
+        {
+          "__proto__": "secret"
+        }
+      ],
+      "expected": {
+        "$undefined": true
+      }
+    },
+    {
+      "fn": "resolveSelection",
+      "args": [
+        {
+          "models": {
+            "providers": {
+              "alpha": {
+                "headers": {
+                  "__proto__": "secret",
+                  "P": " p "
+                },
+                "models": [
+                  {
+                    "id": "m1",
+                    "headers": {
+                      "__proto__": "secret2",
+                      "M": " m "
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": "alpha/m1"
+              }
+            }
+          }
+        },
+        {
+          "$undefined": true
+        }
+      ],
+      "expected": {
+        "provider": "alpha",
+        "model": "m1",
+        "api": "openai-completions",
+        "headers": {
+          "P": " p ",
+          "M": " m "
+        }
+      }
+    },
+    {
+      "fn": "resolveSelection",
+      "args": [
+        {
+          "models": {
+            "providers": {
+              "alpha": {
+                "headers": {
+                  "__proto__": "secret",
+                  "P": " p "
+                },
+                "models": [
+                  {
+                    "id": "m1",
+                    "headers": {
+                      "__proto__": "secret2",
+                      "M": " m "
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "agents": {
+            "defaults": {
+              "model": {
+                "primary": "alpha/m1"
+              }
+            }
+          }
+        },
+        "worker"
+      ],
+      "expected": {
+        "provider": "alpha",
+        "model": "m1",
+        "api": "openai-completions",
+        "headers": {
+          "P": " p ",
+          "M": " m "
+        }
+      }
+    },
+    {
+      "fn": "buildLlmConfig",
+      "args": [
+        {
+          "$undefined": true
+        },
+        {},
+        {
+          "kind": "valid",
+          "json": {
+            "models": {
+              "providers": {
+                "alpha": {
+                  "headers": {},
+                  "models": [
+                    {
+                      "id": "m1"
+                    }
+                  ]
+                }
+              }
+            },
+            "agents": {
+              "defaults": {
+                "model": {
+                  "primary": "alpha/m1"
+                }
+              }
+            }
+          },
+          "text": "{\"models\":{\"providers\":{\"alpha\":{\"headers\":{\"__proto__\":\"secret\",\"X-Keep\":\" x \"},\"models\":[{\"id\":\"m1\"}]}}},\"agents\":{\"defaults\":{\"model\":{\"primary\":\"alpha/m1\"}}}}"
+        }
+      ],
+      "expected": {
+        "agents": {
+          "defaults": {
+            "model": {
+              "primary": "alpha/m1"
+            }
+          }
+        },
+        "models": {
+          "providers": {
+            "alpha": {
+              "api": "openai-responses",
+              "models": [
+                {
+                  "id": "m1",
+                  "api": "openai-responses",
+                  "headers": {
+                    "__proto__": "secret",
+                    "X-Keep": "x"
+                  }
+                }
+              ],
+              "headers": {
+                "__proto__": "secret",
+                "X-Keep": "x"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "fn": "resolveOpenClawModelConfig",
+      "args": [
+        [
+          {
+            "kind": "valid",
+            "json": {
+              "models": {
+                "providers": {
+                  "alpha": {
+                    "headers": {},
+                    "models": [
+                      {
+                        "id": "m1"
+                      }
+                    ]
+                  }
+                }
+              },
+              "agents": {
+                "defaults": {
+                  "model": {
+                    "primary": "alpha/m1"
+                  }
+                }
+              }
+            },
+            "text": "{\"models\":{\"providers\":{\"alpha\":{\"headers\":{\"__proto__\":\"secret\",\"X-Keep\":\" x \"},\"models\":[{\"id\":\"m1\"}]}}},\"agents\":{\"defaults\":{\"model\":{\"primary\":\"alpha/m1\"}}}}"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "provider": "alpha",
+          "model": "m1",
+          "apiType": {
+            "$undefined": true
+          },
+          "baseUrl": {
+            "$undefined": true
+          },
+          "apiKey": {
+            "$undefined": true
+          },
+          "headers": {
+            "__proto__": "secret",
+            "X-Keep": "x"
+          }
+        }
+      ]
+    },
+    {
+      "fn": "resolveApiKey",
+      "args": [
+        {
+          "models": {
+            "providers": {
+              "alpha": {}
+            }
+          }
+        },
+        "alpha",
+        {},
+        {
+          "apiKey": {
+            "toString": null
+          }
+        }
+      ],
+      "expected": {
+        "$error": "Cannot convert object to primitive value"
+      }
+    },
+    {
+      "fn": "resolveApiKey",
+      "args": [
+        {
+          "models": {
+            "providers": {
+              "alpha": {}
+            }
+          }
+        },
+        "alpha",
+        {},
+        {
+          "apiKey": [
+            {
+              "toString": null
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "$error": "Cannot convert object to primitive value"
+      }
+    },
+    {
+      "fn": "resolveApiKey",
+      "args": [
+        {
+          "models": {
+            "providers": {
+              "alpha": {}
+            }
+          }
+        },
+        "alpha",
+        {},
+        {
+          "apiKey": {}
+        }
+      ],
+      "expected": "[object Object]"
+    },
+    {
+      "fn": "resolveApiKey",
+      "args": [
+        {
+          "models": {
+            "providers": {
+              "alpha": {
+                "apiKey": " direct "
+              }
+            }
+          }
+        },
+        "alpha",
+        {},
+        {
+          "apiKey": {
+            "toString": null
+          }
+        }
+      ],
+      "expected": "direct"
+    },
+    {
+      "fn": "resolveApiKey",
+      "args": [
+        {
+          "models": {
+            "providers": {
+              "alpha": {
+                "apiKey": " direct "
+              }
+            }
+          }
+        },
+        "alpha",
+        {},
+        {
+          "apiKey": [
+            {
+              "toString": null
+            }
+          ]
+        }
+      ],
+      "expected": "direct"
+    },
+    {
+      "fn": "resolveApiKey",
+      "args": [
+        {
+          "models": {
+            "providers": {
+              "alpha": {
+                "apiKey": " direct "
+              }
+            }
+          }
+        },
+        "alpha",
+        {},
+        {
+          "apiKey": {}
+        }
+      ],
+      "expected": "direct"
     }
   ]
 }

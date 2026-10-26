@@ -478,6 +478,86 @@ export async function collect(baseline: string) {
       add('resolveMemoryLlm', [{model}, modelConfig, undefined],
           factory.resolveMemoryLlm({model}, modelConfig, undefined));
     }
+
+    // -- #851 boundary goldens ---------------------------------------------
+    // Unlike an object literal, `JSON.parse` creates a real own `__proto__`
+    // property, so these inputs reach `next[key] = value` inside
+    // sanitizeHeaders, where a plain assignment routes the key to the
+    // Object.prototype setter (a no-op for a string value) instead of
+    // creating an own property.
+    for (const text of [
+      '{"__proto__":"secret","Authorization":" token "}',
+      '{"__proto__":"secret"}',
+    ]) {
+      const input = JSON.parse(text);
+      add('sanitizeHeaders', [input], extractor.sanitizeHeaders(input));
+    }
+    // The same own `__proto__` inside provider/model headers of a JSON.parse
+    // config: the merged selection headers must not carry it.
+    const protoHeadersConfig = JSON.parse(
+      '{"models":{"providers":{"alpha":{"headers":{"__proto__":"secret","P":" p "},'
+      + '"models":[{"id":"m1","headers":{"__proto__":"secret2","M":" m "}}]}}},'
+      + '"agents":{"defaults":{"model":{"primary":"alpha/m1"}}}}',
+    );
+    for (const agentId of [undefined, 'worker']) {
+      let expected: any;
+      try {
+        expected = extractor.__selection(protoHeadersConfig, agentId);
+      } catch (error: any) {
+        expected = {$error: error.message};
+      }
+      add('resolveSelection', [protoHeadersConfig, agentId], expected);
+    }
+    // Contrast: `toStringRecord` (service.ts) rebuilds with
+    // `Object.fromEntries`, which defines own data properties, so an own
+    // `__proto__` in the openclaw file survives into the resolved headers —
+    // and `buildLlmConfig` spreads those headers, which also defines own
+    // data properties. sanitizeHeaders above must NOT be unified with these.
+    const protoHeadersState = {
+      kind: 'valid',
+      json: {
+        models: {providers: {alpha: {headers: {}, models: [{id: 'm1'}]}}},
+        agents: {defaults: {model: {primary: 'alpha/m1'}}},
+      },
+      text: '{"models":{"providers":{"alpha":{"headers":{"__proto__":"secret","X-Keep":" x "},'
+        + '"models":[{"id":"m1"}]}}},"agents":{"defaults":{"model":{"primary":"alpha/m1"}}}}',
+    };
+    {
+      const home = join(scratch, `proto-headers-${index++}`);
+      mkdirSync(home, {recursive: true});
+      writeOpenClaw(home, protoHeadersState);
+      process.env.HOME = home;
+      const service = await loadService(baseline, 'proto-headers');
+      const observed = await withEnv({}, async () => service.buildLlmConfig(undefined));
+      add('buildLlmConfig', [undefined, {}, protoHeadersState], observed);
+      add('resolveOpenClawModelConfig', [[protoHeadersState]], [service.resolveOpenClawModelConfig()]);
+    }
+    // The runtime resolver can hand back a non-string apiKey; `String(value)`
+    // on `{toString: null}` (directly or inside an array) throws, and the
+    // conversion error must reach the caller instead of the no-key fallback.
+    // A plain object still converts to `"[object Object]"`.
+    const objectAuths = [
+      {apiKey: {toString: null}},
+      {apiKey: [{toString: null}]},
+      {apiKey: {}},
+    ];
+    for (const cfg of [
+      {models: {providers: {alpha: {}}}},
+      {models: {providers: {alpha: {apiKey: ' direct '}}}},
+    ]) {
+      for (const auth of objectAuths) {
+        const runtime = {modelAuth: {resolveApiKeyForProvider: async () => auth}};
+        let expected: any;
+        await withEnv({}, async () => {
+          try {
+            expected = await extractor.__apiKey(cfg, 'alpha', runtime);
+          } catch (error: any) {
+            expected = {$error: error.message};
+          }
+        });
+        add('resolveApiKey', [cfg, 'alpha', {}, auth], expected);
+      }
+    }
   } finally {
     process.env.HOME = savedHome;
     rmSync(scratch, {recursive: true, force: true});
