@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Mutate guard/submit product bytes, replay real TS gold, restore exact bytes.
 Run exclusively. Compile failures, signals, empty matches and deadlines are INVALID.
-The launcher's one target is mandatory. Each child process group has a deadline.
+The launcher's tree target (src/target or _build/cargo-target) is mandatory.
+Each child process group has a deadline.
 """
 import hashlib
 import json
@@ -14,6 +15,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned
 from negative_selection import select
 
@@ -26,7 +28,12 @@ submit = turn / 'submit.rs'
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
 env = dict(os.environ, CARGO_NET_OFFLINE='true')
-assert Path(env['CARGO_TARGET_DIR']).resolve() == workspace / 'target'
+# Accept the cargo workspace's own target and the repository's shared
+# `_build/cargo-target`, like the other #813 runners; resolve both sides so a
+# symlinked src/target still matches either spelling.
+target_dir = Path(env['CARGO_TARGET_DIR']).resolve()
+assert target_dir in {(workspace / 'target').resolve(), (repo / '_build/cargo-target').resolve()}, \
+    'use this tree src/target or _build/cargo-target'
 assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
 for key in ['PDRS_SUBMIT_CASE', 'PDRS_SUBMIT_CAPABILITY']:
     env.pop(key, None)
@@ -120,8 +127,9 @@ with mutating_sources(repo, [guard, submit]) as snapshots:
             marker = control['marker']
             valid = not timed_out and ((returncode == 0 and 'test result: ok. 1 passed; 0 failed;' in raw
                 and f'test {control["test"]} ... ok' in raw) if marker is None else (
-                returncode == 101 and 'test result: FAILED' in raw and 'assertion' in raw
-                and marker in raw and 'could not compile' not in raw))
+                returncode == 101 and 'test result: FAILED' in raw
+                and named_test_killed(raw, control['test'], marker)
+                and 'could not compile' not in raw))
             (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr + raw + f'\nexit={returncode} timed_out={timed_out}\n')
             # run_owned reaps the group itself, so the leader pid is not exported.
             summary.append(dict(name=control['name'], case=control.get('case'), marker=marker, before=control.get('before'), after=control.get('after'), pid=None, reaped=True, exit=returncode, timed_out=timed_out, valid=valid))

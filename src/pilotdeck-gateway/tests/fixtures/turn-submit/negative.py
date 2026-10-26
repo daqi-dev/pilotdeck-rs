@@ -14,6 +14,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import panic_evidence as panic_payload
 from negative_process import mutating_sources, run_owned
 from negative_selection import select
 
@@ -283,6 +284,19 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         return {line[4:].strip() for line in text.splitlines()
                 if line.startswith('    runtime::turn::')}
 
+    def panic_blocks(text, test_name):
+        # The named test's own panic segments, header retained. Only the
+        # `location` anchors need the `panicked at <path>:<line>:<col>` header;
+        # `message` anchors use the shared payload-only evidence (#813 fix-r4)
+        # so a path, thread name or backtrace cannot satisfy them.
+        #
+        # Merge note: main's #747 fix-r3 `panic_evidence` also collects every
+        # block owned by the named test; matching the exact name here matches
+        # the shared helper's rule (#813 fix-r2), so a nested test's panic
+        # cannot stand in for the named test.
+        return [part for part in text.split("thread '")[1:]
+                if part.startswith(f"{test_name}'")]
+
     summary = []
     try:
         for name, before, _, _, _, _ in mutants:
@@ -344,14 +358,25 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
             if name == 'baseline':
                 valid = not timed_out and returncode == 0 and 'test result: ok. 4 passed' in raw and 'test result: ok. 10 passed' in raw
             else:
-                # The named test must be the one that panicked, and the marker
-                # must appear in that test's own panic output. Product panics
+                # The named test must be the one that panicked, and the
+                # evidence must live in that test's own output. Product panics
                 # (a poison-unwrap mutant) are evidence alongside assertion
                 # diffs; a marker elsewhere in the log is not.
-                evidence = panic_evidence(raw, used_test)
-                anchored = (f'panicked at {anchor}:' in evidence
-                            if anchor_kind == 'location'
-                            else marker_kills_named_test(raw, used_test, anchor))
+                #
+                # location: main's #747 fix-r3 derives the anchor from the
+                # mutation span via unwrap_site(), so the reverting unwrap()'s
+                # real file:line:column is matched even after source shifts.
+                # #813 fix-r6 keeps that header match inside the named test's
+                # own panic blocks only, never a sibling test's block.
+                #
+                # message: #813 fix-r4/r6 use the shared payload-only
+                # extraction, so a marker that only appears in a thread name,
+                # source path or backtrace cannot satisfy the anchor.
+                if anchor_kind == 'location':
+                    anchored = any(f'panicked at {anchor}:' in block
+                                   for block in panic_blocks(raw, used_test))
+                else:
+                    anchored = anchor in panic_payload(raw, used_test)
                 valid = (not timed_out and returncode == 101 and 'test result: FAILED' in raw
                          and 'could not compile' not in raw and used_test in failed_tests(raw)
                          and anchored)
