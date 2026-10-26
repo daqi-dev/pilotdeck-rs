@@ -558,8 +558,15 @@ fn contains_ci(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
+// Shared with the html_markdown integration tests (see process_spawn.rs for
+// the precedent of reaching into tests/common from this crate's sources).
+#[cfg(test)]
+#[path = "../../../../../tests/common/timing.rs"]
+mod timing;
+
 #[cfg(test)]
 mod tests {
+    use super::timing;
     use super::*;
     use std::time::Duration;
 
@@ -879,40 +886,6 @@ mod tests {
         elapsed
     }
 
-    /// Timing samples per size. Three is the default; the quadratic negative
-    /// control lowers it to one because every mutant sample costs minutes.
-    fn timing_samples() -> usize {
-        std::env::var("PDRS_HTML_COMPAT_TIMING_SAMPLES")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .filter(|samples| (1..=9).contains(samples))
-            .unwrap_or(3)
-    }
-
-    /// Interleave the two sizes and keep the fastest run of each. A single
-    /// preempted sample must not decide the ratio on a loaded host; alternating
-    /// the order also keeps the first allocation from always falling on the
-    /// same size.
-    fn fastest_scaling(half: &str, full: &str, samples: usize) -> (Duration, Duration) {
-        let mut half_fastest = Duration::MAX;
-        let mut full_fastest = Duration::MAX;
-        for round in 0..samples {
-            let (half_elapsed, full_elapsed) = if round % 2 == 0 {
-                (timed_rewrite(half), timed_rewrite(full))
-            } else {
-                let full_elapsed = timed_rewrite(full);
-                (timed_rewrite(half), full_elapsed)
-            };
-            eprintln!(
-                "deep-frame-select sample {}: 4 MiB in {half_elapsed:?}, 8 MiB in {full_elapsed:?}",
-                round + 1
-            );
-            half_fastest = half_fastest.min(half_elapsed);
-            full_fastest = full_fastest.min(full_elapsed);
-        }
-        (half_fastest, full_fastest)
-    }
-
     #[test]
     fn deep_frame_stack_select_end_tags_stay_within_linear_budget() {
         // GLM r4's shape: 100,000 nested <template> frames and 434,624
@@ -920,23 +893,16 @@ mod tests {
         // the select frame sitting on top of the 100,000 template frames.
         let half = deep_frame_select_fixture(4 * 1024 * 1024, 50_000);
         let full = deep_frame_select_fixture(8 * 1024 * 1024, 100_000);
-        let samples = timing_samples();
-        let (half_elapsed, full_elapsed) = fastest_scaling(&half, &full, samples);
+        let samples = timing::timing_samples();
+        let (half_elapsed, full_elapsed) =
+            timing::fastest_scaling("deep-frame-select", samples, |is_full| {
+                timed_rewrite(if is_full { &full } else { &half })
+            });
         eprintln!(
             "deep-frame-select: fastest of {samples}: 4 MiB in {half_elapsed:?}, 8 MiB in {full_elapsed:?}"
         );
         // Doubling the input doubles linear work but quadruples the old
-        // bottom-up rescan per `</select>`. Compare the fastest interleaved
-        // samples so one preempted run cannot turn a linear scanner red, while
-        // the quadratic rescan is still far outside the 3x + 150 ms band.
-        const GROWTH: f64 = 3.0;
-        const NOISE: f64 = 0.15;
-        let limit = half_elapsed.as_secs_f64() * GROWTH + NOISE;
-        assert!(
-            full_elapsed.as_secs_f64() <= limit,
-            "8 MiB rewrite {full_elapsed:?} did not scale from 4 MiB {half_elapsed:?} \
-             (fastest of {samples}): allowed {limit:.3}s = {GROWTH}x + {NOISE}s; \
-             the quadratic rescan needs about 4x"
-        );
+        // bottom-up rescan per `</select>`; see timing::assert_within_linear_band.
+        timing::assert_within_linear_band("8 MiB rewrite", half_elapsed, full_elapsed, samples);
     }
 }
