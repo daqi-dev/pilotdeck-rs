@@ -205,7 +205,7 @@ async fn web(transport: impl ModelHttpTransport + 'static, context: &ToolRunCont
     match fetcher.get_url_markdown_content(URL, Some(context)).await {
         Ok(FetchResult::Fetched { entry, .. }) => ok(entry.content),
         Ok(FetchResult::Redirect { .. }) => panic!("same-origin fixture must follow"),
-        Err(FetchError::Other(message)) => error(None, &message.to_utf8().unwrap()),
+        Err(FetchError::Other { name, message }) => error(name, &message.to_utf8().unwrap()),
         Err(FetchError::Http(error)) => panic!("unexpected status: {error:?}"),
     }
 }
@@ -559,7 +559,6 @@ async fn web_fetch_headers_fulfilled_continuation_first() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_headers_fulfilled_parent_first() {
     check("web_fetch/headers/fulfilled/parent-first").await;
 }
@@ -576,13 +575,11 @@ async fn web_fetch_headers_fulfilled_tie_parent_last() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_headers_rejected_continuation_first() {
     check("web_fetch/headers/rejected/continuation-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_headers_rejected_parent_first() {
     check("web_fetch/headers/rejected/parent-first").await;
 }
@@ -594,31 +591,26 @@ async fn web_fetch_headers_rejected_tie_parent_first() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_headers_rejected_tie_parent_last() {
     check("web_fetch/headers/rejected/tie-parent-last").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_headers_idle_continuation_first() {
     check("web_fetch/headers/idle/continuation-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_headers_idle_parent_first() {
     check("web_fetch/headers/idle/parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_headers_idle_tie_parent_first() {
     check("web_fetch/headers/idle/tie-parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_headers_idle_tie_parent_last() {
     check("web_fetch/headers/idle/tie-parent-last").await;
 }
@@ -646,7 +638,6 @@ async fn web_fetch_body_fulfilled_tie_parent_last() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_body_rejected_continuation_first() {
     check("web_fetch/body/rejected/continuation-first").await;
 }
@@ -664,13 +655,11 @@ async fn web_fetch_body_rejected_tie_parent_first() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_body_rejected_tie_parent_last() {
     check("web_fetch/body/rejected/tie-parent-last").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_body_idle_continuation_first() {
     check("web_fetch/body/idle/continuation-first").await;
 }
@@ -682,13 +671,11 @@ async fn web_fetch_body_idle_parent_first() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_body_idle_tie_parent_first() {
     check("web_fetch/body/idle/tie-parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_body_idle_tie_parent_last() {
     check("web_fetch/body/idle/tie-parent-last").await;
 }
@@ -699,7 +686,6 @@ async fn web_fetch_redirect_hop_fulfilled_continuation_first() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_redirect_hop_fulfilled_parent_first() {
     check("web_fetch/redirect-hop/fulfilled/parent-first").await;
 }
@@ -716,13 +702,11 @@ async fn web_fetch_redirect_hop_fulfilled_tie_parent_last() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_redirect_hop_rejected_continuation_first() {
     check("web_fetch/redirect-hop/rejected/continuation-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_redirect_hop_rejected_parent_first() {
     check("web_fetch/redirect-hop/rejected/parent-first").await;
 }
@@ -734,31 +718,26 @@ async fn web_fetch_redirect_hop_rejected_tie_parent_first() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_redirect_hop_rejected_tie_parent_last() {
     check("web_fetch/redirect-hop/rejected/tie-parent-last").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_redirect_hop_idle_continuation_first() {
     check("web_fetch/redirect-hop/idle/continuation-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_redirect_hop_idle_parent_first() {
     check("web_fetch/redirect-hop/idle/parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_redirect_hop_idle_tie_parent_first() {
     check("web_fetch/redirect-hop/idle/tie-parent-first").await;
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_redirect_hop_idle_tie_parent_last() {
     check("web_fetch/redirect-hop/idle/tie-parent-last").await;
 }
@@ -769,7 +748,6 @@ async fn web_fetch_retry_status_fulfilled_continuation_first() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_retry_status_fulfilled_parent_first() {
     check("web_fetch/retry-status/fulfilled/parent-first").await;
 }
@@ -791,7 +769,6 @@ async fn web_fetch_retry_error_fulfilled_continuation_first() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_retry_error_fulfilled_parent_first() {
     check("web_fetch/retry-error/fulfilled/parent-first").await;
 }
@@ -1377,67 +1354,56 @@ async fn web_fetch_io_headers_fulfilled_continuation_first() {
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_fulfilled_parent_first() {
     check("web_fetch/io-headers/fulfilled/parent-first").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_fulfilled_tie_parent_first() {
     check("web_fetch/io-headers/fulfilled/tie-parent-first").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_fulfilled_tie_parent_last() {
     check("web_fetch/io-headers/fulfilled/tie-parent-last").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_rejected_continuation_first() {
     check("web_fetch/io-headers/rejected/continuation-first").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_rejected_parent_first() {
     check("web_fetch/io-headers/rejected/parent-first").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_rejected_tie_parent_first() {
     check("web_fetch/io-headers/rejected/tie-parent-first").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_rejected_tie_parent_last() {
     check("web_fetch/io-headers/rejected/tie-parent-last").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_idle_continuation_first() {
     check("web_fetch/io-headers/idle/continuation-first").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_idle_parent_first() {
     check("web_fetch/io-headers/idle/parent-first").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_idle_tie_parent_first() {
     check("web_fetch/io-headers/idle/tie-parent-first").await;
 }
 
 #[tokio::test]
-#[ignore = "#456 差异：web FetchError::Other 未保留 TS 错误类型名"]
 async fn web_fetch_io_headers_idle_tie_parent_last() {
     check("web_fetch/io-headers/idle/tie-parent-last").await;
 }

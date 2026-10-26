@@ -18,8 +18,10 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
+baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
 network = root / 'src/pilotdeck-gateway/src/runtime/network.rs'
 web = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/network.rs'
+fetcher = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/fetcher.rs'
 cases = [
     ('io-as-microtask', network,
      "            timer: None,\n            microtask: false,",
@@ -51,6 +53,28 @@ cases = [
     ('retry-outer-parent-message', web, 'if outer.parent {\n                abort_error("Network retry aborted.")',
      'if outer.parent {\n                abort_error("wrong outer retry message")',
      ['web_tools::web_fetch_hop_timeout_during_retry_uses_retry_abort_message']),
+    ('error-name-network', fetcher, 'name: Some("NetworkFetchError"),\n            message: error.message,',
+     'name: None,\n            message: error.message,',
+     ['web_fetch_headers_fulfilled_parent_first', 'web_fetch_redirect_hop_rejected_continuation_first',
+      'web_fetch_retry_status_fulfilled_parent_first']),
+    ('error-name-body', fetcher, 'Err(BodyError::Terminated) => return Err(type_error("terminated")),',
+     'Err(BodyError::Terminated) => return Err(untyped("terminated")),',
+     ['web_fetch_body_rejected_continuation_first', 'web_fetch_body_idle_tie_parent_last']),
+    ('error-name-body-aborted', fetcher,
+     'fn network_error(message: &str) -> FetchError {\n    FetchError::Other {\n        name: Some("NetworkFetchError"),',
+     'fn network_error(message: &str) -> FetchError {\n    FetchError::Other {\n        name: None,',
+     ['known_differences_remain_exact_and_ignored']),
+    ('error-name-plain', fetcher, 'fn other(message: &str) -> FetchError {\n    FetchError::Other {\n        name: Some("Error"),',
+     'fn other(message: &str) -> FetchError {\n    FetchError::Other {\n        name: None,',
+     ['web_tools::web_fetch_generic_error_keeps_ts_error_name']),
+    ('error-name-invalid-url-redirect', fetcher,
+     'let redirect_url = parse_with_base(&location, &url)\n                    .ok_or_else(|| type_error("Invalid URL"))?',
+     'let redirect_url = parse_with_base(&location, &url)\n                    .ok_or_else(|| untyped("Invalid URL"))?',
+     ['web_tools::web_fetch_invalid_redirect_location_keeps_ts_type_error_name']),
+    ('error-name-invalid-url-upgrade', fetcher,
+     'upgrade_http_to_https(url).ok_or_else(|| type_error("Invalid URL"))',
+     'upgrade_http_to_https(url).ok_or_else(|| untyped("Invalid URL"))',
+     ['lib::runtime::tools::builtin::web::fetcher::tests::web_fetch_upgrade_failure_keeps_ts_type_error_name']),
     ('retry-count', web, '&& attempt < retry.max_retries',
      '&& false && attempt < retry.max_retries',
      ['fetch_redirect_retry_status_fulfilled_continuation_first']),
@@ -140,6 +164,18 @@ def assert_required_failure(name, log):
                    re.escape('assertion `left == right` failed: network timing cell: ' + cell) + r'\n')
         assert re.search(pattern, log), (name, 'bound test/anchor must fail', test, cell)
 
+# Case-specific assertion anchors: the mutation must be rejected by the
+# intended assertion, not by a compile error or an unrelated panic.
+failure_anchors = {
+    'error-name-network': ('"name": Null', '"name": String("NetworkFetchError")'),
+    'error-name-body': ('"name": Null', '"name": String("TypeError")'),
+    'error-name-body-aborted': ('known difference changed: web_fetch/body/',
+                               '"name": Null', '"name": String("NetworkFetchError")'),
+    'error-name-plain': ('name: None', 'name: Some("Error")'),
+    'error-name-invalid-url-redirect': ('name: None', 'name: Some("TypeError")'),
+    'error-name-invalid-url-upgrade': ('name: None', 'name: Some("TypeError")'),
+}
+
 if sys.argv[2:]:
     selected = set(sys.argv[2:])
     cases = [case for case in cases if case[0] in selected]
@@ -158,8 +194,13 @@ def run(name, test):
     slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
     save(name + '.slots.log', slot.stdout + slot.stderr)
     target, _, selection = test.partition('::')
-    target, selection = (target, selection) if selection else ('network_timing', test)
-    command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--test', target]
+    if target == 'lib':
+        command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+                   '-p', 'pilotdeck-gateway', '--lib']
+    else:
+        target, selection = (target, selection) if selection else ('network_timing', test)
+        command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+                   '-p', 'pilotdeck-gateway', '--test', target]
     command += ['--', '--nocapture', '--test-threads=1'] if test == '*' else [selection, '--', '--exact', '--nocapture', '--test-threads=1']
     result = run_owned(command, cwd=root, env=env, timeout=300)
     log = result.stdout + result.stderr
@@ -172,7 +213,7 @@ for name, path, old, new, tests in cases:
         code, log = run(f'{name}-{index}-positive', test)
         assert code == 0 and (f'{expected_passes} passed; 0 failed' if test == '*' else '1 passed; 0 failed') in log, (name, 'positive', code)
     killed_cells = set()
-    with mutating_sources(root, [path]) as originals:
+    with mutating_sources(root, [path], baseline=baseline) as originals:
         original = originals[path].decode()
         assert original.count(old) == 1, (name, 'unique mutation anchor', original.count(old))
         changed = original.replace(old, new)
@@ -180,7 +221,17 @@ for name, path, old, new, tests in cases:
         path.write_text(changed)
         for index, test in enumerate(tests):
             code, log = run(f'{name}-{index}-negative', test)
-            assert code == 101 and ('test result: FAILED.' in log if test == '*' else f"{test.split('::')[-1]} ..." in log and 'test result: FAILED. 0 passed; 1 failed' in log) and (f'left: Other({list(map(ord, "wrong outer retry message"))})' in log and f'right: Other({list(map(ord, "Network retry aborted."))})' in log and 'assertion `left == right` failed' in log if test.startswith('web_tools::') else assertion_anchors.get(name, 'assertion `left == right` failed: network timing cell:') in log), (name, 'not an oracle assertion failure', code)
+            anchor_ok = all(needle in log for needle in failure_anchors.get(name, ()))
+            if name in failure_anchors:
+                failure_ok = 'assertion `left == right` failed' in log
+            else:
+                failure_ok = (
+                    f'left: Other({list(map(ord, "wrong outer retry message"))})' in log
+                    and f'right: Other({list(map(ord, "Network retry aborted."))})' in log
+                    and 'assertion `left == right` failed' in log
+                    if test.startswith('web_tools::')
+                    else assertion_anchors.get(name, 'assertion `left == right` failed: network timing cell:') in log)
+            assert code == 101 and ('test result: FAILED.' in log if test == '*' else f"{test.split('::')[-1]} ..." in log and 'test result: FAILED. 0 passed; 1 failed' in log) and failure_ok and anchor_ok, (name, 'not an oracle/typed assertion failure', code, anchor_ok)
             assert_required_failure(name, log)
             for line in log.splitlines():
                 if '{"id":' in line:

@@ -26,7 +26,7 @@ use pilotdeck_gateway::{
                     SecondaryNext, make_secondary_prompt, validate_web_fetch_input,
                     web_fetch_permission,
                 },
-                fetcher::{MAX_MARKDOWN_LENGTH, shared_cache, truncate_entry},
+                fetcher::{FetchError, MAX_MARKDOWN_LENGTH, shared_cache, truncate_entry},
                 network::{
                     FetchOptions, HttpRequest, RetryOptions, network_fetch, node_timer_delay_ms,
                 },
@@ -2157,11 +2157,64 @@ async fn web_fetch_parent_event_preserves_hop_timeout_before_late_response() {
     signal.cancel();
     assert_eq!(
         pending.await.unwrap_err(),
-        pilotdeck_gateway::runtime::tools::builtin::web::fetcher::FetchError::Other(
-            "Network request aborted by parent signal.".into()
-        )
+        pilotdeck_gateway::runtime::tools::builtin::web::fetcher::FetchError::Other {
+            name: Some("NetworkFetchError"),
+            message: "Network request aborted by parent signal.".into(),
+        }
     );
     assert_eq!(*calls.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn web_fetch_generic_error_keeps_ts_error_name() {
+    // `urlFetcher.ts:267` throws a plain `Error("Invalid URL")`; the transport
+    // is never reached, so its script does not matter.
+    let fetcher = UrlFetcher::new(Arc::new(NeverTransport));
+    assert_eq!(
+        fetcher
+            .get_url_markdown_content("not a url", None)
+            .await
+            .unwrap_err(),
+        FetchError::Other {
+            name: Some("Error"),
+            message: "Invalid URL".into(),
+        }
+    );
+}
+
+/// A 302 whose `Location` cannot be parsed against the request URL.
+struct InvalidLocationTransport;
+
+impl ModelHttpTransport for InvalidLocationTransport {
+    fn send(&self, _: hyper::Request<Full<Bytes>>) -> TransportFuture {
+        TransportFuture::ready(Ok(hyper::Response::builder()
+            .status(302)
+            .header("location", "http://[")
+            .body(
+                Full::new(Bytes::new())
+                    .map_err(|never| -> BodyFailure { match never {} })
+                    .boxed(),
+            )
+            .unwrap()))
+    }
+}
+
+/// `urlFetcher.ts:175` parses the Location with `new URL(location, url)`;
+/// Node v22.22.0 throws `TypeError("Invalid URL")` (`fix-r1/ts-probe.log`).
+#[tokio::test]
+async fn web_fetch_invalid_redirect_location_keeps_ts_type_error_name() {
+    let mut fetcher = UrlFetcher::new(Arc::new(InvalidLocationTransport));
+    fetcher.cache = Arc::new(UrlCache::default());
+    assert_eq!(
+        fetcher
+            .get_url_markdown_content("http://example.com/start", None)
+            .await
+            .unwrap_err(),
+        FetchError::Other {
+            name: Some("TypeError"),
+            message: "Invalid URL".into(),
+        }
+    );
 }
 
 fn doc_harness() -> Harness {
@@ -2518,9 +2571,10 @@ async fn web_fetch_hop_timeout_during_retry_uses_retry_abort_message() {
         .await;
         assert_eq!(
             result.unwrap_err(),
-            pilotdeck_gateway::runtime::tools::builtin::web::fetcher::FetchError::Other(
-                "Network retry aborted.".into()
-            )
+            pilotdeck_gateway::runtime::tools::builtin::web::fetcher::FetchError::Other {
+                name: Some("NetworkFetchError"),
+                message: "Network retry aborted.".into(),
+            }
         );
         assert_eq!(*calls.lock().unwrap(), 1);
     }

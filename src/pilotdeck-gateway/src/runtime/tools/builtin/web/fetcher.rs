@@ -91,19 +91,63 @@ pub struct WebFetchHttpError {
 #[derive(Clone, Debug, PartialEq)]
 pub enum FetchError {
     Http(WebFetchHttpError),
-    /// Any other `Error`; the message only.
+    /// Any other thrown `Error`. `name` is the TS `Error.name` of the throw
+    /// site (`NetworkFetchError`, `TypeError`, or plain `Error`); `None` means
+    /// the Rust path has no TS-typed error to preserve.
     // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-ERROR-CLASS-001.md
-    Other(JsString),
+    Other {
+        name: Option<&'static str>,
+        message: JsString,
+    },
 }
 
 impl From<NetworkFetchError> for FetchError {
     fn from(error: NetworkFetchError) -> Self {
-        Self::Other(error.message)
+        Self::Other {
+            name: Some("NetworkFetchError"),
+            message: error.message,
+        }
     }
 }
 
+/// A TS `throw new Error(...)` site.
 fn other(message: &str) -> FetchError {
-    FetchError::Other(JsString::from(message))
+    FetchError::Other {
+        name: Some("Error"),
+        message: JsString::from(message),
+    }
+}
+
+/// A TS built-in `TypeError` throw site (Undici body failure, `new URL`).
+fn type_error(message: &str) -> FetchError {
+    FetchError::Other {
+        name: Some("TypeError"),
+        message: JsString::from(message),
+    }
+}
+
+/// A Rust/host failure with no TS error class to preserve.
+fn untyped(message: &str) -> FetchError {
+    FetchError::Other {
+        name: None,
+        message: JsString::from(message),
+    }
+}
+
+/// A `NetworkFetchError` produced outside [`NetworkFetchError`]'s conversion.
+fn network_error(message: &str) -> FetchError {
+    FetchError::Other {
+        name: Some("NetworkFetchError"),
+        message: JsString::from(message),
+    }
+}
+
+/// `upgradeHttpToHttps(url)` at the `getURLMarkdownContent` boundary. The TS
+/// caller has already run `validateURL`, which parses the same string, so a
+/// failure here is defensive; the thrown class is still `new URL`'s
+/// `TypeError: Invalid URL`.
+fn upgrade_url(url: &str) -> Result<String, FetchError> {
+    upgrade_http_to_https(url).ok_or_else(|| type_error("Invalid URL"))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -328,7 +372,7 @@ impl UrlFetcher {
                     return Err(other("Redirect missing Location header"));
                 };
                 let redirect_url = parse_with_base(&location, &url)
-                    .ok_or_else(|| other("Invalid URL"))?
+                    .ok_or_else(|| type_error("Invalid URL"))?
                     .to_string();
                 if is_permitted_redirect(&url, &redirect_url) {
                     url = redirect_url;
@@ -363,12 +407,12 @@ impl UrlFetcher {
             // Ledger: specs/gateway-parity/diffs/A6.4-NETWORK-TIMING-POST-HEADERS-PARENT-001.md
             let body = match response.read_body(MAX_HTTP_CONTENT_LENGTH, parent).await {
                 Ok(body) => body,
-                Err(BodyError::Terminated) => return Err(other("terminated")),
+                Err(BodyError::Terminated) => return Err(type_error("terminated")),
                 // The parent signal fired mid-body; the baseline's message for
                 // an aborted `networkFetch` (observed before the headers) is
                 // kept so both abort points look the same.
                 Err(BodyError::Aborted) => {
-                    return Err(other("Network request aborted by parent signal."));
+                    return Err(network_error("Network request aborted by parent signal."));
                 }
                 Err(BodyError::TooLarge) => {
                     return Err(other(&format!(
@@ -403,7 +447,7 @@ impl UrlFetcher {
                 from_cache: true,
             });
         }
-        let upgraded = upgrade_http_to_https(url).ok_or_else(|| other("Invalid URL"))?;
+        let upgraded = upgrade_url(url)?;
         let raw = match self.fetch_with_redirects(&upgraded, parent).await? {
             Hop::Redirect {
                 original_url,
@@ -451,7 +495,7 @@ impl UrlFetcher {
                 Ok(converter.convert_bounded(&html, MAX_MARKDOWN_LENGTH + 1))
             })
             .await
-            .map_err(|error| other(&error.message))?
+            .map_err(|error| untyped(&error.message))?
             .map_err(|message| other(&message))?;
             (
                 markdown.text,
@@ -487,3 +531,23 @@ impl UrlFetcher {
 }
 
 struct HttpOutcome(super::network::HttpResponse);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `urlValidation.ts:35` runs `new URL(url)`, which throws
+    /// `TypeError("Invalid URL")` in Node v22.22.0 (`fix-r1/ts-probe.log`).
+    /// `validateURL` parses the same string first, so the production branch is
+    /// defensive; exercise the boundary function directly.
+    #[test]
+    fn web_fetch_upgrade_failure_keeps_ts_type_error_name() {
+        assert_eq!(
+            upgrade_url("http://[").unwrap_err(),
+            FetchError::Other {
+                name: Some("TypeError"),
+                message: "Invalid URL".into(),
+            }
+        );
+    }
+}

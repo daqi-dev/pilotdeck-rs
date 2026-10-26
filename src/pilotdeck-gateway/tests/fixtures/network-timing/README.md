@@ -1,7 +1,7 @@
 # Network cancellation timing fixture (#456 pr1 / pr2)
 
 固定 TS cc7c4e6 + Node v22.22.0 的真实执行共336格，沿用同一个生成器、金样、差异表和反向守卫。
-当前Rust接线336格：240对齐、96差异。pr2b补上MCP GET56、POST48、hooks48，新增111对齐、41差异；差异不等于已接受或阶段完成。
+当前Rust接线336格：274对齐、62差异。pr2b补上MCP GET56、POST48、hooks48，新增111对齐、41差异；#752 修复 web 错误类型名后，ERROR-CLASS 的 34 格（pr1 23 + pr2a 11）转绿，剩余 62 格差异。差异不等于已接受或阶段完成。
 非test产品代码、公开接口和行为不变，仅在两个私有模块追加cfg(test)接线。产品修复归#752。pr2b原始证据与逐格状态见本树 `_tmp/20261026-issue-456c/RESULT.md`；pr2a记录仍在原目录。
 
 | 路径 | timer headers/body/redirect | timer retry-status/error | io-headers | lifecycle | TS合计 | Rust已接线 |
@@ -28,6 +28,9 @@ TS路径和行号相对固定基线根：
 - background：`src/agent/sub/BackgroundSubagentRuntime.ts:45,63-80,102-116`真start/run/stop/stopAndWait；指定child调用networkFetch(GET,timeout60000,retry1/base500/cap5000)。这组参数属于指定child，不是所有后台任务的网络策略。网络结果和task.status/error/ended/stopped分别观察。
 
 Rust web/background调用公开真实实现；私有fetch_redirect/network经`#[path]`编译原文件。
+web `FetchError::Other` 现在保留 TS 的 `Error.name`（`NetworkFetchError` / `TypeError` /
+plain `Error`），未知宿主错误仍是null，绝不根据message补造类型；`fetch_tool` 仍只把
+message 包进 `tool_execution_failed`，与 `webFetch.ts` 的工具错误形状一致。
 background timer的redirect首跳ready、末跳after元数据保留；断言禁止将timer隐藏于io/microtask。
 MCP通过cfg(test)模块调用真实 `network_fetch_continuing_with` + `fetch_with/follow` + `streamable_text`；hooks调用真实 `execute_with` + 既有 `ExecutionResult::failure(false)` + `to_value`，完整保留返回对象。测试不声称私有seam覆盖public catch调用位；既有hooks_runtime真实execute回归另验。
 MCP timer traversal仅把已经同步走过的真实follow结果连同唯一末跳timer元数据交给caller；不会把timer藏在microtask里。真实I/O另走socket路径。每跳检查请求路径，次数/重试仍严格比较完整observable。
@@ -75,19 +78,27 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --test 
 ```
 
 既有默认ignore的重生成守卫复用同一network-timing fixture，重新调用生成器并逐字节比较全部336格。
-integration默认137通过=129对齐+6overdue+1差异守卫+1registry负控，56忽略=55差异+1重生成；两个private lib模块默认114通过=111对齐+2差异守卫+1metadata/trace负控，41忽略=41差异。忽略不等于已批准或阶段通过。
+integration默认171通过=163对齐+6overdue+1差异守卫+1registry负控，22忽略=21差异+1重生成；两个private lib模块默认114通过=111对齐+2差异守卫+1metadata/trace负控，41忽略=41差异。忽略不等于已批准或阶段通过。
 同样先核cargo槽位：`cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib network_timing_tests`。
 
 ## 差异与负控
 
-known_differences.json是TS原值/Rust当前原值/category/test的单一维护表。现96格=pr1的38+pr2a的17+pr2b的41。
+known_differences.json是TS原值/Rust当前原值/category/test的单一维护表。现62格=pr1的15+pr2a的6+pr2b的41。
 历史账本字节不变；pr2b按根因新增PARENT-TIE-002、RETRY-TIE-002、POST-HEADERS-PARENT-003、ERROR-CLASS-003未批准条目。
+#752 修复 web 错误对象的 TS 类型名后，ERROR-CLASS-001（23格）与 ERROR-CLASS-002（11格）
+从表中删除并解除 ignore，更正见两份 R1；PARENT-TIE-001 的 2 格、POST-HEADERS-PARENT-001
+的 5 格因修复后 name 变化同步 Rust 快照（仍因注册序/headers 后取消保留差异），见各自 R1。
 每格严格TS断言并独立ignore；共享registry核三处源码的全部336格集合、测试属性、两个cfg(test)模块接线、TS原值、TS≠Rust、ignore集合/理由和函数格ID绑定。三个默认反向守卫按所属路径逐格重放Rust，未将缺失格过滤成通过。
 改变差异表现或修复后仍保留ignore都会失败；不改产品来迁就期望。
 
-`negative_controls.py /fresh/evidence [control...]`临时变异产品源码，要求独占树；使用mutating_sources验证HEAD、锁和恢复，
+`negative_controls.py /fresh/evidence [control...]`临时变异产品源码，要求独占树；使用mutating_sources验证基线（默认HEAD，未提交候选可用`PDRS_NEGATIVE_BASELINE`指定候选树对象）、锁和恢复，
 cargo均经wait_for_slot/run_owned，正控→预期测试断言失败→恢复正控。每项绑定测试名与断言锚点，编译失败不算。
 新增background signal/同步取消/未启动/等待完成/done/ended/完成态/错误内容负控，及真实I/O完成源和同步取消结果负控。
+#752 另加错误类型 name 负控：`error-name-network`（From<NetworkFetchError>）、`error-name-body`
+（body Terminated → TypeError）、`error-name-body-aborted`（body Aborted → NetworkFetchError，经默认
+`known_differences_remain_exact_and_ignored` 重放）、`error-name-plain`（plain Error），以及
+`error-name-invalid-url-redirect` 与 `error-name-invalid-url-upgrade` 两处 `Invalid URL` 的 TypeError；
+`lib::` 选择走 `--lib`。
 四组整矩阵负控实际失败格清单在summary.json；逐格关键覆盖见交付negative-coverage.json。
 
 `negative_observations.mts <raw.ndjson>`只改内存中的原始记录，每条新增守卫、新源码/依赖项和每个新增矩阵项均有负控；
