@@ -885,6 +885,9 @@ async fn close_closes_idle_keep_alive_connections() {
     let response = read_response(&mut idle).await;
     assert!(response.starts_with(b"HTTP/1.1 405"), "{response:?}");
 
+    // This task owns the original listener. Its identity survives port reuse by
+    // another test, unlike a fresh TCP connect after close() releases the port.
+    let accept_loop = server.task.as_ref().unwrap().abort_handle();
     let closing = tokio::spawn(async move { server.close().await });
     let mut byte = [0u8; 1];
     let read = tokio::time::timeout(Duration::from_secs(2), idle.read(&mut byte))
@@ -896,8 +899,8 @@ async fn close_closes_idle_keep_alive_connections() {
         .expect("close() did not finish")
         .unwrap();
     assert!(
-        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
-        "the listener still accepts after close()"
+        accept_loop.is_finished(),
+        "the original listener task is still running after close()"
     );
     let _ = std::fs::remove_dir_all(directory);
 }
@@ -1407,6 +1410,7 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
         .await
         .expect("the request never reached dispatch")
         .expect("entered channel closed");
+    let accept_loop = server.task.as_ref().unwrap().abort_handle();
     let close_task = tokio::spawn(async move { server.close().await });
     // The connection future is parked on `spawn_blocking`, so the shutdown
     // branch is polled while the request is still in flight and the response
@@ -1471,8 +1475,8 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
         .expect("close() hung after the in-flight request")
         .unwrap();
     assert!(
-        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
-        "the listener still accepts after close()"
+        accept_loop.is_finished(),
+        "the original listener task is still running after close()"
     );
     let _ = std::fs::remove_dir_all(directory);
 }
