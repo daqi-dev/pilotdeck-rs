@@ -69,15 +69,23 @@ python3 -I scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gat
 
 报告区分实测成功与验收状态：冻结哈希不符时，即使测量成功，校准总判也为
 `BLOCKED` / exit 2。进程树读取受阻在 `launch.json:psCensus` 明确记录为 `BLOCKED`，
-不能写成“空树且全部清理完成”；清理结论只看 `processTreeCleanup`——`run_fixture`
-在 `wait()` 后对本次 `start_new_session` 的进程组做 `os.killpg(pgid, 0)` 探测，
-`ProcessLookupError` 记 `VERIFIED`（不依赖 ps），组内仍有成员记 `GROUP_NOT_EMPTY`
-并向该组 SIGTERM（有界等待后仅对本组 SIGKILL），探测被拒记 `BLOCKED`。
-只有 `processTreeCleanup=VERIFIED` 才允许顶层 `status` / `executionStatus` 为 `PASS`；
-`GROUP_NOT_EMPTY` / `BLOCKED` / `NOT_VERIFIED` 一律为
-`PASS_WITH_CLEANUP_UNVERIFIED`，`freezeStatus` 为
-`BLOCKED_CLEANUP_UNVERIFIED`（只认 PASS 的冻结 / 矩阵消费者因此不会把它当通过）。
+不能写成“空树且全部清理完成”；清理结论只看 `processTreeCleanup`。`run_fixture`
+用 `os.waitid(P_PID, pid, WEXITED|WNOWAIT)` 等 launcher 退出但不回收：leader 还是僵尸时
+它的 pid/pgid 不会被复用，`os.killpg(pgid, 0)` 仍指向本次 `start_new_session` 的组，
+探测与 SIGTERM/SIGKILL 都在回收之前完成，最后才 `wait()`。macOS 上组内只剩僵尸 leader 时
+`killpg(pgid, 0)` 返回 `EPERM`，再以 `kill(leaderPid, 0)` 成功证明僵尸仍在，记 `VERIFIED`
+（不依赖 ps）；组内仍有存活成员记 `GROUP_NOT_EMPTY` 并只向该组 SIGTERM（5 s 有界等待后
+仍不空则只对该组 SIGKILL）；探测被拒记 `BLOCKED`；leader 已被他人回收或平台无法证明归属时
+记 `NOT_VERIFIED` 且不发信号。只有 `processTreeCleanup=VERIFIED` 才允许顶层
+`status` / `executionStatus` 为 `PASS`；`GROUP_NOT_EMPTY` / `BLOCKED` / `NOT_VERIFIED`
+一律为 `PASS_WITH_CLEANUP_UNVERIFIED`，`freezeStatus` 为
+`BLOCKED_CLEANUP_UNVERIFIED`（只认 PASS 的冻结 / 矩阵消费者因此不会把它当通过），
+且 `session_domain.py --suite calibrate` 返回 exit 2（与 `BLOCKED` 同约定），只看退出码的
+CI/shell 调用方也不会把它当通过。
 `controls/session_domain.py` 同批增加 `cleanup-empty-group`、
 `cleanup-leftover-grandchild`、`cleanup-probe-blocked` 三个行为控制，cleanup 结果计入
-`results.json:cleanup`，任一失败即整批 FAIL。
+`results.json:cleanup`，任一失败即整批 FAIL。行为 fixture
+`src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/` 的 `ignore` 孙进程先装好
+`SIG_IGN` 并写就绪标记，launcher 有界等待后才退出；源码变异负控按变异绑定期望字段，
+环境/启动失败判 INVALID 且全部跑完再汇总。
 A5.3 的白名单变更须由协调者完成双评审、哈希登记后再合并。
