@@ -192,6 +192,176 @@ for name, path, pattern, replacement in mutants:
         self.write("mutants = [('sample', source, 'before.*', 'after')]\ncontent.replace(before, after)\nre.subn(pattern, replacement, content)\n")
         self.assertIn('mixed literal/regex', self.run_check(1))
 
+    def move_script(self, relative):
+        self.script.unlink()
+        self.script = self.fixtures / relative
+        self.script.parent.mkdir(parents=True, exist_ok=True)
+
+    def test_background_helper_tests_require_an_explicit_exception(self):
+        name = 'background-panic/test_negative_controls.py'
+        self.move_script(name)
+        self.write("def test_helper():\n    negative.mutate('probe', 'anchor', 'anchor', 'changed')\n")
+        self.assertIn('no supported mutation anchors',
+                      self.run_check(1, label='helper-tests-unregistered'))
+        CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
+        self.assertIn(f'UNSUPPORTED {name}:', self.run_check(label='helper-tests-registered'))
+        del CHECK.UNSUPPORTED[name]
+        self.run_check(1, label='helper-tests-registration-removed')
+        CHECK.UNSUPPORTED[name] = PRODUCTION_UNSUPPORTED[name]
+        self.run_check(label='helper-tests-registration-restored')
+
+    def test_dictionary_rows_and_new_keys_check_every_anchor(self):
+        body = """mutants = {'first': (source, 'before', 'after')}
+for suffix, old in [('a', 'before'), ('b', 'before')]:
+    mutants[f'added-{suffix}'] = (source, old, old.replace('before', 'after'))
+"""
+        self.write(body)
+        self.assertIn('anchors=3 errors=0', self.run_check(label='dictionary-original'))
+        self.source.write_text('missing')
+        self.assertIn('anchors=3 errors=3', self.run_check(1, label='dictionary-missing'))
+        self.source.write_text('before before')
+        self.assertIn('anchors=3 errors=3', self.run_check(1, label='dictionary-ambiguous'))
+        self.source.write_text('before\n')
+        self.run_check(label='dictionary-restored')
+        for bad in [
+            body + "mutants['first'] = (source, 'before', 'after')\n",
+            body.replace("('b', 'before')", "('a', 'before')"),
+            "mutants = {'first': (source, 'before', 'after'), 'first': (source, 'before', 'after')}\n",
+        ]:
+            self.write(bad)
+            self.assertIn('duplicate mutation key', self.run_check(1, label='dictionary-overwrite'))
+        for bad in [
+            "mutants = {'first': dynamic_row()}\n",
+            "mutants = {**other}\n",
+            "mutants = {'': (source, 'before', 'after')}\n",
+            "mutants = {1: (source, 'before', 'after')}\n",
+            body + 'mutants.clear()\n',
+            body + "mutants['first'] += (source, 'before', 'after')\n",
+            body + "mutants = {'reset': (source, 'before', 'after')}\n",
+            body + "mutants[unknown_key] = (source, 'before', 'after')\n",
+            body + "del mutants['first']\n",
+            body + 'del mutants\n',
+            body + "mutants['extra']: tuple = (source, 'before', 'after')\n",
+            "if unknown_condition:\n    mutants = {'first': (source, 'before', 'after')}\n",
+            "if unknown_condition:\n    mutants = {}\nmutants['first'] = (source, 'before', 'after')\n",
+            "for suffix in ['a', 'b']:\n    mutants = {}\n    mutants[suffix] = (source, 'before', 'after')\n",
+            "mutants = {}\nwhile unknown_condition:\n    mutants['first'] = (source, 'before', 'after')\n",
+            body.replace('    mutants[f', '    break\n    mutants[f'),
+            body.replace('    mutants[f', '    if unknown_condition:\n        continue\n    mutants[f'),
+        ]:
+            self.write(bad)
+            self.run_check(1, label='dictionary-unsupported-update')
+        self.write(body)
+        self.run_check(label='dictionary-format-restored')
+
+    def test_host_pump_dictionary_uses_its_conditional_count_guard(self):
+        self.move_script('host-event-pump/negative_controls.py')
+        body = """path = source
+mutations = {'idle': ('before', 'after', 'test'), 'wire': ('delivery', 'changed', 'test')}
+name = sys.argv[2]
+old, new, test = mutations[name]
+assert content.count(old) == (2 if name == 'wire' else 1), name
+"""
+        self.source.write_text('before delivery delivery')
+        self.write(body)
+        self.assertIn('anchors=2 errors=0', self.run_check(label='pump-original'))
+        for content, error in [('before delivery', 'expected=2 actual=1'),
+                               ('before delivery delivery delivery', 'expected=2 actual=3'),
+                               ('delivery delivery', 'expected=1 actual=0')]:
+            self.source.write_text(content)
+            self.assertIn(error, self.run_check(1, label='pump-bad-count'))
+        self.source.write_text('before delivery delivery')
+        self.run_check(label='pump-restored')
+        # Read the script's expectation, do not duplicate a hardcoded wire=2.
+        self.write(body.replace("2 if name", "3 if name"))
+        self.assertIn('expected=3 actual=2', self.run_check(1, label='pump-changed-guard'))
+        for guard in ['', 'assert content.count(old) == dynamic_count\n',
+                      'assert content.count(old) != 2\n',
+                      'assert content.count(old) == 2 == 2\n',
+                      'assert content.count(old) == 0\n',
+                      'assert content.count(old) == True\n',
+                      'assert content.count(old) == 2\nassert content.count(old) == 2\n']:
+            self.write(body[:body.index('assert')] + guard)
+            self.run_check(1, label='pump-unsupported-guard')
+        self.write(body)
+        self.run_check(label='pump-guard-restored')
+        self.write("ANCHOR_COUNTS = {'wire': 2}\n" + body)
+        self.assertIn('duplicate count declaration', self.run_check(1, label='pump-duplicate-count-rule'))
+        self.write(body)
+        self.run_check(label='pump-count-rule-restored')
+
+    def test_output_schema_bytes_preserve_exact_file_bytes(self):
+        self.move_script('output-schema/negative.py')
+        # Invalid UTF-8 and CRLF distinguish byte counting from text decoding.
+        original = b'prefix\xff\r\nbefore\r\n'
+        body = "MUTANTS = [('mask', b'\\xff\\r\\nbefore', b'after', True)]\n"
+        self.source.write_bytes(original)
+        self.write(body)
+        self.assertIn('anchors=1 errors=0', self.run_check(label='bytes-original'))
+        for content in [original.replace(b'\r\n', b'\n'), b'missing', original * 2]:
+            self.source.write_bytes(content)
+            self.run_check(1, label='bytes-wrong-anchor')
+        self.source.write_bytes(original)
+        self.run_check(label='bytes-restored')
+        self.write(body.replace("b'\\xff\\r\\nbefore'", "b''"))
+        self.assertIn('empty', self.run_check(1, label='bytes-empty-anchor'))
+        self.write(body.replace("b'after'", "'after'"))
+        self.assertIn('same string/byte type', self.run_check(1, label='bytes-text-replacement'))
+        self.write("MUTANTS = [('mask', 'before', b'after', True)]\n")
+        self.assertIn('same string/byte type', self.run_check(1, label='text-bytes-replacement'))
+        self.write(body + 're.subn(pattern, replacement, content)\n')
+        self.assertIn('literal consumers', self.run_check(1, label='bytes-regex-consumer'))
+        self.write(body)
+        self.run_check(label='bytes-format-restored')
+
+    def test_sidecar_dictionary_metadata_and_generated_json_rows(self):
+        self.move_script('sidecar-payload/negative.py')
+        body = """mutants = {'embedded': (source, 'package', 'test', 'before', 'after')}
+for route, test in [('wire', 'wire'), ('host', 'module')]:
+    old = f'"name":"missing","route":"{route}"'
+    mutants[f'omit-{route}'] = ('src/oracle.json', 'package', test, old, old.replace(route, 'omitted'))
+"""
+        oracle = self.root / 'src/oracle.json'
+        original = '"name":"missing","route":"wire"\n"name":"missing","route":"host"'
+        oracle.write_text(original)
+        self.write(body)
+        self.assertIn('anchors=3 errors=0', self.run_check(label='sidecar-original'))
+        oracle.write_text(original.replace('wire', 'lost'))
+        self.assertIn('omit-wire: src/oracle.json expected=1 actual=0',
+                      self.run_check(1, label='sidecar-json-missing'))
+        oracle.write_text(original)
+        self.source.write_text('missing')
+        self.assertIn('embedded: src/example.rs expected=1 actual=0',
+                      self.run_check(1, label='sidecar-product-missing'))
+        self.source.write_text('before\n')
+        self.run_check(label='sidecar-restored')
+        self.write(body.replace("'package', 'test', ", ''))
+        self.run_check(1, label='sidecar-incomplete-metadata-row')
+        self.write(body)
+        self.run_check(label='sidecar-row-restored')
+
+    def test_host_factory_relative_source_and_concatenated_anchor(self):
+        self.move_script('host-factory/negative.py')
+        body = """SOURCE = Path('src/example.rs')
+LOOP = 'before'
+MUTATIONS = [('lease', LOOP, 'after', 'test', 'failure'),
+             ('deadline', 'timeout ' + LOOP, 'changed ' + LOOP, 'test', 'failure')]
+"""
+        self.source.write_text('timeout before')
+        self.write(body)
+        self.assertIn('anchors=2 errors=0', self.run_check(label='factory-original'))
+        self.source.write_text('before')
+        self.assertIn('deadline: src/example.rs expected=1 actual=0',
+                      self.run_check(1, label='factory-dependency-missing'))
+        self.source.write_text('timeout before before')
+        self.assertIn('expected=1 actual=2', self.run_check(1, label='factory-ambiguous'))
+        self.source.write_text('timeout before')
+        self.run_check(label='factory-restored')
+        self.write(body.replace("src/example.rs", '../outside.rs'))
+        self.assertIn('outside repository', self.run_check(1, label='factory-outside-source'))
+        self.write(body)
+        self.run_check(label='factory-path-restored')
+
     def test_constants_paths_loops_and_extensions(self):
         self.write("""folder = source.parent
 alias, label = [folder / 'example.rs', 'sample']
