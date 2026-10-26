@@ -345,3 +345,86 @@ async fn concurrent_emits_reach_the_sink_in_arrival_order() {
         (0..16).map(f64::from).collect::<Vec<_>>()
     );
 }
+
+fn sidecar_payload_oracle() -> JsValue {
+    crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/sidecar-payload/oracle.json"
+    ))
+}
+
+#[test]
+fn sidecar_payload_wire_matches_ts() {
+    let mut replayed = 0;
+    for case in array(&sidecar_payload_oracle(), "cases") {
+        let route = text(case.get("route").unwrap());
+        if !matches!(route.as_str(), "wire-event" | "wire-final") {
+            continue;
+        }
+        replayed += 1;
+        let mut message = parse_json(r#"{"kind":"event","eventType":"agent_event","streamId":"stream","runId":"run","operationId":"operation","requestId":"request","sequence":0,"final":false,"outcome":"completed"}"#).unwrap().as_object().unwrap().clone();
+        message.insert("final".into(), JsValue::Bool(route == "wire-final"));
+        if let Some(payload) = case.get("payload") {
+            message.insert("payload".into(), materialize(payload));
+        }
+        let result = pilotdeck_protocol::module::validate_module_message(&JsValue::Object(message));
+        assert_eq!(
+            result.is_ok(),
+            case.get("ok").unwrap().as_bool().unwrap(),
+            "{case:?}"
+        );
+        if let Err(error) = result {
+            assert_eq!(
+                format!("Invalid sidecar message: {}: {}", error.code, error.message),
+                text(case.get("error").unwrap())
+            );
+        }
+    }
+    assert_eq!(replayed, 24);
+}
+
+#[tokio::test]
+async fn sidecar_payload_module_matches_ts() {
+    let mut replayed = 0;
+    for case in array(&sidecar_payload_oracle(), "cases") {
+        if text(case.get("route").unwrap()) != "host-bridge" {
+            continue;
+        }
+        replayed += 1;
+        let sink = Arc::new(FakeSink::default());
+        let handler = Handler::new(TurnIdentity::new("session", "turn"), sink.clone());
+        let good = parse_json(
+            r#"{"type":"text_delta","sessionId":"session","turnId":"turn","text":"after"}"#,
+        )
+        .unwrap();
+        for (payload, golden) in [
+            case.get("payload")
+                .map(materialize)
+                .unwrap_or(JsValue::Undefined),
+            good,
+        ]
+        .into_iter()
+        .zip(array(case, "replies"))
+        {
+            let call = event_call(payload);
+            let response = module_response(&call, handler.call(call.clone()).await);
+            assert_eq!(response.get("ok"), golden.get("ok"), "{case:?}");
+            assert_eq!(
+                response.get("error").and_then(|error| error.get("message")),
+                golden.get("error")
+            );
+        }
+        let types = handler
+            .drain()
+            .iter()
+            .map(|event| event.get("type").unwrap().clone())
+            .collect();
+        assert_eq!(JsValue::Array(types), *case.get("drained").unwrap());
+    }
+    assert_eq!(replayed, 12);
+}
+
+#[test]
+#[ignore = "requires Node v22.22.0 and PDRS_BASELINE node_modules"]
+fn sidecar_payload_regenerates_identically() {
+    crate::test_baseline::regenerates_identically("sidecar-payload");
+}
