@@ -14,7 +14,8 @@
 oracle 与宿主环境无关。cache case 在同一个模块实例上先坏 JSON 再写合法
 JSON，记录两次返回值，锁定「首次失败后永久 null」。
 
-覆盖 343 个观测：openclaw 缺失 / 坏 JSON / primary 命中与不命中 / provider
+覆盖 361 个观测：openclaw 缺失 / 坏 JSON / primary 命中与不命中（含按
+`id` / `name` 命中，且 name 命中的模型可以不是首个模型）/ provider
 或 model 缺失 / headers 合并与 trim；`buildLlmConfig` 的默认值、六条 env
 回退、options 覆盖、modelRef、openclaw 选择命中与不命中、apiKey 环境变量名
 字面量；extractor 的 `sanitizeHeaders`（含数组记录）、`resolveAgentPrimaryModel`、
@@ -43,7 +44,7 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-llm-config/negative.py /tmp/edgeclaw-llm-config-negative
 ```
 
-`negative.py` 用 `mutating_sources` 锁定并恢复产品源码，逐条要求编译成功、
-运行时断言转红。脚本要求调用方提供 `CARGO_TARGET_DIR`。`config.rs` 是新增
-文件，提交前不在 `HEAD`，`mutating_sources` 会拒跑；因此本单不实跑整套负控，
-由协调者在提交后的宿主执行（见 RESULT）。
+`negative.py` 用 `mutating_sources` 锁定并恢复产品源码，逐格要求编译成功、
+运行时断言转红；一格失败不中止，跑完后汇总 `KILLED / SURVIVED / INVALID`，
+有存活或无效退出 1。脚本要求调用方提供 `CARGO_TARGET_DIR`，未设即报错。
+整套负控逐个重编译，耗时较长，由协调者在宿主执行（见 RESULT）。

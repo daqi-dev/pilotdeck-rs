@@ -2238,6 +2238,67 @@
       ]
     },
     {
+      "fn": "resolveOpenClawModelConfig",
+      "args": [
+        [
+          {
+            "kind": "valid",
+            "json": {
+              "models": {
+                "providers": {
+                  "alpha": {
+                    "models": [
+                      {
+                        "id": "other",
+                        "api": "google",
+                        "baseUrl": "https://first.example",
+                        "headers": {
+                          "X-Pick": " first "
+                        }
+                      },
+                      {
+                        "id": "id2",
+                        "name": "friendly",
+                        "api": "anthropic",
+                        "baseUrl": " https://second.example// ",
+                        "headers": {
+                          "X-Pick": " second ",
+                          "X-Only": "second"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "agents": {
+                "defaults": {
+                  "model": {
+                    "primary": "alpha/friendly"
+                  }
+                }
+              }
+            },
+            "text": "{\n  \"models\": {\n    \"providers\": {\n      \"alpha\": {\n        \"models\": [\n          {\n            \"id\": \"other\",\n            \"api\": \"google\",\n            \"baseUrl\": \"https://first.example\",\n            \"headers\": {\n              \"X-Pick\": \" first \"\n            }\n          },\n          {\n            \"id\": \"id2\",\n            \"name\": \"friendly\",\n            \"api\": \"anthropic\",\n            \"baseUrl\": \" https://second.example// \",\n            \"headers\": {\n              \"X-Pick\": \" second \",\n              \"X-Only\": \"second\"\n            }\n          }\n        ]\n      }\n    }\n  },\n  \"agents\": {\n    \"defaults\": {\n      \"model\": {\n        \"primary\": \"alpha/friendly\"\n      }\n    }\n  }\n}"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "provider": "alpha",
+          "model": "friendly",
+          "apiType": "anthropic",
+          "baseUrl": "https://second.example//",
+          "apiKey": {
+            "$undefined": true
+          },
+          "headers": {
+            "X-Pick": "second",
+            "X-Only": "second"
+          }
+        }
+      ]
+    },
+    {
       "fn": "sanitizeHeaders",
       "args": [
         {

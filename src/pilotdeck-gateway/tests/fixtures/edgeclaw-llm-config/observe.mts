@@ -213,6 +213,16 @@ export async function collect(baseline: string) {
         }},
         agents: {defaults: {model: {primary: 'beta/b2'}}},
       }},
+      // Name matching must select the second model; the first model's
+      // api/baseUrl/headers make the `id`-only fallback observable.
+      {name: 'model-by-name-second', json: {
+        models: {providers: {alpha: {models: [
+          {id: 'other', api: 'google', baseUrl: 'https://first.example', headers: {'X-Pick': ' first '}},
+          {id: 'id2', name: 'friendly', api: 'anthropic', baseUrl: ' https://second.example// ',
+           headers: {'X-Pick': ' second ', 'X-Only': 'second'}},
+        ]}}},
+        agents: {defaults: {model: {primary: 'alpha/friendly'}}},
+      }},
     ];
     const buildCases: Array<{name: string; openClaw: any; options: any; env: Record<string, string>}> = [
       {name: 'defaults', openClaw: {kind: 'missing'}, options: undefined, env: {}},
