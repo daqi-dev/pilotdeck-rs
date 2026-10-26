@@ -257,34 +257,58 @@ pub(crate) fn response<F: Files>(
 /// PILOT_HOME. Resolve the ordinary ~/.pilotdeck fallback against the host HOME.
 /// If the OS home cannot be represented from the captured environment, TS keeps
 /// ownership instead of guessing a directory.
-pub(crate) fn native_metadata(env: &Env) -> Option<Metadata<crate::metadata::NativeFiles>> {
-    metadata_at(env, std::env::current_dir().ok()?)
+pub(crate) fn native_metadata(
+    env: &Env,
+) -> Result<Option<Metadata<crate::metadata::NativeFiles>>, config::Error> {
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => {
+            // TS can resolve an absolute home without cwd. Native Metadata
+            // still needs cwd: retain host ownership for that existing limit
+            // (A4-MODEL-CATALOG-CWD-001), rather than inventing a cwd or error.
+            if home_path(env).is_none_or(|home| home.is_absolute()) {
+                return Ok(None);
+            }
+            let (code, message) = crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None);
+            return Err(config::Error {
+                code: code.into(),
+                message: message.into(),
+                diagnostics: vec![],
+                name: "Error",
+                requires_host: false,
+            });
+        }
+    };
+    Ok(metadata_at(env, cwd))
 }
+
+#[cfg(all(test, unix))]
+#[path = "../tests/fixtures/model-catalog-cwd/regression.rs"]
+mod cwd_tests;
 fn metadata_at(
     env: &Env,
     cwd: std::path::PathBuf,
 ) -> Option<Metadata<crate::metadata::NativeFiles>> {
-    let value = env
-        .get("PILOT_HOME")
-        .map(String::as_str)
-        .unwrap_or("~/.pilotdeck");
-    let home = if value == "~" || value.starts_with("~/") {
-        let system_home = env.get("HOME")?;
-        let suffix = value.strip_prefix("~/").unwrap_or("");
-        crate::metadata::resolve(
-            &cwd,
-            &std::path::Path::new(system_home)
-                .join(suffix)
-                .to_string_lossy(),
-        )
-    } else {
-        crate::metadata::resolve(&cwd, value)
-    };
+    let home = crate::metadata::resolve(&cwd, &home_path(env)?.to_string_lossy());
     Some(Metadata {
         home,
         cwd,
         files: crate::metadata::NativeFiles,
     })
+}
+
+fn home_path(env: &Env) -> Option<std::path::PathBuf> {
+    let value = env
+        .get("PILOT_HOME")
+        .map(String::as_str)
+        .unwrap_or("~/.pilotdeck");
+    if value == "~" || value.starts_with("~/") {
+        let system_home = env.get("HOME")?;
+        let suffix = value.strip_prefix("~/").unwrap_or("");
+        Some(std::path::Path::new(system_home).join(suffix))
+    } else {
+        Some(value.into())
+    }
 }
 #[cfg(test)]
 mod tests {

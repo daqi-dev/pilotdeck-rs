@@ -98,9 +98,12 @@ pub(crate) fn route_with_metadata<F: Files>(
                 return crate::session_model::response(request, metadata, &env)
                     .map_or(Route::Forward, Route::LocalResponse);
             }
-            return crate::model_catalog::native_metadata(&env)
-                .and_then(|m| crate::session_model::response(request, &m, &env))
-                .map_or(Route::Forward, Route::LocalResponse);
+            return match crate::model_catalog::native_metadata(&env) {
+                Ok(metadata) => metadata
+                    .and_then(|m| crate::session_model::response(request, &m, &env))
+                    .map_or(Route::Forward, Route::LocalResponse),
+                Err(error) => metadata_error_response(request, &error),
+            };
         }
         return route_catalog(request, metadata, &env);
     }
@@ -301,8 +304,28 @@ pub(crate) fn route_catalog<F: Files>(
             .map_or(Route::Forward, Route::LocalResponse);
     }
     match crate::model_catalog::native_metadata(env) {
-        Some(metadata) => crate::model_catalog::response(request, &metadata, env)
+        Ok(Some(metadata)) => crate::model_catalog::response(request, &metadata, env)
             .map_or(Route::Forward, Route::LocalResponse),
-        None => Route::Forward,
+        Ok(None) => Route::Forward,
+        Err(error) => metadata_error_response(request, &error),
     }
+}
+
+fn metadata_error_response(request: &JsValue, error: &crate::config::Error) -> Route {
+    let response = object([
+        ("type", "response".into()),
+        (
+            "id",
+            request.get("id").expect("validated request id").clone(),
+        ),
+        ("ok", JsValue::Bool(false)),
+        (
+            "error",
+            object([
+                ("code", JsValue::String(error.code.as_str().into())),
+                ("message", JsValue::String(error.message.clone())),
+            ]),
+        ),
+    ]);
+    Route::LocalResponse(stringify_json(&response).unwrap().unwrap().into_bytes())
 }
