@@ -519,3 +519,185 @@ async fn concurrent_host_entries_keep_replay_durable_and_live_in_one_order() {
     drop(registry);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+async fn panic_deadline<T>(future: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(std::time::Duration::from_secs(2), future)
+        .await
+        .expect("spawn completion deadline")
+}
+
+struct PanicRegistry(Mutex<VecDeque<RegistryFuture<()>>>);
+impl TurnRunRegistry for PanicRegistry {
+    fn accept(&self, _: &RunAcceptInput) -> RegistryFuture<bool> {
+        Box::pin(async { Ok(false) })
+    }
+    fn events(&self, _: &RunRef) -> RegistryFuture<Vec<JsValue>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+    fn append(&self, _: &RunRef, _: &JsValue) -> RegistryFuture<()> {
+        self.0.lock().unwrap().pop_front().unwrap()
+    }
+}
+
+struct WakeFlag(AtomicBool);
+impl std::task::Wake for WakeFlag {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn durable_spawn_panic_matrix() {
+    let oracle = include_str!("../../../tests/fixtures/runtime-spawn-panic/oracle.json");
+    crate::test_baseline::oracle(oracle);
+    let oracle: Value = serde_json::from_str(oracle).unwrap();
+    let mut ids = HashSet::new();
+    for case in oracle["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["id"].as_str().unwrap().starts_with("durable-"))
+    {
+        let id = case["id"].as_str().unwrap();
+        assert!(ids.insert(id));
+        let (release, gate) = oneshot::channel();
+        let (started, entered) = oneshot::channel();
+        let after = id.contains("-P1-");
+        let first: RegistryFuture<()> = Box::pin(async move {
+            started.send(()).unwrap();
+            if after {
+                gate.await.unwrap();
+            }
+            panic!("injected panic");
+        });
+        let second: RegistryFuture<()> = Box::pin(async { panic!("injected panic") });
+        let registry = Arc::new(PanicRegistry(Mutex::new(VecDeque::from([first, second]))));
+        let publisher = TurnPublisher::start(run_ref(), Some(registry), Arc::default());
+        publisher.gateway_event(js(&json!({"type":"delta"})));
+        publisher.gateway_event(js(&json!({"type":"delta"})));
+        let writes = publisher.publication.state.lock().unwrap().pending.clone();
+        let n = case["outcomes"].as_array().unwrap().len();
+        let mut waiters: Vec<_> = (0..n)
+            .map(|_| Box::pin(publisher.publication.wait_for(&writes)))
+            .collect();
+        let mut next = Box::pin(publisher.next());
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        for waiter in &mut waiters {
+            assert!(waiter.as_mut().poll(&mut cx).is_pending());
+        }
+        assert!(next.as_mut().poll(&mut cx).is_pending());
+        if id.ends_with("-C") {
+            drop(waiters);
+            drop(next);
+            waiters = (0..n)
+                .map(|_| Box::pin(publisher.publication.wait_for(&writes)))
+                .collect();
+            next = Box::pin(publisher.next());
+        }
+        let flags: Vec<_> = (0..n)
+            .map(|_| Arc::new(WakeFlag(AtomicBool::new(false))))
+            .collect();
+        for (waiter, flag) in waiters.iter_mut().zip(&flags) {
+            let waker = std::task::Waker::from(flag.clone());
+            assert!(
+                waiter
+                    .as_mut()
+                    .poll(&mut std::task::Context::from_waker(&waker))
+                    .is_pending()
+            );
+        }
+        panic_deadline(entered).await.unwrap();
+        if after {
+            assert!(
+                next.as_mut().poll(&mut cx).is_pending(),
+                "{id}: gate remains pending"
+            );
+            release.send(()).unwrap();
+        }
+        panic_deadline(publisher.publication.wait_for(&writes)).await;
+        assert!(
+            flags.iter().all(|f| f.0.load(Ordering::SeqCst)),
+            "every drain waiter notified: {id}"
+        );
+        for waiter in waiters {
+            panic_deadline(waiter).await;
+        }
+        assert!(
+            publisher
+                .publication
+                .state
+                .lock()
+                .unwrap()
+                .pending
+                .is_empty(),
+            "pending cleanup"
+        );
+        let event = panic_deadline(next).await.unwrap();
+        assert_eq!(json(&event), case["visible"][0], "failure event: {id}");
+        panic_deadline(publisher.finish()).await;
+        assert_eq!(
+            panic_deadline(publisher.next()).await,
+            None,
+            "single failure: {id}"
+        );
+    }
+    assert_eq!(ids.len(), 8, "complete durable matrix");
+}
+
+#[tokio::test]
+async fn durable_spawn_cancelled_predecessor_releases_successor() {
+    let (cancel, gate) = oneshot::channel::<()>();
+    let (started, entered) = oneshot::channel();
+    let polled = Arc::new(AtomicBool::new(false));
+    let seen = polled.clone();
+    let first: RegistryFuture<()> = Box::pin(async move {
+        started.send(()).unwrap();
+        gate.await
+            .map_err(|_| RunRegistryError::Invalid("cancelled predecessor".into()))
+    });
+    let second: RegistryFuture<()> = Box::pin(async move {
+        seen.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    let publisher = TurnPublisher::start(
+        run_ref(),
+        Some(Arc::new(PanicRegistry(Mutex::new(VecDeque::from([
+            first, second,
+        ]))))),
+        Arc::default(),
+    );
+    publisher.gateway_event(js(&json!({"type":"first"})));
+    publisher.gateway_event(js(
+        &json!({"type":"assistant_text_delta", "text":"again", "runId":"r"}),
+    ));
+    panic_deadline(entered).await.unwrap();
+    let mut next = Box::pin(publisher.next());
+    assert!(
+        next.as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+            .is_pending()
+    );
+    assert!(
+        !polled.load(Ordering::SeqCst),
+        "successor must wait for predecessor"
+    );
+    drop(cancel);
+    panic_deadline(publisher.finish()).await;
+    let oracle: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/runtime-spawn-panic/oracle.json"
+    ))
+    .unwrap();
+    let case = oracle["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "predecessor-durable")
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        assert_eq!(json(&next.await.unwrap()), case["visible"][0]);
+        assert_eq!(json(&publisher.next().await.unwrap()), case["visible"][1]);
+        assert_eq!(publisher.next().await, None);
+    })
+    .await
+    .expect("successor delivery deadline");
+}

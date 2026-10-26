@@ -421,8 +421,23 @@ where
     F: std::future::Future<Output = Result<(), RuntimeError>> + Send + 'static,
 {
     let (sender, receiver) = watch::channel(None);
+    // Keep the completion sender outside the task polling the external future.
+    // A panic must settle the same shared result as an ordinary port error.
+    let task = executor.spawn(future);
     executor.spawn(async move {
-        let outcome = future.await;
+        let outcome = task.await.unwrap_or_else(|error| {
+            let payload = error.try_into_panic().ok();
+            let message = payload
+                .as_ref()
+                .and_then(|payload| {
+                    payload
+                        .downcast_ref::<&str>()
+                        .copied()
+                        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                })
+                .unwrap_or("MCP lifecycle task ended unexpectedly");
+            Err(RuntimeError::new(message))
+        });
         sender.send_replace(Some(outcome));
     });
     receiver
@@ -1056,6 +1071,148 @@ impl ProjectMcpRuntimeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn panic_deadline<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::time::timeout(std::time::Duration::from_secs(2), future)
+            .await
+            .expect("spawn completion deadline")
+    }
+
+    struct PanicStop(
+        Mutex<Option<crate::runtime::mcp::runtime::McpFuture<'static, Result<(), RuntimeError>>>>,
+    );
+    impl SessionMcpRuntime for PanicStop {
+        fn stop(&self) -> crate::runtime::mcp::runtime::McpFuture<'_, Result<(), RuntimeError>> {
+            self.0.lock().unwrap().take().expect("stop called once")
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_spawn_panic_matrix() {
+        use std::{
+            future::Future,
+            task::{Context, Waker},
+        };
+        let oracle = include_str!("../../../tests/fixtures/runtime-spawn-panic/oracle.json");
+        crate::test_baseline::oracle(oracle);
+        let oracle: serde_json::Value = serde_json::from_str(oracle).unwrap();
+        let mut ids = std::collections::HashSet::new();
+        for case in oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["id"].as_str().unwrap().starts_with("shared-"))
+        {
+            let id = case["id"].as_str().unwrap();
+            assert!(ids.insert(id));
+            let (release, gate) = tokio::sync::oneshot::channel();
+            let (started, entered) = tokio::sync::oneshot::channel();
+            let after = id.contains("-P1-");
+            let owner = SessionMcpRuntimeRegistry::new();
+            owner
+                .register(
+                    "s",
+                    Arc::new(PanicStop(Mutex::new(Some(Box::pin(async move {
+                        started.send(()).unwrap();
+                        if after {
+                            gate.await.unwrap();
+                        }
+                        panic!("injected panic");
+                    }))))),
+                )
+                .unwrap();
+            let n = case["outcomes"].as_array().unwrap().len();
+            let mut waiters: Vec<_> = (0..n).map(|_| Box::pin(owner.dispose())).collect();
+            let mut cx = Context::from_waker(Waker::noop());
+            for waiter in &mut waiters {
+                assert!(waiter.as_mut().poll(&mut cx).is_pending());
+            }
+            if id.ends_with("-C") {
+                drop(waiters);
+                waiters = (0..n).map(|_| Box::pin(owner.dispose())).collect();
+            }
+            panic_deadline(entered).await.unwrap();
+            if after {
+                assert!(
+                    waiters[0].as_mut().poll(&mut cx).is_pending(),
+                    "{id}: gate remains pending"
+                );
+                release.send(()).unwrap();
+            }
+            let mut outcomes = vec![];
+            for waiter in waiters {
+                let error = panic_deadline(waiter).await.unwrap_err();
+                outcomes.push(error.message);
+            }
+            assert_eq!(
+                serde_json::json!(outcomes),
+                case["outcomes"],
+                "shared failure: {id}"
+            );
+            assert_eq!(owner.state(), McpOwnerState::Disposed);
+            assert_eq!(owner.size(), 0);
+            let receiver = lock(&owner.inner).dispose.clone().unwrap();
+            assert!(
+                receiver.borrow().as_ref().unwrap().is_err(),
+                "shared result retained"
+            );
+            assert_eq!(
+                panic_deadline(owner.dispose()).await.unwrap_err().message,
+                "injected panic",
+                "late observer"
+            );
+        }
+        assert_eq!(ids.len(), 8, "complete shared matrix");
+    }
+
+    #[tokio::test]
+    async fn shared_spawn_outcomes_and_cancelled_gate() {
+        for (payload, expected) in [
+            (Some("owned panic".to_string()), "owned panic"),
+            (None, "MCP lifecycle task ended unexpectedly"),
+        ] {
+            let result = shared(async move {
+                if let Some(payload) = payload {
+                    std::panic::panic_any(payload);
+                }
+                std::panic::panic_any(7_u8);
+            });
+            assert_eq!(
+                panic_deadline(settled(result)).await.unwrap_err().message,
+                expected,
+                "panic payload"
+            );
+        }
+        let (cancel, gate) = tokio::sync::oneshot::channel::<()>();
+        let receiver =
+            shared(async move { gate.await.map_err(|_| RuntimeError::new("cancelled gate")) });
+        assert!(receiver.borrow().is_none());
+        drop(cancel);
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/runtime-spawn-panic/oracle.json"
+        ))
+        .unwrap();
+        let case = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "predecessor-shared")
+            .unwrap();
+        assert_eq!(
+            serde_json::json!([panic_deadline(settled(receiver)).await.unwrap_err().message]),
+            case["outcomes"]
+        );
+        assert_eq!(
+            panic_deadline(settled(shared(async { Ok(()) }))).await,
+            Ok(())
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the fixed TS baseline and tsx"]
+    fn spawn_panic_regenerates_identically() {
+        crate::test_baseline::regenerates_identically("runtime-spawn-panic");
+    }
 
     #[test]
     fn registry_paths_use_shared_lexical_resolution() {
