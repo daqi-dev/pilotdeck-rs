@@ -1343,6 +1343,9 @@
           }
         }
       ],
+      "submitOptions": {
+        "allowPlanModeTools": false
+      },
       "consumption": {
         "status": "pr2 已消费",
         "test": "runner_input_text_boundaries",
@@ -1491,6 +1494,9 @@
           }
         }
       ],
+      "submitOptions": {
+        "allowPlanModeTools": false
+      },
       "consumption": {
         "status": "pr2 已消费",
         "test": "runner_input_blocks_boundaries",
@@ -2964,6 +2970,9 @@
           }
         }
       ],
+      "submitOptions": {
+        "allowPlanModeTools": false
+      },
       "consumption": {
         "status": "pr3 端口已消费",
         "test": "recording_original_text",
@@ -3070,6 +3079,9 @@
           ]
         }
       ],
+      "submitOptions": {
+        "allowPlanModeTools": false
+      },
       "consumption": {
         "status": "pr2 已消费",
         "test": "recording_synthetic_null",

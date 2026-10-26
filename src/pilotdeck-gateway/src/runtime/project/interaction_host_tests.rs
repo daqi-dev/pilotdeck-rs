@@ -160,7 +160,14 @@ async fn client_with_close_timeout(
     .await
 }
 fn adapter(registry: Arc<ProjectRuntimeRegistry>, mode: &'static str) -> LiveSessionAdapter {
-    LiveSessionAdapter::with_interaction(test_recorder(), Vec::new, move |identity, _| {
+    adapter_with_recorder(registry, mode, test_recorder())
+}
+fn adapter_with_recorder(
+    registry: Arc<ProjectRuntimeRegistry>,
+    mode: &'static str,
+    recorder: Arc<crate::storage::recorder::Recorder>,
+) -> LiveSessionAdapter {
+    LiveSessionAdapter::with_interaction(recorder, Vec::new, move |identity, _| {
         let lease = registry.acquire(None).unwrap();
         Box::pin(async move {
             Ok(InteractionHost {
@@ -172,6 +179,28 @@ fn adapter(registry: Arc<ProjectRuntimeRegistry>, mode: &'static str) -> LiveSes
         })
     })
 }
+fn assert_accepted_once(recorder: &crate::storage::recorder::Recorder, turn: &str, count: usize) {
+    let bytes = std::fs::read_to_string(recorder.writer().path()).unwrap();
+    let accepted: Vec<_> = bytes
+        .lines()
+        .map(|line| parse_json(line).unwrap())
+        .filter(|row| row.get("type") == Some(&"accepted_input".into()))
+        .collect();
+    assert_eq!(
+        accepted.len(),
+        count,
+        "every submit must persist accepted_input"
+    );
+    assert_eq!(
+        accepted
+            .iter()
+            .filter(|row| row.get("turnId") == Some(&turn.into()))
+            .count(),
+        1,
+        "unique turn must reach RecordingAction::Accept"
+    );
+}
+
 fn host_modules(manifest: &JsObject) -> &JsObject {
     manifest.get("hostModules").unwrap().as_object().unwrap()
 }
@@ -198,11 +227,20 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
     assert!(!old_events.is_closed());
     let current = registry.resolve(None).unwrap();
     assert!(!Arc::ptr_eq(&old, &current));
-    let second = adapter(registry.clone(), "live-payload");
-    let mut newer = second
+    let recorder = test_recorder();
+    let second = adapter_with_recorder(registry.clone(), "live-payload", recorder.clone());
+    let mut predecessor = second
         .submit(
             parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
             wire_options(),
+        )
+        .unwrap();
+    while bounded(predecessor.next()).await.unwrap().is_some() {}
+    assert_accepted_once(&recorder, "turn", 1);
+    let mut newer = second
+        .submit(
+            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+            wire_options_for("reload-next"),
         )
         .unwrap();
     bounded(newer.next()).await.unwrap();
@@ -225,6 +263,7 @@ async fn host_consumes_actual_generations_across_reload_and_live_stdio() {
         );
         assert!(bounded(running.next()).await.unwrap().is_none());
     }
+    assert_accepted_once(&recorder, "reload-next", 2);
     bounded(old.wait_disposed()).await.unwrap();
     assert_eq!(old_events.release_count(), 1);
     assert_eq!(current.state(), RuntimeState::Active);
@@ -420,21 +459,25 @@ async fn host_missing_bounded_recorder_rolls_back_all_bound_ports() {
 async fn host_live_stdio_dispatches_all_four_ports_and_delivers_buffered_events() {
     let scratch = Scratch::new();
     let registry = Arc::new(interaction_registry(&scratch));
-    let session = adapter(registry.clone(), "live-interaction");
-    let mut stream = session
-        .submit(
-            parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
-            wire_options(),
-        )
-        .unwrap();
-    let mut events = Vec::new();
-    while let Some(event) = bounded(stream.next()).await.unwrap() {
-        events.push(event);
+    let recorder = test_recorder();
+    let session = adapter_with_recorder(registry.clone(), "live-interaction", recorder.clone());
+    for (index, turn_id) in ["turn", "ports-next"].into_iter().enumerate() {
+        let mut stream = session
+            .submit(
+                parse_json(r#"{"type":"blocks","content":[]}"#).unwrap(),
+                wire_options_for(turn_id),
+            )
+            .unwrap();
+        let mut events = Vec::new();
+        while let Some(event) = bounded(stream.next()).await.unwrap() {
+            events.push(event);
+        }
+        assert_eq!(events.len(), 5, "{events:?}");
+        assert_eq!(events[2].get("event"), Some(&"host-probe".into()));
+        assert_eq!(events[3].get("event"), Some(&"ports-tested".into()));
+        assert_eq!(events[4].get("type"), Some(&"turn_completed".into()));
+        assert_accepted_once(&recorder, turn_id, index + 1);
     }
-    assert_eq!(events.len(), 5, "{events:?}");
-    assert_eq!(events[2].get("event"), Some(&"host-probe".into()));
-    assert_eq!(events[3].get("event"), Some(&"ports-tested".into()));
-    assert_eq!(events[4].get("type"), Some(&"turn_completed".into()));
     bounded(registry.dispose()).await.unwrap();
 }
 

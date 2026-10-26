@@ -1,0 +1,45 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/scope/AgentHandle.ts": "b491c291f31a37b188a7ef2f9bd8d35925ada1846b8f28e66052c387b5be1f2a",
+    "src/agent/session/AgentSession.ts": "1d1f929fb6f08a5f0957b900cd0a1bfb65ae14080d7f26e971c141d2c5f1d789"
+  },
+  "matrix": [
+    {
+      "name": "history-owned",
+      "active": 1,
+      "reads": 1
+    },
+    {
+      "name": "pending",
+      "active": 1,
+      "reads": 1
+    },
+    {
+      "name": "aborted",
+      "active": 1,
+      "reads": 1
+    },
+    {
+      "name": "released",
+      "active": 1,
+      "reads": 2,
+      "messages": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "fresh"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "disposed",
+      "active": 0,
+      "reads": 2
+    }
+  ]
+}

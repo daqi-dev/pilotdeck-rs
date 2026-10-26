@@ -162,7 +162,7 @@ impl LiveSessionAdapter {
 impl LiveSession for LiveSessionAdapter {
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         // Invalid requests must not occupy the session's active turn slot.
-        let (mut request, input) = parse_execute_request(&input, &options, (self.history)())?;
+        let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
         let cancellation = Cancellation::default();
         {
             let mut state = self.state.lock().unwrap();
@@ -177,6 +177,12 @@ impl LiveSession for LiveSessionAdapter {
             state.active = Some(cancellation.clone());
         }
         let active = Arc::new(ActiveTurn(self.state.clone()));
+        // Read the projection only after admission owns the slot. Rejected
+        // submissions must not observe history or race its current owner.
+        input.history = (self.history)();
+        request
+            .payload
+            .insert("messages".into(), JsValue::Array(input.loop_messages()));
         let owner = active.clone();
         let (recording_sender, recording_ready) = oneshot::channel();
         let host_factory = self.host_factory.clone();
