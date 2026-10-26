@@ -14,6 +14,7 @@ use std::sync::Arc;
 mod recording;
 pub use recording::{Recording, RecordingAction};
 
+#[derive(Clone)]
 pub enum AgentInput {
     Text(JsString),
     Blocks(Vec<JsValue>),
@@ -21,6 +22,7 @@ pub enum AgentInput {
 
 /// History is loop-only; synthetic input is durable but never acknowledged as
 /// the user's input. Metadata is the host's acceptedInputMetadata projection.
+#[derive(Clone)]
 pub struct TurnInput {
     pub input: AgentInput,
     pub history: Vec<JsValue>,

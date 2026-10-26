@@ -19,9 +19,9 @@ source = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
            '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::live::stream_tests::live_']
 run = partial(run, root=root, out=out, command=command, env=env)
-lazy = 'host = async { host_factory(request.identity.clone(), recorder).await } => host?,'
+lazy = 'host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,'
 mutations = [
-    ('eager-factory', [(lazy, 'host = host_factory(request.identity.clone(), recorder) => host?,')]),
+    ('eager-factory', [(lazy, 'host = host_factory(request.identity.clone(), recorder.clone()) => host?,')]),
     ('factory-before-cancel', [('biased;', 'biased; ' + lazy), (lazy, '')]),
     ('ignore-factory-cancel', [('_ = cancellation.cancelled() =>', '_ = std::future::pending::<()>() =>')]),
 ]
