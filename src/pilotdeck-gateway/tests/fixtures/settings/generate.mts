@@ -69,7 +69,8 @@ const add = (id: string, yaml: string, extra: Omit<Case, 'id' | 'yaml'> = {}) =>
 
 // Success: minimal configuration. Sources are [env/bootstrap (no path, phase),
 // default file (path + contentHash, no phase)]; the provider apiKey is
-// redacted in `config` while `credentialSource` (not a secret key) survives.
+// redacted in `config`, and so is `credentialSource`: the baseline's secret
+// pattern is a substring match, and the key itself contains `credential`.
 add('minimal', BASE);
 // Success: every section, with secret-shaped keys at several nesting levels
 // (provider apiKey, adapter token/webhookUrl/appSecret, tools.webSearch.apiKey
@@ -103,6 +104,23 @@ tools: {webSearch: {enabled: true, provider: tavily, apiKey: k, endpoint: 'https
 telemetry: {enabled: true}
 proxy: {url: 'http://p', noProxy: localhost}
 runPolicy: {failureGuard: {enabled: true, modelFailureLimit: 3, toolFailureLimits: {bash: 2}, toolLabels: {bash: Bash}}}
+`);
+// Success: extraBody keys that only Unicode-fold onto a secret name survive.
+// U+212A (KELVIN SIGN) inside `toKen` folds to `token` under full Unicode
+// case folding, but the baseline's non-Unicode case-insensitive pattern never
+// folds a non-ASCII code unit onto an ASCII one, so the lookalike key survives
+// while the ASCII-cased `TOKEN`/`token` spellings are redacted.
+add('unicode-lookalike-keys', `schemaVersion: 1
+agent: {model: parity/deterministic}
+model:
+  providers:
+    parity:
+      protocol: openai
+      url: http://127.0.0.1:28794/v1
+      apiKey: mock-only
+      extraBody: {toKen: visible, TOKEN: hidden-upper, token: hidden}
+      models:
+        deterministic: {}
 `);
 // Success: an unknown top-level field produces a recoverable warning whose
 // `path` is present; diagnostics projection keeps `recoverable: true`.

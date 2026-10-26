@@ -33,7 +33,7 @@ fn resolve_settings_replays_real_typescript_oracle() {
         oracle.get("count").and_then(JsValue::as_number),
         Some(cases.len() as f64)
     );
-    assert_eq!(cases.len(), 12, "fixture count changed");
+    assert_eq!(cases.len(), 13, "fixture count changed");
     let sources = oracle
         .get("sources")
         .and_then(JsValue::as_object)
@@ -400,6 +400,72 @@ fn config_is_projected_through_the_shared_redaction() {
     assert_eq!(
         projected.get("url"),
         Some(&text_value("http://127.0.0.1:1/v1"))
+    );
+}
+
+#[test]
+fn unicode_lookalike_keys_survive_the_secret_match() {
+    // The baseline's `SECRET_KEY_PATTERN` is a non-Unicode case-insensitive
+    // regex: ES canonicalization never folds a non-ASCII code unit onto an
+    // ASCII one, so lookalike keys survive while ASCII-cased spellings of the
+    // same needles are still redacted.
+    // A lone surrogate inside the needle spelling, like the TS probe's
+    // `to\uD800ken`: it can never fold onto or equal an ASCII letter.
+    let lone_surrogate = JsString::from_utf16(
+        "to".encode_utf16()
+            .chain([0xD800])
+            .chain("ken".encode_utf16())
+            .collect(),
+    );
+    let mut extra_body = JsObject::new();
+    extra_body.insert(JsString::from("to\u{212A}en"), text_value("kelvin"));
+    extra_body.insert(JsString::from("tok\u{131}en"), text_value("dotless i"));
+    extra_body.insert(JsString::from("\u{17F}ecret"), text_value("long s"));
+    extra_body.insert(lone_surrogate.clone(), text_value("lone surrogate"));
+    extra_body.insert("TOKEN".into(), text_value("upper"));
+    extra_body.insert("token".into(), text_value("plain"));
+    let mut provider = JsObject::new();
+    provider.insert("extraBody".into(), JsValue::Object(extra_body));
+    let mut snapshot = snapshot_with(JsValue::Array(vec![]), JsValue::Array(vec![]), None);
+    let config = object(&[(
+        "model",
+        object(&[(
+            "providers",
+            object(&[("parity", JsValue::Object(provider))]),
+        )]),
+    )]);
+    if let JsValue::Object(object) = &mut snapshot {
+        object.insert("config".into(), config);
+    }
+    let response = resolved_settings(&snapshot);
+    let projected = response
+        .get("config")
+        .and_then(|c| c.get("model"))
+        .and_then(|m| m.get("providers"))
+        .and_then(|p| p.get("parity"))
+        .and_then(|p| p.get("extraBody"))
+        .and_then(|b| b.as_object())
+        .expect("projected extraBody");
+    let survives = |key: &JsString, value: &str| {
+        assert_eq!(
+            projected.get_key(key),
+            Some(&text_value(value)),
+            "unicode lookalike key must survive the secret match (#864 fix-r1)"
+        );
+    };
+    survives(&JsString::from("to\u{212A}en"), "kelvin");
+    survives(&JsString::from("tok\u{131}en"), "dotless i");
+    survives(&JsString::from("\u{17F}ecret"), "long s");
+    survives(&lone_surrogate, "lone surrogate");
+    assert_eq!(
+        projected.get("TOKEN"),
+        Some(&text_value("<redacted>")),
+        "ASCII upper-case needle spelling must still be redacted (#864 fix-r1)"
+    );
+    assert_eq!(
+        projected.get("token"),
+        Some(&text_value("<redacted>")),
+        "ASCII needle spelling must still be redacted (#864 fix-r1)"
     );
 }
 

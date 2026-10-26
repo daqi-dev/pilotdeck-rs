@@ -10,13 +10,17 @@ boot 完整网关后调用 `gateway.resolveSettings()`，响应逐字录制；�
 
 ## 目录与条数
 
-`oracle.json` 共 **12** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
+`oracle.json` 共 **13** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
 source 数量和每个 `sourceSha256` 长度做精确断言。三类输入：
 
-- 成功（10 条）：`minimal`（sources=[env/bootstrap, default 文件]，env source 无
+- 成功（11 条）：`minimal`（sources=[env/bootstrap, default 文件]，env source 无
   `path` 有 `phase`，文件 source 有 `path`+`contentHash` 无 `phase`）、
   `full-sections`（全节 + 多层密钥形 key 递归脱敏，含 `credentialSource` 与
   `maxContextTokens` 因 `credential`/`token` 子串而被脱敏的实测行为）、
+  `unicode-lookalike-keys`（extraBody 的 `toKen`（U+212A KELVIN SIGN）在
+  非 Unicode 大小写不敏感匹配下不折成 `token` 而保留原值，`TOKEN`/`token`
+  照常脱敏；Unicode 折叠会把它误判成 `token`，见 `snapshot.rs` 的
+  `secret()`）、
   `unknown-field-warning`（`recoverable: true` + `path` 的告警）、
   `provider-excluded-hint`（`hint` 存在必须保留的分支）、
   `router-unknown-fallback`（快照诊断带 `hint: undefined` 自有键，响应必须省略）、

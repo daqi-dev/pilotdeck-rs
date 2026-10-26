@@ -9,7 +9,7 @@
     "src/pilot/config/PilotConfigStore.ts": "4b89879d9be8afa09e082b0e4038ebd2b1e9fe811d34b7edee2fc9edb88c94f8",
     "src/pilot/config/types.ts": "9e3d0c7e5eaf8e0174d8ae0dd18389bc4f99064503175aefd29b68e9cbe8cb3c"
   },
-  "count": 12,
+  "count": 13,
   "cases": [
     {
       "id": "minimal",
@@ -372,6 +372,109 @@
             "loadedAt": "1970-01-01T00:00:00.000Z",
             "path": "<ROOT>/home/pilotdeck.yaml",
             "contentHash": "ebef35ff7a8d887ce9100e6a8f4561f23f832b544c079e4913431743b4760686"
+          }
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "unicode-lookalike-keys",
+      "yaml": "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      extraBody: {toKen: visible, TOKEN: hidden-upper, token: hidden}\n      models:\n        deterministic: {}\n",
+      "env": {},
+      "response": {
+        "schemaVersion": 1,
+        "version": 1,
+        "loadedAt": "1970-01-01T00:00:00.000Z",
+        "contentHash": "071eb0d70ab089c55a4195c5bee4498ab84b98ac9c565cda456091f686e0bc87",
+        "config": {
+          "agent": {
+            "model": {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "parity": {
+                "id": "parity",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:28794/v1",
+                "apiKey": "<redacted>",
+                "credentialSource": "<redacted>",
+                "timeoutMs": {
+                  "$": "undefined"
+                },
+                "headers": {},
+                "extraBody": {
+                  "toKen": "visible",
+                  "TOKEN": "<redacted>",
+                  "token": "<redacted>"
+                },
+                "speedMapping": {
+                  "$": "undefined"
+                },
+                "retry": {
+                  "$": "undefined"
+                },
+                "models": {
+                  "deterministic": {
+                    "thinking": {
+                      "$": "undefined"
+                    },
+                    "id": "deterministic",
+                    "displayName": {
+                      "$": "undefined"
+                    },
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": "<redacted>",
+                      "maxOutputTokens": "<redacted>"
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    },
+                    "aliases": {
+                      "$": "undefined"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "sources": [
+          {
+            "kind": "env",
+            "priority": 30,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "contentHash": "03f6416875f386a93e3032020d19deeee59c85efd635590174800b3df7d93504",
+            "phase": "bootstrap"
+          },
+          {
+            "kind": "default",
+            "priority": 10,
+            "loadedAt": "1970-01-01T00:00:00.000Z",
+            "path": "<ROOT>/home/pilotdeck.yaml",
+            "contentHash": "b42aabd0da54396989a5ac42687841ef7c2bd3accbeabfa744a9db5ad9424ece"
           }
         ],
         "diagnostics": []
