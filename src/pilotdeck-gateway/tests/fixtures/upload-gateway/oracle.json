@@ -1,0 +1,3392 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sources": {
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/gateway/dialog/UploadStore.ts": "05a515c69257e9bbaa15dbdcad86f49a3615053b60846161635f26072fbe399a",
+    "src/gateway/dialog/errors.ts": "20668c4b0074c1cd2b9d375b11a3a8c93c47faddf8264844b6a6206f1630804c",
+    "src/gateway/dialog/UploadLifecyclePort.ts": "3f693bd2c413302574ff6ba07a43752e36e6657af6a4dc63610e07c56bfa6516",
+    "src/gateway/dialog/UploadArtifactLeasePort.ts": "e6baa1ade762ab303fc78449dedfe95485bf52b6ddc3bcf8b4d9e150daab1e15",
+    "src/gateway/protocol/types.ts": "e3c9d4e11b3a2acbc3dd5445896bbaef1cef332a82cfe11d4da0668de4de589a",
+    "src/gateway/protocol/frames.ts": "872d94f1c8908cd34adf807cb80caa94577d6bca8c6c05bd453ccc7d3b46e870"
+  },
+  "command": "PDRS_BASELINE=/path/to/PilotDeck node --import \"$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs\" src/pilotdeck-gateway/tests/fixtures/upload-gateway/generate.mts <output>",
+  "node": "v22.22.0",
+  "errorMapping": "src/gateway/server/GatewayWsConnection.ts:249-253",
+  "epoch": 1792281600000,
+  "scenarios": [
+    {
+      "name": "create-validation",
+      "operations": [
+        {
+          "method": "create",
+          "undefinedParams": true
+        },
+        {
+          "method": "create",
+          "params": null
+        },
+        {
+          "method": "create",
+          "params": {}
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": null
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": ""
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": " \t\n"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": " ﻿"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": 5
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": {}
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": true
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": null
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": "x"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": {}
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": []
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": "once"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": "once"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": ""
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "missing",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        }
+      ],
+      "results": [
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of undefined (reading 'projectKey')"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of null (reading 'projectKey')"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required for uploads."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required for uploads."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required for uploads."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required for uploads."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "PROJECT_NOT_FOUND",
+            "message": "projectKey is required for uploads."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "input.projectKey?.trim is not a function"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "input.projectKey?.trim is not a function"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "input.projectKey?.trim is not a function"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_INVALID",
+            "message": "files must be an array."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_INVALID",
+            "message": "files must be an array."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_INVALID",
+            "message": "files must be an array."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_INVALID",
+            "message": "files must be an array."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_INVALID",
+            "message": "files must contain 1..500 entries."
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-2",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": "once"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-2",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": "once"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-3",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": ""
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "PROJECT_NOT_FOUND",
+            "message": "Unknown projectKey: missing"
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "missing",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "idempotency-key",
+      "operations": [
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": "once"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": "once"
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": ""
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "upload-2"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": 0
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "upload-3"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": false
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "upload-4"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": null
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "upload-5"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": 5
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": true
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": []
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": {}
+          }
+        }
+      ],
+      "results": [
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": "once"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": "once"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "cancelled",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "cancel",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-2",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": ""
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-2",
+            "projectKey": "<PROJECT>",
+            "status": "cancelled",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "cancel",
+              "uploadId": "upload-2"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-3",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": 0
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-3",
+            "projectKey": "<PROJECT>",
+            "status": "cancelled",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "cancel",
+              "uploadId": "upload-3"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-4",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": false
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-4",
+            "projectKey": "<PROJECT>",
+            "status": "cancelled",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "cancel",
+              "uploadId": "upload-4"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-5",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-5",
+            "projectKey": "<PROJECT>",
+            "status": "cancelled",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "cancel",
+              "uploadId": "upload-5"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "ERR_INVALID_ARG_TYPE",
+            "message": "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received type number (5)"
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": 5
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "ERR_INVALID_ARG_TYPE",
+            "message": "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received type boolean (true)"
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": true
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "ERR_INVALID_ARG_TYPE",
+            "message": "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of Array"
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": []
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "ERR_INVALID_ARG_TYPE",
+            "message": "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of Object"
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": {}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "get-validation",
+      "operations": [
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "absent"
+          }
+        },
+        {
+          "method": "get",
+          "params": {}
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": null
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": 5
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": {}
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": ""
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "../evil"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "a/b"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "a..b"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "é"
+          }
+        },
+        {
+          "method": "get",
+          "undefinedParams": true
+        },
+        {
+          "method": "get",
+          "params": null
+        },
+        {
+          "advance": 86400000
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        }
+      ],
+      "results": [
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Unknown uploadId: absent"
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "absent"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Unknown uploadId: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of undefined (reading 'uploadId')"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of null (reading 'uploadId')"
+          },
+          "calls": []
+        },
+        {
+          "ok": null,
+          "calls": []
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "expired",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-19T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": [],
+            "errorCode": "ATTACHMENT_EXPIRED",
+            "errorMessage": "Upload expired."
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "expired",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-19T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": [],
+            "errorCode": "ATTACHMENT_EXPIRED",
+            "errorMessage": "Upload expired."
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "upload-1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "part-validation",
+      "operations": [
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 1,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "../evil",
+            "clientFileId": "",
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "",
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": " \t",
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": 5,
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": null,
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": true,
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": null
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": 5
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": true
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "A"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "AAA"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "A==="
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "===="
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "AA=A"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "AA-_"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "AAAA\n"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "éééé"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-2",
+            "clientFileId": "file-1",
+            "contentBase64": "AB=="
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "aGVsbG8="
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "aGVsbG8="
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": {
+              "$zerosBytes": 8388609
+            }
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "absent",
+            "contentBase64": "aGVsbG8="
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "nope",
+            "clientFileId": "file-1",
+            "contentBase64": "aGVsbG8="
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "aGVsbG8="
+          }
+        },
+        {
+          "method": "part",
+          "undefinedParams": true
+        },
+        {
+          "method": "part",
+          "params": null
+        }
+      ],
+      "results": [
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-2",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 1,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 1,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 1,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "clientFileId is required."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "clientFileId is required."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "clientFileId is required."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "clientFileId is required."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "clientFileId is required."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "clientFileId is required."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "ok": {
+            "attachmentId": "file-1",
+            "name": "hello.txt",
+            "relativePath": "folder/hello.txt",
+            "mimeType": "text/plain",
+            "bytes": 1,
+            "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-2",
+              "clientFileId": "file-1",
+              "bytes": 1,
+              "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "attachmentId": "file-1",
+            "name": "hello.txt",
+            "relativePath": "folder/hello.txt",
+            "mimeType": "text/plain",
+            "bytes": 5,
+            "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-1",
+              "clientFileId": "file-1",
+              "bytes": 5,
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "Unexpected or duplicate file part: file-1"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-1",
+              "clientFileId": "file-1",
+              "bytes": 5,
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_TOO_LARGE",
+            "message": "Remote upload parts are limited to 8388608 bytes."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "Unexpected or duplicate file part: absent"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-1",
+              "clientFileId": "absent",
+              "bytes": 5,
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Unknown uploadId: nope"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "nope",
+              "clientFileId": "file-1",
+              "bytes": 5,
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "completed",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 5,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "attachments": [
+              {
+                "attachmentId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "mimeType": "text/plain",
+                "bytes": 5,
+                "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+              }
+            ],
+            "receivedClientFileIds": [
+              "file-1"
+            ]
+          },
+          "calls": [
+            {
+              "method": "complete",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_INVALID_STATE",
+            "message": "Upload is completed."
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-1",
+              "clientFileId": "file-1",
+              "bytes": 5,
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of undefined (reading 'uploadId')"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of null (reading 'uploadId')"
+          },
+          "calls": []
+        }
+      ]
+    },
+    {
+      "name": "complete-cancel-validation",
+      "operations": [
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              },
+              {
+                "clientFileId": "file-2",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "upload-2"
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "upload-2"
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "upload-2"
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "upload-3"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "upload-3"
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "absent"
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "../evil"
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "absent"
+          }
+        },
+        {
+          "method": "cancel",
+          "params": {
+            "uploadId": "../evil"
+          }
+        },
+        {
+          "method": "complete",
+          "undefinedParams": true
+        },
+        {
+          "method": "complete",
+          "params": null
+        },
+        {
+          "method": "cancel",
+          "undefinedParams": true
+        },
+        {
+          "method": "cancel",
+          "params": null
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ]
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-4",
+            "clientFileId": "file-1",
+            "contentBase64": "aGVsbG8="
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "upload-4"
+          }
+        }
+      ],
+      "results": [
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-2",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-3",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              },
+              {
+                "clientFileId": "file-2",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 10,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                },
+                {
+                  "clientFileId": "file-2",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "One or more declared files were not uploaded."
+          },
+          "calls": [
+            {
+              "method": "complete",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_INVALID_STATE",
+            "message": "Upload is failed."
+          },
+          "calls": [
+            {
+              "method": "complete",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "failed",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": [],
+            "errorCode": "UPLOAD_MANIFEST_MISMATCH",
+            "errorMessage": "One or more declared files were not uploaded."
+          },
+          "calls": [
+            {
+              "method": "cancel",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-2",
+            "projectKey": "<PROJECT>",
+            "status": "cancelled",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "cancel",
+              "uploadId": "upload-2"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-2",
+            "projectKey": "<PROJECT>",
+            "status": "cancelled",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "cancel",
+              "uploadId": "upload-2"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_INVALID_STATE",
+            "message": "Upload is cancelled."
+          },
+          "calls": [
+            {
+              "method": "complete",
+              "uploadId": "upload-2"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "One or more declared files were not uploaded."
+          },
+          "calls": [
+            {
+              "method": "complete",
+              "uploadId": "upload-3"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-3",
+            "projectKey": "<PROJECT>",
+            "status": "failed",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              },
+              {
+                "clientFileId": "file-2",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 10,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": [],
+            "errorCode": "UPLOAD_MANIFEST_MISMATCH",
+            "errorMessage": "One or more declared files were not uploaded."
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "upload-3"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Unknown uploadId: absent"
+          },
+          "calls": [
+            {
+              "method": "complete",
+              "uploadId": "absent"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Unknown uploadId: absent"
+          },
+          "calls": [
+            {
+              "method": "cancel",
+              "uploadId": "absent"
+            }
+          ]
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of undefined (reading 'uploadId')"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of null (reading 'uploadId')"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of undefined (reading 'uploadId')"
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of null (reading 'uploadId')"
+          },
+          "calls": []
+        },
+        {
+          "ok": {
+            "uploadId": "upload-4",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "attachmentId": "file-1",
+            "name": "hello.txt",
+            "relativePath": "folder/hello.txt",
+            "mimeType": "text/plain",
+            "bytes": 5,
+            "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-4",
+              "clientFileId": "file-1",
+              "bytes": 5,
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-4",
+            "projectKey": "<PROJECT>",
+            "status": "completed",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 5,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "attachments": [
+              {
+                "attachmentId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "mimeType": "text/plain",
+                "bytes": 5,
+                "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+              }
+            ],
+            "receivedClientFileIds": [
+              "file-1"
+            ]
+          },
+          "calls": [
+            {
+              "method": "complete",
+              "uploadId": "upload-4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "provider-unavailable",
+      "operations": [
+        {
+          "method": "create",
+          "undefinedParams": true
+        },
+        {
+          "method": "create",
+          "params": {}
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "../evil"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "../evil",
+            "clientFileId": "",
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "",
+            "contentBase64": ""
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "A"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "aGVsbG8="
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "../evil"
+          }
+        },
+        {
+          "method": "cancel",
+          "undefinedParams": true
+        },
+        {
+          "method": "part",
+          "undefinedParams": true
+        }
+      ],
+      "results": [
+        {
+          "error": {
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Gateway uploads are unavailable."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Gateway uploads are unavailable."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Gateway uploads are unavailable."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_NOT_FOUND",
+            "message": "Invalid uploadId."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_MANIFEST_MISMATCH",
+            "message": "clientFileId is required."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "UPLOAD_PART_INVALID",
+            "message": "contentBase64 must be a valid base64 string."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Gateway uploads are unavailable."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Gateway uploads are unavailable."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Gateway uploads are unavailable."
+          },
+          "calls": []
+        },
+        {
+          "error": {
+            "code": "gateway_request_failed",
+            "message": "Cannot read properties of undefined (reading 'uploadId')"
+          },
+          "calls": []
+        }
+      ]
+    },
+    {
+      "name": "response-adaptation",
+      "operations": [
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "idempotencyKey": "key"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-1",
+            "clientFileId": "file-1",
+            "contentBase64": "aGVsbG8="
+          }
+        },
+        {
+          "method": "complete",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "tamper": "metadata-extra"
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "tamper": "metadata-error"
+        },
+        {
+          "method": "get",
+          "params": {
+            "uploadId": "upload-1"
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": ""
+              }
+            ]
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-2",
+            "clientFileId": "file-1",
+            "contentBase64": "aGVsbG8="
+          }
+        },
+        {
+          "method": "create",
+          "params": {
+            "projectKey": "p",
+            "files": [
+              {
+                "clientFileId": "file-1",
+                "name": "  hello.txt  ",
+                "relativePath": "folder/hello.txt",
+                "size": 5
+              }
+            ]
+          }
+        },
+        {
+          "method": "part",
+          "params": {
+            "uploadId": "upload-3",
+            "clientFileId": "file-1",
+            "contentBase64": "aGVsbG8="
+          }
+        }
+      ],
+      "results": [
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": "text/plain"
+                }
+              ],
+              "idempotencyKey": "key"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "attachmentId": "file-1",
+            "name": "hello.txt",
+            "relativePath": "folder/hello.txt",
+            "mimeType": "text/plain",
+            "bytes": 5,
+            "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-1",
+              "clientFileId": "file-1",
+              "bytes": 5,
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "completed",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 5,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683",
+            "attachments": [
+              {
+                "attachmentId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "mimeType": "text/plain",
+                "bytes": 5,
+                "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+              }
+            ],
+            "receivedClientFileIds": [
+              "file-1"
+            ]
+          },
+          "calls": [
+            {
+              "method": "complete",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "completed",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 5,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683",
+            "attachments": [
+              {
+                "attachmentId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "mimeType": "text/plain",
+                "bytes": 5,
+                "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+              }
+            ],
+            "receivedClientFileIds": [
+              "file-1"
+            ]
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "ok": null,
+          "calls": []
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "completed",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 5,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683",
+            "attachments": [
+              {
+                "attachmentId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "bytes": 5,
+                "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+              }
+            ],
+            "receivedClientFileIds": [
+              "file-1"
+            ]
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "ok": null,
+          "calls": []
+        },
+        {
+          "ok": {
+            "uploadId": "upload-1",
+            "projectKey": "<PROJECT>",
+            "status": "failed",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": "text/plain"
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 5,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "idempotencyKeyHash": "2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683",
+            "attachments": [
+              {
+                "attachmentId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "bytes": 5,
+                "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+              }
+            ],
+            "receivedClientFileIds": [
+              "file-1"
+            ],
+            "errorCode": "E_RECORDED",
+            "errorMessage": "recorded failure"
+          },
+          "calls": [
+            {
+              "method": "get",
+              "uploadId": "upload-1"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-2",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5,
+                "mimeType": ""
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5,
+                  "mimeType": ""
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "attachmentId": "file-1",
+            "name": "hello.txt",
+            "relativePath": "folder/hello.txt",
+            "bytes": 5,
+            "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-2",
+              "clientFileId": "file-1",
+              "bytes": 5,
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
+          ]
+        },
+        {
+          "ok": {
+            "uploadId": "upload-3",
+            "projectKey": "<PROJECT>",
+            "status": "created",
+            "manifest": [
+              {
+                "clientFileId": "file-1",
+                "name": "hello.txt",
+                "relativePath": "folder/hello.txt",
+                "size": 5
+              }
+            ],
+            "totalBytes": 5,
+            "uploadedBytes": 0,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "updatedAt": "2026-10-18T00:00:00.000Z",
+            "expiresAt": "2026-10-19T00:00:00.000Z",
+            "receivedClientFileIds": []
+          },
+          "calls": [
+            {
+              "method": "create",
+              "projectKey": "p",
+              "files": [
+                {
+                  "clientFileId": "file-1",
+                  "name": "  hello.txt  ",
+                  "relativePath": "folder/hello.txt",
+                  "size": 5
+                }
+              ],
+              "idempotencyKey": null
+            }
+          ]
+        },
+        {
+          "ok": {
+            "attachmentId": "file-1",
+            "name": "hello.txt",
+            "relativePath": "folder/hello.txt",
+            "bytes": 5,
+            "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+          },
+          "calls": [
+            {
+              "method": "writePart",
+              "uploadId": "upload-3",
+              "clientFileId": "file-1",
+              "bytes": 5,
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

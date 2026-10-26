@@ -9,6 +9,9 @@
 //! lock. Live TS cross-tests are `#[ignore]` (need PDRS_BASELINE); the
 //! non-ignored `upload_golden_bytes_match_ts_fixtures` guards the format in CI.
 mod error;
+pub mod gateway;
+#[cfg(test)]
+mod gateway_tests;
 #[cfg(test)]
 mod tests;
 
