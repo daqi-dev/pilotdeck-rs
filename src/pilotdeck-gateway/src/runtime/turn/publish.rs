@@ -199,7 +199,17 @@ impl Publication {
             if let Some(previous) = previous {
                 let _ = previous.await;
             }
-            let result = future.await;
+            // Supervise only after the predecessor settles, preserving FIFO.
+            // Panic follows the same failure publication and cleanup as Err.
+            let result = publication
+                .executor
+                .spawn(future)
+                .await
+                .unwrap_or_else(|_| {
+                    Err(RunRegistryError::Invalid(
+                        "Run registry append task failed.".into(),
+                    ))
+                });
             let mut state = publication.state.lock().unwrap();
             match result {
                 Ok(()) => {
