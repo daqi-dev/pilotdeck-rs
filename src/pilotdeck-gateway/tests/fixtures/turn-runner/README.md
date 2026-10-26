@@ -123,7 +123,7 @@ runner 负控默认25项（两个 terminal 分支分别变异，每个锚点 cou
 
 ## 宿主验收
 
-pr5d 的 `integrity_negative.py` 随 fixtures 入库，覆盖原有 12 项流完整性变异；名称、锚点、点名测试与专属失败消息保持不变。完整负控由协调者在宿主前台串行运行；会话内只传 `--sample` 跑首项 `loop-prefix`。每项依次正控、运行时断言失败、恢复后正控，编译失败、无关 panic 或超时不算 KILLED。共享 `mutating_sources` 校验 HEAD 基线、独占同树并逐字节恢复，`run_owned` 将每次 cargo 限在 600 秒内，`wait_for_slot` 最多等 900 秒。执行期间同树不得另起 cargo 或修改源码。
+pr5d 的 `integrity_negative.py` 随 fixtures 入库，覆盖原有 12 项流完整性变异。`completed-leak` 绑定 `forward_completed` 的专属失败消息 `#741 pr5d leaked completed must be rejected`。完整负控由协调者在宿主前台串行运行；会话内在输出目录后传 `completed-leak` 只跑这一项，也可传其他变异名；`--sample` 仍只跑首项 `loop-prefix`。共享 `negative_suite.py` 逐项执行正控、变异、恢复后正控，记录 KILLED / SURVIVED / INVALID，安全恢复后继续后继，最终汇总到 `summary.json`，有未杀项时非零退出；源码保护或恢复失败时停止不安全的变异并把未跑项记 INVALID。编译失败、无关 panic、零测试或超时不算 KILLED。`--exact --include-ignored` 保证每个绑定（含真实 TS 与重生成守卫）实际执行，正控与恢复均须恰一个点名测试通过。共享 `mutating_sources` 校验 HEAD（或显式 `PDRS_NEGATIVE_BASELINE`）基线、独占同树并逐字节恢复，`run_owned` 将每次 cargo 限在 600 秒内，`wait_for_slot` 最多等 900 秒。执行期间同树不得另起 cargo 或修改源码。
 
 在已提交产品源码、安装好固定基线依赖及 Node v22.22.0 的本树根目录执行；`CARGO_TARGET_DIR` 必须由调用方传入本树路径，脚本未设置时直接拒绝。证据目录独占创建，失败后重跑使用新目录。以下命令替代证据目录中的 `host-validation.sh`：
 

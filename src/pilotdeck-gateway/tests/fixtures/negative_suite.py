@@ -45,7 +45,8 @@ def run_cases(root, cases, out, env, mutate, *, timeout=900, baseline='HEAD'):
         try:
             slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
             (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
-            result = run_owned(command + [test, '--', '--exact', '--nocapture'],
+            # Exact binding still runs one test, including explicit TS/regeneration guards.
+            result = run_owned(command + [test, '--', '--exact', '--include-ignored', '--nocapture'],
                                cwd=root, env=env, timeout=timeout)
             (out / f'{label}.log').write_text(result.stdout + result.stderr)
             return result
