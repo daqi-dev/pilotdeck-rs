@@ -153,7 +153,12 @@ async function run(name: string, setup: any = {}, steps = ['observe', 'accept', 
         if (setup.pumpFailure) throw Error('injected pump failure');
         const modelEvents = setup.modelEvents ? [
           { type: 'model_event', event: { type: 'request_started', provider: 'provider', model: 'configured' } },
-          { type: 'model_event', event: { type: 'request_started', provider: 'provider', model: 'actual' } },
+          // fix-r2 (opus r2 concurrency #1): the second request_started frame
+          // carries its own reasoning/temperature/speed, so the golden pins
+          // that the request_started dedup event (InProcessGateway.ts:1661-
+          // 1667) carries only provider/model/source/runId — folding the
+          // selection-event keys into it is a visible wire difference.
+          { type: 'model_event', event: { type: 'request_started', provider: 'provider', model: 'actual', reasoning: 0.9, temperature: 0.6, speed: 0.4 } },
         ] : [];
         for (const event of [...modelEvents, ...(setup.failureEvents ?? [])]) {
           if (cancelled) break;

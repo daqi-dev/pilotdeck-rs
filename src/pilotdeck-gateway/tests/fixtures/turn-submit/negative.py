@@ -45,6 +45,37 @@ def panic_evidence(raw, used_test):
     return '\n'.join(evidence)
 
 
+def marker_kills_named_test(raw, used_test, marker):
+    """fix-r2 P0 (opus): the marker must appear inside the named test's own
+    panic evidence. ``marker in raw`` let a marker that only another test's
+    panic (or plain stdout) mentioned satisfy the anchor, judging a surviving
+    mutant killed."""
+    return marker in panic_evidence(raw, used_test)
+
+
+def anchor_self_test():
+    """fix-r2 P0 self-test: a marker confined to another test's panic block
+    must not count as evidence (the r1 comment promised this; ``marker in
+    raw`` did not deliver)."""
+    marker = 'invalid-mode: step'
+    used_test = 'runtime::turn::submit::tests::real_ts_submit_scenarios'
+    stray = (
+        "thread 'runtime::turn::submit::tests::real_ts_utf16_preflight' "
+        "panicked at submit_tests.rs:1:\n" + marker + "\n"
+    )
+    real = (
+        "thread 'runtime::turn::submit::tests::real_ts_submit_scenarios' "
+        "panicked at submit_tests.rs:2:\n" + marker + "\n"
+    )
+    assert marker in stray, 'fixture: the stray log must contain the marker'
+    assert not marker_kills_named_test(stray, used_test, marker), \
+        'a marker in another test\'s panic block must be invalid evidence'
+    assert marker_kills_named_test(stray + real, used_test, marker)
+    print('anchor self-test: PASS', flush=True)
+
+
+anchor_self_test()
+
 with mutating_sources(repo, [source, host_source, test_source], baseline=baseline) as snapshots:
     original = snapshots[source]
     host_original = snapshots[host_source]
@@ -85,7 +116,14 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         ('finally-error-swallowed', 'self.host.after_turn(&run)', 'let _ = self.host.after_turn(&run); Ok(())', 'finally-failed', 'finally-failed: step', None),
         ('input-ack-before-native-durable', 'let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'publisher.gateway_event(object([("type", "input_accepted".into()), ("runId", JsValue::String(run.run_id.clone()))]));\n        let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
         ('stale-completion-filter-skipped', '|| !self\n                    .owner\n                    .is_current_completion(&run.session_key, completion)', '|| false', 'superseded-completion', 'superseded-completion: step', None),
-        ('model-selection-event-skipped', 'publisher.gateway_event(model_event(model, &source, run));', 'let _ = model;', 'actual-model-selection', 'actual-model-selection: step', None),
+        # fix-r2 (opus r2 concurrency #1): the request_started dedup event is
+        # built from four explicit keys. Both mutants share this anchor: one
+        # drops the event, the other reverts to the shared model_event fold —
+        # which now leaks the frame's own reasoning/temperature/speed into
+        # the wire (the regenerated golden carries those keys on the 'actual'
+        # request_started frame, and TS :1661-1667 still emits four keys).
+        ('model-selection-event-skipped', 'publisher.gateway_event(object([\n                        ("type", "model_selection_changed".into()),\n                        ("provider", field(model, "provider").clone()),\n                        ("model", field(model, "model").clone()),\n                        ("source", source.clone()),\n                        ("runId", JsValue::String(run.run_id.clone())),\n                    ]));', 'let _ = model;', 'actual-model-selection', 'actual-model-selection: step', None),
+        ('request-started-fold-leaked', 'publisher.gateway_event(object([\n                        ("type", "model_selection_changed".into()),\n                        ("provider", field(model, "provider").clone()),\n                        ("model", field(model, "model").clone()),\n                        ("source", source.clone()),\n                        ("runId", JsValue::String(run.run_id.clone())),\n                    ]));', 'publisher.gateway_event(model_event(model, &source, run));', 'actual-model-selection', 'actual-model-selection: step', None),
         ('actual-text-model-skipped', 'set(&mut event, "model", model.clone());', 'let _ = model;', 'actual-model-selection', 'actual-model-selection: step', None),
         ('lease-release-skipped', 'let _ = submitter.host.finish_pump(&worker_run).await;', 'let _ = &worker_run;', 'lease-release', 'lease-release: step', None),
         ('fingerprint-includes-reconnect-metadata', '["runId", "interactionBinding", "telemetry"]', '["ignoredRunId", "ignoredBinding", "ignoredTelemetry"]', 'execution-fingerprint', 'execution-fingerprint: step', None),
@@ -249,7 +287,8 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
                 # diffs; a marker elsewhere in the log is not.
                 evidence = panic_evidence(raw, used_test)
                 anchored = (f'panicked at {anchor}:' in evidence
-                            if anchor_kind == 'location' else anchor in evidence)
+                            if anchor_kind == 'location'
+                            else marker_kills_named_test(raw, used_test, anchor))
                 valid = (not timed_out and returncode == 101 and 'test result: FAILED' in raw
                          and 'could not compile' not in raw and used_test in failed_tests(raw)
                          and anchored)

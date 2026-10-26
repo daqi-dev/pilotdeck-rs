@@ -5824,7 +5824,10 @@
           "event": {
             "type": "request_started",
             "provider": "provider",
-            "model": "actual"
+            "model": "actual",
+            "reasoning": 0.9,
+            "temperature": 0.6,
+            "speed": 0.4
           }
         },
         {
@@ -15022,7 +15025,10 @@
           "event": {
             "type": "request_started",
             "provider": "provider",
-            "model": "actual"
+            "model": "actual",
+            "reasoning": 0.9,
+            "temperature": 0.6,
+            "speed": 0.4
           }
         },
         {

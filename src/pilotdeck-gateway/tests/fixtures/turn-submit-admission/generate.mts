@@ -120,6 +120,11 @@ const clone = (x: any) => JSON.parse(JSON.stringify(x, (_key, value) => value in
 const settle = async () => { for (let i = 0; i < 12; ++i) await new Promise<void>(r => setImmediate(r)); };
 const cases: any[] = [];
 async function run(name: string, setup: any = {}, steps = ['observe']) {
+  // fix-r2 P2 (DeepSeek): interactionCalls is module-level, so every case must
+  // start empty; the r1 probe let each case's turn_ended groups accumulate into
+  // all later snapshots (reconnect-equal-id-bad-generation carried six groups
+  // left by its predecessors while its own thrown turn contributed none).
+  interactionCalls.length = 0;
   controlledClock = steps.includes('timeout') ? new Map() : undefined;
   const root = await mkdtemp(join(tmpdir(), 'pdrs-submit-admission-'));
   const file = new registryModule.FileRunRegistry(join(root, 'registry.json'));

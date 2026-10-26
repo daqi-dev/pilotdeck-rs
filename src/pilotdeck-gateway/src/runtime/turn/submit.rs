@@ -1049,7 +1049,18 @@ impl TurnSubmitter {
                     field(model, "model").clone(),
                 );
                 if last_model.as_ref() != Some(&key) {
-                    publisher.gateway_event(model_event(model, &source, run));
+                    // InProcessGateway.ts:1661-1667: the request_started
+                    // dedup event carries only provider/model/source/runId —
+                    // the reasoning/temperature/speed fold belongs to the
+                    // selection event (:1522-1529), never to the native
+                    // frame's own fields.
+                    publisher.gateway_event(object([
+                        ("type", "model_selection_changed".into()),
+                        ("provider", field(model, "provider").clone()),
+                        ("model", field(model, "model").clone()),
+                        ("source", source.clone()),
+                        ("runId", JsValue::String(run.run_id.clone())),
+                    ]));
                     last_model = Some(key);
                 }
             }
@@ -1208,8 +1219,8 @@ fn busy_message(session: &JsString) -> JsValue {
 }
 
 fn model_event(selection: &JsValue, source: &JsValue, run: &RunRef) -> JsValue {
-    // InProcessGateway.ts:1522-1529 and :1661-1667: reasoning/temperature/
-    // speed precede runId when the selection carries them.
+    // InProcessGateway.ts:1522-1529: reasoning/temperature/speed precede
+    // runId when the selection carries them.
     let mut event = object([
         ("type", "model_selection_changed".into()),
         ("provider", field(selection, "provider").clone()),
