@@ -20,6 +20,8 @@ root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/interaction'
+# Source occurrences, independent of first/last replacement selection.
+ANCHOR_COUNTS = {'reject-live-reentry': 2, 'deny-dispose-detached': 2}
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
     ('late-cross-thread-response', 'bus.rs',
@@ -101,7 +103,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
-        expected = 2 if name in ['reject-live-reentry', 'deny-dispose-detached'] else 1
+        expected = ANCHOR_COUNTS.get(name, 1)
         assert content.count(old) == expected, (name, content.count(old))
         changed = new.join(content.rsplit(old, 1)) if name == 'deny-dispose-detached' else content.replace(old, new, 1)
         (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(content.splitlines(True), changed.splitlines(True), fromfile=filename, tofile=filename)))
