@@ -16,6 +16,7 @@
 //! snapshot capture, dream rollback and root swaps live in [`storage::snapshots`].
 //! Retrieval, extraction and heartbeat belong to the remaining work packages.
 pub mod file_memory;
+pub mod messages;
 mod node_fs;
 pub mod storage;
 pub mod text;
