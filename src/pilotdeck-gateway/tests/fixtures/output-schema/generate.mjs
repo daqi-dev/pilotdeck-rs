@@ -367,7 +367,12 @@ for (const [id, schema, data] of [
   ['iso-time/missing-zone', {type: 'string', format: 'iso-time'}, '12:00:00'],
   ['date-time/space', {type: 'string', format: 'date-time'}, '2024-02-29 12:00:00Z'],
   ['date-time/nope', {type: 'string', format: 'date-time'}, 'nope'],
+  // #848: date-time splits on `/t|\s/i` with JS `\s` (BOM in, NEL out).
+  ['date-time/bom-separator', {type: 'string', format: 'date-time'}, '2024-02-29\uFEFF12:00:00Z'],
+  ['date-time/nel-separator', {type: 'string', format: 'date-time'}, '2024-02-29\u008512:00:00Z'],
   ['iso-date-time/space-no-zone', {type: 'string', format: 'iso-date-time'}, '2024-02-29 12:00:00'],
+  ['iso-date-time/bom-separator', {type: 'string', format: 'iso-date-time'}, '2024-02-29\uFEFF12:00:00'],
+  ['iso-date-time/nel-separator', {type: 'string', format: 'iso-date-time'}, '2024-02-29\u008512:00:00'],
   ['duration/full', {type: 'string', format: 'duration'}, 'P1Y2M3DT4H5M6S'],
   ['duration/bare', {type: 'string', format: 'duration'}, 'P'],
   ['duration/weeks', {type: 'string', format: 'duration'}, 'P2W'],
@@ -460,6 +465,19 @@ for (const [id, schema, data] of [
   ['url/long-s-private', {type: 'string', format: 'url'}, 'HTTPſ://192.168.1.1/x'],
   ['url/long-s-not-scheme', {type: 'string', format: 'url'}, 'ſhttp://example.com/'],
   ['url/ligature-st-scheme', {type: 'string', format: 'url'}, 'httpﬆ://example.com/a'],
+  // #848: `url`'s path is `[^\s]*` and userinfo is `\S+`, using JS `\s`
+  // (BOM in, NEL out). Host characters come from
+  // `[a-z0-9\u{00a1}-\u{ffff}]`, so BOM and U+2000 remain valid host
+  // characters even though they are JS whitespace, while NEL and NBSP
+  // (below U+00A1) stay invalid.
+  ['url/path-bom', {type: 'string', format: 'url'}, 'http://example.com/\uFEFF'],
+  ['url/path-nel', {type: 'string', format: 'url'}, 'http://example.com/\u0085'],
+  ['url/userinfo-bom', {type: 'string', format: 'url'}, 'http://u\uFEFF@example.com/'],
+  ['url/userinfo-nel', {type: 'string', format: 'url'}, 'http://u\u0085@example.com/'],
+  ['url/host-bom', {type: 'string', format: 'url'}, 'http://exa\uFEFFmple.com/'],
+  ['url/host-nel', {type: 'string', format: 'url'}, 'http://exa\u0085mple.com/'],
+  ['url/host-ideographic-space', {type: 'string', format: 'url'}, 'http://exa\u2000mple.com/'],
+  ['url/host-nbsp', {type: 'string', format: 'url'}, 'http://exa\u00A0mple.com/'],
   // #834: `byte` is the one ajv-formats regex compiled with /gm — `^`/`$`
   // match around every ECMAScript line terminator (\n, \r, U+2028, U+2029;
   // U+0085 is not one), and `test` succeeds when any single full line is a
@@ -1100,5 +1118,8 @@ const oracle = {
 };
 
 const target = path.join(outDir, 'ajv-oracle.json');
-fs.writeFileSync(target, `${JSON.stringify(oracle, null, 2)}\n`);
+// The caller owns a fresh output directory; `wx` refuses to clobber an
+// existing oracle so a stale/partial run cannot be mistaken for a golden.
+fs.mkdirSync(outDir, {recursive: true});
+fs.writeFileSync(target, `${JSON.stringify(oracle, null, 2)}\n`, {flag: 'wx'});
 console.log(`wrote ${target}: ${oracle.cases.length} cases`);

@@ -2932,12 +2932,46 @@
       "errorText": "data must match format \"date-time\""
     },
     {
+      "id": "date-time/bom-separator",
+      "schema": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "data": "2024-02-29﻿12:00:00Z"
+    },
+    {
+      "id": "date-time/nel-separator",
+      "schema": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "data": "2024-02-2912:00:00Z",
+      "errorText": "data must match format \"date-time\""
+    },
+    {
       "id": "iso-date-time/space-no-zone",
       "schema": {
         "type": "string",
         "format": "iso-date-time"
       },
       "data": "2024-02-29 12:00:00"
+    },
+    {
+      "id": "iso-date-time/bom-separator",
+      "schema": {
+        "type": "string",
+        "format": "iso-date-time"
+      },
+      "data": "2024-02-29﻿12:00:00"
+    },
+    {
+      "id": "iso-date-time/nel-separator",
+      "schema": {
+        "type": "string",
+        "format": "iso-date-time"
+      },
+      "data": "2024-02-2912:00:00",
+      "errorText": "data must match format \"iso-date-time\""
     },
     {
       "id": "duration/full",
@@ -3558,6 +3592,74 @@
         "format": "url"
       },
       "data": "httpﬆ://example.com/a",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/path-bom",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://example.com/﻿",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/path-nel",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://example.com/"
+    },
+    {
+      "id": "url/userinfo-bom",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://u﻿@example.com/",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/userinfo-nel",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://u@example.com/"
+    },
+    {
+      "id": "url/host-bom",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://exa﻿mple.com/"
+    },
+    {
+      "id": "url/host-nel",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://example.com/",
+      "errorText": "data must match format \"url\""
+    },
+    {
+      "id": "url/host-ideographic-space",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://exa mple.com/"
+    },
+    {
+      "id": "url/host-nbsp",
+      "schema": {
+        "type": "string",
+        "format": "url"
+      },
+      "data": "http://exa mple.com/",
       "errorText": "data must match format \"url\""
     },
     {
