@@ -104,12 +104,14 @@ impl Ctx {
                 Arc::new(JsonlTranscriptStore::new()),
                 Arc::new(move |_| chat_dir.clone()),
             );
-            let storage = adapter.create_session_storage(SessionStorageInput {
-                project_root: PROJECT_ROOT.into(),
-                pilot_home: dir.join("home"),
-                session_id: SESSION.into(),
-                now: Some(Arc::new(|| NOW.to_owned())),
-            });
+            let storage = adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root: PROJECT_ROOT.into(),
+                    pilot_home: dir.join("home"),
+                    session_id: SESSION.into(),
+                    now: Some(Arc::new(|| NOW.to_owned())),
+                })
+                .unwrap();
             Recorder::from_writer(Arc::new(storage.transcript))
         } else {
             let ticking = field(options, "tickingClock") == &JsValue::Bool(true);

@@ -1,0 +1,83 @@
+{
+  "node": "v22.22.0",
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/storage/AsyncTranscriptStorageAdapter.ts": "1071059df586535fccd459afe1cb0b0e14c209f46038da0d964fe260c6cdb423",
+    "src/session/storage/ProjectSessionStorage.ts": "51aae89cf30959264f67e09d21051bb4ff58aa83135480337027599032a52d95",
+    "src/session/transcript/JsonlTranscriptWriter.ts": "28cd4788ff4465be4594edf7fb59762299362ac867ef9a50c24732ab212a4678",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a"
+  },
+  "cases": [
+    {
+      "name": "relative-normal",
+      "outcome": {
+        "chatDir": "<root>/cwd/home/projects/pdrs-fixture-project/chats",
+        "transcriptPath": "<root>/cwd/home/projects/pdrs-fixture-project/chats/s-..-one.jsonl",
+        "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s-..-one",
+        "fileHistoryDir": "<root>/cwd/home/projects/pdrs-fixture-project/chats/s-..-one/file-history",
+        "subagentsDir": "<root>/cwd/home/projects/pdrs-fixture-project/chats/s-..-one/subagents",
+        "projectionCheckpointPath": "<root>/cwd/home/projects/pdrs-fixture-project/chats/s-..-one.jsonl.projections.json",
+        "subagentPath": "<root>/cwd/home/projects/pdrs-fixture-project/chats/s-..-one/subagents/kid.jsonl",
+        "nestedSubagentPath": "<root>/cwd/home/projects/pdrs-fixture-project/chats/s-..-one/subagents/kid/subagents/grandchild.jsonl"
+      }
+    },
+    {
+      "name": "relative-deleted",
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd"
+        }
+      }
+    },
+    {
+      "name": "absolute-normal",
+      "outcome": {
+        "chatDir": "<root>/home/projects/pdrs-fixture-project/chats",
+        "transcriptPath": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one.jsonl",
+        "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s-..-one",
+        "fileHistoryDir": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one/file-history",
+        "subagentsDir": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one/subagents",
+        "projectionCheckpointPath": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one.jsonl.projections.json",
+        "subagentPath": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one/subagents/kid.jsonl",
+        "nestedSubagentPath": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one/subagents/kid/subagents/grandchild.jsonl"
+      }
+    },
+    {
+      "name": "absolute-deleted",
+      "outcome": {
+        "chatDir": "<root>/home/projects/pdrs-fixture-project/chats",
+        "transcriptPath": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one.jsonl",
+        "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s-..-one",
+        "fileHistoryDir": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one/file-history",
+        "subagentsDir": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one/subagents",
+        "projectionCheckpointPath": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one.jsonl.projections.json",
+        "subagentPath": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one/subagents/kid.jsonl",
+        "nestedSubagentPath": "<root>/home/projects/pdrs-fixture-project/chats/s-..-one/subagents/kid/subagents/grandchild.jsonl"
+      }
+    },
+    {
+      "name": "project-relative-deleted",
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd"
+        }
+      }
+    },
+    {
+      "name": "join-relative-normal",
+      "outcome": {
+        "transcriptPath": "logs/s/subagents/kid.jsonl"
+      }
+    },
+    {
+      "name": "join-relative-deleted",
+      "outcome": {
+        "transcriptPath": "logs/s/subagents/kid.jsonl"
+      }
+    }
+  ]
+}
