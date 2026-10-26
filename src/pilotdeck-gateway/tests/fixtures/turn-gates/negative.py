@@ -17,6 +17,7 @@ runner = root / 'src/pilotdeck-gateway/src/runtime/turn/runner.rs'
 tests = root / 'src/pilotdeck-gateway/src/runtime/turn/gates_tests.rs'
 consumer = root / 'src/pilotdeck-gateway/tests/fixtures/turn-runner/oracle.json'
 factory_peer = root / 'src/pilotdeck-gateway/tests/fixtures/host-factory/peer.py'
+factory = root / 'src/pilotdeck-gateway/src/runtime/turn/host_factory.rs'
 factory_tests = root / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs'
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib']
 def run(name, test='gates_tests'):
@@ -27,6 +28,8 @@ def run(name, test='gates_tests'):
     return result
 lazy = 'host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,'
 mutants = [
+    ('factory-close-timeout', factory, '.with_close_timeout(close_timeout)', '.with_close_timeout({ let _ = close_timeout; Limits::default().close_timeout })', 'live_prepared_cleanup_uses_close_timeout'),
+    ('prepared-close-timeout', source, 'TurnScope::new(inner.clone(), close_timeout)', 'TurnScope::new(inner.clone(), { let _ = close_timeout; std::time::Duration::from_secs(5) })', 'live_prepared_cleanup_uses_close_timeout'),
     ('consumer-exists', consumer, '"test": "runner_success"', '"test": "runner_nonexistent_consumer"', 'oracle_consumers_exist'),
     ('skip-start', runner, 'self.io(|r, s, t| r.start_turn(s, t)).await?;', 'let _ = self.io(|r, s, t| r.start_turn(s, t)).await;', 'gates_start_failure'),
     ('eager-connect', source, 'if execute_wait.await.is_err() {', 'let client = client.await;\n                let client: HostFuture<HostClient> = Box::pin(async move { client });\n                if execute_wait.await.is_err() {', 'gates_accept_failure'),
@@ -45,10 +48,12 @@ mutants = [
 ]
 # Include the new test source in the baseline guard. Before submission it is
 # absent from HEAD: refuse rather than manufacture a second repository/target.
-with mutating_sources(root, [source, runner, tests, consumer, factory_peer, factory_tests]) as originals:
+with mutating_sources(root, [source, runner, tests, consumer, factory_peer, factory_tests, factory]) as originals:
     assert run('positive').returncode == 0
     assert run('positive-consumers', 'oracle_consumers_exist').returncode == 0
-    chosen = mutants[1:3] if '--sample' in sys.argv else mutants
+    selected = set(sys.argv[2:])
+    assert selected <= {'--sample'} | {m[0] for m in mutants}
+    chosen = [m for m in mutants if m[0] in {'skip-start', 'eager-connect'}] if '--sample' in selected else [m for m in mutants if not selected or m[0] in selected]
     for name, path, old, new, test in chosen:
         body = originals[path].decode()
         if name == 'omit-prepared-cleanup':
@@ -66,6 +71,10 @@ with mutating_sources(root, [source, runner, tests, consumer, factory_peer, fact
         result = run(name, test)
         assert result.returncode != 0 and 'test result: FAILED' in result.stdout, name
         assert f'::{test} ... FAILED' in result.stdout and 'panicked at' in result.stdout + result.stderr, name
+        if name == 'factory-close-timeout':
+            assert 'factory forwards close_timeout' in result.stdout, name
+        if name == 'prepared-close-timeout':
+            assert 'configured deadline' in result.stdout or 'configured budget' in result.stdout, name
         path.write_bytes(originals[path])
         assert run(name + '-restored', test).returncode == 0
     (out / 'summary.json').write_text(json.dumps({'mutants': len(chosen), 'restored': True}) + '\n')

@@ -295,30 +295,38 @@ async fn matrix(name: &str) {
     registry.dispose().await.unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
-macro_rules! gate_case {
-    ($name:ident, $case:literal) => {
-        #[tokio::test]
-        async fn $name() {
-            matrix($case).await;
+macro_rules! gate_cases {
+    ($($name:ident, $case:literal;)*) => {
+        $(#[tokio::test]
+        async fn $name() { matrix($case).await; })*
+        #[test]
+        fn gates_oracle_fully_consumed() {
+            let oracle = crate::test_baseline::oracle(include_str!(
+                "../../../tests/fixtures/turn-gates/oracle.json"
+            ));
+            let JsValue::Array(rows) = oracle.get("matrix").unwrap() else { panic!("matrix") };
+            assert_fixture_consumed(rows, [$($case),*].into_iter().map(str::to_owned));
         }
     };
 }
-gate_case!(gates_start_failure, "start-failure");
-gate_case!(gates_accept_failure, "accept-failure");
-gate_case!(gates_cancel_ok, "cancel-ok");
-gate_case!(gates_cancel_once, "cancel-once");
-gate_case!(gates_cancel_always, "cancel-always");
-gate_case!(gates_error_ok, "error-ok");
-gate_case!(gates_error_once, "error-once");
-gate_case!(gates_error_always, "error-always");
-gate_case!(gates_protocol_ok, "protocol-ok");
-gate_case!(gates_protocol_once, "protocol-once");
-gate_case!(gates_protocol_always, "protocol-always");
-gate_case!(gates_drop_before, "drop-before");
-gate_case!(gates_drop_pending, "drop-pending");
-gate_case!(gates_drop_after, "drop-after");
-gate_case!(gates_drop_pending_once, "drop-pending-once");
-gate_case!(gates_drop_pending_always, "drop-pending-always");
+gate_cases! {
+    gates_start_failure, "start-failure";
+    gates_accept_failure, "accept-failure";
+    gates_cancel_ok, "cancel-ok";
+    gates_cancel_once, "cancel-once";
+    gates_cancel_always, "cancel-always";
+    gates_error_ok, "error-ok";
+    gates_error_once, "error-once";
+    gates_error_always, "error-always";
+    gates_protocol_ok, "protocol-ok";
+    gates_protocol_once, "protocol-once";
+    gates_protocol_always, "protocol-always";
+    gates_drop_before, "drop-before";
+    gates_drop_pending, "drop-pending";
+    gates_drop_after, "drop-after";
+    gates_drop_pending_once, "drop-pending-once";
+    gates_drop_pending_always, "drop-pending-always";
+}
 
 #[test]
 #[ignore = "requires fixed PDRS_BASELINE and Node/tsx"]

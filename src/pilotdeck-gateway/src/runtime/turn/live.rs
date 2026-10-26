@@ -80,6 +80,7 @@ pub struct InteractionHost {
 /// HostClient closes its process and disposes its handler after each execution.
 pub struct LiveSessionAdapter {
     host_factory: Arc<TurnHostFactory>,
+    close_timeout: std::time::Duration,
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
     state: Arc<Mutex<SessionState>>,
@@ -110,6 +111,7 @@ impl LiveSessionAdapter {
         host_factory: impl Fn(Arc<Recorder>) -> HostFuture<TurnHost> + Send + Sync + 'static,
     ) -> Self {
         Self {
+            close_timeout: crate::host::Limits::default().close_timeout,
             recorder,
             history: Arc::new(history),
             host_factory: Arc::new(move |_, recorder| {
@@ -121,6 +123,12 @@ impl LiveSessionAdapter {
             }),
             state: Arc::default(),
         }
+    }
+
+    /// Use the same cleanup budget as the lazy HostClient's Limits.
+    pub fn with_close_timeout(mut self, close_timeout: std::time::Duration) -> Self {
+        self.close_timeout = close_timeout;
+        self
     }
 
     /// Invoke the factory once when executing each submitted turn. It must satisfy
@@ -135,6 +143,7 @@ impl LiveSessionAdapter {
         + 'static,
     ) -> Self {
         Self {
+            close_timeout: crate::host::Limits::default().close_timeout,
             recorder,
             history: Arc::new(history),
             host_factory: Arc::new(move |identity, recorder| {
@@ -191,6 +200,7 @@ impl LiveSession for LiveSessionAdapter {
         let (recording_sender, recording_ready) = oneshot::channel();
         let (execute_ready, execute_wait) = oneshot::channel();
         let host_factory = self.host_factory.clone();
+        let close_timeout = self.close_timeout;
         let recorder = self.recorder.clone();
         let identity = request.identity.clone();
         // Shared between the host-side validation hook (every received event)
@@ -210,8 +220,7 @@ impl LiveSession for LiveSessionAdapter {
                     // factory call lazy so a pre-cancel never creates resources.
                     host = async { host_factory(request.identity.clone(), recorder.clone()).await } => host?,
                 };
-                let pending_host =
-                    crate::host::TurnScope::new(inner.clone(), std::time::Duration::from_secs(5));
+                let pending_host = crate::host::TurnScope::new(inner.clone(), close_timeout);
                 let runner = TurnRunner::new(
                     recorder,
                     lease,
