@@ -736,11 +736,7 @@ pub(crate) fn trim_js(value: &JsString) -> JsString {
 }
 
 fn concat(parts: &[&JsString]) -> JsString {
-    let mut units = Vec::new();
-    for part in parts {
-        units.extend(part.units());
-    }
-    JsString::from_utf16(units)
+    join_text_refs(parts.iter().copied(), "")
 }
 
 pub(crate) fn join_lines<'a>(parts: impl IntoIterator<Item = &'a [u16]>) -> JsString {
@@ -755,8 +751,17 @@ pub(crate) fn join_lines<'a>(parts: impl IntoIterator<Item = &'a [u16]>) -> JsSt
 }
 
 pub(crate) fn join_text(parts: &[JsString], separator: &str) -> JsString {
+    join_text_refs(parts, separator)
+}
+
+/// [`join_text`] over borrowed parts, so callers that already hold `&JsString`
+/// values do not clone just to join.
+pub(crate) fn join_text_refs<'a>(
+    parts: impl IntoIterator<Item = &'a JsString>,
+    separator: &str,
+) -> JsString {
     let mut units = Vec::new();
-    for (i, part) in parts.iter().enumerate() {
+    for (i, part) in parts.into_iter().enumerate() {
         if i > 0 {
             units.extend(separator.encode_utf16());
         }

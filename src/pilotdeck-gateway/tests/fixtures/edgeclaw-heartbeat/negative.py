@@ -2,23 +2,31 @@
 """Reversible product mutations for edgeclaw-heartbeat.
 
 Every case compiles and must fail a runtime oracle assertion; a compile error
-never counts as a kill. Every anchor is checked against the baseline bytes
-before the unmutated suite runs: a stale anchor is a harness defect, not a
-surviving mutant, so it prints ``STALE ANCHOR`` and exits 2 (same rule as
-#772 fix-r2). The script then runs the unmutated suite, every mutant, and one
-final unmutated suite after restoration; it prints KILLED/SURVIVED and exits 1
-when any mutant survives. The original bytes are restored in ``finally`` by
-``mutating_sources``.
+never counts as a kill. The script runs the unmutated suite first, then every
+mutant, and one final unmutated suite after restoration; it prints
+KILLED/SURVIVED and exits 1 when any mutant survives. The original bytes are
+restored in ``finally`` by ``mutating_sources``.
 
 New product files are not in HEAD before the coordinator commits them, so this
-script is normally run after that commit. For a pre-commit sample, point
-``NEGATIVE_BASELINE`` at a dangling commit object that contains the authoring
-tree (see RESULT.md). ``NEGATIVE_ONLY=a,b`` narrows the run for a sample.
+script is normally run after that commit. ``NEGATIVE_ONLY=a,b`` narrows the run
+for a sample. cargo always uses the caller's ``CARGO_TARGET_DIR``; without it
+the script exits before writing any file.
 
-cargo always uses the caller's ``CARGO_TARGET_DIR``; without it the script
-exits before writing any file.
+Cases cover every branch changed by #852:
+
+* P1-1 role preservation (drop non-user/assistant roles again);
+* P1-2 checked ``String(value)`` conversion (unchecked fallback), the shared
+  depth bound (2001 containers) and the no-panic contract (panic on a
+  conversion error);
+* P3 shared helpers (``storage::js_truthy`` and ``text::join_text_refs`` are
+  actually used by the heartbeat code).
+
+#831's eight dedicated mutants (``commonPrefixLength``, ``normalizeTrigger``,
+``buildIndexTraceId``, ``exposeStoredRelativePath`` and the text/note/list/json
+detail constructors) are merged as cases 29-36. The trace-id and global-prefix
+anchors are rewritten for #852's shared ``text::join_text_refs`` helper with
+the same semantics.
 """
-import json
 import os
 from pathlib import Path
 import sys
@@ -27,118 +35,198 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
-fixtures = Path(__file__).resolve().parent
-helpers = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat/helpers.rs'
+paths = {
+    'helpers': root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/heartbeat/helpers.rs',
+    'text': root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/text.rs',
+    'storage': root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage.rs',
+    'js_value': root / 'src/pilotdeck-gateway/src/js_value.rs',
+}
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
 baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
 out.mkdir(parents=True, exist_ok=True)
 
-oracle_groups = {case['group'] for case in
-                 json.loads((fixtures / 'oracle.json').read_text())['cases']}
-assertion_anchors = sorted(oracle_groups)
+GENERIC = 'heartbeat_helpers_match_ts'
+DEPTH = 'kv_detail_depth_error_is_reported_not_panicking'
 
 cases = [
+    # -- P1-1: role preservation ---------------------------------------------
     # 1. sameMessage ignores role; two roles with equal content collapse.
-    ('same-role', 'left.role == right.role && left.content == right.content',
-     'left.content == right.content', 'messages/sameMessage'),
-    # 2. Equal-length identical transcripts are reported as new content.
-    ('new-content-length', 'if incoming.len() > previous.len() {',
-     'if incoming.len() >= previous.len() {', 'messages/hasNewContent'),
-    # 3. A shared prefix is always treated as a replacement, even at 0.
-    ('merge-prefix-threshold', 'if prefix_length > 0 {',
-     'if prefix_length >= 0 {', 'merge/mergeSessionMessages'),
-    # 4. A shared prefix reports the whole incoming transcript as new.
-    ('merge-new-tail', 'new_messages: incoming[prefix_length..].to_vec(),',
-     'new_messages: incoming.to_vec(),', 'merge/mergeSessionMessages'),
-    # 5. Flatten forgets the seed transcript.
-    ('flatten-seed', 'let mut previous = seed_messages.to_vec();',
-     'let mut previous = Vec::new();', 'flatten/flattenBatchMessages'),
-    # 6. Focus turns keep assistant messages.
-    ('focus-assistant', '.filter(|message| message.role == MemoryRole::User)',
-     '.filter(|message| message.role != MemoryRole::User)', 'focus/deriveFocusTurns'),
-    # 7. Three-unit CJK grams disappear.
-    ('token-three-gram', 'for size in [2, 3] {', 'for size in [2] {',
-     'token/tokenizeSearchText'),
-    # 8. The whole Han run is kept only up to 7 units.
-    ('token-han-whole', 'if length <= 8 {', 'if length <= 7 {',
-     'token/tokenizeSearchText'),
-    # 9. "项目" is no longer a stopword.
-    ('token-stopword', '"项目",', '"项目x",', 'token/tokenizeSearchText'),
-    # 10. Exact project-name matches score half as much.
-    ('shortlist-exact-weight', ')) * 2;', ')) * 1;',
-     'shortlist/buildGeneralProjectShortlist'),
-    # 11. Tie-break sorting runs ascending instead of descending.
-    ('shortlist-tie-order',
-     'node_compare_utf16(shortlist_collator(), &right.updated_at, &left.updated_at)',
-     'node_compare_utf16(shortlist_collator(), &left.updated_at, &right.updated_at)',
-     'shortlist/buildGeneralProjectShortlist'),
-    # 12. The shortlist cuts one entry too early.
-    ('shortlist-limit', '.take(GENERAL_INDEX_PROJECT_CANDIDATE_LIMIT)',
-     '.take(GENERAL_INDEX_PROJECT_CANDIDATE_LIMIT - 1)',
-     'shortlist/buildGeneralProjectShortlist'),
-    # 13. The routing query drops the stage field.
-    ('routing-stage',
-     'for key in ["name", "description", "rule", "summary", "stage"] {',
-     'for key in ["name", "description", "rule", "summary"] {',
-     'routing/buildCandidateRoutingQuery'),
-    # 14. The preview body header is misspelled.
-    ('preview-body-header', 'lines.push(JsString::from("## Body"));',
-     'lines.push(JsString::from("## Bodies"));',
-     'preview/buildCandidateMemoryPreview'),
-    # 15. The preview keeps 2999 units instead of 3000.
-    ('preview-truncate', 'preview.units()[..3000].to_vec()',
-     'preview.units()[..2999].to_vec()', 'preview/buildCandidateMemoryPreview'),
-    # 16. previewText cuts one unit early at the exact boundary.
-    ('preview-max', 'if normalized.len_utf16() <= max_chars {',
-     'if normalized.len_utf16() < max_chars {', 'trace/previewText'),
-    # 17. User-note detection loses its directory suffix.
-    ('storage-user-note', '&"UserNotes/".encode_utf16()',
-     '&"UserNote/".encode_utf16()', 'trace/inferStorageKind'),
-    # 18. A null/undefined kv value renders as "[object Object]" instead of "".
-    ('kv-null-value', 'None | Some(JsValue::Undefined) | Some(JsValue::Null) => Vec::new(),',
-     'None | Some(JsValue::Undefined) | Some(JsValue::Null) => "[object Object]".encode_utf16().collect::<Vec<_>>(),',
-     'detail/kvDetail'),
-    # 19. Step ids start at 2.
-    ('step-id-offset', 'steps.len() + 1', 'steps.len() + 2', 'step/createStep'),
-    # 20. createStep keeps falsy optional values (null/undefined).
-    ('step-options-truthy', '            && truthy(value)\n', '',
-     'step/createStep'),
-    # 21. Empty timestamps stay in the batch summary.
-    ('batch-empty-timestamp', '.filter(|timestamp| !timestamp.is_empty())\n', '',
-     'batch/createBatchTrace'),
-    # 22. Batch timestamps are not sorted.
-    ('batch-timestamp-sort',
-     '''    timestamps.sort_by(|left, right| {
-        left.encode_utf16()
-            .collect::<Vec<_>>()
-            .cmp(&right.encode_utf16().collect::<Vec<_>>())
-    });''',
-     '', 'batch/createBatchTrace'),
-    # 23. commonPrefixLength stops one message before the shared prefix ends.
-    ('common-prefix-off-by-one',
-     'while index < limit && same_message(previous.get(index), incoming.get(index)) {',
-     'while index + 1 < limit && same_message(previous.get(index), incoming.get(index)) {',
-     'merge/commonPrefixLength'),
-    # 24. normalizeTrigger stops folding the reason to lowercase.
-    ('normalize-trigger-case',
-     'let normalized = text::lowercase(&text::trim_js(reason.unwrap_or(&JsString::default())));',
-     'let normalized = text::trim_js(reason.unwrap_or(&JsString::default()));',
-     'trace/normalizeTrigger'),
-    # 25. buildIndexTraceId joins the l0 ids with ';' instead of ','.
-    ('trace-id-separator',
-     'join_value_refs(&l0_ids.iter().collect::<Vec<_>>(), ",")',
-     'join_value_refs(&l0_ids.iter().collect::<Vec<_>>(), ";")',
-     'trace/buildIndexTraceId'),
-    # 26. Global relative paths lose the "global/" directory prefix.
-    ('expose-global-prefix',
-     'concat(&[&JsString::from("global/"), relative_path])',
-     'concat(&[&JsString::from("global"), relative_path])',
-     'trace/exposeStoredRelativePath'),
-    # 27. textDetail returns the raw escaped text instead of decoding it.
-    ('detail-text-decode',
-     '''    detail(
+    ('same-role', [('helpers',
+                   'left.role == right.role && left.content == right.content',
+                   'left.content == right.content')],
+     GENERIC, 'messages/sameMessage'),
+    # 2. Non-user/assistant roles are dropped again (the original bug). The
+    # first dropped message is the system role in messages/sameMessage, so the
+    # helper's role-specific panic is the declared anchor (a generic
+    # expect("message") would hide which role and case were lost).
+    ('messages-drop-other-roles', [('helpers',
+                                   'let role = MemoryRole::from_js(role);',
+                                   'let role = MemoryRole::from_js(role);\n'
+                                   '            if matches!(role, MemoryRole::Other(_)) {\n'
+                                   '                return None;\n'
+                                   '            }')],
+     GENERIC, 'heartbeat message dropped: role=system'),
+    # 3. Equal-length identical transcripts are reported as new content.
+    ('new-content-length', [('helpers',
+                             'if incoming.len() > previous.len() {',
+                             'if incoming.len() >= previous.len() {')],
+     GENERIC, 'messages/hasNewContent'),
+    # 4. A shared prefix is always treated as a replacement, even at 0.
+    ('merge-prefix-threshold', [('helpers',
+                                 'if prefix_length > 0 {',
+                                 'if prefix_length >= 0 {')],
+     GENERIC, 'merge/mergeSessionMessages'),
+    # 5. A shared prefix reports the whole incoming transcript as new.
+    ('merge-new-tail', [('helpers',
+                         'new_messages: incoming[prefix_length..].to_vec(),',
+                         'new_messages: incoming.to_vec(),')],
+     GENERIC, 'merge/mergeSessionMessages'),
+    # 6. Flatten forgets the seed transcript.
+    ('flatten-seed', [('helpers',
+                       'let mut previous = seed_messages.to_vec();',
+                       'let mut previous = Vec::new();')],
+     GENERIC, 'flatten/flattenBatchMessages'),
+    # 7. Focus turns keep assistant messages.
+    ('focus-assistant', [('helpers',
+                          '.filter(|message| message.role == MemoryRole::User)',
+                          '.filter(|message| message.role != MemoryRole::User)')],
+     GENERIC, 'focus/deriveFocusTurns'),
+    # -- P1-2: checked String(value) and no panic ----------------------------
+    # 8. The checked conversion falls back to unchecked (own toString).
+    ('kv-checked-conversion', [('helpers',
+                                '                Some(value) => crate::js_value::to_string_units_checked(value)\n'
+                                '                    .map_err(KvValueError::from_conversion)?,',
+                                '                Some(value) => crate::js_value::to_string_units(value)\n'
+                                '                    .map_err(|_| KvValueError::StackOverflow)?,')],
+     GENERIC, 'detail/kvDetailCatching'),
+    # 9. The conversion panics instead of returning an error (P0 contract).
+    ('kv-no-panic', [('helpers',
+                      '    fn from_conversion(error: crate::js_value::ToStringError) -> Self {\n'
+                      '        match error {\n'
+                      '            crate::js_value::ToStringError::StackOverflow => Self::StackOverflow,\n'
+                      '            crate::js_value::ToStringError::NotPrimitive => Self::NotPrimitive,\n'
+                      '        }\n'
+                      '    }',
+                      '    fn from_conversion(_error: crate::js_value::ToStringError) -> Self {\n'
+                      '        panic!("String(value) does not overflow");\n'
+                      '    }')],
+     GENERIC, 'String(value) does not overflow'),
+    # 10. The shared depth bound stops rejecting 2001 containers.
+    ('kv-depth-bound', [('js_value',
+                         'pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;',
+                         'pub(crate) const MAX_ARRAY_DEPTH: usize = 3001;')],
+     DEPTH, "Rust's shared 2000-container bound rejects 2001"),
+    # -- P3: shared helpers ---------------------------------------------------
+    # 11. Heartbeat still uses the shared truthiness helper.
+    ('shared-truthy', [('storage',
+                        '        JsValue::Array(_) | JsValue::Object(_) => true,',
+                        '        JsValue::Array(_) | JsValue::Object(_) => false,')],
+     GENERIC, 'step/createStep'),
+    # 12. Heartbeat routes its joins through the shared text helper.
+    ('shared-join-text', [('text',
+                           '            units.extend(separator.encode_utf16());',
+                           '            units.extend(separator.encode_utf16().skip(1));')],
+     GENERIC, 'routing/buildCandidateRoutingQuery'),
+    # -- existing coverage unrelated to #852 ----------------------------------
+    # 13. Three-unit CJK grams disappear.
+    ('token-three-gram', [('helpers', 'for size in [2, 3] {', 'for size in [2] {')],
+     GENERIC, 'token/tokenizeSearchText'),
+    # 14. The whole Han run is kept only up to 7 units.
+    ('token-han-whole', [('helpers', 'if length <= 8 {', 'if length <= 7 {')],
+     GENERIC, 'token/tokenizeSearchText'),
+    # 15. "项目" is no longer a stopword.
+    ('token-stopword', [('helpers', '"项目",', '"项目x",')],
+     GENERIC, 'token/tokenizeSearchText'),
+    # 16. Exact project-name matches score half as much.
+    ('shortlist-exact-weight', [('helpers', ')) * 2;', ')) * 1;')],
+     GENERIC, 'shortlist/buildGeneralProjectShortlist'),
+    # 17. Tie-break sorting runs ascending instead of descending.
+    ('shortlist-tie-order', [('helpers',
+                              'node_compare_utf16(shortlist_collator(), &right.updated_at, &left.updated_at)',
+                              'node_compare_utf16(shortlist_collator(), &left.updated_at, &right.updated_at)')],
+     GENERIC, 'shortlist/buildGeneralProjectShortlist'),
+    # 18. The shortlist cuts one entry too early.
+    ('shortlist-limit', [('helpers',
+                          '.take(GENERAL_INDEX_PROJECT_CANDIDATE_LIMIT)',
+                          '.take(GENERAL_INDEX_PROJECT_CANDIDATE_LIMIT - 1)')],
+     GENERIC, 'shortlist/buildGeneralProjectShortlist'),
+    # 19. The routing query drops the stage field.
+    ('routing-stage', [('helpers',
+                        'for key in ["name", "description", "rule", "summary", "stage"] {',
+                        'for key in ["name", "description", "rule", "summary"] {')],
+     GENERIC, 'routing/buildCandidateRoutingQuery'),
+    # 20. The preview body header is misspelled.
+    ('preview-body-header', [('helpers',
+                              'lines.push(JsString::from("## Body"));',
+                              'lines.push(JsString::from("## Bodies"));')],
+     GENERIC, 'preview/buildCandidateMemoryPreview'),
+    # 21. The preview keeps 2999 units instead of 3000.
+    ('preview-truncate', [('helpers',
+                           'preview.units()[..3000].to_vec()',
+                           'preview.units()[..2999].to_vec()')],
+     GENERIC, 'preview/buildCandidateMemoryPreview'),
+    # 22. previewText cuts one unit early at the exact boundary.
+    ('preview-max', [('helpers',
+                      'if normalized.len_utf16() <= max_chars {',
+                      'if normalized.len_utf16() < max_chars {')],
+     GENERIC, 'trace/previewText'),
+    # 23. User-note detection loses its directory suffix.
+    ('storage-user-note', [('helpers',
+                            '&"UserNotes/".encode_utf16()',
+                            '&"UserNote/".encode_utf16()')],
+     GENERIC, 'trace/inferStorageKind'),
+    # 24. A null/undefined kv value renders as "[object Object]" instead of "".
+    ('kv-null-value', [('helpers',
+                        'None | Some(JsValue::Undefined) | Some(JsValue::Null) => Vec::new(),',
+                        'None | Some(JsValue::Undefined) | Some(JsValue::Null) => '
+                        '"[object Object]".encode_utf16().collect::<Vec<_>>(),')],
+     GENERIC, 'detail/kvDetail'),
+    # 25. Step ids start at 2.
+    ('step-id-offset', [('helpers', 'steps.len() + 1', 'steps.len() + 2')],
+     GENERIC, 'step/createStep'),
+    # 26. createStep keeps falsy optional values (null/undefined).
+    ('step-options-truthy', [('helpers',
+                              '            && js_truthy(value)\n', '')],
+     GENERIC, 'step/createStep'),
+    # 27. Empty timestamps stay in the batch summary.
+    ('batch-empty-timestamp', [('helpers',
+                                '.filter(|timestamp| !timestamp.is_empty())\n', '')],
+     GENERIC, 'batch/createBatchTrace'),
+    # 28. Batch timestamps are not sorted.
+    ('batch-timestamp-sort', [('helpers',
+                               '    timestamps.sort_by(|left, right| {\n'
+                               '        left.encode_utf16()\n'
+                               '            .collect::<Vec<_>>()\n'
+                               '            .cmp(&right.encode_utf16().collect::<Vec<_>>())\n'
+                               '    });',
+                               '')],
+     GENERIC, 'batch/createBatchTrace'),
+    # -- #831: dedicated mutants for the remaining pure functions -------------
+    # 29. commonPrefixLength stops one message before the shared prefix ends.
+    ('common-prefix-off-by-one', [('helpers',
+                                   'while index < limit && same_message(previous.get(index), incoming.get(index)) {',
+                                   'while index + 1 < limit && same_message(previous.get(index), incoming.get(index)) {')],
+     GENERIC, 'merge/commonPrefixLength'),
+    # 30. normalizeTrigger stops folding the reason to lowercase.
+    ('normalize-trigger-case', [('helpers',
+                                 'let normalized = text::lowercase(&text::trim_js(reason.unwrap_or(&JsString::default())));',
+                                 'let normalized = text::trim_js(reason.unwrap_or(&JsString::default()));')],
+     GENERIC, 'trace/normalizeTrigger'),
+    # 31. buildIndexTraceId joins the l0 ids with ';' instead of ','.
+    ('trace-id-separator', [('helpers',
+                             'let joined = text::join_text_refs(l0_ids.iter(), ",");',
+                             'let joined = text::join_text_refs(l0_ids.iter(), ";");')],
+     GENERIC, 'trace/buildIndexTraceId'),
+    # 32. Global relative paths lose the "global/" directory prefix.
+    ('expose-global-prefix', [('helpers',
+                               'text::join_text_refs([&JsString::from("global/"), relative_path], "")',
+                               'text::join_text_refs([&JsString::from("global"), relative_path], "")')],
+     GENERIC, 'trace/exposeStoredRelativePath'),
+    # 33. textDetail returns the raw escaped text instead of decoding it.
+    ('detail-text-decode', [('helpers',
+                             '''    detail(
         "text",
         key,
         label,
@@ -148,7 +236,7 @@ cases = [
             JsValue::String(text::decode_escaped_unicode_text(text, true)),
         )],
     )''',
-     '''    detail(
+                             '''    detail(
         "text",
         key,
         label,
@@ -157,11 +245,11 @@ cases = [
             "text",
             JsValue::String(text.clone()),
         )],
-    )''',
-     'detail/textDetail'),
-    # 28. noteDetail returns the raw escaped text instead of decoding it.
-    ('detail-note-decode',
-     '''    detail(
+    )''')],
+     GENERIC, 'detail/textDetail'),
+    # 34. noteDetail returns the raw escaped text instead of decoding it.
+    ('detail-note-decode', [('helpers',
+                             '''    detail(
         "note",
         key,
         label,
@@ -171,7 +259,7 @@ cases = [
             JsValue::String(text::decode_escaped_unicode_text(text, true)),
         )],
     )''',
-     '''    detail(
+                             '''    detail(
         "note",
         key,
         label,
@@ -180,18 +268,18 @@ cases = [
             "text",
             JsValue::String(text.clone()),
         )],
-    )''',
-     'detail/noteDetail'),
-    # 29. listDetail returns raw escaped items instead of decoding them.
-    ('detail-list-decode',
-     '        .map(|item| JsValue::String(text::decode_escaped_unicode_text(item, true)))',
-     '        .map(|item| JsValue::String(item.clone()))',
-     'detail/listDetail'),
-    # 30. jsonDetail returns the raw JSON value without decoding strings.
-    ('detail-json-decode',
-     'vec![("json", text::decode_escaped_unicode_value(json, true))],',
-     'vec![("json", json.clone())],',
-     'detail/jsonDetail'),
+    )''')],
+     GENERIC, 'detail/noteDetail'),
+    # 35. listDetail returns raw escaped items instead of decoding them.
+    ('detail-list-decode', [('helpers',
+                             '        .map(|item| JsValue::String(text::decode_escaped_unicode_text(item, true)))',
+                             '        .map(|item| JsValue::String(item.clone()))')],
+     GENERIC, 'detail/listDetail'),
+    # 36. jsonDetail returns the raw JSON value without decoding strings.
+    ('detail-json-decode', [('helpers',
+                             'vec![("json", text::decode_escaped_unicode_value(json, true))],',
+                             'vec![("json", json.clone())],')],
+     GENERIC, 'detail/jsonDetail'),
 ]
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
@@ -200,66 +288,71 @@ unknown = only - {case[0] for case in cases}
 assert not unknown, f'unknown NEGATIVE_ONLY cases: {sorted(unknown)}'
 
 
-def assertion_failure(log):
+def assertion_failure(log, anchor):
     if 'could not compile' in log:
         return False
     if 'test result: FAILED.' not in log:
         return False
-    return any(f'{anchor}/' in log for anchor in assertion_anchors)
+    return anchor in log
+
+
+def cargo_test(test):
+    command = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
+               '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_heartbeat']
+    if test:
+        command.extend([test, '--', '--exact'])
+    return run_owned(command, cwd=root, env=env, timeout=600)
+
+
+class AnchorExpired(RuntimeError):
+    """A mutation's anchor no longer matches exactly once.
+
+    This is a script bug, not a surviving mutant: abort instead of recording
+    SURVIVED, otherwise a stale anchor would look like a weak test.
+    """
 
 
 killed, survived = [], []
-with mutating_sources(root, [helpers], baseline=baseline) as originals:
-    # A product line that this list did not follow used to be reported as
-    # SURVIVED (`AssertionError: (name, 0)`), hiding a broken control behind
-    # the same label as a real surviving mutant. Refuse before compiling.
-    source = originals[helpers].decode()
-    stale = []
-    for name, before, _after, _anchor in cases:
-        count = source.count(before)
-        if count != 1:
-            stale.append((name, count))
-    if stale:
-        report = '\n'.join(
-            f'STALE ANCHOR {name}: {count} matches in helpers.rs'
-            for name, count in stale) + '\n'
-        (out / 'stale-anchors.log').write_text(report)
-        print(report, end='', flush=True)
-        print('STALE ANCHORS: negative.py is out of sync with helpers.rs; refusing to run',
-              flush=True)
-        sys.exit(2)
-    base_cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
-                '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_heartbeat']
+with mutating_sources(root, [paths[key] for key in paths], baseline=baseline) as originals:
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-    run = run_owned(base_cmd, cwd=root, env=env, timeout=600)
+    run = cargo_test(None)
     (out / 'baseline.log').write_text(slots.stdout + slots.stderr + run.stdout + run.stderr)
     if run.returncode != 0:
         print('BASELINE FAILED: unmutated suite must pass before mutations', flush=True)
         sys.exit(1)
 
-    for name, before, after, anchor in cases:
+    for name, edits, test, anchor in cases:
         if only and name not in only:
             continue
         reason = None
         try:
-            source = originals[helpers].decode()
+            for key, before, after in edits:
+                path = paths[key]
+                source = path.read_text()
+                count = source.count(before)
+                if count != 1:
+                    raise AnchorExpired(
+                        f'{name}: {key} anchor matched {count} times (expected 1); '
+                        f'update negative.py before running')
+                path.write_text(source.replace(before, after))
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-            helpers.write_text(source.replace(before, after))
-            try:
-                cmd = ['cargo', 'test', '--manifest-path', str(root / 'src/Cargo.toml'),
-                       '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_heartbeat',
-                       'heartbeat_helpers_match_ts', '--', '--exact']
-                run = run_owned(cmd, cwd=root, env=env, timeout=300)
-                log = run.stdout + run.stderr
-                (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
-                if not (run.returncode != 0 and assertion_failure(log)):
-                    reason = 'did not fail a narrowed assertion'
-                elif anchor not in log:
-                    reason = f'failed without the {anchor} oracle anchor'
-            finally:
-                helpers.write_bytes(originals[helpers])
+            run = cargo_test(test)
+            log = run.stdout + run.stderr
+            (out / f'{name}.log').write_text(slots.stdout + slots.stderr + log)
+            if not (run.returncode != 0 and assertion_failure(log, anchor)):
+                reason = 'did not fail the narrowed assertion'
+            elif anchor not in log:
+                reason = f'failed without the {anchor} anchor'
+        except AnchorExpired as error:
+            for path, data in originals.items():
+                path.write_bytes(data)
+            print(f'ANCHOR EXPIRED: {error}', flush=True)
+            sys.exit(2)
         except Exception as error:
             reason = f'{type(error).__name__}: {error}'
+        finally:
+            for path, data in originals.items():
+                path.write_bytes(data)
         if reason is None:
             killed.append(name)
             print(f'KILLED   {name}: {anchor}', flush=True)
@@ -269,12 +362,12 @@ with mutating_sources(root, [helpers], baseline=baseline) as originals:
     for path, data in originals.items():
         path.write_bytes(data)
         assert path.read_bytes() == data, 'restoration failed: ' + str(path)
-
-    # The mutation loop restores after every case; run the suite once more
-    # under the same tree lock so the green-after-restore half of the red/green
-    # pair has its own raw log and no other runner can mutate in between.
+    # #831: the mutation loop restores after every case; run the suite once
+    # more under the same tree lock so the green-after-restore half of the
+    # red/green pair has its own raw log and no other runner can mutate in
+    # between.
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
-    run = run_owned(base_cmd, cwd=root, env=env, timeout=600)
+    run = cargo_test(None)
     restored_log = slots.stdout + slots.stderr + run.stdout + run.stderr
     (out / 'restored.log').write_text(restored_log)
     if run.returncode != 0 or 'test result: ok.' not in restored_log:

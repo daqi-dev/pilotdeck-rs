@@ -179,6 +179,81 @@
     },
     {
       "group": "messages",
+      "fn": "sameMessage",
+      "args": [
+        {
+          "role": "system",
+          "content": "x"
+        },
+        {
+          "role": "system",
+          "content": "x"
+        }
+      ],
+      "expected": true
+    },
+    {
+      "group": "messages",
+      "fn": "sameMessage",
+      "args": [
+        {
+          "role": "system",
+          "content": "x"
+        },
+        {
+          "role": "user",
+          "content": "x"
+        }
+      ],
+      "expected": false
+    },
+    {
+      "group": "messages",
+      "fn": "sameMessage",
+      "args": [
+        {
+          "role": "system",
+          "content": "x"
+        },
+        {
+          "role": "system",
+          "content": "y"
+        }
+      ],
+      "expected": false
+    },
+    {
+      "group": "messages",
+      "fn": "sameMessage",
+      "args": [
+        {
+          "role": "tool",
+          "content": "x"
+        },
+        {
+          "role": "tool",
+          "content": "x"
+        }
+      ],
+      "expected": true
+    },
+    {
+      "group": "messages",
+      "fn": "sameMessage",
+      "args": [
+        {
+          "role": "developer",
+          "content": "x"
+        },
+        {
+          "role": "developer",
+          "content": "x"
+        }
+      ],
+      "expected": true
+    },
+    {
+      "group": "messages",
       "fn": "hasNewContent",
       "args": [
         [],
@@ -413,6 +488,48 @@
         ]
       ],
       "expected": false
+    },
+    {
+      "group": "messages",
+      "fn": "hasNewContent",
+      "args": [
+        [
+          {
+            "role": "system",
+            "content": "a"
+          }
+        ],
+        [
+          {
+            "role": "system",
+            "content": "a"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ]
+      ],
+      "expected": true
+    },
+    {
+      "group": "messages",
+      "fn": "hasNewContent",
+      "args": [
+        [
+          {
+            "role": "system",
+            "content": "a"
+          }
+        ],
+        [
+          {
+            "role": "system",
+            "content": "b"
+          }
+        ]
+      ],
+      "expected": true
     },
     {
       "group": "token",
@@ -8651,6 +8768,253 @@
       }
     },
     {
+      "group": "merge",
+      "fn": "commonPrefixLength",
+      "args": [
+        [
+          {
+            "role": "system",
+            "content": "A"
+          }
+        ],
+        [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "group": "merge",
+      "fn": "mergeSessionMessages",
+      "args": [
+        [
+          {
+            "role": "system",
+            "content": "A"
+          }
+        ],
+        [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ]
+      ],
+      "expected": {
+        "mergedMessages": [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ],
+        "newMessages": [
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ]
+      }
+    },
+    {
+      "group": "merge",
+      "fn": "commonPrefixLength",
+      "args": [
+        [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ],
+        [
+          {
+            "role": "system",
+            "content": "B"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ]
+      ],
+      "expected": 0
+    },
+    {
+      "group": "merge",
+      "fn": "mergeSessionMessages",
+      "args": [
+        [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ],
+        [
+          {
+            "role": "system",
+            "content": "B"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ]
+      ],
+      "expected": {
+        "mergedMessages": [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          },
+          {
+            "role": "system",
+            "content": "B"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ],
+        "newMessages": [
+          {
+            "role": "system",
+            "content": "B"
+          },
+          {
+            "role": "user",
+            "content": "q"
+          }
+        ]
+      }
+    },
+    {
+      "group": "merge",
+      "fn": "commonPrefixLength",
+      "args": [
+        [
+          {
+            "role": "tool",
+            "content": "x"
+          }
+        ],
+        [
+          {
+            "role": "tool",
+            "content": "x"
+          }
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "group": "merge",
+      "fn": "mergeSessionMessages",
+      "args": [
+        [
+          {
+            "role": "tool",
+            "content": "x"
+          }
+        ],
+        [
+          {
+            "role": "tool",
+            "content": "x"
+          }
+        ]
+      ],
+      "expected": {
+        "mergedMessages": [
+          {
+            "role": "tool",
+            "content": "x"
+          }
+        ],
+        "newMessages": []
+      }
+    },
+    {
+      "group": "merge",
+      "fn": "commonPrefixLength",
+      "args": [
+        [
+          {
+            "role": "developer",
+            "content": "x"
+          }
+        ],
+        [
+          {
+            "role": "user",
+            "content": "x"
+          }
+        ]
+      ],
+      "expected": 0
+    },
+    {
+      "group": "merge",
+      "fn": "mergeSessionMessages",
+      "args": [
+        [
+          {
+            "role": "developer",
+            "content": "x"
+          }
+        ],
+        [
+          {
+            "role": "user",
+            "content": "x"
+          }
+        ]
+      ],
+      "expected": {
+        "mergedMessages": [
+          {
+            "role": "developer",
+            "content": "x"
+          },
+          {
+            "role": "user",
+            "content": "x"
+          }
+        ],
+        "newMessages": [
+          {
+            "role": "user",
+            "content": "x"
+          }
+        ]
+      }
+    },
+    {
       "group": "flatten",
       "fn": "flattenBatchMessages",
       "args": [
@@ -9678,6 +10042,543 @@
       ]
     },
     {
+      "group": "flatten",
+      "fn": "flattenBatchMessages",
+      "args": [
+        [
+          {
+            "l0IndexId": "role-1",
+            "sessionKey": "s",
+            "timestamp": "2026-10-20T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "A"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0IndexId": "role-2",
+            "sessionKey": "s",
+            "timestamp": "2026-10-21T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "B"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        []
+      ],
+      "expected": [
+        {
+          "role": "system",
+          "content": "A"
+        },
+        {
+          "role": "user",
+          "content": "question"
+        },
+        {
+          "role": "system",
+          "content": "B"
+        },
+        {
+          "role": "user",
+          "content": "question"
+        }
+      ]
+    },
+    {
+      "group": "focus",
+      "fn": "deriveFocusTurns",
+      "args": [
+        [],
+        [
+          {
+            "l0IndexId": "role-1",
+            "sessionKey": "s",
+            "timestamp": "2026-10-20T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "A"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0IndexId": "role-2",
+            "sessionKey": "s",
+            "timestamp": "2026-10-21T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "B"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "l0IndexId": "role-1",
+          "newMessages": [
+            {
+              "role": "user",
+              "content": "question"
+            }
+          ]
+        },
+        {
+          "l0IndexId": "role-2",
+          "newMessages": [
+            {
+              "role": "user",
+              "content": "question"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "group": "flatten",
+      "fn": "flattenBatchMessages",
+      "args": [
+        [
+          {
+            "l0IndexId": "role-1",
+            "sessionKey": "s",
+            "timestamp": "2026-10-20T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "A"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0IndexId": "role-2",
+            "sessionKey": "s",
+            "timestamp": "2026-10-21T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "B"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "role": "system",
+          "content": "A"
+        },
+        {
+          "role": "user",
+          "content": "question"
+        },
+        {
+          "role": "system",
+          "content": "B"
+        },
+        {
+          "role": "user",
+          "content": "question"
+        }
+      ]
+    },
+    {
+      "group": "focus",
+      "fn": "deriveFocusTurns",
+      "args": [
+        [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "question"
+          }
+        ],
+        [
+          {
+            "l0IndexId": "role-1",
+            "sessionKey": "s",
+            "timestamp": "2026-10-20T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "A"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0IndexId": "role-2",
+            "sessionKey": "s",
+            "timestamp": "2026-10-21T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "B"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "l0IndexId": "role-1",
+          "newMessages": []
+        },
+        {
+          "l0IndexId": "role-2",
+          "newMessages": [
+            {
+              "role": "user",
+              "content": "question"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "group": "flatten",
+      "fn": "flattenBatchMessages",
+      "args": [
+        [
+          {
+            "l0IndexId": "role-1",
+            "sessionKey": "s",
+            "timestamp": "2026-10-20T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "A"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0IndexId": "role-2",
+            "sessionKey": "s",
+            "timestamp": "2026-10-21T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "B"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "question"
+          },
+          {
+            "role": "assistant",
+            "content": "answer"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "role": "system",
+          "content": "A"
+        },
+        {
+          "role": "user",
+          "content": "question"
+        },
+        {
+          "role": "system",
+          "content": "B"
+        },
+        {
+          "role": "user",
+          "content": "question"
+        }
+      ]
+    },
+    {
+      "group": "focus",
+      "fn": "deriveFocusTurns",
+      "args": [
+        [
+          {
+            "role": "system",
+            "content": "A"
+          },
+          {
+            "role": "user",
+            "content": "question"
+          },
+          {
+            "role": "assistant",
+            "content": "answer"
+          }
+        ],
+        [
+          {
+            "l0IndexId": "role-1",
+            "sessionKey": "s",
+            "timestamp": "2026-10-20T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "A"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0IndexId": "role-2",
+            "sessionKey": "s",
+            "timestamp": "2026-10-21T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "B"
+              },
+              {
+                "role": "user",
+                "content": "question"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "l0IndexId": "role-1",
+          "newMessages": []
+        },
+        {
+          "l0IndexId": "role-2",
+          "newMessages": [
+            {
+              "role": "user",
+              "content": "question"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "group": "flatten",
+      "fn": "flattenBatchMessages",
+      "args": [
+        [
+          {
+            "l0IndexId": "role-dup",
+            "sessionKey": "s",
+            "timestamp": "2026-10-20T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "tool",
+                "content": "t"
+              },
+              {
+                "role": "user",
+                "content": "one"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0IndexId": "role-dup",
+            "sessionKey": "s",
+            "timestamp": "2026-10-21T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "S"
+              },
+              {
+                "role": "user",
+                "content": "two"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        []
+      ],
+      "expected": [
+        {
+          "role": "tool",
+          "content": "t"
+        },
+        {
+          "role": "user",
+          "content": "one"
+        },
+        {
+          "role": "system",
+          "content": "S"
+        },
+        {
+          "role": "user",
+          "content": "two"
+        }
+      ]
+    },
+    {
+      "group": "focus",
+      "fn": "deriveFocusTurns",
+      "args": [
+        [],
+        [
+          {
+            "l0IndexId": "role-dup",
+            "sessionKey": "s",
+            "timestamp": "2026-10-20T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "tool",
+                "content": "t"
+              },
+              {
+                "role": "user",
+                "content": "one"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "l0IndexId": "role-dup",
+            "sessionKey": "s",
+            "timestamp": "2026-10-21T00:00:00.000Z",
+            "messages": [
+              {
+                "role": "system",
+                "content": "S"
+              },
+              {
+                "role": "user",
+                "content": "two"
+              }
+            ],
+            "source": "openclaw",
+            "indexed": false,
+            "createdAt": "2026-10-22T00:00:00.000Z"
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "l0IndexId": "role-dup",
+          "newMessages": [
+            {
+              "role": "user",
+              "content": "two"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "group": "trace",
       "fn": "buildIndexTraceId",
       "args": [
@@ -10489,6 +11390,171 @@
         },
         "kind": "kv",
         "entries": []
+      }
+    },
+    {
+      "group": "detail",
+      "fn": "kvDetailCatching",
+      "args": [
+        "k",
+        "L",
+        [
+          {
+            "label": "throw",
+            "value": {
+              "toString": null
+            }
+          }
+        ]
+      ],
+      "expected": {
+        "thrown": {
+          "name": "TypeError",
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "group": "detail",
+      "fn": "kvDetailCatching",
+      "args": [
+        "k",
+        "L",
+        [
+          {
+            "label": "throw",
+            "value": [
+              {
+                "toString": null
+              }
+            ]
+          }
+        ]
+      ],
+      "expected": {
+        "thrown": {
+          "name": "TypeError",
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "group": "detail",
+      "fn": "kvDetailCatching",
+      "args": [
+        "k",
+        "L",
+        [
+          {
+            "label": "throw",
+            "value": [
+              1,
+              [
+                {
+                  "toString": null
+                }
+              ]
+            ]
+          }
+        ]
+      ],
+      "expected": {
+        "thrown": {
+          "name": "TypeError",
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "group": "detail",
+      "fn": "kvDetailCatching",
+      "args": [
+        "k",
+        "L",
+        [
+          {
+            "label": "throw",
+            "value": {
+              "toString": "not callable"
+            }
+          }
+        ]
+      ],
+      "expected": {
+        "thrown": {
+          "name": "TypeError",
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "group": "detail",
+      "fn": "kvDetailCatching",
+      "args": [
+        "k",
+        "L",
+        [
+          {
+            "label": "plain",
+            "value": {
+              "a": 1
+            }
+          },
+          {
+            "label": "nullish",
+            "value": null
+          }
+        ]
+      ],
+      "expected": {
+        "ok": {
+          "key": "k",
+          "label": "L",
+          "kind": "kv",
+          "entries": [
+            {
+              "label": "plain",
+              "value": "[object Object]"
+            },
+            {
+              "label": "nullish",
+              "value": ""
+            }
+          ]
+        }
+      }
+    },
+    {
+      "group": "detail-depth",
+      "fn": "kvDetailDepthProbe",
+      "args": [
+        1999
+      ],
+      "expected": {
+        "depth": 1999,
+        "tsValue": "1"
+      }
+    },
+    {
+      "group": "detail-depth",
+      "fn": "kvDetailDepthProbe",
+      "args": [
+        2000
+      ],
+      "expected": {
+        "depth": 2000,
+        "tsValue": "1"
+      }
+    },
+    {
+      "group": "detail-depth",
+      "fn": "kvDetailDepthProbe",
+      "args": [
+        2001
+      ],
+      "expected": {
+        "depth": 2001,
+        "tsValue": "1"
       }
     },
     {

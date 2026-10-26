@@ -11,7 +11,7 @@
 //! area), regexes run on that lossless projection, and [`decode`] maps back.
 //! ECMAScript `\s` is spelled out because Rust's Unicode `\s` omits U+FEFF.
 
-use crate::runtime::memory::edgeclaw::text;
+use crate::runtime::memory::edgeclaw::{storage::js_truthy, text};
 use crate::runtime::memory::{js_is_space_unit, js_trim_units};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use regex::Regex;
@@ -875,16 +875,6 @@ fn is_noise_line(line: &JsString) -> bool {
 
 // -- message inspection -----------------------------------------------------
 
-fn truthy(value: &JsValue) -> bool {
-    match value {
-        JsValue::Undefined | JsValue::Null => false,
-        JsValue::Bool(value) => *value,
-        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
-        JsValue::String(value) => !value.is_empty(),
-        JsValue::Array(_) | JsValue::Object(_) => true,
-    }
-}
-
 static UNDEFINED: JsValue = JsValue::Undefined;
 
 fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
@@ -928,17 +918,34 @@ pub fn has_tool_call_content(content: &JsValue) -> bool {
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// TS `ChatRole = "user" | "assistant" | "system" | string` (`types.ts:1`).
+/// The first two drive user/assistant normalization; every other non-empty
+/// string must survive storage->heartbeat so transcript comparison, merging
+/// and focus-turn derivation keep their roles (an unknown role is not a user
+/// turn, but it still participates in the common prefix).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemoryRole {
     User,
     Assistant,
+    Other(JsString),
 }
 
 impl MemoryRole {
-    pub fn as_str(self) -> &'static str {
+    pub fn from_js(role: &JsString) -> Self {
+        if role.equals_str("user") {
+            Self::User
+        } else if role.equals_str("assistant") {
+            Self::Assistant
+        } else {
+            Self::Other(role.clone())
+        }
+    }
+
+    pub fn as_string(&self) -> JsString {
         match self {
-            Self::User => "user",
-            Self::Assistant => "assistant",
+            Self::User => JsString::from("user"),
+            Self::Assistant => JsString::from("assistant"),
+            Self::Other(role) => role.clone(),
         }
     }
 }
@@ -961,7 +968,7 @@ impl MemoryMessage {
     /// TS inserts `role`, `content`, then the optional `msgId`.
     pub fn to_value(&self) -> JsValue {
         let mut object = JsObject::new();
-        object.insert("role".into(), JsValue::String(self.role.as_str().into()));
+        object.insert("role".into(), JsValue::String(self.role.as_string()));
         object.insert("content".into(), JsValue::String(self.content.clone()));
         if let Some(msg_id) = &self.msg_id {
             object.insert("msgId".into(), JsValue::String(msg_id.clone()));
@@ -971,7 +978,7 @@ impl MemoryMessage {
 }
 
 pub fn inspect_transcript_message(raw: &JsValue) -> TranscriptMessageInfo {
-    if !truthy(raw) || !matches!(raw, JsValue::Object(_) | JsValue::Array(_)) {
+    if !js_truthy(raw) || !matches!(raw, JsValue::Object(_) | JsValue::Array(_)) {
         return TranscriptMessageInfo {
             role: None,
             content: JsString::default(),
@@ -991,10 +998,10 @@ pub fn inspect_transcript_message(raw: &JsValue) -> TranscriptMessageInfo {
     };
     let content = raw_content(raw, nested);
     let raw_text = text::trim_js(&extract_text_from_content(content, 0));
-    let normalized_content = match normalized {
+    let normalized_content = match &normalized {
         Some(MemoryRole::User) => strip_user_noise(&raw_text),
         Some(MemoryRole::Assistant) => strip_assistant_thinking(&raw_text),
-        None => JsString::default(),
+        Some(MemoryRole::Other(_)) | None => JsString::default(),
     };
     TranscriptMessageInfo {
         role: normalized,
@@ -1110,7 +1117,7 @@ fn normalize_single_message(
     include_assistant: bool,
     max_message_chars: f64,
 ) -> Option<MemoryMessage> {
-    if !truthy(raw) || !matches!(raw, JsValue::Object(_) | JsValue::Array(_)) {
+    if !js_truthy(raw) || !matches!(raw, JsValue::Object(_) | JsValue::Array(_)) {
         return None;
     }
     let nested = as_record(field(raw, "message"));
@@ -1119,10 +1126,10 @@ fn normalize_single_message(
         .as_string()
         .is_some_and(|kind| kind.equals_str("user"))
         && (!matches!(tool_result, JsValue::Undefined | JsValue::Null)
-            || truthy(field(raw, "isMeta"))
-            || truthy(field(raw, "isVisibleInTranscriptOnly"))
-            || truthy(field(raw, "isCompactSummary"))
-            || truthy(field(raw, "isVirtual")))
+            || js_truthy(field(raw, "isMeta"))
+            || js_truthy(field(raw, "isVisibleInTranscriptOnly"))
+            || js_truthy(field(raw, "isCompactSummary"))
+            || js_truthy(field(raw, "isVirtual")))
     {
         return None;
     }
