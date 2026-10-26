@@ -425,25 +425,7 @@
             }
           ],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [],
@@ -648,23 +630,6 @@
               "op": "denySession",
               "sessionKey": "s",
               "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
             }
           ],
           "compactCalls": [],
@@ -761,42 +726,7 @@
           ],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [],
@@ -857,42 +787,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [],
@@ -961,42 +856,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [
             {
               "sessionKey": "s",
@@ -1043,42 +903,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [
             {
               "sessionKey": "s",
@@ -1125,42 +950,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [
             {
               "sessionKey": "s",
@@ -1198,42 +988,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [
             {
               "sessionKey": "s",
@@ -1278,42 +1033,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [
             {
               "sessionKey": "s",
@@ -1363,42 +1083,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [],
@@ -1570,40 +1255,6 @@
               "op": "denySession",
               "sessionKey": "s",
               "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
             }
           ],
           "compactCalls": [],
@@ -1691,59 +1342,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [],
@@ -1790,59 +1389,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [
@@ -1901,59 +1448,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [
@@ -2172,57 +1667,6 @@
           "storageCalls": [],
           "sdkSetCalls": [],
           "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
             {
               "bus": "grants",
               "op": "allowRules",
@@ -2538,74 +1982,6 @@
               "op": "denySession",
               "sessionKey": "s",
               "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
             }
           ],
           "compactCalls": [],
@@ -2702,93 +2078,7 @@
           "registryCalls": [],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [],
@@ -2970,91 +2260,6 @@
               "op": "denySession",
               "sessionKey": "s",
               "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
             }
           ],
           "compactCalls": [],
@@ -3154,110 +2359,7 @@
           ],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [],
@@ -3338,110 +2440,7 @@
           ],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [],
@@ -3516,110 +2515,7 @@
           ],
           "storageCalls": [],
           "sdkSetCalls": [],
-          "interactionCalls": [
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "grants",
-              "op": "allowRules",
-              "sessionKey": "s"
-            },
-            {
-              "bus": "elicitation",
-              "op": "rejectSession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            },
-            {
-              "bus": "permission",
-              "op": "denySession",
-              "sessionKey": "s",
-              "reason": "turn_ended"
-            }
-          ],
+          "interactionCalls": [],
           "compactCalls": [],
           "compactAborts": [],
           "authorizerCalls": [],

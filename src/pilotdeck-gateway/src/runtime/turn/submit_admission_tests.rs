@@ -70,9 +70,14 @@ impl SubmitTrustedAuthorizer for RecordingAuthorizer {
 }
 
 /// The probe's controlled SDK session config port (generate.mts
-/// `setSdkSessionConfig`): validation mirrors the TS gateway's own
-/// `validateSdkSessionConfig` checks exercised by the oracle cases
-/// (InProcessGateway.ts:3216-3218, 3243-3249); the native validator is 7b.
+/// `setSdkSessionConfig`): validation mirrors exactly the two
+/// `validateSdkSessionConfig` branches the oracle cases exercise
+/// (InProcessGateway.ts:3216-3218, 3243-3249: systemPrompt type, deny empty
+/// entries); TS's further branches (persistSession, planModeInstructions,
+/// outputStyle, permissionMode, defaultMode=plan, ask-entry types,
+/// managedModels, deny non-array) are deliberately NOT mirrored here — the
+/// native validator is 7b, and this stub must not become a second golden for
+/// behavior the oracle never measured.
 struct RecordingSdkConfig {
     calls: Mutex<Vec<Value>>,
 }
@@ -624,18 +629,26 @@ async fn real_ts_admission_full_turn_scenarios() {
     // replacement claim outcomes, the compaction command (including the
     // timeout abort), trusted-context authorization, the plan rewrite, the
     // model-selection fold and the sdkSessionConfig validation window.
+    // fix-r2 P1: compact-compacted/compact-failed-error join the full turn so
+    // the router.compact result projection (usage merge, error code/message
+    // verbatim) runs on the real submitter, not only through route_input.
+    // fix-r2 sibling P2: the two remaining sdk-config shapes join too.
     for name in [
         "reconnect-fresh-turn",
         "replacement-claim-committed",
         "replacement-claim-conflict",
         "replacement-write-reservation",
         "compact-busy",
+        "compact-compacted",
+        "compact-failed-error",
         "compact-timeout-abort",
         "trusted-authorized",
         "plan-rewritten",
         "model-selection-normalized",
         "sdk-config-valid-wired",
         "sdk-config-invalid-wired",
+        "sdk-config-managed-invalid-wired",
+        "sdk-config-invalid-unwired",
     ] {
         let case = oracle["cases"]
             .as_array()
@@ -757,6 +770,10 @@ async fn replay_full_turn(case: &Value) {
             input[key.as_str()] = value.clone();
         }
     }
+    // fix-r2 P3: the runId is read from the merged case input, so a future
+    // oracle case that submits a different runId cannot silently keep a
+    // stale hard-coded key in the claim and registry assertions below.
+    let run_id = input["runId"].as_str().unwrap().to_string();
     let mut stream = submitter.submit(js(&input));
     let mut wires = Vec::new();
     while let Some(event) = stream.next().await.unwrap() {
@@ -818,11 +835,11 @@ async fn replay_full_turn(case: &Value) {
     // 'rx') keeps gating the session exactly as the TS releasePreflight
     // no-op leaves it.
     let expected_claim = match setup["pendingReplacement"].as_str() {
-        Some(pending) if pending != "r" => SubmitClaim::Conflict,
+        Some(pending) if pending != run_id => SubmitClaim::Conflict,
         _ => SubmitClaim::None,
     };
     assert_eq!(
-        replacement.claim_for_submit(&"s".into(), &"r".into()),
+        replacement.claim_for_submit(&"s".into(), &JsString::from(run_id.as_str())),
         expected_claim,
         "{name}: claim settled"
     );
@@ -835,24 +852,28 @@ async fn replay_full_turn(case: &Value) {
     let run = RunRef {
         session_key: "s".into(),
         project_key: Some("p".into()),
-        run_id: "r".into(),
+        run_id: JsString::from(run_id.as_str()),
     };
-    // Command turns (compact/plan usage) never reach run acceptance, so the
-    // oracle carries no durable expectations for them: the run stays absent.
-    let expected_events = case["registryEvents"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    assert_eq!(
-        reopened
-            .events(&run, None, None)
-            .unwrap()
-            .iter()
-            .map(json)
-            .collect::<Vec<_>>(),
-        expected_events,
-        "{name}: durable events"
-    );
+    // fix-r2 P2 (DeepSeek): a case without the registryEvents field pins its
+    // durable emptiness explicitly — an unwrap_or_default would silently
+    // absorb a future oracle that adds events for a command turn.
+    let durable: Vec<_> = reopened
+        .events(&run, None, None)
+        .unwrap()
+        .iter()
+        .map(json)
+        .collect();
+    match case.get("registryEvents") {
+        Some(expected) => assert_eq!(
+            durable,
+            expected.as_array().unwrap().clone(),
+            "{name}: durable events"
+        ),
+        None => assert!(
+            durable.is_empty(),
+            "{name}: the oracle carries no durable expectation, so the run must leave none"
+        ),
+    }
     let record = reopened.get(&run).unwrap();
     let record = record
         .map(|record| {
@@ -874,7 +895,9 @@ async fn absent_ports_reproduce_unwired_option_behavior() {
         replacement_coordinator(&RecordingStorage::default()),
     )));
     assert!(!admission.has_sdk_config());
-    assert!(admission.validate_sdk_config(&js(&json!({}))).is_ok());
+    // fix-r2 P3: calling validate without a wired port now trips a
+    // debug_assert (the submitter gates on has_sdk_config(), submit.rs:372);
+    // the unwired refusal surface is the set_sdk_config error below.
     let input = js(&json!({
         "sessionKey": "s", "projectKey": "p", "runId": "r", "message": "hello", "channelKey": "test",
         "sdkSessionConfig": {"taskBudget": {"total": 1}}
@@ -904,6 +927,20 @@ async fn absent_ports_reproduce_unwired_option_behavior() {
         .unwrap_err();
     assert_eq!(error.code, "CAPABILITY_UNAVAILABLE");
     assert_eq!(error.message, "sdk_session_config is unavailable.");
+}
+
+/// fix-r2 P3 (DeepSeek r1 P3-a): the None arm of `validate_sdk_config` is a
+/// caller-contract violation, not a silent pass — the submitter gates on
+/// `has_sdk_config()` (submit.rs:372-379) before validating, so reaching the
+/// arm trips the debug_assert instead of mirroring the unwired refusal.
+#[test]
+#[should_panic(expected = "validate_sdk_config called without a wired sdk port")]
+fn validate_without_a_wired_port_trips_the_caller_contract() {
+    let admission = GatewaySubmitAdmission::new(SubmitAdmissionOptions::new(
+        replacement_coordinator(&RecordingStorage::default()),
+    ));
+    assert!(!admission.has_sdk_config());
+    let _ = admission.validate_sdk_config(&js(&json!({"systemPrompt": "ok"})));
 }
 /// fix-r1 P1: a wired port owns the sdkSessionConfig validation in the
 /// preflight window (probe sdk-config-invalid-wired: the TS gateway rejects
@@ -988,6 +1025,67 @@ async fn compact_timer_dies_with_dropped_turn() {
     assert!(
         router.aborts.lock().unwrap()[0].reason().is_none(),
         "the dropped turn's timeout timer must not outlive it"
+    );
+}
+
+/// fix-r2 (opus r2 boundary #2): a finite timeoutMs above 2^31-1 is a 1 ms
+/// timer in Node (`setTimeout` clamps the delay and warns), not a u64::MAX
+/// saturation that never fires (probed on Node v22.22.0: 1e20 ms fired in
+/// 4.9 ms — see `_tmp/20261026-issue-747/fix-r2/probe-node-settimeout.mjs`).
+/// The overflow compaction must still abort with the `timeout:<runId>` reason.
+#[tokio::test]
+async fn compact_timeout_clamps_node_overflow_delay() {
+    struct HangingRouter {
+        aborts: Mutex<Vec<CompactionAbort>>,
+    }
+    impl SubmitCompactionRouter for HangingRouter {
+        fn compact<'a>(
+            &'a self,
+            _: &'a JsString,
+            _: &'a JsString,
+            abort: &'a CompactionAbort,
+        ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+            let abort = abort.clone();
+            self.aborts.lock().unwrap().push(abort.clone());
+            Box::pin(async move {
+                let _ = abort.aborted().await;
+                Ok(js(&json!({"type": "aborted", "usage": {}})))
+            })
+        }
+    }
+    let router = Arc::new(HangingRouter {
+        aborts: Mutex::default(),
+    });
+    let mut options =
+        SubmitAdmissionOptions::new(replacement_coordinator(&RecordingStorage::default()));
+    options.compaction = Some(router.clone());
+    let admission = GatewaySubmitAdmission::new(options);
+    let mut input = js(&json!({
+        "sessionKey": "s", "projectKey": "p", "runId": "r", "channelKey": "test",
+        "message": "/compact", "timeoutMs": 3_000_000_000.0
+    }));
+    // Without the clamp the timer would sit at 3e9 ms (about 35 days) and
+    // this deadline would kill the test instead.
+    let events = tokio::time::timeout(Duration::from_secs(2), admission.route_input(&mut input))
+        .await
+        .expect("an overflow timeoutMs must clamp to Node's 1 ms and fire")
+        .unwrap();
+    assert!(
+        router.aborts.lock().unwrap()[0]
+            .reason()
+            .expect("the clamped timer must have aborted the router")
+            .equals_str("timeout:r"),
+        "the overflow timeout keeps the timeout:<runId> reason"
+    );
+    assert_eq!(
+        json(&JsValue::Array(events)),
+        json!([
+            {"type": "agent_status", "runId": "r", "event": "manual_compaction",
+             "detail": {"outcome": "aborted", "turnId": "r"}},
+            {"type": "assistant_text_delta", "text": "Compaction cancelled."},
+            {"type": "turn_completed", "runId": "r", "usage": {}, "finishReason": "aborted_streaming"},
+        ]),
+        "the aborted compaction still projects its events"
     );
 }
 

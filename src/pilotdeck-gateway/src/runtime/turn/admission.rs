@@ -213,7 +213,13 @@ impl GatewaySubmitAdmission {
         };
         let timeout = field(input, "timeoutMs")
             .as_number()
-            .filter(|ms| ms.is_finite() && *ms > 0.0);
+            .filter(|ms| ms.is_finite() && *ms > 0.0)
+            // The single source of Node's `setTimeout` delay rule, including
+            // the overflow clamp to 1 ms (probed on Node v22.22.0: 1e20 and
+            // 3e9 ms both fire ~1 ms after a TimeoutOverflowWarning); the
+            // plain `f64 as u64` cast saturates to `u64::MAX` and the timer
+            // would never fire.
+            .map(pilotdeck_protocol::timer_delay_ms);
         let abort = CompactionAbort::default();
         // The guard keeps `finally { clearTimeout(timeoutHandle) }` true on
         // every exit: not only after the router settles, but also when this
@@ -225,7 +231,7 @@ impl GatewaySubmitAdmission {
             reason.extend_from_slice(run.units());
             let reason = JsString::from_utf16(reason);
             TimerGuard(Some(tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(ms as u64)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
                 abort.abort(reason);
             })))
         });
@@ -701,11 +707,19 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
         // InProcessGateway.ts:1027-1034: with the option wired, the config is
         // validated in the preflight window, before beginTurn and before the
         // set port runs (probe: a wired port plus an invalid config never
-        // reaches set). The submitter only asks after has_sdk_config(), so
-        // the None arm mirrors the unwired refusal it already emitted.
+        // reaches set). The submitter only asks after has_sdk_config()
+        // (submit.rs:372-379), so reaching the None arm means that ordering
+        // was broken; the refusal for an unwired port is the caller's.
         match self.options.sdk_config.as_ref() {
             Some(port) => port.validate(config),
-            None => Ok(()),
+            None => {
+                debug_assert!(
+                    false,
+                    "validate_sdk_config called without a wired sdk port; \
+                     callers must gate on has_sdk_config() first"
+                );
+                Ok(())
+            }
         }
     }
     fn set_sdk_config<'a>(
@@ -750,6 +764,9 @@ struct TimerGuard(Option<tokio::task::JoinHandle<()>>);
 impl Drop for TimerGuard {
     fn drop(&mut self) {
         if let Some(timer) = self.0.take() {
+            // `clearTimeout` counterpart: abort only schedules the cancel
+            // (DeepSeek r2 P3-e), so the sleep task may be polled once more,
+            // but it can no longer reach the abort write that matters.
             timer.abort();
         }
     }

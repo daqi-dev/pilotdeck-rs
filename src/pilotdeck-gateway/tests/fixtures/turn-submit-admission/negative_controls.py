@@ -11,8 +11,8 @@ Each mutation names the admission behavior it kills (admission.rs anchors,
 InProcessGateway.ts:764-1203 and createLocalGateway.ts:1413-1451 counterparts):
 reconnect stale-outcome gate, replacement claim/reservation preflight, compact
 and plan command routing and fixed copy, plan rewrite, model-selection fold,
-busy mapping, task-budget absent-port copy, compaction timeout reason, and the
-sdk config absent-port copy.
+busy mapping, task-budget absent-port copy, compaction timeout reason, the
+compaction overflow-delay clamp, and the sdk config absent-port copy.
 """
 import hashlib
 import os
@@ -33,10 +33,15 @@ def panic_evidence(log):
 
     libtest prints ``thread '<test>' panicked at``; only a panic from a test
     under ``runtime::turn::admission`` counts, so a mutant killed by another
-    module's assertion can never satisfy the anchor.
+    module's assertion can never satisfy the anchor. fix-r2 P3 (opus r2):
+    the prefix must be the module itself or a child, never a sibling module
+    that merely shares the name stem (``runtime::turn::admission_helper``).
     """
-    return any(segment.split("'", 1)[0].startswith('runtime::turn::admission')
-               for segment in log.split("thread '")[1:])
+    for segment in log.split("thread '")[1:]:
+        test = segment.split("'", 1)[0]
+        if test == 'runtime::turn::admission' or test.startswith('runtime::turn::admission::'):
+            return True
+    return False
 
 
 mutations = [
@@ -60,6 +65,10 @@ mutations = [
     ('sdk-validate-ignored', source, 'Some(port) => port.validate(config),', 'Some(_port) => Ok(()),'),
     # fix-r1: a turn dropped mid-compaction must cancel its timeout timer.
     ('compact-timer-orphan', source, 'if let Some(timer) = self.0.take() {\n            timer.abort();\n        }', 'if let Some(timer) = self.0.take() {\n            let _ = timer;\n        }'),
+    # fix-r2 (opus r2 boundary #2): a finite timeoutMs above 2^31-1 must clamp
+    # to Node's 1 ms setTimeout behavior, not saturate into a never-firing
+    # timer (killed by compact_timeout_clamps_node_overflow_delay).
+    ('compact-clamp-removed', source, '.map(pilotdeck_protocol::timer_delay_ms);', '.map(|ms| ms as u64);'),
     # fix-r1: the raw connectionId mismatch gate must treat a differently
     # bound id as stale, not as a validation candidate.
     ('reconnect-mismatch', source, '!matches!(binding.get("connectionId"),', 'matches!(binding.get("connectionId"),'),
