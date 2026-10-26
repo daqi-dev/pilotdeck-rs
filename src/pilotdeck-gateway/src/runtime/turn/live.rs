@@ -49,6 +49,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant, sleep_until};
 
+type StatusReceipt = Option<oneshot::Sender<()>>;
+type ForwardedEvent = (JsValue, bool, StatusReceipt);
+
 type TurnHost = (
     HostFuture<HostClient>,
     Arc<dyn HostHandler>,
@@ -211,6 +214,7 @@ impl LiveSession for LiveSessionAdapter {
         // Keep at most one delivered event ahead of the submit consumer.
         let (events, receiver) = mpsc::channel(1);
         Ok(Box::new(LiveTurnStream {
+            callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
                 let (client, inner, lease, manifest) = tokio::select! {
                     biased;
@@ -240,6 +244,7 @@ impl LiveSession for LiveSessionAdapter {
                     events,
                     integrity: hook_integrity,
                     forwarding: Arc::default(),
+                    callback_cancel: Some(cancellation.clone()),
                 });
                 // No connection or execute can start until both durable gates commit.
                 if execute_wait.await.is_err() {
@@ -304,7 +309,8 @@ struct LiveTurnStream {
     // lets HostClient clean up its child and outstanding callbacks.
     execution: Option<HostFuture<ExecuteResult>>,
     result: Option<Result<ExecuteResult, HostError>>,
-    events: mpsc::Receiver<JsValue>,
+    // The sidecar status callback applies only to wire events, not host drains.
+    events: mpsc::Receiver<ForwardedEvent>,
     identity: ExecutionIdentity,
     input: TurnInput,
     // The instance the host-side receive hook observes into. finish() also
@@ -319,7 +325,8 @@ struct LiveTurnStream {
     recording_ready: oneshot::Receiver<Recording>,
     recording: Option<Recording>,
     // A cancelled next drops only its borrow, never the transition or payload.
-    pending_event: Option<(JsValue, bool)>,
+    pending_event: Option<(JsValue, bool, StatusReceipt)>,
+    callback_cancel: Option<Cancellation>,
     accepted: bool,
     preflight: u8,
     execute_ready: Option<oneshot::Sender<()>>,
@@ -331,7 +338,32 @@ impl LiveTurn for LiveTurnStream {
         Box::pin(async move {
             loop {
                 if self.pending_event.is_some() {
-                    return self.settle_recording().await;
+                    if let Some(event) = self.settle_recording().await? {
+                        return Ok(Some(event));
+                    }
+                    continue;
+                }
+                if let Some(error) = self.recording.as_ref().and_then(Recording::callback_error) {
+                    // A callback rejection ends the loop, including host drains.
+                    // No queued successor may escape while execute joins cleanup.
+                    if let Some(cancel) = &self.callback_cancel {
+                        cancel.cancel(None);
+                    }
+                    self.events.close();
+                    while self.events.try_recv().is_ok() {}
+                    if let Some(execution) = self.execution.as_mut() {
+                        let _ = execution.await;
+                    }
+                    self.execution = None;
+                    self.result = None;
+                    self.recording.as_mut().unwrap().take_callback_error();
+                    let failure = crate::metadata::object([
+                        ("code", "agent_invalid_state".into()),
+                        ("message", error.as_str().into()),
+                    ]);
+                    return self
+                        .begin_recording(RecordingAction::Fail(failure), JsValue::Null, true, None)
+                        .await;
                 }
                 if let Some(event) = self.recorded.pop_front() {
                     return self.deliver_recorded(event);
@@ -348,7 +380,7 @@ impl LiveTurn for LiveTurnStream {
                         };
                         self.preflight += 1;
                         let event = crate::metadata::object([("type", kind.into())]);
-                        return self.begin_recording(action, event, false).await;
+                        return self.begin_recording(action, event, false, None).await;
                     }
                     let _ = self.execute_ready.take().unwrap().send(());
                 }
@@ -367,7 +399,7 @@ impl LiveTurn for LiveTurnStream {
                 if delivered.is_none() {
                     delivered = self.events.try_recv().ok();
                 }
-                if let Some(event) = delivered {
+                if let Some((event, wire, receipt)) = delivered {
                     // The host already emitted these two committed lifecycle events.
                     // Wire validation still checks the sidecar's complete sequence.
                     if self.preflight == 2
@@ -376,11 +408,19 @@ impl LiveTurn for LiveTurnStream {
                         self.delivered.observe_event(&event)?;
                         continue;
                     }
-                    return self.record_event(event, false).await;
+                    // TurnRunner ignores loop artifact snapshots; its collector owns final artifacts.
+                    if event.get("type") == Some(&"file_artifacts".into()) {
+                        self.delivered.observe_event(&event)?;
+                        continue;
+                    }
+                    if let Some(event) = self.record_event(event, false, wire, receipt).await? {
+                        return Ok(Some(event));
+                    }
+                    continue;
                 }
                 return match self.result.take() {
                     Some(result) => match self.finish(result) {
-                        Ok(Some(event)) => self.record_event(event, true).await,
+                        Ok(Some(event)) => self.record_event(event, true, false, None).await,
                         Err(error) if self.accepted => {
                             let failure = crate::metadata::object([
                                 ("code", "agent_invalid_state".into()),
@@ -390,6 +430,7 @@ impl LiveTurn for LiveTurnStream {
                                 RecordingAction::Fail(failure),
                                 JsValue::Null,
                                 true,
+                                None,
                             )
                             .await
                         }
@@ -422,6 +463,8 @@ impl LiveTurnStream {
         &mut self,
         event: JsValue,
         terminal: bool,
+        wire: bool,
+        receipt: StatusReceipt,
     ) -> Result<Option<JsValue>, RuntimeError> {
         if let Ok(recording) = self.recording_ready.try_recv() {
             self.recording = Some(recording);
@@ -431,6 +474,12 @@ impl LiveTurnStream {
             Some(kind) if kind.equals_str("input_accepted") => {
                 Some(RecordingAction::Accept(self.input.clone()))
             }
+            Some(kind) if kind.equals_str("turn_failed") => Some(RecordingAction::LoopFailed(
+                event.get("error").cloned().unwrap_or(JsValue::Undefined),
+            )),
+            Some(kind) if wire && kind.equals_str("agent_status") => {
+                Some(RecordingAction::Status(event.clone()))
+            }
             // Pre-cancel without a runner retains the existing abort contract.
             _ if terminal && self.accepted => Some(RecordingAction::Complete(
                 event.get("result").cloned().unwrap_or(JsValue::Undefined),
@@ -438,7 +487,10 @@ impl LiveTurnStream {
             _ => None,
         };
         if let (true, Some(action)) = (self.recording.is_some(), action) {
-            return self.begin_recording(action, event, terminal).await;
+            return self.begin_recording(action, event, terminal, receipt).await;
+        }
+        if let Some(receipt) = receipt {
+            let _ = receipt.send(());
         }
         if terminal {
             self.release();
@@ -453,6 +505,7 @@ impl LiveTurnStream {
         action: RecordingAction,
         event: JsValue,
         terminal: bool,
+        receipt: StatusReceipt,
     ) -> Result<Option<JsValue>, RuntimeError> {
         if let Err(error) = self
             .recording
@@ -463,7 +516,7 @@ impl LiveTurnStream {
             self.release();
             return Err(RuntimeError::new(error.to_string()));
         }
-        self.pending_event = Some((event, terminal));
+        self.pending_event = Some((event, terminal, receipt));
         self.settle_recording().await
     }
 
@@ -474,14 +527,29 @@ impl LiveTurnStream {
             .expect("pending event owns recording")
             .settle()
             .await;
-        let (event, terminal) = self.pending_event.take().expect("pending event");
-        let events = match outcome {
+        let (event, terminal, receipt) = self.pending_event.take().expect("pending event");
+        let mut events = match outcome {
             Ok(events) => events,
             Err(error) => {
                 self.release();
                 return Err(RuntimeError::new(error.to_string()));
             }
         };
+        if self.recording.as_ref().unwrap().callback_error().is_some() {
+            return Ok(None);
+        }
+        if let Some(receipt) = receipt {
+            let _ = receipt.send(());
+        }
+        if event.get("type") == Some(&"turn_failed".into()) {
+            // Preserve the loop event (including timeline/extensions), while the
+            // runner contributes only its optional durable failure status.
+            self.delivered.observe_event(&event)?;
+            *events.last_mut().expect("loop failure") = event;
+            self.recorded.extend(events);
+            let event = self.recorded.pop_front().expect("loop failure");
+            return self.deliver_recorded(event);
+        }
         // Completion fallback is itself a committed failure. Publish the runner's
         // result, never the original success whose persistence failed.
         if self.execute_ready.is_some() || events.len() != 1 || event == JsValue::Null {
@@ -639,9 +707,11 @@ impl LiveTurnStream {
 /// rejection fails the receive path before application and ACK.
 struct StreamHandler {
     inner: Arc<dyn HostHandler>,
-    events: mpsc::Sender<JsValue>,
+    events: mpsc::Sender<ForwardedEvent>,
     integrity: Arc<StreamIntegrity>,
     forwarding: Arc<Mutex<Forwarding>>,
+    // Embedded pump probes may omit execution cancellation; production binds it.
+    callback_cancel: Option<Cancellation>,
 }
 
 /// A cancelled slot hands its unfinished predecessor to its successor, even
@@ -910,7 +980,14 @@ impl StreamHandler {
                     self.forwarding.lock().unwrap().activity = Some(Instant::now());
                     if let Err(error) = self.forward(Box::pin(async { Ok(()) }), None, Some(delivery), false, true).await { break error; }
                 }
-            } => Err(error),
+            } => {
+                if let Some(cancel) = &self.callback_cancel {
+                    cancel.cancel(None);
+                    // Unlike dropping execute, awaiting it joins child/handler cleanup.
+                    let _ = execution.await;
+                }
+                Err(error)
+            },
         }
     }
 
@@ -967,24 +1044,49 @@ impl StreamHandler {
         let events = self.events.clone();
         let integrity = self.integrity.clone();
         let forwarding = self.forwarding.clone();
+        let record_status = self.callback_cancel.is_some();
         Box::pin(async move {
             let buffered = buffered?;
             let sending = async move {
                 delivery.wait().await;
                 let buffered = forwarding.lock().unwrap().project_host(buffered, heartbeat);
-                for event in buffered.into_iter().map(JsValue::Object).chain(payload) {
+                for (event, wire) in buffered
+                    .into_iter()
+                    .map(|e| (JsValue::Object(e), false))
+                    .chain(payload.map(|e| (e, true)))
+                {
                     let permit = events.reserve().await.map_err(|_| {
                         HostError::new(HostErrorKind::Callback, "LiveTurn event receiver closed.")
                     })?;
                     // A callback may have passed validation before a later host
                     // drain failed, then waited for ordering or channel capacity.
                     // Check and send atomically with respect to recording failure.
-                    let error = integrity.host_error.lock().unwrap();
-                    if let Some(error) = error.as_ref() {
-                        return Err(HostError::new(HostErrorKind::Protocol, error));
+                    // TS awaits the status callback before yield/ACK. Keep its
+                    // receipt in LiveTurn across cancelled next() borrows.
+                    let (receipt, recorded) = if record_status
+                        && wire
+                        && event.get("type") == Some(&"agent_status".into())
+                    {
+                        let (send, receive) = oneshot::channel();
+                        (Some(send), Some(receive))
+                    } else {
+                        (None, None)
+                    };
+                    {
+                        let error = integrity.host_error.lock().unwrap();
+                        if let Some(error) = error.as_ref() {
+                            return Err(HostError::new(HostErrorKind::Protocol, error));
+                        }
+                        permit.send((event, wire, receipt));
                     }
-                    permit.send(event);
-                    drop(error);
+                    if let Some(recorded) = recorded {
+                        recorded.await.map_err(|_| {
+                            HostError::new(
+                                HostErrorKind::Callback,
+                                "LiveTurn status callback rejected.",
+                            )
+                        })?;
+                    }
                     if !module {
                         forwarding.lock().unwrap().activity = Some(Instant::now());
                     }

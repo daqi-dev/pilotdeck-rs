@@ -130,7 +130,7 @@ fn wire(payload: &JsValue, final_event: bool) -> JsValue {
 
 fn stream(
     execution: HostFuture<ExecuteResult>,
-    events: mpsc::Receiver<JsValue>,
+    events: mpsc::Receiver<ForwardedEvent>,
     integrity: Arc<StreamIntegrity>,
 ) -> LiveTurnStream {
     // Directly-built streams bypass the host receive path, so nothing has
@@ -153,6 +153,7 @@ fn stream(
         recording_ready: oneshot::channel().1,
         recording: None,
         pending_event: None,
+        callback_cancel: None,
         accepted: false,
         preflight: 0,
         execute_ready: None,
@@ -341,6 +342,7 @@ async fn next_streams_payloads_with_backpressure_and_projects_final_once() {
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
         forwarding: Arc::default(),
+        callback_cancel: None,
     });
     let integrity = handler.integrity.clone();
     let sent = expected.clone();
@@ -380,7 +382,7 @@ async fn event_queued_in_the_completing_poll_precedes_execution_error() {
     let sent = event.clone();
     let mut turn = stream(
         Box::pin(async move {
-            tx.send(sent).await.unwrap();
+            tx.send((sent, true, None)).await.unwrap();
             Err(HostError::new(HostErrorKind::Disconnected, "lost peer"))
         }),
         rx,
@@ -408,6 +410,7 @@ async fn failed_handler_event_is_not_published() {
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
         forwarding: Arc::default(),
+        callback_cancel: None,
     });
     let integrity = handler.integrity.clone();
     let mut turn = stream(
@@ -492,6 +495,7 @@ async fn event_after_the_authoritative_terminal_fails_closed() {
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
         forwarding: Arc::default(),
+        callback_cancel: None,
     });
     let integrity = handler.integrity.clone();
     let mut turn = stream(
@@ -717,6 +721,7 @@ async fn host_second_turn_failed_from_finalization_failure_is_accepted() {
     for event_type in [
         "turn_started",
         "input_accepted",
+        "agent_status",
         "turn_failed",
         "turn_failed",
     ] {
@@ -1063,6 +1068,7 @@ async fn slow_consumer_still_receives_a_ready_error_terminal() {
             "turn_started",
             "input_accepted",
             "model_event",
+            "agent_status",
             "turn_failed",
             "turn_completed"
         ]
@@ -1192,7 +1198,12 @@ async fn success_after_observed_turn_failed_is_rejected_even_with_cancel() {
     let handler = Arc::new(Handler::default());
     let session = session("live-failed-then-success", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    for event_type in ["turn_started", "input_accepted", "turn_failed"] {
+    for event_type in [
+        "turn_started",
+        "input_accepted",
+        "agent_status",
+        "turn_failed",
+    ] {
         assert_eq!(
             next(turn.as_mut()).await.unwrap().unwrap().get("type"),
             Some(&event_type.into()),
@@ -1217,7 +1228,12 @@ async fn max_turns_after_observed_turn_failed_is_rejected_even_with_cancel() {
     let handler = Arc::new(Handler::default());
     let session = session("live-failed-then-max-turns", handler.clone()).await;
     let mut turn = session.submit(input(), options()).unwrap();
-    for event_type in ["turn_started", "input_accepted", "turn_failed"] {
+    for event_type in [
+        "turn_started",
+        "input_accepted",
+        "agent_status",
+        "turn_failed",
+    ] {
         assert_eq!(
             next(turn.as_mut()).await.unwrap().unwrap().get("type"),
             Some(&event_type.into()),
@@ -1247,6 +1263,7 @@ async fn events_after_a_violation_settle_to_none_even_when_buffered() {
         events: tx,
         integrity: Arc::new(StreamIntegrity::new()),
         forwarding: Arc::default(),
+        callback_cancel: None,
     });
     let integrity = handler.integrity.clone();
     let mut turn = stream(
@@ -1708,7 +1725,11 @@ fn queue_host_events(inner: &Handler, events: &[JsValue]) {
 
 fn buffered_handler(
     capacity: usize,
-) -> (Arc<Handler>, Arc<StreamHandler>, mpsc::Receiver<JsValue>) {
+) -> (
+    Arc<Handler>,
+    Arc<StreamHandler>,
+    mpsc::Receiver<ForwardedEvent>,
+) {
     let inner = Arc::new(Handler::default());
     let (events, receiver) = mpsc::channel(capacity);
     let handler = Arc::new(StreamHandler {
@@ -1716,6 +1737,7 @@ fn buffered_handler(
         events,
         integrity: Arc::new(StreamIntegrity::new()),
         forwarding: Arc::default(),
+        callback_cancel: None,
     });
     (inner, handler, receiver)
 }
@@ -1890,7 +1912,7 @@ async fn host_buffer_batches_wait_for_reserved_wire_order() {
     ]
     .concat();
     for event in expected {
-        assert_eq!(rx.try_recv().unwrap(), event);
+        assert_eq!(rx.try_recv().unwrap().0, event);
     }
     assert!(matches!(
         rx.try_recv(),
@@ -1927,7 +1949,7 @@ async fn host_error_cuts_off_prevalidated_and_backpressured_deliveries() {
                 .unwrap()
                 .is_err()
         );
-        assert_eq!(rx.try_recv().unwrap(), started); // earlier applied prefix survives
+        assert_eq!(rx.try_recv().unwrap().0, started); // earlier applied prefix survives
         let future = pending
             .take()
             .unwrap_or_else(|| handler.event(wire(&accepted, false)));
@@ -2033,6 +2055,7 @@ async fn final_event_payload_shape_is_left_to_inner_handler() {
         events,
         integrity: Arc::new(StreamIntegrity::new()),
         forwarding: Arc::default(),
+        callback_cancel: None,
     };
     let error = handler
         .event(parse_json(r#"{"final":true}"#).unwrap())
@@ -2059,7 +2082,7 @@ async fn non_final_event_object_payload_is_applied_and_forwarded() {
             let event = JsValue::Object(event);
             handler.event(event.clone()).await.unwrap();
             assert_eq!(*inner.events.lock().unwrap(), vec![event]);
-            assert_eq!(receiver.try_recv().unwrap(), payload);
+            assert_eq!(receiver.try_recv().unwrap().0, payload);
             assert!(matches!(
                 receiver.try_recv(),
                 Err(mpsc::error::TryRecvError::Empty)
@@ -2080,6 +2103,7 @@ async fn aborted_execution_releases_validated_wire_reservations() {
         events,
         integrity: Arc::new(StreamIntegrity::new()),
         forwarding: Arc::default(),
+        callback_cancel: None,
     });
     let client = spawn_client("live-normal").await.unwrap();
     let final_received = client.final_received();
@@ -2104,7 +2128,7 @@ async fn aborted_execution_releases_validated_wire_reservations() {
     assert_eq!(reserved, 3);
     assert_eq!(inner.events.lock().unwrap().len(), 2); // input_accepted is pending
     assert_eq!(
-        rx.try_recv().unwrap().get("type"),
+        rx.try_recv().unwrap().0.get("type"),
         Some(&"turn_started".into())
     );
     // Construct a real host-buffered callback behind the queued wire slots.
@@ -2118,10 +2142,10 @@ async fn aborted_execution_releases_validated_wire_reservations() {
         .expect("discarded wire reservations must not strand a later module callback")
         .unwrap();
     assert!(handler.forwarding.lock().unwrap().wire.is_empty());
-    assert_eq!(rx.try_recv().unwrap(), module_event);
+    assert_eq!(rx.try_recv().unwrap().0, module_event);
     let later = host_event("after_aborted_wire");
     deliver(&handler, &later, false).await.unwrap();
-    assert_eq!(rx.try_recv().unwrap(), later);
+    assert_eq!(rx.try_recv().unwrap().0, later);
     timeout(
         FINAL_SYNC_TIMEOUT,
         handler.event(wire(&JsValue::Null, true)),
@@ -2166,12 +2190,12 @@ async fn discarded_middle_wire_reservation_preserves_delivery_order() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(rx.try_recv().unwrap(), first);
+        assert_eq!(rx.try_recv().unwrap().0, first);
         timeout(FINAL_SYNC_TIMEOUT, last_call)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(rx.try_recv().unwrap(), last);
+        assert_eq!(rx.try_recv().unwrap().0, last);
         assert!(matches!(
             rx.try_recv(),
             Err(mpsc::error::TryRecvError::Empty)
@@ -2203,12 +2227,12 @@ async fn discarded_middle_wire_reservation_preserves_pending_module_order() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(rx.try_recv().unwrap(), first);
+    assert_eq!(rx.try_recv().unwrap().0, first);
     timeout(FINAL_SYNC_TIMEOUT, last_call)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(rx.try_recv().unwrap(), last);
+    assert_eq!(rx.try_recv().unwrap().0, last);
     assert!(matches!(
         rx.try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
@@ -2238,12 +2262,12 @@ async fn discarded_middle_wire_reservation_keeps_predecessor_when_successor_is_c
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(rx.try_recv().unwrap(), first);
+    assert_eq!(rx.try_recv().unwrap().0, first);
     timeout(FINAL_SYNC_TIMEOUT, last_call)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(rx.try_recv().unwrap(), last);
+    assert_eq!(rx.try_recv().unwrap().0, last);
     assert!(matches!(
         rx.try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
@@ -2281,7 +2305,7 @@ async fn discarded_event_guards_release_only_their_own_reservation() {
     drop(first);
     timeout(FINAL_SYNC_TIMEOUT, module).await.unwrap().unwrap();
     assert!(handler.forwarding.lock().unwrap().wire.is_empty());
-    assert_eq!(rx.try_recv().unwrap(), host_event("after_discard"));
+    assert_eq!(rx.try_recv().unwrap().0, host_event("after_discard"));
     // A callback constructed but never polled must release its transferred slot.
     let guard = handler.validate_event(&host_event("model_event")).unwrap();
     let callback = handler.event(wire(&host_event("model_event"), false));
@@ -2364,7 +2388,7 @@ async fn embedded_final_uses_js_truthiness() {
         } else {
             assert_eq!(recorded, vec![event]);
         }
-        assert_eq!(rx.try_recv().unwrap(), payload);
+        assert_eq!(rx.try_recv().unwrap().0, payload);
     }
 }
 
@@ -3409,9 +3433,12 @@ async fn sidecar_payload_embedded_reader_matches_ts() {
             assert!(rx.try_recv().is_err());
         } else {
             assert_eq!(inner.events.lock().unwrap().len(), 1);
-            assert_eq!(rx.try_recv().unwrap(), *case.get("value").unwrap());
+            assert_eq!(rx.try_recv().unwrap().0, *case.get("value").unwrap());
         }
         assert!(handler.forwarding.lock().unwrap().wire.is_empty());
     }
     assert_eq!(replayed, 12);
 }
+
+#[path = "forward_tests.rs"]
+mod forwarding;

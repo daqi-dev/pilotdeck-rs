@@ -50,6 +50,7 @@ pub struct TurnRunner {
     phase: Phase,
     messages: Vec<JsValue>,
     failure_status: bool,
+    callback_error: Option<String>,
 }
 pub type Transition = RecorderResult<(TurnRunner, Vec<JsValue>)>;
 
@@ -70,6 +71,7 @@ impl TurnRunner {
             phase: Phase::New,
             messages: vec![],
             failure_status: false,
+            callback_error: None,
         }
     }
     pub fn messages(&self) -> &[JsValue] {
@@ -180,11 +182,69 @@ impl TurnRunner {
         self.require(Phase::Accepted)?;
         let mut events = vec![];
         if !self.failure_status {
+            if matches!(error, JsValue::Null | JsValue::Undefined) {
+                let value = if error == JsValue::Null {
+                    "null"
+                } else {
+                    "undefined"
+                };
+                self.callback_error = Some(format!(
+                    "Cannot read properties of {value} (reading 'message')"
+                ));
+                return Ok((self, events));
+            }
             events.push(self.status(&error).await);
             self.failure_status = true;
         }
         events.push(self.event("turn_failed", [("error", error)]));
         Ok((self, events))
+    }
+    /// Sidecar wire callback (host-buffer statuses deliberately do not call it).
+    pub async fn loop_status(mut self, event: JsValue) -> Transition {
+        self.require(Phase::Accepted)?;
+        let present = |v: Option<&JsValue>| {
+            v.filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
+                .cloned()
+        };
+        let name = event.get("event").cloned().unwrap_or(JsValue::Undefined);
+        let detail = event.get("detail");
+        let failure = detail.and_then(|d| d.get("severity")) == Some(&"error".into())
+            || [
+                "max_budget_reached",
+                "task_budget_reached",
+                "model_request_failed",
+                "tool_call_recovery_exhausted",
+                "max_turns_reached",
+                "max_output_recovery_exhausted",
+                "empty_response",
+                "content_filter",
+                "unknown_finish_reason",
+            ]
+            .iter()
+            .any(|v| name == (*v).into());
+        let kind = present(event.get("kind"))
+            .unwrap_or_else(|| if failure { "error" } else { "status" }.into());
+        // TS sets this before the awaited write, irrespective of detail.visible.
+        self.failure_status |= kind == "error".into() && name != "turn_failed".into();
+        let text = present(event.get("text")).unwrap_or_else(|| {
+            detail
+                .and_then(|d| d.get("message"))
+                .filter(|v| matches!(v, JsValue::String(_)))
+                .cloned()
+                .unwrap_or_else(|| name.clone())
+        });
+        let mut status = object([("event", name), ("kind", kind), ("text", text)]);
+        if let (Some(detail), JsValue::Object(status)) = (detail, &mut status) {
+            status.insert("detail".into(), detail.clone());
+        }
+        if let Err(error) = self
+            .io(move |r, s, t| Ok(r.writer().record_agent_status_message(s, t, &status)?))
+            .await
+        {
+            self.callback_error = Some(error.to_string());
+            return Ok((self, vec![]));
+        }
+        Ok((self, vec![event]))
     }
     pub async fn complete(mut self, result: JsValue) -> Transition {
         self.require(Phase::Accepted)?;
