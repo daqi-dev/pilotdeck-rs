@@ -172,29 +172,46 @@ def wait_exit_unreaped(pid, timeout):
 
 
 _PROC_LIBRARY = None
+_PROC_BUFFER_SLACK = 4096
+_PROC_PGRP_ONLY = 2  # <sys/proc_info.h>; typeinfo is the process group id
+_CENSUS_ATTEMPTS = 3
 
 
-def _darwin_pids():
-    """All pids from libproc, without spawning ``ps``. ``None`` if unavailable."""
+def _darwin_group_pids(pgid, library=None):
+    """Exact pids in *pgid* from libproc's ``PROC_PGRP_ONLY``.
+
+    A single kernel call returns the group's current members (including an
+    unreaped zombie leader), so there is no "global pid snapshot then per-pid
+    getpgid" window in which a member can fork a descendant and exit unseen.
+    ``proc_listpids`` copies min(capacity, members) and returns the bytes
+    copied: a returned count equal to the capacity is truncation, not a
+    complete census.  Allocate slack, accept only a strictly short, 4-byte
+    aligned write, and grow while the buffer is full.  ``None`` means the
+    group could not be enumerated completely.  ``library`` is a test seam.
+    """
     global _PROC_LIBRARY
     try:
-        if _PROC_LIBRARY is None:
-            _PROC_LIBRARY = ctypes.CDLL(ctypes.util.find_library('proc') or 'libproc.dylib',
-                                        use_errno=True)
-            _PROC_LIBRARY.proc_listpids.restype = ctypes.c_int
-            _PROC_LIBRARY.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32,
-                                                    ctypes.c_void_p, ctypes.c_int]
-        library = _PROC_LIBRARY
-        needed = library.proc_listpids(1, 0, None, 0)  # PROC_ALL_PIDS
+        if library is None:
+            if _PROC_LIBRARY is None:
+                _PROC_LIBRARY = ctypes.CDLL(ctypes.util.find_library('proc') or 'libproc.dylib',
+                                            use_errno=True)
+                _PROC_LIBRARY.proc_listpids.restype = ctypes.c_int
+                _PROC_LIBRARY.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32,
+                                                        ctypes.c_void_p, ctypes.c_int]
+            library = _PROC_LIBRARY
+        needed = library.proc_listpids(_PROC_PGRP_ONLY, pgid, None, 0)
         if needed <= 0:
             return None
-        for _ in range(3):
-            buffer = (ctypes.c_uint32 * max(needed // 4, 1))()
-            written = library.proc_listpids(1, 0, buffer, needed)
-            if 0 < written <= needed:
-                return [pid for pid in buffer[:written // 4] if pid]
+        for _ in range(4):
+            capacity = needed + _PROC_BUFFER_SLACK
+            buffer = (ctypes.c_uint32 * ((capacity + 3) // 4))()
+            written = library.proc_listpids(_PROC_PGRP_ONLY, pgid, buffer, capacity)
             if written <= 0:
                 return None
+            if written < capacity and written % 4 == 0:
+                return {pid for pid in buffer[:written // 4] if pid}
+            # A full buffer is truncated (or the count is malformed): grow and
+            # retry, never return a partial group.
             needed = written
     except (OSError, AttributeError, ValueError):
         return None
@@ -208,23 +225,15 @@ def _proc_pids():
         return None
 
 
-def live_group_members(pgid):
-    """Live (non-zombie) pids in *pgid*, independently of ps and signal permission.
+def _linux_group_members(pgid):
+    """Linux fallback: per-pid ``getpgid`` census; any unknown pid is fatal.
 
-    ``killpg(pgid, 0)`` returning EPERM only proves "no member this process may
-    signal": XNU filters the unreaped zombie in the group path, and a live
-    descendant with different credentials is denied too.  ``getpgid(pid)``
-    answers for every live pid regardless of owner, and an exited-unreaped pid
-    is already gone from it (measured 2026-10-26), so a full pid scan gives a
-    permission-independent census.  ``None`` means the census could not be
-    taken; callers must fail closed instead of guessing "empty".
+    Linux never reaches this census for a zombie-only group (a zombie is
+    signalable there, so ``killpg(pgid, 0)`` succeeds and the caller fails
+    closed before the census).  It is kept permission-independent and strict
+    for completeness; an ESRCH mid-scan returns ``None``.
     """
-    if sys.platform == 'darwin':
-        pids = _darwin_pids()
-    elif Path('/proc').is_dir():
-        pids = _proc_pids()
-    else:
-        return None
+    pids = _proc_pids()
     if pids is None:
         return None
     members = set()
@@ -233,16 +242,125 @@ def live_group_members(pgid):
         if pid == own:
             continue
         try:
-            if os.getpgid(pid) == pgid:
-                members.add(pid)
+            group = os.getpgid(pid)
         except ProcessLookupError:
-            continue  # exited between the scan and the query
+            return None
         except OSError:
             return None
+        if group == pgid:
+            members.add(pid)
     return members
 
 
-def group_probe_state(pgid, leader_pid):
+def _group_snapshot(pgid):
+    if sys.platform == 'darwin':
+        return _darwin_group_pids(pgid)
+    if Path('/proc').is_dir():
+        return _linux_group_members(pgid)
+    return None
+
+
+def live_group_members(pgid):
+    """Live (and unreaped) pids in *pgid*, independently of ps/signal permission.
+
+    ``killpg(pgid, 0)`` returning EPERM only proves "no member this process may
+    signal": XNU filters the unreaped zombie in the group path, and a live
+    descendant with different credentials is denied too.  On macOS the group is
+    enumerated directly with ``PROC_PGRP_ONLY``; two consecutive complete
+    snapshots must agree, otherwise a member appeared/disappeared while the
+    census was taken and the result is unproven.  Truncation, enumeration
+    failure, and a changing group all return ``None``; callers must fail closed
+    instead of guessing "empty".
+    """
+    for _ in range(_CENSUS_ATTEMPTS):
+        first = _group_snapshot(pgid)
+        if first is None:
+            continue
+        second = _group_snapshot(pgid)
+        if second is None:
+            continue
+        if first != second:
+            # Membership changed between complete snapshots: a descendant may
+            # exist that neither snapshot can vouch for.
+            continue
+        return second
+    return None
+
+
+class HeldProcessGroup:
+    """The only entry allowed to signal this run's process group.
+
+    It holds the direct child and refuses every actual signal unless
+    ``waitid(WNOWAIT)`` proves the leader is still ours: ``RUNNING`` (live,
+    unreaped direct child) or ``EXITED`` (zombie, pid/pgid still reserved).
+    ``REAPED``/``UNSUPPORTED`` means the pid/pgid may already name another
+    process group, so the request is refused and the caller records
+    NOT_VERIFIED/BLOCKED rather than VERIFIED.  Signal-0 observations are
+    exposed as ``observe``/``probe_*`` and never claim ownership.
+    """
+
+    def __init__(self, child):
+        self.child = child
+        self.pid = child.pid
+
+    def _state(self):
+        return wait_exit_unreaped(self.pid, 0)
+
+    def _signal(self, sig, *, group, states):
+        state = self._state()
+        if state not in states:
+            return 'refused', state
+        try:
+            if group:
+                os.killpg(self.pid, sig)
+            else:
+                os.kill(self.pid, sig)
+        except ProcessLookupError:
+            return 'missing', state
+        except PermissionError as error:
+            return 'denied', str(error)
+        except OSError as error:
+            return 'error', f'{type(error).__name__}: {error}'
+        return ('alive' if sig == 0 else 'sent'), state
+
+    def send(self, sig):
+        """Deliver *sig* to the held group. ``sig`` must be a real signal."""
+        if sig == 0:
+            raise ValueError('use probe_group() for signal 0')
+        return self._signal(sig, group=True, states=('RUNNING', 'EXITED'))
+
+    def probe_group(self):
+        return self._signal(0, group=True, states=('RUNNING', 'EXITED'))
+
+    def probe_leader(self):
+        return self._signal(0, group=False, states=('RUNNING', 'EXITED'))
+
+    def kill_leader(self, sig):
+        return self._signal(sig, group=False, states=('RUNNING',))
+
+    @classmethod
+    def observe(cls, pgid):
+        """Signal-0 observation of a bare group; never delivers a signal."""
+        try:
+            os.killpg(pgid, 0)
+            return 'alive'
+        except ProcessLookupError:
+            return 'empty'
+        except OSError:
+            return 'blocked'
+
+    @classmethod
+    def observe_pid(cls, pid):
+        try:
+            os.kill(pid, 0)
+            return 'alive'
+        except ProcessLookupError:
+            return 'missing'
+        except OSError:
+            return 'blocked'
+
+
+def group_probe_state(held):
     """State of our group while its leader is an unreaped zombie.
 
     macOS returns EPERM to ``killpg(pgid, 0)`` when the only signalable member
@@ -251,28 +369,33 @@ def group_probe_state(pgid, leader_pid):
     proof of emptiness: a live descendant we may not signal also yields EPERM.
     Only an independent member census that finds nothing besides this run's
     unreaped leader may be reported as ``empty``.  A census that cannot be
-    taken, or a denied leader probe, is ``blocked`` and gets no signal.
+    completed (ESRCH race, truncation, enumeration failure), a changing census,
+    or a denied leader probe is ``blocked`` and gets no signal.
     """
-    try:
-        os.killpg(pgid, 0)
-        return 'alive', None
-    except ProcessLookupError:
+    outcome, detail = held.probe_group()
+    if outcome == 'refused':
+        return 'blocked', f'group probe refused: leader state {detail}'
+    if outcome == 'missing':
         return 'empty', 'killpg0=ESRCH'
-    except PermissionError as error:
-        live = live_group_members(pgid)
-        if live is None:
-            return 'blocked', f'killpg0=EPERM; independent group census unavailable: {error}'
-        live.discard(leader_pid)
-        try:
-            os.kill(leader_pid, 0)
-        except OSError as denied:
-            return 'blocked', f'{error}; leader probe: {denied}; census={sorted(live)}'
-        if live:
-            return 'alive', f'killpg0=EPERM but census found live members {sorted(live)}: {error}'
-        return 'empty', (f'killpg0=EPERM with the unreaped zombie leader present '
-                         f'and an empty live-member census: {error}')
-    except OSError as error:
-        return 'blocked', str(error)
+    if outcome == 'error':
+        return 'blocked', detail
+    if outcome == 'alive':
+        return 'alive', None
+    # outcome == 'denied' (EPERM): EPERM is not emptiness.
+    live = live_group_members(held.pid)
+    if live is None:
+        return 'blocked', ('killpg0=EPERM; independent group census unavailable '
+                           f'or incomplete: {detail}')
+    live.discard(held.pid)
+    leader, leader_detail = held.probe_leader()
+    if leader == 'refused':
+        return 'blocked', f'{detail}; leader probe refused: {leader_detail}'
+    if leader != 'alive':
+        return 'blocked', f'{detail}; leader probe: {leader} {leader_detail}; census={sorted(live)}'
+    if live:
+        return 'alive', f'killpg0=EPERM but census found live members {sorted(live)}: {detail}'
+    return 'empty', (f'killpg0=EPERM with the unreaped zombie leader present '
+                     f'and an empty live-member census: {detail}')
 
 
 def probe_process_group(child, wait=5):
@@ -281,17 +404,20 @@ def probe_process_group(child, wait=5):
     ``child`` was started with ``start_new_session``, so its pid is the pgid.
     The leader must be an unreaped zombie: its pid/pgid cannot be reused then,
     so ``killpg(pgid, ...)`` can only reach this run's descendants (plus the
-    zombie itself).  Signals happen before ``wait()``; reaping is the last
-    step.  A leader that is still running or was already reaped has no
-    provable ownership, so it is reported NOT_VERIFIED and gets no signal.
-    A group whose signal probe is EPERM is only called empty after an
-    independent live-member census (``group_probe_state``) finds nothing but
-    this run's unreaped leader; an unavailable census is BLOCKED.  A live
-    group is a finding (``GROUP_NOT_EMPTY``), not something to hide
-    after remediation: record it, SIGTERM only that group, and never rewrite
-    the status to VERIFIED just because our own SIGTERM eventually emptied it.
+    zombie itself).  Every actual signal goes through ``HeldProcessGroup``,
+    which re-checks that ownership immediately before sending; signals happen
+    before ``wait()`` and reaping is the last step.  A leader that is still
+    running or was already reaped has no provable ownership, so it is reported
+    NOT_VERIFIED and gets no signal.  A group whose signal probe is EPERM is
+    only called empty after a complete, stable live-member census
+    (``group_probe_state``) finds nothing but this run's unreaped leader; an
+    unavailable/incomplete census is BLOCKED.  A live group is a finding
+    (``GROUP_NOT_EMPTY``), not something to hide after remediation: record it,
+    SIGTERM only that group, and never rewrite the status to VERIFIED just
+    because our own SIGTERM eventually emptied it.
     """
-    pgid = child.pid
+    held = HeldProcessGroup(child)
+    pgid = held.pid
     result = {'pgid': pgid, 'probe': 'waitid-WNOWAIT+killpg0',
               'signal': None, 'leaderUnreaped': False, 'leaderReaped': False}
     if wait_exit_unreaped(pgid, wait) != 'EXITED':
@@ -301,7 +427,7 @@ def probe_process_group(child, wait=5):
         return result
     result['leaderUnreaped'] = True
     try:
-        state, detail = group_probe_state(pgid, pgid)
+        state, detail = group_probe_state(held)
         if sys.platform != 'darwin' and state == 'alive':
             # Elsewhere a zombie is signalable, so signal 0 cannot separate
             # "only the zombie leader" from a live member.  Fail closed rather
@@ -317,17 +443,23 @@ def probe_process_group(child, wait=5):
         else:
             result['status'] = CLEANUP_GROUP_NOT_EMPTY
             for sig in (signal.SIGTERM, signal.SIGKILL):
-                result['signal'] = sig.name
-                try:
-                    os.killpg(pgid, sig)
-                except ProcessLookupError:
+                outcome, info = held.send(sig)
+                if outcome == 'sent':
+                    result['signal'] = sig.name
+                elif outcome == 'missing':
                     result['emptyAfterSignal'] = True
                     break
-                except OSError as error:
-                    result['signalError'] = str(error)
+                elif outcome == 'refused':
+                    result['signalRefused'] = info
+                    result.update(status=CLEANUP_NOT_VERIFIED,
+                                  reason='group signal refused after ownership was '
+                                         f'lost: leader state {info}')
+                    break
+                else:
+                    result['signalError'] = info
                 deadline = time.monotonic() + 5
                 while time.monotonic() < deadline:
-                    state, detail = group_probe_state(pgid, pgid)
+                    state, detail = group_probe_state(held)
                     if state == 'empty':
                         result['emptyAfterSignal'] = True
                         break
@@ -402,24 +534,25 @@ def run_fixture(output, baseline, command=None):
                 audit['leaderReapState'] = 'ALREADY_REAPED'
     finally:
         if child is not None:
+            held = HeldProcessGroup(child)
             if leader_state == 'RUNNING':
                 # The leader is still alive, so its pid is the pgid directly.
-                # Terminate that group, but keep waiting without reaping until
-                # the probe has run while the leader is a zombie.
-                try:
-                    os.killpg(child.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                except PermissionError as error:
-                    audit['cleanupBlocked'] = str(error)
+                # Every signal goes through the single ownership entry: it
+                # re-checks waitid(WNOWAIT) immediately before sending and
+                # refuses once the pid may have been reused.  Keep waiting
+                # without reaping until the probe has run on a zombie.
+                outcome, detail = held.send(signal.SIGTERM)
+                if outcome == 'refused':
+                    audit['cleanupBlocked'] = f'group signal refused: leader state {detail}'
+                elif outcome == 'error':
+                    audit['cleanupBlocked'] = detail
                 leader_state = wait_exit_unreaped(child.pid, 5)
                 if leader_state == 'RUNNING':
-                    try:
-                        os.killpg(child.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    except PermissionError as error:
-                        audit['cleanupBlocked'] = str(error)
+                    outcome, detail = held.send(signal.SIGKILL)
+                    if outcome == 'refused':
+                        audit['cleanupBlocked'] = f'group signal refused: leader state {detail}'
+                    elif outcome == 'error':
+                        audit['cleanupBlocked'] = detail
                     leader_state = wait_exit_unreaped(child.pid, 5)
                 if leader_state == 'RUNNING':
                     audit['cleanupBlocked'] = 'launcher did not exit after SIGKILL'
@@ -450,14 +583,16 @@ def run_fixture(output, baseline, command=None):
             try:
                 # Fixture evidence is read only after the group was probed and
                 # reaped; a truncated/missing launch.json must not skip cleanup.
-                # Never signal a bare pid after the leader's identity was lost
-                # (wait_exit_unreaped reported REAPED, or another reaper won):
-                # only a still-RUNNING direct child is ours to SIGKILL.
-                if child.returncode is None and leader_state == 'RUNNING':
-                    try:
-                        child.kill()
-                    except OSError:
-                        pass
+                # Never signal a bare pid after the leader's identity was lost.
+                # The entry re-checks waitid(WNOWAIT) and refuses unless the
+                # leader is still RUNNING, so the reap-state guard lives in one
+                # place (the signal entry) instead of every caller.
+                if child.returncode is None:
+                    outcome, detail = held.kill_leader(signal.SIGKILL)
+                    if outcome == 'error':
+                        audit['cleanupBlocked'] = detail
+                    elif outcome == 'refused':
+                        audit['cleanupBlocked'] = f'leader kill refused: state {detail}'
                 if child.returncode is None:
                     try:
                         child.wait(timeout=5)

@@ -99,8 +99,8 @@ def blocked_branch_removed(rows):
         return False, f'blocked: expected 1 result row, saw {len(matched)}'
     row = matched[0]
     error = row.get('error')
-    if error != 'OSError: denied':
-        return False, f'error={error!r}, want "OSError: denied"'
+    if not (isinstance(error, str) and error.startswith('RuntimeError:')):
+        return False, f'error={error!r}, want a RuntimeError from the removed BLOCKED branch'
     reported_cases = row.get('cases') or []
     if [case.get('case') for case in reported_cases] != ['permission-denied']:
         return False, f"cases={[case.get('case') for case in reported_cases]!r}, want ['permission-denied']"
@@ -125,9 +125,9 @@ def wiring_relaxed(rows):
 # so callables stay out of MUTATIONS.
 MUTATIONS = [
     ('empty-group-probe-removed', SOURCE,
-     "        return 'empty', (f'killpg0=EPERM with the unreaped zombie leader present '\n"
-     "                         f'and an empty live-member census: {error}')",
-     "        return 'alive', 'mutant: empty-group probe removed'"),
+     "    return 'empty', (f'killpg0=EPERM with the unreaped zombie leader present '\n"
+     "                     f'and an empty live-member census: {detail}')",
+     "    return 'alive', 'mutant: empty-group probe removed'"),
     ('cleanup-status-write-removed', SOURCE,
      "            audit['processTreeCleanup'] = audit['processGroupProbe']['status']",
      "            audit['processTreeCleanup'] = CLEANUP_VERIFIED"),
@@ -139,8 +139,8 @@ MUTATIONS = [
      "    for sig in (signal.SIGTERM, signal.SIGKILL):",
      "    for sig in (signal.SIGKILL,):"),
     ('blocked-branch-removed', SOURCE,
-     "    except OSError as error:\n        return 'blocked', str(error)",
-     "    except OSError:\n        raise"),
+     "    if outcome == 'error':\n        return 'blocked', detail",
+     "    if outcome == 'error':\n        raise  # mutant: remove the BLOCKED branch"),
     ('sigkill-escalation-removed', SOURCE,
      "    for sig in (signal.SIGTERM, signal.SIGKILL):",
      "    for sig in (signal.SIGTERM,):"),
@@ -148,28 +148,44 @@ MUTATIONS = [
      "                overall = cleanup_status(audit)",
      "                overall = 'PASS'"),
     ('eperm-census-ignored', SOURCE,
-     "        live = live_group_members(pgid)",
-     "        live = set()  # mutant: ignore the independent live-member census"),
+     "    live = live_group_members(held.pid)",
+     "    live = set()  # mutant: ignore the independent live-member census"),
     ('unavailable-census-as-empty', SOURCE,
-     "            return 'blocked', f'killpg0=EPERM; independent group census unavailable: {error}'",
-     "            live = set()  # mutant: treat an unavailable census as empty"),
+     "        return 'blocked', ('killpg0=EPERM; independent group census unavailable '\n"
+     "                           f'or incomplete: {detail}')",
+     "        live = set()  # mutant: treat an unavailable census as empty"),
     ('reap-guard-removed', SOURCE,
-     "                if child.returncode is None and leader_state == 'RUNNING':",
-     "                if child.returncode is None:  # mutant: signal after REAPED"),
+     "        return self._signal(sig, group=False, states=('RUNNING',))",
+     "        return self._signal(sig, group=False, states=('RUNNING', 'EXITED', 'REAPED'))"),
+    ('snapshot-race-accepted', SOURCE,
+     "        if first != second:\n"
+     "            # Membership changed between complete snapshots: a descendant may\n"
+     "            # exist that neither snapshot can vouch for.\n"
+     "            continue",
+     "        if first != second:\n            return first  # mutant: accept the first snapshot"),
+    ('unstable-census-accepted', SOURCE,
+     "        if first != second:\n"
+     "            # Membership changed between complete snapshots: a descendant may\n"
+     "            # exist that neither snapshot can vouch for.\n"
+     "            continue",
+     "        if first != second:\n            return second  # mutant: accept a changing census"),
+    ('truncation-accepted', SOURCE,
+     "            if written < capacity and written % 4 == 0:",
+     "            if written <= capacity:  # mutant: accept a full (truncated) buffer"),
+    ('enumeration-failure-empty', SOURCE,
+     "        if first is None:\n            continue",
+     "        if first is None:\n            return set()  # mutant: enumeration failure == empty"),
+    ('signal-gate-removed', SOURCE,
+     "        state = self._state()\n        if state not in states:\n            return 'refused', state",
+     "        state = self._state()\n        # mutant: signal without proving ownership"),
 ]
 
-# name -> (mode, judge, uses_launcher, allowed_probe_errors).  The judge names
-# the mutation's own expected (wrong) fields; ``allowed_probe_errors`` names the
-# probe result fields (``signalError`` / ``probeError``) this mutation's own
-# fault is allowed to produce, and any other mutation that sees one is INVALID,
-# never KILLED.
 JUDGES = {
     'empty-group-probe-removed': (
         'clean',
         lambda rows: match(rows, 'clean', {
             'processTreeCleanup': 'GROUP_NOT_EMPTY',
-            'probe.emptyAfterSignal': False,
-            'probe.signal': 'SIGKILL',
+            'probe.status': 'GROUP_NOT_EMPTY',
         }),
         True,
         ('signalError', 'probeError')),
@@ -218,8 +234,38 @@ JUDGES = {
         False,
         ()),
     'reap-guard-removed': ('reap-state', lambda rows: match(rows, 'reap-state', {'killCalls': 1}), False, ()),
+    'snapshot-race-accepted': (
+        'census-snapshot',
+        lambda rows: match(rows, 'census-snapshot', {
+            'processTreeCleanup': 'VERIFIED',
+            'topLevel': 'PASS',
+        }),
+        False,
+        ()),
+    'unstable-census-accepted': (
+        'census-unstable',
+        lambda rows: match(rows, 'census-unstable', {'members': [900, 424245]}), False, ()),
+    'truncation-accepted': (
+        'census-truncated',
+        lambda rows: match(rows, 'census-truncated', {'returnedPids': 1}), False, ()),
+    'enumeration-failure-empty': (
+        'census-enumeration',
+        lambda rows: match(rows, 'census-enumeration', {
+            'processTreeCleanup': 'VERIFIED',
+            'topLevel': 'PASS',
+        }),
+        False,
+        ()),
+    'signal-gate-removed': (
+        'signal-entry',
+        lambda rows: match(rows, 'signal-entry', {
+            'groupOutcome': 'denied',
+            'leaderOutcome': 'denied',
+            'killCalls': 2,
+        }),
+        False,
+        ()),
 }
-
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
 

@@ -5,6 +5,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -63,6 +64,8 @@ validate_calibration = session_domain_module.validate_calibration
 probe_process_group = session_domain_module.probe_process_group
 wait_exit_unreaped = session_domain_module.wait_exit_unreaped
 cleanup_status = session_domain_module.cleanup_status
+HeldProcessGroup = session_domain_module.HeldProcessGroup
+live_group_members = session_domain_module.live_group_members
 CLEANUP_VERIFIED = session_domain_module.CLEANUP_VERIFIED
 CLEANUP_GROUP_NOT_EMPTY = session_domain_module.CLEANUP_GROUP_NOT_EMPTY
 CLEANUP_BLOCKED = session_domain_module.CLEANUP_BLOCKED
@@ -348,13 +351,9 @@ def cleanup_controls(output):
         results.append({'name': name, 'passed': bool(ok), 'detail': detail, **extra})
 
     def group_empty(pgid):
-        try:
-            os.killpg(pgid, 0)
-            return False
-        except ProcessLookupError:
-            return True
-        except OSError:
-            return False
+        # Signal-0 observation through the same ownership entry; it never
+        # delivers a signal and is only used after the probe reaped the leader.
+        return HeldProcessGroup.observe(pgid) == 'empty'
 
     def wait_group_empty(pgid, timeout=5):
         """Observe only.  The probe reaped the leader last, so after it returns
@@ -498,19 +497,170 @@ def cleanup_controls(output):
           lost.get('status') == CLEANUP_NOT_VERIFIED and not signals and error is None,
           f"status={lost.get('status')} signalCalls={len(signals)} error={error}", probe=lost)
 
+    # 6. A member appears between two complete group snapshots: the first
+    # snapshot sees only the zombie leader, the second sees the descendant.
+    # Accepting either snapshot alone would report empty; the stable pair must
+    # report the live member, and the top level must never be PASS.
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
+    state = wait_exit_unreaped(child.pid, 10)
+    leader = child.pid
+    race = {'status': None}
+    delivered = []
+    error = None
+    if state == 'EXITED':
+        snapshot_pids = iter([[leader], [leader, 424244], [leader, 424244],
+                              [leader, 424244], [leader], [leader]])
+
+        def next_snapshot(*_args):
+            return set(next(snapshot_pids, [leader]))
+
+        def record_group(*args, **_kwargs):
+            if len(args) > 1 and args[1] != 0:
+                delivered.append(args)
+            raise PermissionError('sandbox denies group signals')
+
+        try:
+            with patch.object(session_domain_module, '_darwin_group_pids',
+                              side_effect=next_snapshot), \
+                    patch.object(os, 'killpg', side_effect=record_group):
+                race = probe_process_group(child)
+        except Exception as exc:  # a crash must not count as the expected finding
+            error = f'{type(exc).__name__}: {exc}'
+    else:
+        error = f'leader state {state}'
+    if child.returncode is None:
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    race_top = cleanup_status({'processTreeCleanup': race.get('status')})
+    check('cleanup-census-snapshot-race',
+          race.get('status') == CLEANUP_GROUP_NOT_EMPTY
+          and race_top == CLEANUP_UNVERIFIED_STATUS and delivered and error is None,
+          f"status={race.get('status')} top={race_top} "
+          f"deliveredSignalCalls={len(delivered)} error={error}", probe=race)
+
+    # 7. A stable pair that includes the descendant must report it, not the
+    # leader-only first snapshot.
+    snapshots = iter([[900], [900, 424244], [900, 424244], [900, 424244], [900, 424244]])
+
+    def next_members(*_args):
+        return set(next(snapshots, [900, 424244]))
+
+    with patch.object(session_domain_module, '_darwin_group_pids', side_effect=next_members):
+        members = live_group_members(900)
+    check('cleanup-census-descendant', members == {900, 424244},
+          f'members={None if members is None else sorted(members)}')
+
+    # 8. Two complete snapshots that disagree mean membership changed while the
+    # census was being taken; no set may be reported as stable.
+    alternating = iter([[900, 424244], [900, 424245]] * 4)
+
+    def next_unstable(*_args):
+        return set(next(alternating, [900, 424245]))
+
+    with patch.object(session_domain_module, '_darwin_group_pids', side_effect=next_unstable):
+        unstable = live_group_members(900)
+    check('cleanup-census-unstable', unstable is None,
+          f'members={None if unstable is None else sorted(unstable)}')
+
+    # 9. libproc reports a full buffer: the group was truncated, not complete.
+    class FullBufferLibrary:
+        def __init__(self):
+            self.calls = []
+
+        def proc_listpids(self, kind, typeinfo, buffer, size):
+            self.calls.append((kind, typeinfo, size))
+            if buffer is None:
+                return 2832
+            buffer[0] = 424242
+            return size
+
+    library = FullBufferLibrary()
+    truncated = session_domain_module._darwin_group_pids(900, library=library)
+    check('cleanup-census-truncated', truncated is None and library.calls[:1] == [(2, 900, 0)],
+          f'returned={None if truncated is None else sorted(truncated)} calls={library.calls}')
+
+    # 10. Enumeration failure is not an empty group.
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'], start_new_session=True)
+    state = wait_exit_unreaped(child.pid, 10)
+    unavailable = {'status': None}
+    error = None
+    if state == 'EXITED':
+        try:
+            with patch.object(session_domain_module, '_darwin_group_pids', return_value=None), \
+                    patch.object(os, 'killpg', side_effect=PermissionError('denied')):
+                unavailable = probe_process_group(child)
+        except Exception as exc:
+            error = f'{type(exc).__name__}: {exc}'
+    else:
+        error = f'leader state {state}'
+    if child.returncode is None:
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    unavailable_top = cleanup_status({'processTreeCleanup': unavailable.get('status')})
+    check('cleanup-census-enumeration-failure',
+          unavailable.get('status') == CLEANUP_BLOCKED
+          and unavailable_top == CLEANUP_UNVERIFIED_STATUS and error is None,
+          f"status={unavailable.get('status')} top={unavailable_top} error={error}",
+          probe=unavailable)
+
+    # 11. The single signal entry refuses a reaped leader for both group and
+    # direct-pid sends; a denied gate is never a lucky kill.
+    child = subprocess.Popen([sys.executable, '-I', '-c', 'pass'])
+    child.wait(timeout=10)
+    held = HeldProcessGroup(child)
+    calls = []
+
+    def deny(*args, **_kwargs):
+        calls.append(args)
+        raise PermissionError('denied')
+
+    try:
+        with patch.object(os, 'killpg', side_effect=deny), \
+                patch.object(os, 'kill', side_effect=deny):
+            group_outcome = held.send(signal.SIGTERM)
+            leader_outcome = held.kill_leader(signal.SIGKILL)
+        entry_error = None
+    except Exception as exc:
+        group_outcome = leader_outcome = (None, None)
+        entry_error = f'{type(exc).__name__}: {exc}'
+    check('cleanup-signal-entry-reaped',
+          entry_error is None and group_outcome[0] == 'refused'
+          and leader_outcome[0] == 'refused' and not calls,
+          f'group={group_outcome} leader={leader_outcome} calls={len(calls)} error={entry_error}')
+
+    # 12. Positive pair: the same entry really delivers while the leader is a
+    # live, unreaped direct child.
+    child = subprocess.Popen(['sleep', '30'], start_new_session=True)
+    held = HeldProcessGroup(child)
+    entry_error = None
+    outcome = (None, None)
+    try:
+        outcome = held.send(signal.SIGTERM)
+        child.wait(timeout=10)
+    except Exception as exc:
+        entry_error = f'{type(exc).__name__}: {exc}'
+    finally:
+        if child.returncode is None:
+            try:
+                child.kill()
+                child.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    check('cleanup-signal-entry-held',
+          entry_error is None and outcome[0] == 'sent' and child.returncode is not None,
+          f'outcome={outcome} returncode={child.returncode} error={entry_error}')
+
     report = {'status': 'PASS' if all(row['passed'] for row in results) else 'FAIL',
               'scope': 'cleanup probe behavior controls; not native evidence', 'cases': results}
     save(output / 'cleanup-controls.json', report)
     return report
 
 def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True
+    return HeldProcessGroup.observe_pid(pid) == 'alive'
 
 
 def run_all(output, source=None):
