@@ -309,16 +309,19 @@ impl AsyncTranscriptAdapter {
         (self.project_chat_dir)(key)
     }
     /// ProjectSessionStorage.ts:401-417 paths; transcript goes to the store.
-    pub fn create_session_storage(&self, input: SessionStorageInput) -> SessionStorage {
+    pub fn create_session_storage(
+        &self,
+        input: SessionStorageInput,
+    ) -> AdapterResult<SessionStorage> {
         let project = ProjectKey {
             project_root: input.project_root,
             pilot_home: input.pilot_home,
         };
-        let chat_dir = resolve(&self.project_chat_dir(&project), &[]);
+        let chat_dir = resolve(&self.project_chat_dir(&project), &[])?;
         let safe_id = sanitize_session_id(&input.session_id);
         let safe_id = safe_id.as_str();
-        let transcript_path = resolve(&chat_dir, &[format!("{safe_id}.jsonl").as_str()]);
-        let subagents_dir = resolve(&chat_dir, &[safe_id, "subagents"]);
+        let transcript_path = resolve(&chat_dir, &[format!("{safe_id}.jsonl").as_str()])?;
+        let subagents_dir = resolve(&chat_dir, &[safe_id, "subagents"])?;
         let mut checkpoint = transcript_path.clone().into_os_string();
         checkpoint.push(".projections.json");
         let base = Arc::new(KeyBase {
@@ -329,12 +332,12 @@ impl AsyncTranscriptAdapter {
                 .now
                 .unwrap_or_else(|| Arc::new(|| super::transcript::timestamp().unwrap_or_default())),
         });
-        SessionStorage {
+        Ok(SessionStorage {
             tool_results_dir: resolve(
                 &base.project.project_root,
                 &[".pilotdeck", "tool-results", safe_id],
-            ),
-            file_history_dir: resolve(&chat_dir, &[safe_id, "file-history"]),
+            )?,
+            file_history_dir: resolve(&chat_dir, &[safe_id, "file-history"])?,
             projection_checkpoint_path: checkpoint.into(),
             transcript: TranscriptWriter::new(
                 base.clone(),
@@ -345,7 +348,7 @@ impl AsyncTranscriptAdapter {
             transcript_path,
             subagents_dir,
             base,
-        }
+        })
     }
     /// TS listSessions (AsyncTranscriptStorageAdapter.ts:392-411); `None` when
     /// the store has no `list`. Reads every record before projecting, like the
@@ -369,7 +372,7 @@ impl AsyncTranscriptAdapter {
                     session_id: record.session_id.clone(),
                     now: None,
                 })
-                .read_transcript(None)
+                .and_then(|storage| storage.read_transcript(None))
             })
             .collect();
         Some((|| -> AdapterResult<Vec<JsValue>> {
@@ -865,7 +868,9 @@ impl TranscriptWriter {
     }
     fn sidechain_path(&self, subagent_id: &JsString) -> PathBuf {
         match &self.layout {
-            SubagentLayout::Dir(dir) => resolve(
+            // Only create_session_storage constructs Dir, after resolving it
+            // to an absolute path. No cwd lookup is needed for these children.
+            SubagentLayout::Dir(dir) => normalize(
                 dir,
                 &[format!("{}.jsonl", sanitize_session_id(subagent_id)).as_str()],
             ),
@@ -886,14 +891,15 @@ impl TranscriptWriter {
                 };
                 // path.join, not resolve: an absolute-looking id stays nested.
                 let parent = self.path.parent().unwrap_or(Path::new("/"));
-                resolve(
-                    Path::new(&format!(
-                        "{}/{stem}/subagents/{}.jsonl",
-                        parent.display(),
-                        lossy(subagent_id)
-                    )),
-                    &[],
-                )
+                let path = PathBuf::from(format!(
+                    "{}/{stem}/subagents/{}.jsonl",
+                    parent.display(),
+                    lossy(subagent_id)
+                ));
+                // TS defaultSubagentPath uses path.join, which does not read
+                // cwd. Preserve this branch's existing success/fallback paths;
+                // changing its relative-path layout is outside this resolve fix.
+                resolve(&path, &[]).unwrap_or_else(|_| normalize(&path, &[]))
             }
         }
     }
@@ -1299,12 +1305,21 @@ pub fn sanitize_session_id(session_id: &JsString) -> String {
     }
 }
 /// Node path.resolve/join for absolute bases: lexical, no symlink resolution.
-fn resolve(base: &Path, parts: &[&str]) -> PathBuf {
-    let mut path = if base.is_absolute() {
+fn resolve(base: &Path, parts: &[&str]) -> AdapterResult<PathBuf> {
+    let path = if base.is_absolute() {
         base.to_path_buf()
     } else {
-        std::env::current_dir().unwrap_or_default().join(base)
+        std::env::current_dir()
+            .map_err(|error| {
+                let (_, message) = crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None);
+                AdapterError::Store(io::Error::new(error.kind(), message).into())
+            })?
+            .join(base)
     };
+    Ok(normalize(&path, parts))
+}
+fn normalize(base: &Path, parts: &[&str]) -> PathBuf {
+    let mut path = base.to_path_buf();
     for part in parts.iter().filter(|p| !p.is_empty()) {
         path.push(part);
     }
@@ -1421,12 +1436,16 @@ mod restore_tests {
         });
         let adapter =
             AsyncTranscriptAdapter::new(store.clone(), Arc::new(|_| "/pdrs-fixture/chats".into()));
-        let storage = Arc::new(adapter.create_session_storage(SessionStorageInput {
-            project_root: "/pdrs-fixture/project".into(),
-            pilot_home: "/pdrs-fixture/home".into(),
-            session_id: "s1".into(),
-            now: Some(Arc::new(|| "2026-10-18T00:00:00.000Z".into())),
-        }));
+        let storage = Arc::new(
+            adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root: "/pdrs-fixture/project".into(),
+                    pilot_home: "/pdrs-fixture/home".into(),
+                    session_id: "s1".into(),
+                    now: Some(Arc::new(|| "2026-10-18T00:00:00.000Z".into())),
+                })
+                .unwrap(),
+        );
         *store.owner.lock().unwrap() = Arc::downgrade(&storage);
         storage
             .transcript

@@ -323,12 +323,16 @@ impl Ctx {
     }
     fn open(&mut self, session_id: JsString) -> &SessionStorage {
         self.session_id = session_id.clone();
-        self.storage = Some(self.adapter.create_session_storage(SessionStorageInput {
-            project_root: PROJECT_ROOT.into(),
-            pilot_home: self.pilot_home.clone(),
-            session_id,
-            now: Some(clock()),
-        }));
+        self.storage = Some(
+            self.adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root: PROJECT_ROOT.into(),
+                    pilot_home: self.pilot_home.clone(),
+                    session_id,
+                    now: Some(clock()),
+                })
+                .unwrap(),
+        );
         self.storage()
     }
 }
@@ -621,12 +625,14 @@ fn real_ts_scenarios_match_outcomes_calls_and_bytes() {
 fn fresh(dir: &Path, store: Arc<dyn TranscriptStore>) -> (AsyncTranscriptAdapter, SessionStorage) {
     let chat = dir.join("chats");
     let adapter = AsyncTranscriptAdapter::new(store, Arc::new(move |_: &ProjectKey| chat.clone()));
-    let storage = adapter.create_session_storage(SessionStorageInput {
-        project_root: PROJECT_ROOT.into(),
-        pilot_home: dir.join("home"),
-        session_id: "s1".into(),
-        now: Some(clock()),
-    });
+    let storage = adapter
+        .create_session_storage(SessionStorageInput {
+            project_root: PROJECT_ROOT.into(),
+            pilot_home: dir.join("home"),
+            session_id: "s1".into(),
+            now: Some(clock()),
+        })
+        .unwrap();
     (adapter, storage)
 }
 fn metadata_value(n: usize) -> JsValue {
@@ -898,6 +904,7 @@ fn real_ts_and_rust_continue_each_others_transcripts() {
             session_id: "cross".into(),
             now: None,
         })
+        .unwrap()
     };
     let storage = open();
     let restored = storage.restore().unwrap();
