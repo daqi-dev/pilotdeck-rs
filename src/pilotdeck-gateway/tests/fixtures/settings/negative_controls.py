@@ -23,15 +23,19 @@ out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/config/settings.rs'
 
 # Every mutant is applied to the original independently and names the test in
-# `--test settings` whose assertion it must turn red.
+# `--test settings` whose assertion it must turn red. Rows are
+# (name, source, old, new) so the anchor_selfcheck preflight can statically
+# resolve each row's path and verify the old anchor against the live file.
 mutations = [
     ('redaction-disabled',
+     source,
      '''    out.insert(
         "config".into(),
         super::snapshot::redact(&field(snapshot, "config")),
     );''',
      '''    out.insert("config".into(), field(snapshot, "config"));'''),
     ('hint-always-included',
+     source,
      '''    for key in ["path", "source", "hint", "redactedValue"] {
         put_truthy(&mut out, value, key);
     }''',
@@ -40,6 +44,7 @@ mutations = [
     }
     out.insert("hint".into(), field(value, "hint"));'''),
     ('recoverable-truthiness',
+     source,
      '''    let recoverable = field(value, "recoverable");
     if !matches!(recoverable, JsValue::Undefined) {
         out.insert("recoverable".into(), recoverable);
@@ -49,6 +54,7 @@ mutations = [
         out.insert("recoverable".into(), recoverable);
     }'''),
     ('source-path-always-included',
+     source,
      '''    for key in ["path", "contentHash", "phase"] {
         put_truthy(&mut out, value, key);
     }''',
@@ -57,6 +63,7 @@ mutations = [
     }
     out.insert("path".into(), field(value, "path"));'''),
     ('top-level-key-order-swapped',
+     source,
      '''    out.insert(
         "config".into(),
         super::snapshot::redact(&field(snapshot, "config")),
@@ -68,6 +75,7 @@ mutations = [
         super::snapshot::redact(&field(snapshot, "config")),
     );'''),
     ('version-mistranscribed',
+     source,
      '''    for key in ["schemaVersion", "version", "loadedAt", "contentHash"] {
         out.insert(key.into(), field(snapshot, key));
     }''',
@@ -103,8 +111,7 @@ if 'CARGO_TARGET_DIR' not in os.environ:
 env = os.environ.copy()
 summary = []
 with mutating_sources(root, [source]) as snapshots:
-    for name, old, new in mutations:
-        path = source
+    for name, path, old, new in mutations:
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
