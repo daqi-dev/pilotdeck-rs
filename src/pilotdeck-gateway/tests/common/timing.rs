@@ -62,3 +62,23 @@ pub fn assert_within_linear_band(label: &str, half: Duration, full: Duration, sa
          a quadratic implementation needs about 4x"
     );
 }
+
+/// Constant-factor backstop for what the ratio cannot see: a linear-but-slow
+/// rewrite stays inside the 3x band (the pre-4fbb5f78b moved-subtree rewalk
+/// was linear at ~36x the cost per byte). The budget is per full-size sample:
+/// taking more timing samples multiplies a test's wall cost but never divides
+/// this budget (`PDRS_TIMING_SAMPLES=1` gets the same cap), and the fastest
+/// sample is judged so one preempted run cannot redden the backstop either.
+/// Debug keeps ~3.75x headroom over the slowest full sample observed on the
+/// CI runners (~32 s; 46033287a, 193e8a1e); release keeps its original cap,
+/// where the 36x rewalk measured 50.4 s against 5 s.
+// The html_compat unit tests judge the scaling ratio only (#798 removed
+// their absolute cap), so this helper is dead code in that compilation unit.
+#[allow(dead_code)]
+pub fn assert_within_per_sample_cap(label: &str, full: Duration, samples: usize) {
+    let budget = if cfg!(debug_assertions) { 120.0 } else { 5.0 };
+    assert!(
+        full.as_secs_f64() < budget,
+        "{label}: took {full:?} (fastest of {samples}), per-sample budget {budget}s"
+    );
+}

@@ -519,6 +519,17 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
             case["markdownSha256"].as_str().unwrap()
         );
         let halved = expand_large_recipe(&halved_recipe(&case["html"]));
+        // The scaling ratio's premise is that the halved recipe really is
+        // about half the input: halving the numerically largest repeat is only
+        // equivalent when that repeat also dominates the byte count, and a
+        // "half" that stays at 0.8x would loosen the 3x band into a
+        // constant-factor check. Pin the premise, not the recipe shape.
+        let halved_ratio = halved.len() as f64 / html.len() as f64;
+        assert!(
+            (0.4..=0.6).contains(&halved_ratio),
+            "{name}: halved recipe is {halved_ratio:.3}x the full bytes; \
+             the doubling premise of the scaling ratio no longer holds"
+        );
         let error = std::cell::RefCell::new(None);
         let (half_elapsed, full_elapsed) = timing::fastest_scaling(name, samples, |full| {
             let (input, want) = if full {
@@ -558,14 +569,10 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
             full_elapsed,
             samples,
         );
-        // Constant-factor backstop at the same loose wall clock (the
-        // pre-4fbb5f78b moved-subtree rewalk was ~36x slower per byte while
-        // still scaling linearly).
-        let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
-        assert!(
-            full_elapsed.as_secs_f64() < budget,
-            "{name}: took {full_elapsed:?} (fastest of {samples}), budget {budget}s"
-        );
+        // Constant-factor backstop: the pre-4fbb5f78b moved-subtree rewalk
+        // scaled linearly at ~36x the cost per byte, invisible to the ratio;
+        // see timing::assert_within_per_sample_cap.
+        timing::assert_within_per_sample_cap(&format!("{name}: full page"), full_elapsed, samples);
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -585,6 +592,7 @@ fn ten_mib_of_flat_inline_siblings_stays_fast() {
     let html = "<em>x</em>".repeat(1024 * 1024);
     assert_eq!(html.len(), 10 * 1024 * 1024);
     let half_html = "<em>x</em>".repeat(512 * 1024);
+    assert_eq!(half_html.len(), html.len() / 2);
     let expected_full = period.repeat(1024 * 1024);
     let expected_half = period.repeat(512 * 1024);
     let samples = timing::timing_samples();
@@ -607,11 +615,7 @@ fn ten_mib_of_flat_inline_siblings_stays_fast() {
         html.len()
     );
     timing::assert_within_linear_band("flat inline: 10 MiB", half_elapsed, full_elapsed, samples);
-    let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
-    assert!(
-        full_elapsed.as_secs_f64() < budget,
-        "flat inline: took {full_elapsed:?} (fastest of {samples}), budget {budget}s"
-    );
+    timing::assert_within_per_sample_cap("flat inline: 10 MiB", full_elapsed, samples);
 }
 
 #[test]
@@ -841,13 +845,8 @@ fn reparented_wide_subtrees_stay_fast() {
         samples,
     );
     // The pre-4fbb5f78b moved-subtree rewalk scaled linearly too, just about
-    // 36x slower per byte, so keep the loose absolute cap as the backstop.
-    let budget = if cfg!(debug_assertions) { 60.0 } else { 5.0 };
-    assert!(
-        full_elapsed.as_secs_f64() < budget,
-        "reparent wide subtree: took {full_elapsed:?} (fastest of {samples}), \
-         budget {budget}s"
-    );
+    // 36x slower per byte, so keep the per-sample absolute cap as the backstop.
+    timing::assert_within_per_sample_cap("reparent wide subtree: 8 MiB", full_elapsed, samples);
 }
 
 /// The class-level bail-out in `html_compat` stops rewriting at an unmodelled
