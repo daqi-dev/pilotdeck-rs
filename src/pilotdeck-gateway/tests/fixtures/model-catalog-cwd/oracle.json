@@ -1,0 +1,584 @@
+{
+  "node": "v22.22.0",
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/dialog/modelCatalog.ts": "87b5ce892aefec8f2148e44b30fb78cc9c93f6140e206e44be454aa3b7ab507d",
+    "src/pilot/config/loadPilotConfig.ts": "0d666bd5dec52b805be7066b7538d54919bd601b43286bdf9acf4a1354581d6e",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+    "src/gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f"
+  },
+  "cases": [
+    {
+      "name": "relative-normal",
+      "cwdReads": 4,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "relative-normal",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "relative-deleted",
+      "cwdReads": 2,
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd",
+          "syscall": "uv_cwd"
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "relative-deleted",
+        "ok": false,
+        "error": {
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd"
+        }
+      }
+    },
+    {
+      "name": "empty-normal",
+      "cwdReads": 4,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "empty-normal",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-deleted",
+      "cwdReads": 2,
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd",
+          "syscall": "uv_cwd"
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "empty-deleted",
+        "ok": false,
+        "error": {
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd"
+        }
+      }
+    },
+    {
+      "name": "absolute-normal",
+      "cwdReads": 0,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "absolute-normal",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "absolute-deleted",
+      "cwdReads": 0,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "absolute-deleted",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "tilde-normal",
+      "cwdReads": 0,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "tilde-normal",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "tilde-deleted",
+      "cwdReads": 0,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "tilde-deleted",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "tilde-child-normal",
+      "cwdReads": 0,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "tilde-child-normal",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "tilde-child-deleted",
+      "cwdReads": 0,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "tilde-child-deleted",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "unset-normal",
+      "cwdReads": 0,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "unset-normal",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "unset-deleted",
+      "cwdReads": 0,
+      "outcome": {
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      },
+      "frame": {
+        "type": "response",
+        "id": "unset-deleted",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "parity/deterministic",
+              "provider": "parity",
+              "model": "deterministic",
+              "displayName": "deterministic",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "parity",
+            "model": "deterministic"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        }
+      }
+    }
+  ]
+}
