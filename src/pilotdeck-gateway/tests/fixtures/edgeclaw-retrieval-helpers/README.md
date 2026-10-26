@@ -43,7 +43,16 @@ python3 src/pilotdeck-gateway/tests/fixtures/edgeclaw-retrieval-helpers/negative
 运行时断言转红：`\p{Script=Han}` 切分、`localeCompare` 排序（`"a"` 在
 `"B"` 前，字节序相反）、normalize 的 trim、project meta description 回退、
 user 文件去重、trace 时钟注入、fallback 3 条上限、最近 4 条用户消息、shortlist
-30 条上限、step 序号、`hasUserSummary`。脚本必须由调用方提供
-`CARGO_TARGET_DIR`，未提供时在写任何文件前报错。由于新增的 `helpers.rs` 在
-提交前不在 HEAD，`mutating_sources` 会拒绝运行；本单按约定只写好脚本，由
-协调者在提交后的宿主上执行。
+30 条上限、step 序号、`hasUserSummary`、CJK 停用词 `当前` / ASCII 停用词
+`general`、exact 权重 10、render 路由白名单 user/project/mix（`auto` 不得
+进入、`none`/`auto` 落空串）。
+
+脚本先跑一遍未变异套件并要求通过，再逐格执行；单格失败不中止，最后打印
+`KILLED`/`SURVIVED` 汇总，有存活项时退出 1。每格必须命中对应测试的
+`assert_eq!` 失败且日志含该函数的 `args=` 锚点；`could not compile` 不算杀死。
+全部字节恢复后再跑一遍同一套件并要求通过（`restored.log`）。
+`NEGATIVE_ONLY=a,b` 可只跑指定格做样本（未变异基线仍先跑）。脚本必须由
+调用方提供 `CARGO_TARGET_DIR`，未提供时在写任何文件前报错；
+`mutating_sources` 要求 gateway 产品树与基线一致（默认 `HEAD`，可用
+`NEGATIVE_BASELINE` 指定悬挂提交）。本树 `helpers.rs` 已在 HEAD，产品树干净
+时可直接运行；全量 16 格由协调者在宿主执行。
