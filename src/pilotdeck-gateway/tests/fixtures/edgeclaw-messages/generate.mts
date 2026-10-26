@@ -25,7 +25,7 @@ for (const group of [
   'extract', 'injected', 'whitespace', 'probe', 'plugin', 'sender', 'quoted',
   'timestamp', 'attachment', 'envelope', 'opaque', 'sender-prefix', 'mentions',
   'envelope-lines', 'user', 'thinking', 'commands', 'tools', 'skip-user',
-  'skip-assistant', 'inspect', 'normalize-one', 'normalize',
+  'skip-assistant', 'inspect', 'normalize-one', 'normalize', 'case-fold',
 ]) assert.ok(groups[group] > 0, group);
 const oracle = {sourceCommit: provenance.ref, sourceSha256, nodeVersion: process.version, clockMs, cases};
 const text = JSON.stringify(oracle, null, 2) + '\n';

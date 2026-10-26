@@ -351,6 +351,289 @@
       "expected": ""
     },
     {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              "s3"
+            ]
+          ]
+        ]
+      ],
+      "expected": "s3"
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              {
+                "type": "text",
+                "text": "t3"
+              }
+            ]
+          ]
+        ]
+      ],
+      "expected": "t3"
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              [
+                "s4"
+              ]
+            ]
+          ]
+        ]
+      ],
+      "expected": "s4"
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              [
+                {
+                  "type": "text",
+                  "text": "t4"
+                }
+              ]
+            ]
+          ]
+        ]
+      ],
+      "expected": "t4"
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              [
+                [
+                  "s5"
+                ]
+              ]
+            ]
+          ]
+        ]
+      ],
+      "expected": "s5"
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              [
+                [
+                  {
+                    "type": "text",
+                    "text": "t5"
+                  }
+                ]
+              ]
+            ]
+          ]
+        ]
+      ],
+      "expected": "t5"
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    "s6"
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ],
+      "expected": ""
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    {
+                      "type": "text",
+                      "text": "t6"
+                    }
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ],
+      "expected": ""
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      "s7"
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ],
+      "expected": ""
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      {
+                        "type": "text",
+                        "text": "t7"
+                      }
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ],
+      "expected": ""
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        {
+          "content": {
+            "content": {
+              "content": {
+                "content": {
+                  "type": "text",
+                  "text": "o4"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected": "o4"
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        {
+          "content": {
+            "content": {
+              "content": {
+                "content": {
+                  "content": {
+                    "type": "text",
+                    "text": "o5"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected": "o5"
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        {
+          "content": {
+            "content": {
+              "content": {
+                "content": {
+                  "content": {
+                    "content": {
+                      "type": "text",
+                      "text": "o6"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected": ""
+    },
+    {
+      "group": "extract",
+      "fn": "extractTextFromContent",
+      "args": [
+        {
+          "content": {
+            "content": {
+              "content": {
+                "content": {
+                  "content": {
+                    "content": {
+                      "content": {
+                        "type": "text",
+                        "text": "o7"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected": ""
+    },
+    {
       "group": "injected",
       "fn": "stripInjectedMemoryContext",
       "args": [
@@ -3032,6 +3315,46 @@
         "  a  \n\n\n b <think>x</think> c "
       ],
       "expected": "c"
+    },
+    {
+      "group": "thinking",
+      "fn": "stripAssistantThinking",
+      "args": [
+        "a<think>one</think>keep<think>two</think>b"
+      ],
+      "expected": "keepb"
+    },
+    {
+      "group": "thinking",
+      "fn": "stripAssistantThinking",
+      "args": [
+        "a<thinking>one</thinking>keep<thinking>two</thinking>b"
+      ],
+      "expected": "keepb"
+    },
+    {
+      "group": "thinking",
+      "fn": "stripAssistantThinking",
+      "args": [
+        "a<think>one</think>keep<thinking>two</thinking>b"
+      ],
+      "expected": "b"
+    },
+    {
+      "group": "thinking",
+      "fn": "stripAssistantThinking",
+      "args": [
+        "</think><think>one</think>keep<think>two</think>b"
+      ],
+      "expected": "keepb"
+    },
+    {
+      "group": "thinking",
+      "fn": "stripAssistantThinking",
+      "args": [
+        "</thinking><thinking>one</thinking>keep<thinking>two</thinking>b"
+      ],
+      "expected": "keepb"
     },
     {
       "group": "commands",
@@ -22354,6 +22677,912 @@
         []
       ],
       "expected": "\r]*\ud800\rc@: {@a1 [)  🚀a1\n*a1c🚀"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AſBlongS"
+      ],
+      "expected": "aſblongs"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AKBkelvin"
+      ],
+      "expected": "akbkelvin"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AıBdotlessI"
+      ],
+      "expected": "aıbdotlessi"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AİBdottedI"
+      ],
+      "expected": "ai̇bdottedi"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AßBsharpS"
+      ],
+      "expected": "aßbsharps"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AẞBcapSharpS"
+      ],
+      "expected": "aßbcapsharps"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AΣBcapSigma"
+      ],
+      "expected": "aσbcapsigma"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AσBsigma"
+      ],
+      "expected": "aσbsigma"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AςBfinalSigma"
+      ],
+      "expected": "aςbfinalsigma"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AµBmicro"
+      ],
+      "expected": "aµbmicro"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "AμBmu"
+      ],
+      "expected": "aμbmu"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "ΑΣ"
+      ],
+      "expected": "ας"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "Σ"
+      ],
+      "expected": "σ"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "ΑΣ Α"
+      ],
+      "expected": "ας α"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "İstanbul"
+      ],
+      "expected": "i̇stanbul"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "STRASSE"
+      ],
+      "expected": "strasse"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "straße"
+      ],
+      "expected": "straße"
+    },
+    {
+      "group": "case-fold",
+      "fn": "normalizeSenderHint",
+      "args": [
+        "µ/μ"
+      ],
+      "expected": "µ/μ"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripQuotedContextBlocks",
+      "args": [
+        "[Chat messages since your last reply - for context]old[Current message - respond to this]new"
+      ],
+      "expected": "[Current message - respond to this]new"
+    },
+    {
+      "group": "case-fold",
+      "fn": "extractCurrentMessageSegment",
+      "args": [
+        "[Chat messages since your last reply - for context]old[Current message - respond to this]new"
+      ],
+      "expected": "new"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripQuotedContextBlocks",
+      "args": [
+        "[Chat meſſages since your last reply - for context]old[Current message - respond to this]new"
+      ],
+      "expected": "[Chat meſſages since your last reply - for context]old[Current message - respond to this]new"
+    },
+    {
+      "group": "case-fold",
+      "fn": "extractCurrentMessageSegment",
+      "args": [
+        "[Chat meſſages since your last reply - for context]old[Current message - respond to this]new"
+      ],
+      "expected": "new"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripQuotedContextBlocks",
+      "args": [
+        "[Chat messages since your last reply - for context]old[Current meſſage - reſpond to this]new"
+      ],
+      "expected": ""
+    },
+    {
+      "group": "case-fold",
+      "fn": "extractCurrentMessageSegment",
+      "args": [
+        "[Chat messages since your last reply - for context]old[Current meſſage - reſpond to this]new"
+      ],
+      "expected": "[Chat messages since your last reply - for context]old[Current meſſage - reſpond to this]new"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripQuotedContextBlocks",
+      "args": [
+        "[Chat messages since your last reply - for context]old[Current message - respond to thiſ]new"
+      ],
+      "expected": ""
+    },
+    {
+      "group": "case-fold",
+      "fn": "extractCurrentMessageSegment",
+      "args": [
+        "[Chat messages since your last reply - for context]old[Current message - respond to thiſ]new"
+      ],
+      "expected": "[Chat messages since your last reply - for context]old[Current message - respond to thiſ]new"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripQuotedContextBlocks",
+      "args": [
+        "[Chat messages since your last reply - for context]old[Current message - respond to thiK]new"
+      ],
+      "expected": ""
+    },
+    {
+      "group": "case-fold",
+      "fn": "extractCurrentMessageSegment",
+      "args": [
+        "[Chat messages since your last reply - for context]old[Current message - respond to thiK]new"
+      ],
+      "expected": "[Chat messages since your last reply - for context]old[Current message - respond to thiK]new"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripQuotedContextBlocks",
+      "args": [
+        "[CHAT MESSAGES SINCE YOUR LAST REPLY - FOR CONTEXT]old[CURRENT MESSAGE - RESPOND TO THIS]new"
+      ],
+      "expected": "[CURRENT MESSAGE - RESPOND TO THIS]new"
+    },
+    {
+      "group": "case-fold",
+      "fn": "extractCurrentMessageSegment",
+      "args": [
+        "[CHAT MESSAGES SINCE YOUR LAST REPLY - FOR CONTEXT]old[CURRENT MESSAGE - RESPOND TO THIS]new"
+      ],
+      "expected": "[CHAT MESSAGES SINCE YOUR LAST REPLY - FOR CONTEXT]old[CURRENT MESSAGE - RESPOND TO THIS]new"
+    },
+    {
+      "group": "case-fold",
+      "fn": "extractCurrentMessageSegment",
+      "args": [
+        "[Current message - respond to this]first[Current message - respond to this]last"
+      ],
+      "expected": "last"
+    },
+    {
+      "group": "case-fold",
+      "fn": "extractCurrentMessageSegment",
+      "args": [
+        "[Current message - respond to this]only"
+      ],
+      "expected": "only"
+    },
+    {
+      "group": "case-fold",
+      "fn": "extractCurrentMessageSegment",
+      "args": [
+        "[Current message - respond to this]"
+      ],
+      "expected": ""
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAttachmentScaffolding",
+      "args": [
+        "x\nTo send an image back, foo\ny"
+      ],
+      "expected": "x\n\ny"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAttachmentScaffolding",
+      "args": [
+        "x\nTo ſend an image back, foo\ny"
+      ],
+      "expected": "x\nTo ſend an image back, foo\ny"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAttachmentScaffolding",
+      "args": [
+        "x\nTO SEND AN IMAGE BACK, foo\ny"
+      ],
+      "expected": "x\n\ny"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAttachmentScaffolding",
+      "args": [
+        "[media attached: x] hi"
+      ],
+      "expected": "hi"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAttachmentScaffolding",
+      "args": [
+        "[medİa attached: x] hi"
+      ],
+      "expected": "[medİa attached: x] hi"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAttachmentScaffolding",
+      "args": [
+        "[MEDIA ATTACHED: x] hi"
+      ],
+      "expected": "hi"
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "session status"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "session status"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "session status"
+      ],
+      "expected": 1
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "ſession status"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "ſession status"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "ſession status"
+      ],
+      "expected": 0
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "sesſion status"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "sesſion status"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "sesſion status"
+      ],
+      "expected": 0
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "sessİon status"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "sessİon status"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "sessİon status"
+      ],
+      "expected": 0
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "SESSION STATUS"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "SESSION STATUS"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "SESSION STATUS"
+      ],
+      "expected": 1
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "Project state maintained by Agent"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "Project state maintained by Agent"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "Project state maintained by Agent"
+      ],
+      "expected": 1
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "Project ſtate maintained by Agent"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "Project ſtate maintained by Agent"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "Project ſtate maintained by Agent"
+      ],
+      "expected": 0
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "PROJECT STATE MAINTAINED BY AGENT"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "PROJECT STATE MAINTAINED BY AGENT"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "PROJECT STATE MAINTAINED BY AGENT"
+      ],
+      "expected": 1
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "git status: clean"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "git status: clean"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "git status: clean"
+      ],
+      "expected": 1
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "git ſtatus: clean"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "git ſtatus: clean"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "git ſtatus: clean"
+      ],
+      "expected": 0
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "GIT STATUS: CLEAN"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "GIT STATUS: CLEAN"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "GIT STATUS: CLEAN"
+      ],
+      "expected": 1
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "agent: a\nhost: h\nworkspace: w\nos: o"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "agent: a\nhost: h\nworkspace: w\nos: o"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "agent: a\nhost: h\nworkspace: w\nos: o"
+      ],
+      "expected": 4
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "agent: a\nhoſt: h\nworkspace: w\nos: o"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "agent: a\nhoſt: h\nworkspace: w\nos: o"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "agent: a\nhoſt: h\nworkspace: w\nos: o"
+      ],
+      "expected": 3
+    },
+    {
+      "group": "case-fold",
+      "fn": "lineLooksLikePluginNoise",
+      "args": [
+        "AGENT: a\nHOST: h\nWORKSPACE: w\nOS: o"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "startsWithPluginStateLine",
+      "args": [
+        "AGENT: a\nHOST: h\nWORKSPACE: w\nOS: o"
+      ],
+      "expected": false
+    },
+    {
+      "group": "case-fold",
+      "fn": "countPluginStateMarkers",
+      "args": [
+        "AGENT: a\nHOST: h\nWORKSPACE: w\nOS: o"
+      ],
+      "expected": 4
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripInjectedMemoryContext",
+      "args": [
+        "System: note\nreal"
+      ],
+      "expected": "System: note\nreal"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripInjectedMemoryContext",
+      "args": [
+        "Syſtem: note\nreal"
+      ],
+      "expected": "Syſtem: note\nreal"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripInjectedMemoryContext",
+      "args": [
+        "ſystem: note\nreal"
+      ],
+      "expected": "ſystem: note\nreal"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripInjectedMemoryContext",
+      "args": [
+        "SYSTEM: note\nreal"
+      ],
+      "expected": "SYSTEM: note\nreal"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAssistantThinking",
+      "args": [
+        "<think>hidden</think>answer"
+      ],
+      "expected": "answer"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAssistantThinking",
+      "args": [
+        "<thinK>hidden</thinK>answer"
+      ],
+      "expected": "<thinK>hidden</thinK>answer"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAssistantThinking",
+      "args": [
+        "<THINK>hidden</THINK>answer"
+      ],
+      "expected": "answer"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripAssistantThinking",
+      "args": [
+        "a<thinKing>h</thinKing>b"
+      ],
+      "expected": "a<thinKing>h</thinKing>b"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "System: [2026-10-22] note\nreal"
+      ],
+      "expected": "real"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "Syſtem: [2026-10-22] note\nreal"
+      ],
+      "expected": "Syſtem: [2026-10-22] note\nreal"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "[x for context]\nreal"
+      ],
+      "expected": "real"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "[x for conteſt]\nreal"
+      ],
+      "expected": "[x for conteſt]\nreal"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "[X FOR CONTEXT]\nreal"
+      ],
+      "expected": "real"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "[Current message - respond to this]\nreal"
+      ],
+      "expected": "real"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "[Current meſſage - respond to this]\nreal"
+      ],
+      "expected": "[Current meſſage - respond to this]\nreal"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "[message_id:abc]\nreal"
+      ],
+      "expected": "real"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "[meſſage_id:abc]\nreal"
+      ],
+      "expected": "[meſſage_id:abc]\nreal"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingMessageEnvelopeLines",
+      "args": [
+        "[MESSAGE_ID:abc]\nreal"
+      ],
+      "expected": "real"
+    },
+    {
+      "group": "case-fold",
+      "fn": "collectSenderHints",
+      "args": [
+        "Sender (untrusted metadata): ```json\n{\"sender\":\"Alice\"}\n```\nhello"
+      ],
+      "expected": [
+        "alice"
+      ]
+    },
+    {
+      "group": "case-fold",
+      "fn": "collectSenderHints",
+      "args": [
+        "ſender (untrusted metadata): ```json\n{\"sender\":\"Alice\"}\n```\nhello"
+      ],
+      "expected": []
+    },
+    {
+      "group": "case-fold",
+      "fn": "collectSenderHints",
+      "args": [
+        "Sender (untrusted metadata): ```jſon\n{\"sender\":\"Alice\"}\n```\nhello"
+      ],
+      "expected": []
+    },
+    {
+      "group": "case-fold",
+      "fn": "collectSenderHints",
+      "args": [
+        "Sender (untrusted metadata): ```JSON\n{\"sender\":\"Alice\"}\n```\nhello"
+      ],
+      "expected": [
+        "alice"
+      ]
+    },
+    {
+      "group": "case-fold",
+      "fn": "collectSenderHints",
+      "args": [
+        "SENDER (UNTRUSTED METADATA): ```json\n{\"sender\":\"Alice\"}\n```\nhello"
+      ],
+      "expected": [
+        "alice"
+      ]
+    },
+    {
+      "group": "case-fold",
+      "fn": "isSessionStartupMarkerText",
+      "args": [
+        "A new session was started via /new or /reset.\nRun your Session Startup sequence now"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "isSessionStartupMarkerText",
+      "args": [
+        "A new session was started via /new or /reset.\nRun your Seſſion Startup sequence now"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "isSessionStartupMarkerText",
+      "args": [
+        "A new session was started via /new or /reset.\nRUN YOUR SESSION STARTUP SEQUENCE NOW"
+      ],
+      "expected": true
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingSenderPrefix",
+      "args": [
+        "Aİlice: hi",
+        [
+          "ali̇ce"
+        ]
+      ],
+      "expected": "Aİlice: hi"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingSenderPrefix",
+      "args": [
+        "ſalice: hi",
+        [
+          "ſalice"
+        ]
+      ],
+      "expected": "hi"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingSenderPrefix",
+      "args": [
+        "ΑΣ: hi",
+        [
+          "ας"
+        ]
+      ],
+      "expected": "hi"
+    },
+    {
+      "group": "case-fold",
+      "fn": "stripLeadingSenderPrefix",
+      "args": [
+        "Σ: hi",
+        [
+          "σ"
+        ]
+      ],
+      "expected": "hi"
     }
   ]
 }

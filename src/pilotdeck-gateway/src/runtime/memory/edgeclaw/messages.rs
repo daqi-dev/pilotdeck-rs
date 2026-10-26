@@ -11,11 +11,8 @@
 //! area), regexes run on that lossless projection, and [`decode`] maps back.
 //! ECMAScript `\s` is spelled out because Rust's Unicode `\s` omits U+FEFF.
 
-use crate::{
-    model_catalog::lower,
-    runtime::memory::{js_is_space_unit, js_trim_units},
-};
-use icu_locale_core::LanguageIdentifier;
+use crate::runtime::memory::edgeclaw::text;
+use crate::runtime::memory::{js_is_space_unit, js_trim_units};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use regex::Regex;
 use std::sync::OnceLock;
@@ -141,29 +138,8 @@ fn re_split(text: &JsString, re: &Regex) -> Vec<JsString> {
     re.split(&encode(text)).map(decode).collect()
 }
 
-fn lower_text(value: &JsString) -> JsString {
-    lower(value, &LanguageIdentifier::UNKNOWN, false)
-}
-
 fn units_of(value: &str) -> Vec<u16> {
     value.encode_utf16().collect()
-}
-
-fn starts_with_str(value: &JsString, needle: &str) -> bool {
-    value.units().starts_with(&units_of(needle))
-}
-
-fn contains_str(value: &JsString, needle: &str) -> bool {
-    let needle = units_of(needle);
-    needle.is_empty()
-        || value
-            .units()
-            .windows(needle.len())
-            .any(|part| part == needle)
-}
-
-fn trim_js(value: &JsString) -> JsString {
-    JsString::from_utf16(js_trim_units(value.units()).to_vec())
 }
 
 fn trim_start_js(value: &JsString) -> JsString {
@@ -179,37 +155,43 @@ fn trim_lines(value: &[u16]) -> Vec<&[u16]> {
     value.split(|unit| *unit == u16::from(b'\n')).collect()
 }
 
-fn join_lines(lines: &[&[u16]]) -> JsString {
-    let mut units = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
-        if index > 0 {
-            units.push(u16::from(b'\n'));
-        }
-        units.extend(*line);
+/// ECMAScript non-Unicode `/i` `Canonicalize` (ES2024 22.2.2.8.2), matching
+/// V8 22 for the boundary units in `tests/fixtures/edgeclaw-messages`:
+/// ASCII letters uppercase; a non-ASCII unit stays put unless its default
+/// uppercase is a single non-ASCII BMP unit. So `ſ`, `K` (U+212A), `İ` and
+/// `ı` never fold onto ASCII (`/s/i` and `/k/i` are false for the first two),
+/// while `Σ`/`σ`/`ς` fold together and `ß`/`ẞ` do not.
+fn canonicalize_case(unit: u16) -> u16 {
+    if unit < 0x80 {
+        return if (u16::from(b'a')..=u16::from(b'z')).contains(&unit) {
+            unit - 0x20
+        } else {
+            unit
+        };
     }
-    JsString::from_utf16(units)
-}
-
-fn join_text(parts: &[JsString], separator: &str) -> JsString {
-    let mut units = Vec::new();
-    for (index, part) in parts.iter().enumerate() {
-        if index > 0 {
-            units.extend(separator.encode_utf16());
-        }
-        units.extend(part.units());
-    }
-    JsString::from_utf16(units)
-}
-
-fn fold_upper(unit: u16) -> Option<char> {
-    let character = char::from_u32(u32::from(unit))?;
+    let Some(character) = char::from_u32(u32::from(unit)) else {
+        return unit;
+    };
     let mut upper = character.to_uppercase();
-    let first = upper.next()?;
-    upper.next().is_none().then_some(first)
+    let Some(first) = upper.next() else {
+        return unit;
+    };
+    // `String.prototype.toUpperCase` leaves multi-unit expansions (`ß` -> SS)
+    // unchanged for canonicalization.
+    if upper.next().is_some() {
+        return unit;
+    }
+    let point = first as u32;
+    // Non-ASCII canonicalization never introduces an ASCII match (legacy
+    // non-Unicode `/i`), and a supplementary uppercase is two UTF-16 units.
+    if !(0x80..=0xFFFF).contains(&point) {
+        return unit;
+    }
+    point as u16
 }
 
 fn ci_eq(left: u16, right: u16) -> bool {
-    fold_upper(left).is_some_and(|upper| fold_upper(right) == Some(upper))
+    canonicalize_case(left) == canonicalize_case(right)
 }
 
 fn starts_with_ci(value: &[u16], at: usize, needle: &str) -> bool {
@@ -235,7 +217,7 @@ fn find_ci(value: &[u16], needle: &str, from: usize) -> Option<usize> {
 // -- text extraction --------------------------------------------------------
 
 fn push_unique(parts: &mut Vec<JsString>, value: &JsString) {
-    let value = trim_js(value);
+    let value = text::trim_js(value);
     if !value.is_empty() && !parts.contains(&value) {
         parts.push(value);
     }
@@ -246,15 +228,13 @@ fn extract_text_from_content(content: &JsValue, depth: usize) -> JsString {
         return JsString::default();
     }
     match content {
-        JsValue::String(text) => {
-            crate::runtime::memory::edgeclaw::text::decode_escaped_unicode_text(text, false)
-        }
+        JsValue::String(text) => text::decode_escaped_unicode_text(text, false),
         JsValue::Array(items) => {
             let mut blocks = Vec::new();
             for item in items {
                 push_unique(&mut blocks, &extract_text_from_content(item, depth + 1));
             }
-            join_text(&blocks, "\n")
+            text::join_text(&blocks, "\n")
         }
         JsValue::Object(object) => extract_text_from_object(object, depth),
         _ => JsString::default(),
@@ -269,7 +249,7 @@ fn extract_text_from_object(content: &JsObject, depth: usize) -> JsString {
     let kind = content
         .get("type")
         .and_then(JsValue::as_string)
-        .map(lower_text);
+        .map(text::lowercase);
     if kind.as_ref().is_some_and(|kind| {
         equals_any(
             kind,
@@ -300,14 +280,11 @@ fn extract_text_from_object(content: &JsObject, depth: usize) -> JsString {
             )
         })
     {
-        return crate::runtime::memory::edgeclaw::text::decode_escaped_unicode_text(text, false);
+        return text::decode_escaped_unicode_text(text, false);
     }
     let mut parts = Vec::new();
     if let Some(text) = text {
-        push_unique(
-            &mut parts,
-            &crate::runtime::memory::edgeclaw::text::decode_escaped_unicode_text(text, false),
-        );
+        push_unique(&mut parts, &text::decode_escaped_unicode_text(text, false));
     }
     for key in [
         "content", "body", "message", "caption", "parts", "items", "blocks", "segments", "chunks",
@@ -317,7 +294,7 @@ fn extract_text_from_object(content: &JsObject, depth: usize) -> JsString {
             &extract_text_from_content(content.get(key).unwrap_or(&UNDEFINED), depth + 1),
         );
     }
-    trim_js(&join_text(&parts, "\n"))
+    text::trim_js(&text::join_text(&parts, "\n"))
 }
 
 pub fn extract_text_from_content_value(content: &JsValue) -> JsString {
@@ -335,14 +312,16 @@ pub fn extract_text_from_object_value(content: &JsValue, depth: usize) -> JsStri
 // -- injected memory / recall context --------------------------------------
 
 pub fn strip_injected_memory_context(text: &JsString) -> JsString {
-    let mut cleaned = trim_js(text);
+    let mut cleaned = text::trim_js(text);
     for (index, pattern) in memory_context_patterns().iter().enumerate() {
-        if contains_str(&cleaned, MEMORY_HEADERS[index]) {
-            cleaned = trim_js(&re_replace(&cleaned, pattern, ""));
+        if text::contains(cleaned.units(), &units_of(MEMORY_HEADERS[index])) {
+            cleaned = text::trim_js(&re_replace(&cleaned, pattern, ""));
         }
     }
-    if contains_str(&cleaned, RECALL_HEADER) && contains_str(&cleaned, RECALL_INSTRUCTION) {
-        cleaned = trim_js(&re_replace(&cleaned, recall_context_pattern(), ""));
+    if text::contains(cleaned.units(), &units_of(RECALL_HEADER))
+        && text::contains(cleaned.units(), &units_of(RECALL_INSTRUCTION))
+    {
+        cleaned = text::trim_js(&re_replace(&cleaned, recall_context_pattern(), ""));
         let without_cr: Vec<u16> = cleaned
             .units()
             .iter()
@@ -360,7 +339,7 @@ pub fn strip_injected_memory_context(text: &JsString) -> JsString {
                 break;
             }
         }
-        cleaned = trim_js(&join_lines(&lines[start..]));
+        cleaned = text::trim_js(&text::join_lines(lines[start..].iter().copied()));
     }
     cleaned
 }
@@ -386,7 +365,7 @@ fn recall_context_pattern() -> &'static Regex {
     })
 }
 
-lazy_regex!(system_prefix_pattern, r"(?i)^System:");
+lazy_regex!(system_prefix_pattern, r"(?i-u)^System:");
 
 // -- whitespace and plugin scaffolding -------------------------------------
 
@@ -411,7 +390,7 @@ pub fn compact_whitespace(text: &JsString) -> JsString {
             previous_empty = empty;
         }
     }
-    trim_js(&join_lines(&compact))
+    text::trim_js(&text::join_lines(compact.iter().copied()))
 }
 
 pub fn normalize_plugin_noise_probe(text: &JsString) -> JsString {
@@ -420,27 +399,27 @@ pub fn normalize_plugin_noise_probe(text: &JsString) -> JsString {
     value = value.replace(['\u{2028}', '\u{2029}'], "\n");
     value = probe_marker_pattern().replace_all(&value, "").to_string();
     value = probe_space_pattern().replace_all(&value, " ").to_string();
-    trim_js(&decode(&value))
+    text::trim_js(&decode(&value))
 }
 
 lazy_regex!(probe_marker_pattern, r"(?m)^[>\-*$C]+");
 lazy_regex!(probe_space_pattern, r"(?s)$S+");
 lazy_regex!(
     marker_pattern,
-    r"(?i)(?-u:\b)project state maintained by(?-u:\b)"
+    r"(?i-u)(?-u:\b)project state maintained by(?-u:\b)"
 );
-lazy_regex!(session_pattern, r"(?i)(?-u:\b)session status(?-u:\b)");
+lazy_regex!(session_pattern, r"(?i-u)(?-u:\b)session status(?-u:\b)");
 lazy_regex!(
     git_status_pattern,
-    r"(?i)(?-u:\b)git status(?: summary)?$S*:"
+    r"(?i-u:(?-u:\b)git status(?: summary)?)$S*:"
 );
 lazy_regex!(
     start_project_pattern,
-    r"(?i)^project state maintained by(?-u:\b)"
+    r"(?i-u:^project state maintained by(?-u:\b))"
 );
-lazy_regex!(start_session_pattern, r"(?i)^session status(?-u:\b)");
-lazy_regex!(start_branch_pattern, r"(?i)^current git branch$S*:");
-lazy_regex!(start_git_pattern, r"(?i)^git status(?: summary)?$S*:");
+lazy_regex!(start_session_pattern, r"(?i-u:^session status(?-u:\b))");
+lazy_regex!(start_branch_pattern, r"(?i-u:^current git branch)$S*:");
+lazy_regex!(start_git_pattern, r"(?i-u:^git status(?: summary)?)$S*:");
 
 fn marker_word_patterns() -> &'static [Regex] {
     static RE: OnceLock<Vec<Regex>> = OnceLock::new();
@@ -455,7 +434,7 @@ fn marker_word_patterns() -> &'static [Regex] {
             "current git branch",
         ]
         .iter()
-        .map(|word| rx(&format!(r"(?i)(?-u:\b){word}$S*:")))
+        .map(|word| rx(&format!(r"(?i-u:(?-u:\b){word})$S*:")))
         .collect()
     })
 }
@@ -519,7 +498,7 @@ pub fn strip_plugin_state_scaffolding(text: &JsString) -> JsString {
     }
     let mut paragraphs: Vec<JsString> = re_split(&normalized, paragraph_pattern())
         .iter()
-        .map(trim_js)
+        .map(text::trim_js)
         .filter(|paragraph| !paragraph.is_empty())
         .collect();
     while paragraphs
@@ -528,7 +507,7 @@ pub fn strip_plugin_state_scaffolding(text: &JsString) -> JsString {
     {
         paragraphs.remove(0);
     }
-    let mut cleaned = trim_js(&join_text(&paragraphs, "\n\n"));
+    let mut cleaned = text::trim_js(&text::join_text(&paragraphs, "\n\n"));
     if cleaned.is_empty() {
         return cleaned;
     }
@@ -540,7 +519,7 @@ pub fn strip_plugin_state_scaffolding(text: &JsString) -> JsString {
     {
         start += 1;
     }
-    cleaned = compact_whitespace(&join_lines(&lines[start..]));
+    cleaned = compact_whitespace(&text::join_lines(lines[start..].iter().copied()));
     if cleaned.is_empty() {
         return cleaned;
     }
@@ -552,14 +531,14 @@ pub fn strip_plugin_state_scaffolding(text: &JsString) -> JsString {
 }
 
 lazy_regex!(paragraph_pattern, r"\n$S*\n");
-lazy_regex!(paragraph_session_pattern, r"(?i)session status");
+lazy_regex!(paragraph_session_pattern, r"(?i-u)session status");
 
 // -- sender metadata / quoted context --------------------------------------
 
 pub fn normalize_sender_hint(value: &JsString) -> JsString {
     let mut out = Vec::new();
     let mut in_space = false;
-    for unit in lower_text(value).units().iter().copied() {
+    for unit in text::lowercase(value).units().iter().copied() {
         if js_is_space_unit(unit) {
             in_space = true;
         } else {
@@ -573,19 +552,9 @@ pub fn normalize_sender_hint(value: &JsString) -> JsString {
     JsString::from_utf16(out)
 }
 
-fn json_text(value: &JsString) -> String {
-    let mut text = String::new();
-    for unit in char::decode_utf16(value.units().iter().copied()) {
-        match unit {
-            Ok(character) => text.push(character),
-            Err(error) => text.push_str(&format!("\\u{:04x}", error.unpaired_surrogate())),
-        }
-    }
-    text
-}
-
 fn add_sender_hints(raw: &str, hints: &mut Vec<JsString>) {
-    let text = json_text(&decode(raw));
+    let decoded = decode(raw);
+    let text = text::json_text(decoded.units());
     let Ok(parsed) = parse_json(&text) else {
         return;
     };
@@ -653,7 +622,7 @@ pub fn extract_current_message_segment(text: &JsString) -> JsString {
     let Some(index) = value.windows(marker.len()).rposition(|part| part == marker) else {
         return text.clone();
     };
-    trim_js(&JsString::from_utf16(
+    text::trim_js(&JsString::from_utf16(
         value[index + marker.len()..].to_vec(),
     ))
 }
@@ -737,11 +706,11 @@ pub fn strip_leading_current_message_envelope(text: &JsString) -> JsString {
     let Some(capture) = current_envelope_pattern().captures(&encoded) else {
         return text.clone();
     };
-    trim_js(&decode(&capture[2]))
+    text::trim_js(&decode(&capture[2]))
 }
 
 pub fn looks_like_opaque_sender_label(label: &JsString) -> bool {
-    let value = trim_js(label);
+    let value = text::trim_js(label);
     let encoded = encode(&value);
     !value.is_empty()
         && value.len_utf16() <= 120
@@ -752,7 +721,7 @@ pub fn looks_like_opaque_sender_label(label: &JsString) -> bool {
 pub fn strip_leading_sender_prefix(text: &JsString, hints: &[JsString]) -> JsString {
     let units = text.units().to_vec();
     let lines = trim_lines(&units);
-    let first = trim_js(&JsString::from_utf16(lines[0].to_vec()));
+    let first = text::trim_js(&JsString::from_utf16(lines[0].to_vec()));
     let encoded = encode(&first);
     let Some(capture) = sender_prefix_pattern().captures(&encoded) else {
         return text.clone();
@@ -768,7 +737,7 @@ pub fn strip_leading_sender_prefix(text: &JsString, hints: &[JsString]) -> JsStr
             .iter()
             .map(|line| JsString::from_utf16(line.to_vec())),
     );
-    trim_js(&join_text(&parts, "\n"))
+    text::trim_js(&text::join_text(&parts, "\n"))
 }
 
 pub fn strip_leading_mentions(text: &JsString) -> JsString {
@@ -790,7 +759,7 @@ pub fn strip_leading_message_envelope_lines(text: &JsString) -> JsString {
     while start < lines.len() && is_noise_line(&JsString::from_utf16(lines[start].to_vec())) {
         start += 1;
     }
-    trim_js(&join_lines(&lines[start..]))
+    text::trim_js(&text::join_lines(lines[start..].iter().copied()))
 }
 
 pub fn strip_user_noise(text: &JsString) -> JsString {
@@ -841,14 +810,14 @@ pub fn strip_assistant_thinking(text: &JsString) -> JsString {
             previous_empty = empty;
         }
     }
-    let normalized = trim_js(&join_lines(&compact));
+    let normalized = text::trim_js(&text::join_lines(compact.iter().copied()));
     let paragraphs: Vec<JsString> = re_split(&normalized, paragraph_pattern())
         .iter()
-        .map(trim_js)
+        .map(text::trim_js)
         .filter(|paragraph| !paragraph.is_empty())
         .collect();
     if paragraphs.len() >= 2 && is_meta_reasoning(&paragraphs[0]) {
-        return trim_js(&strip_plugin_state_scaffolding(&join_text(
+        return text::trim_js(&strip_plugin_state_scaffolding(&text::join_text(
             &paragraphs[1..],
             "\n\n",
         )));
@@ -857,21 +826,24 @@ pub fn strip_assistant_thinking(text: &JsString) -> JsString {
 }
 
 fn is_meta_reasoning(value: &JsString) -> bool {
-    let any = |list: &[&str]| list.iter().any(|needle| contains_str(value, needle));
-    (starts_with_str(value, "用户")
+    let any = |list: &[&str]| {
+        list.iter()
+            .any(|needle| text::contains(value.units(), &units_of(needle)))
+    };
+    (text::starts_with(value, "用户")
         && any(&["需要", "应该", "这是", "表达", "分享", "说明", "记录"]))
-        || (starts_with_str(value, "搜索结果") && any(&["需要", "无法", "不太理想"]))
-        || (starts_with_str(value, "这搜索") && any(&["不太全", "看不到", "找不到"]))
+        || (text::starts_with(value, "搜索结果") && any(&["需要", "无法", "不太理想"]))
+        || (text::starts_with(value, "这搜索") && any(&["不太全", "看不到", "找不到"]))
 }
 
 fn is_noise_line(line: &JsString) -> bool {
-    let value = trim_js(line);
+    let value = text::trim_js(line);
     if value.is_empty() {
         return true;
     }
     let encoded = encode(&value);
     if value.equals_str("```")
-        || lower_text(&value).equals_str("```json")
+        || text::lowercase(&value).equals_str("```json")
         || value.equals_str("{")
         || value.equals_str("}")
     {
@@ -1006,7 +978,7 @@ pub fn inspect_transcript_message(raw: &JsValue) -> TranscriptMessageInfo {
         _ => None,
     };
     let content = raw_content(raw, nested);
-    let raw_text = trim_js(&extract_text_from_content(content, 0));
+    let raw_text = text::trim_js(&extract_text_from_content(content, 0));
     let normalized_content = match normalized {
         Some(MemoryRole::User) => strip_user_noise(&raw_text),
         Some(MemoryRole::Assistant) => strip_assistant_thinking(&raw_text),
@@ -1029,8 +1001,9 @@ pub fn is_session_startup_marker_text(text: &JsString) -> bool {
     if normalized.is_empty() {
         return false;
     }
-    contains_str(&normalized, SESSION_START_PREFIX)
-        || (contains_str(&normalized, SESSION_START_PREFIX) && session_sequence(&normalized))
+    text::contains(normalized.units(), &units_of(SESSION_START_PREFIX))
+        || (text::contains(normalized.units(), &units_of(SESSION_START_PREFIX))
+            && session_sequence(&normalized))
 }
 
 fn session_sequence(value: &JsString) -> bool {
@@ -1049,7 +1022,7 @@ pub fn parse_leading_slash_command(text: &JsString) -> Option<JsString> {
     let trimmed = compact_whitespace(text);
     let encoded = encode(&trimmed);
     let capture = slash_command_pattern().captures(&encoded)?;
-    let command = lower_text(&decode(&capture[1]));
+    let command = text::lowercase(&decode(&capture[1]));
     let command = command.to_utf8().ok()?;
     SLASH_COMMANDS
         .contains(&command.as_str())
@@ -1071,7 +1044,7 @@ pub fn parse_bang_command(text: &JsString) -> Option<JsString> {
     }
     let encoded = encode(&trimmed);
     let capture = bang_command_pattern().captures(&encoded)?;
-    let command = lower_text(&decode(&capture[1])).to_utf8().ok()?;
+    let command = text::lowercase(&decode(&capture[1])).to_utf8().ok()?;
     BANG_COMMANDS
         .contains(&command.as_str())
         .then_some(JsString::from(command))
@@ -1081,7 +1054,7 @@ pub fn should_skip_user_message(content: &JsString) -> bool {
     content.is_empty()
         || is_session_startup_marker_text(content)
         || is_command_only_user_text(content)
-        || starts_with_str(content, SLUG_PREFIX)
+        || text::starts_with(content, SLUG_PREFIX)
 }
 
 pub fn should_skip_assistant_message(raw_content: &JsValue, content: &JsString) -> bool {
@@ -1091,18 +1064,18 @@ pub fn should_skip_assistant_message(raw_content: &JsValue, content: &JsString) 
     if has_tool_call_content(raw_content) {
         return true;
     }
-    if contains_str(content, "\n") {
+    if text::contains(content.units(), &units_of("\n")) {
         return false;
     }
-    let compact = trim_js(content);
-    (starts_with_str(&compact, "用户")
+    let compact = text::trim_js(content);
+    (text::starts_with(&compact, "用户")
         && ["需要", "应该", "这是", "表达", "分享", "记录"]
             .iter()
-            .any(|needle| contains_str(&compact, needle)))
-        || (starts_with_str(&compact, "搜索结果")
+            .any(|needle| text::contains(compact.units(), &units_of(needle))))
+        || (text::starts_with(&compact, "搜索结果")
             && ["需要", "无法", "不太理想"]
                 .iter()
-                .any(|needle| contains_str(&compact, needle)))
+                .any(|needle| text::contains(compact.units(), &units_of(needle))))
 }
 
 // -- normalization ----------------------------------------------------------
@@ -1168,7 +1141,7 @@ fn normalize_single_message(
     Some(MemoryMessage {
         msg_id,
         role,
-        content: crate::runtime::memory::edgeclaw::text::truncate(&info.content, max_message_chars),
+        content: text::truncate(&info.content, max_message_chars),
     })
 }
 
@@ -1207,45 +1180,48 @@ pub fn normalize_messages(raw: &[JsValue], options: &NormalizeOptions) -> Vec<Me
     }
 }
 
-lazy_regex!(think_close_pattern, r"(?is)^.*?</think>");
-lazy_regex!(thinking_close_pattern, r"(?is)^.*?</thinking>");
-lazy_regex!(think_pair_pattern, r"(?is)<think>.*?</think>");
-lazy_regex!(thinking_pair_pattern, r"(?is)<thinking>.*?</thinking>");
-lazy_regex!(think_tag_pattern, r"(?i)</?think[^>]*>");
-lazy_regex!(thinking_tag_pattern, r"(?i)</?thinking[^>]*>");
+lazy_regex!(think_close_pattern, r"(?s)^.*?(?i-u:</think>)");
+lazy_regex!(thinking_close_pattern, r"(?s)^.*?(?i-u:</thinking>)");
+lazy_regex!(think_pair_pattern, r"(?s)(?i-u:<think>).*?(?i-u:</think>)");
+lazy_regex!(
+    thinking_pair_pattern,
+    r"(?s)(?i-u:<thinking>).*?(?i-u:</thinking>)"
+);
+lazy_regex!(think_tag_pattern, r"(?i-u:</?think)[^>]*>");
+lazy_regex!(thinking_tag_pattern, r"(?i-u:</?thinking)[^>]*>");
 lazy_regex!(
     session_sequence_pattern,
-    r"(?i)(?-u:\b)(?:Run|Execute) your Session Startup sequence(?-u:\b)"
+    r"(?i-u)(?-u:\b)(?:Run|Execute) your Session Startup sequence(?-u:\b)"
 );
 
 // -- static patterns --------------------------------------------------------
 
 lazy_regex!(
     sender_block_pattern,
-    r"(?is)(?:Conversation info|Sender)$S*\(untrusted metadata\)$S*:$S*```(?:json)?$S*(.*?)$S*```"
+    r"(?s)(?:(?i-u:Conversation info)|(?i-u:Sender))$S*\((?i-u:untrusted metadata)\)$S*:$S*```(?:(?i-u:json))?$S*(.*?)$S*```"
 );
 lazy_regex!(
     sender_inline_pattern,
-    r"(?is)(?:Conversation info|Sender)$S*\(untrusted metadata\)$S*:$S*(\{.*?\})"
+    r"(?s)(?:(?i-u:Conversation info)|(?i-u:Sender))$S*\((?i-u:untrusted metadata)\)$S*:$S*(\{.*?\})"
 );
 lazy_regex!(
     sender_block_strip_pattern,
-    r"(?is)(?:Conversation info|Sender)$S*\(untrusted metadata\)$S*:$S*```(?:json)?.*?```$S*"
+    r"(?s)(?:(?i-u:Conversation info)|(?i-u:Sender))$S*\((?i-u:untrusted metadata)\)$S*:$S*```(?:(?i-u:json))?.*?```$S*"
 );
 lazy_regex!(
     sender_inline_strip_pattern,
-    r"(?is)(?:Conversation info|Sender)$S*\(untrusted metadata\)$S*:$S*\{.*?\}$S*"
+    r"(?s)(?:(?i-u:Conversation info)|(?i-u:Sender))$S*\((?i-u:untrusted metadata)\)$S*:$S*\{.*?\}$S*"
 );
 lazy_regex!(
     quoted_pattern,
-    r"(?is)(?:Chat history since last reply|Replied message)$S*\(untrusted[^)]*\)$S*:$S*```(?:json)?.*?```$S*"
+    r"(?s)(?:(?i-u:Chat history since last reply)|(?i-u:Replied message))$S*\((?i-u:untrusted)[^)]*\)$S*:$S*```(?:(?i-u:json))?.*?```$S*"
 );
 lazy_regex!(
     timestamp_pattern,
-    r"(?i)^$S*\[[^\]\n]*(?:[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}|GMT|UTC)[^\]\n]*\]$S*"
+    r"^$S*\[[^\]\n]*(?:[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}|(?i-u:GMT)|(?i-u:UTC))[^\]\n]*\]$S*"
 );
-lazy_regex!(file_boundary_pattern, r"(?i)\n<file(?-u:\b)");
-lazy_regex!(file_tag_pattern, r"(?i)<file(?-u:\b)[^>]*>");
+lazy_regex!(file_boundary_pattern, r"\n(?i-u:<file)(?-u:\b)");
+lazy_regex!(file_tag_pattern, r"(?i-u:<file)(?-u:\b)[^>]*>");
 lazy_regex!(
     current_envelope_pattern,
     r"(?s)^(?:\[[^\]\n]{1,320}\]$S*)+([^:\n]{1,120}):$S*(.*)$"
@@ -1254,27 +1230,27 @@ lazy_regex!(opaque_label_pattern, r"^[A-Za-z0-9_.@()\- ]+$");
 lazy_regex!(opaque_digit_pattern, r"[0-9_]");
 lazy_regex!(opaque_word_pattern, r"^[A-Za-z][A-Za-z0-9_.@()\- ]{4,}$");
 lazy_regex!(sender_prefix_pattern, r"(?s)^([^:\n]{1,120}):$S*(.*)$");
-lazy_regex!(mention_pattern, r"(?i)^@[A-Za-z0-9_.-]+$S*");
+lazy_regex!(mention_pattern, r"^@[A-Za-z0-9_.-]+$S*");
 lazy_regex!(
     untrusted_prefix_pattern,
-    r"(?i)^(?:Conversation info|Sender)$S*\(untrusted metadata\)$S*:?"
+    r"^(?:(?i-u:Conversation info)|(?i-u:Sender))$S*\((?i-u:untrusted metadata)\)$S*:?"
 );
 lazy_regex!(
     quoted_prefix_pattern,
-    r"(?i)^(?:Chat history since last reply|Replied message)$S*\(untrusted[^)]*\)$S*:?"
+    r"^(?:(?i-u:Chat history since last reply)|(?i-u:Replied message))$S*\((?i-u:untrusted)[^)]*\)$S*:?"
 );
 lazy_regex!(
     system_timestamp_pattern,
-    r"(?i)^System:$S*\[[^\]\n]*(?:[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}|GMT|UTC)[^\]\n]*\]$S*"
+    r"(?i-u:^System:)$S*\[[^\]\n]*(?:[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}|(?i-u:GMT)|(?i-u:UTC))[^\]\n]*\]$S*"
 );
-lazy_regex!(message_id_pattern, r"(?i)^\[message_id:[^\]]+\]$");
+lazy_regex!(message_id_pattern, r"^(?i-u:\[message_id:)[^\]]+\]$");
 lazy_regex!(
     context_bracket_pattern,
-    r"(?i)^\[[^\]\n]*(?:for context|Current message - respond to this)[^\]\n]*\]$"
+    r"^\[[^\]\n]*(?:(?i-u:for context)|(?i-u:Current message - respond to this))[^\]\n]*\]$"
 );
 lazy_regex!(
     timestamp_label_pattern,
-    r"(?i)^\[[^\]\n]*(?:[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}|GMT|UTC|channel:[0-9]+)[^\]\n]*\]$S*[^:\n]{1,120}:$S*"
+    r"^\[[^\]\n]*(?:[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}|(?i-u:GMT)|(?i-u:UTC)|(?i-u:channel):[0-9]+)[^\]\n]*\]$S*[^:\n]{1,120}:$S*"
 );
 lazy_regex!(
     slash_command_pattern,
