@@ -13,12 +13,14 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 ROOT = Path(__file__).resolve().parents[5]
 OUT = Path(sys.argv[1]).resolve()
 OUT.mkdir(parents=True, exist_ok=False)
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
+TEST = 'runtime::plugins::tests::disposal_notify_between_first_and_spawned_poll_is_retained'
 with mutating_sources(ROOT, [SOURCE]) as snapshots:
     before = snapshots[SOURCE]
     old = b'std::task::Poll::Pending => callback.await,'
@@ -33,7 +35,9 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
     mutated = before.replace(old, new)
     assert mutated != before
     env = dict(os.environ, CARGO_BUILD_JOBS='4')
-    assert Path(env.get('CARGO_TARGET_DIR', ROOT / 'src/target')).resolve() == ROOT / 'src/target'
+    target_dir = Path(env.get('CARGO_TARGET_DIR', ROOT / 'src/target')).resolve()
+    assert target_dir in {(ROOT / 'src/target').resolve(), (ROOT / '_build/cargo-target').resolve()}, \
+        'use this tree src/target or _build/cargo-target'
     started = time.monotonic()
     slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=120)
     (OUT / 'slots.log').write_text(slot.stdout + slot.stderr)
@@ -42,15 +46,17 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
         result = run_owned([
             'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
             '-p', 'pilotdeck-gateway', '--lib',
-            'disposal_notify_between_first_and_spawned_poll_is_retained',
-            '--', '--nocapture', '--test-threads=1',
+            TEST,
+            '--', '--exact', '--nocapture', '--test-threads=1',
         ], cwd=ROOT, env=env, timeout=max(1, min(180, 240 - (time.monotonic() - started))))
         output = result.stdout + result.stderr
         (OUT / 'recreate-callback.log').write_text(output)
+        # #813: the named test's FAILED line plus the marker inside its own
+        # panic block, not ordinary stdout or a sibling test.
         killed = (
             result.returncode == 101
-            and 'disposal lost the notification between first and spawned poll: Elapsed(())' in output
-            and 'test result: FAILED. 0 passed; 1 failed;' in output
+            and named_test_killed(output, TEST,
+                                  'disposal lost the notification between first and spawned poll')
             and 'could not compile' not in output
         )
         summary = dict(

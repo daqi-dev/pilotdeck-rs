@@ -2,17 +2,21 @@
 
 Run with the launcher environment and a fresh evidence directory. Restore the
 exact source bytes after each mutation; compilation errors never count.
+Optional mutation ids (``restore-old-logic``, ``catch-first-poll-only``,
+``invoke-under-state-lock``) select a subset; every one still runs in its own
+process.
 """
 import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import select
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
@@ -22,17 +26,37 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
     BASE = snapshots[SOURCE]
     TEXT = BASE.decode()
     ENV = dict(os.environ, RUSTC_WRAPPER='', CARGO_BUILD_JOBS='4')
-    assert Path(ENV.get('CARGO_TARGET_DIR', ROOT / 'src/target')).resolve() == ROOT / 'src/target'
-    # The exact pushed pre-repair-3 product code, including the repair-2 test hook.
-    OLD_COMMIT = '6286ed744c4e04ffea76fd7458772316a2364040'
-    OLD = subprocess.check_output(
-        ['git', 'show', f'{OLD_COMMIT}:src/pilotdeck-gateway/src/runtime/plugins.rs'],
-        cwd=ROOT, timeout=10,
-    )
+    target_dir = Path(ENV.get('CARGO_TARGET_DIR', ROOT / 'src/target')).resolve()
+    assert target_dir in {(ROOT / 'src/target').resolve(), (ROOT / '_build/cargo-target').resolve()}, \
+        'use this tree src/target or _build/cargo-target'
 
     def replace(old, new):
         assert TEXT.count(old) == 1, f'expected one anchor: {old!r}'
         return TEXT.replace(old, new).encode()
+
+    # Pre-repair-3 behaviour on the current source: a dispose panic is not
+    # converted into a disposal error, so the start task unwinds and the rest of
+    # the batch is stranded. Replaying the whole 6286ed7 file no longer compiles
+    # against the current plugins_tests.rs (later changes added fields its tests
+    # use); this reverse diff keeps the same behavioural claim.
+    old_logic = replace(
+        '                let mut callback = Box::pin(std::future::poll_fn(move |cx| {\n'
+        '                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {\n'
+        '                        future.as_mut().poll(cx)\n'
+        '                    }))\n'
+        '                    .unwrap_or_else(|payload| {\n'
+        '                        let message = payload\n'
+        '                            .downcast_ref::<String>()\n'
+        '                            .cloned()\n'
+        '                            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))\n'
+        '                            .unwrap_or_else(|| "Plugin dispose callback panicked.".to_owned());\n'
+        '                        std::task::Poll::Ready(Err(PluginRuntimeError::new(message)))\n'
+        '                    })\n'
+        '                }));',
+        '                let mut callback = Box::pin(std::future::poll_fn(move |cx| {\n'
+        '                    future.as_mut().poll(cx)\n'
+        '                }));',
+    )
 
     # Catch only the eager first poll, allowing an unwind after a Pending poll.
     first_only = replace(
@@ -50,18 +74,29 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
         b'        // Every synchronous prologue has run before any callback can resume.',
         b'        drop(_state_guard);\n        // Every synchronous prologue has run before any callback can resume.',
     )
+    # Both the timeout expectation and the completion assertion are real
+    # detections of the stranding; which one fires depends on scheduling.
+    stranded = ('sync panic stranded a waiter: dispose deadline',
+                'assertion `left == right` failed')
     CASES = [
-        ('restore-old-logic', OLD, 'disposal_sync_panic_does_not_strand_other_waiters',
-         'sync panic stranded a waiter: dispose deadline: Elapsed(())'),
+        ('restore-old-logic', old_logic, 'disposal_sync_panic_does_not_strand_other_waiters',
+         stranded),
         ('catch-first-poll-only', first_only, 'disposal_sync_panic_does_not_strand_other_waiters',
-         'sync panic stranded a waiter: dispose deadline: Elapsed(())'),
+         stranded),
         ('invoke-under-state-lock', hold_lock, 'disposal_prologue_can_access_runtime_state',
          'DisposeFn invoked under state lock'),
     ]
+    # Optional mutation ids keep a host re-run bounded; `always=()` because
+    # this script has no unmutated baseline row.
+    cases = select(CASES, sys.argv[2:], always=())
+    # #813: the libtest status line and the panic block carry the full module
+    # path; the bare function name cannot be judged exactly.
+    TEST_PREFIX = 'runtime::plugins::tests::'
     summary = []
     start = time.monotonic()
     try:
-        for name, mutation, test, marker in CASES:
+        for name, mutation, test, marker in cases:
+            test_name = TEST_PREFIX + test
             assert mutation != BASE, f'{name} must change bytes'
             assert SOURCE.read_bytes() == BASE, 'source changed outside exclusive runner'
             slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh',
@@ -71,16 +106,18 @@ with mutating_sources(ROOT, [SOURCE]) as snapshots:
                 SOURCE.write_bytes(mutation)
                 result = run_owned([
                     'cargo', 'test', '--offline', '--manifest-path', str(ROOT / 'src/Cargo.toml'),
-                    '-p', 'pilotdeck-gateway', '--lib', test,
-                    '--', '--nocapture', '--test-threads=1',
+                    '-p', 'pilotdeck-gateway', '--lib', test_name,
+                    '--', '--exact', '--nocapture', '--test-threads=1',
                 ], cwd=ROOT, env=ENV, timeout=max(1, min(150, 590 - (time.monotonic() - start))))
                 output = result.stdout + result.stderr
                 (OUT / f'{name}.log').write_text(output)
-                killed = (result.returncode == 101 and marker in output
-                          and 'test result: FAILED. 0 passed; 1 failed;' in output
+                # #813: `test {test_name} ... FAILED` plus the marker inside that
+                # test's panic block, never ordinary stdout or a sibling test.
+                killed = (result.returncode == 101
+                          and named_test_killed(output, test_name, marker)
                           and 'could not compile' not in output)
                 summary.append(dict(mutation=name, mutationSha256=hashlib.sha256(mutation).hexdigest(),
-                                    exit=result.returncode, killed=killed, marker=marker))
+                                    exit=result.returncode, test=test_name, killed=killed, marker=marker))
                 print(json.dumps(summary[-1]), flush=True)
                 assert killed, 'require behavioral failure, not compile error or parent timeout'
             finally:

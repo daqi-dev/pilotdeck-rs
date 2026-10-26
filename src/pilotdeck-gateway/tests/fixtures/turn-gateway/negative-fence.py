@@ -15,7 +15,9 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import named_test_killed
 from negative_process import mutating_sources, run_owned
+from negative_selection import select
 
 fixture = Path(__file__).resolve().parent
 workspace = fixture.parents[3]
@@ -24,16 +26,19 @@ turn = workspace / 'pilotdeck-gateway/src/runtime/turn'
 gateway = turn / 'gateway.rs'
 submit = turn / 'submit.rs'
 tests = turn / 'gateway_tests.rs'
+submit_tests = turn / 'submit_tests.rs'
 session = workspace / 'pilotdeck-gateway/src/runtime/session/mod.rs'
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
 env = dict(os.environ, CARGO_NET_OFFLINE='true')
-assert Path(env['CARGO_TARGET_DIR']).resolve() == workspace / 'target'
+target_dir = Path(env['CARGO_TARGET_DIR']).resolve()
+assert target_dir in {(workspace / 'target').resolve(), (repo / '_build/cargo-target').resolve()}, \
+    'use this tree src/target or _build/cargo-target'
 assert env.get('PDRS_BASELINE'), 'set PDRS_BASELINE'
 for key in ['PDRS_GATEWAY_CASE', 'PDRS_SUBMIT_CAPABILITY']:
     env.pop(key, None)
-with mutating_sources(repo, [gateway, submit, tests, session]) as snapshots:
-    original = {p: snapshots[p] for p in [gateway, submit, tests, session]}
+with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as snapshots:
+    original = {p: snapshots[p] for p in [gateway, submit, tests, submit_tests, session]}
     text = original[gateway].decode()
     start = text.index('            let wait_for = {')
     end = text.index('            if let Some(mut done) = wait_for {', start)
@@ -84,7 +89,7 @@ with mutating_sources(repo, [gateway, submit, tests, session]) as snapshots:
         mutation('observation-does-not-wait', tests,
             'if self.0.lock().unwrap().len() >= frames && (!ended || consumer.load(Ordering::SeqCst))',
             'if true || (self.0.lock().unwrap().len() >= frames && (!ended || consumer.load(Ordering::SeqCst)))',
-            'observation.as_mut().poll', 'transport_observation_waits_for_delivery_and_receive_completion'),
+            'observation must wait for delivery before the receive completes', 'transport_observation_waits_for_delivery_and_receive_completion'),
     ]
     # Move the observer to identity resolution, before acceptance/admission, so a
     # busy/preflight submission can overwrite a valid current consumer slot.
@@ -98,14 +103,26 @@ with mutating_sources(repo, [gateway, submit, tests, session]) as snapshots:
     m['test'] = ws_test
     m['marker'] = 'abort-after-busy'
 
+    # The two filter controls must fail through the named test's own
+    # `assert!(selected > 0, "<message>")`. The marker is that assertion
+    # message, not a code fragment; verify the literal is still in the test
+    # source before trusting any verdict derived from it (#813 fix-r3).
+    filter_assertions = {
+        'PDRS_GATEWAY_CASE': ('gateway case filter must match at least one scenario', tests),
+        'PDRS_SUBMIT_CAPABILITY': ('submit capability filter must match at least one scenario', submit_tests),
+    }
+    for key, (message, path) in filter_assertions.items():
+        assert f'assert!(selected > 0, "{message}");' in original[path].decode(), \
+            (key, 'filter assertion message drifted')
+
     selected = [dict(name='baseline', test=fence_test, marker=None)] + mutants
     for key, test in [('PDRS_GATEWAY_CASE', ws_test), ('PDRS_SUBMIT_CAPABILITY', cap_test)]:
+        message, _path = filter_assertions[key]
         for label, value in [('unknown', 'does-not-exist'), ('empty', '')]:
             selected.append(dict(name=f'{key.lower()}-{label}', test=test,
-                marker=f'{key} matched no scenario', filter=(key, value)))
-    if len(sys.argv) > 2:
-        selected = [m for m in selected if m['name'] in sys.argv[2:]]
-        assert selected, 'unknown controls'
+                marker=message, filter=(key, value)))
+    selected = select(
+        selected, sys.argv[2:], name=lambda row: row['name'])
     command = ['cargo', 'test', '--offline', '--manifest-path', str(workspace / 'Cargo.toml'),
                '-p', 'pilotdeck-gateway', '--lib']
     summary = []
@@ -150,14 +167,20 @@ with mutating_sources(repo, [gateway, submit, tests, session]) as snapshots:
                 and int(result.group(1)) == 1
                 and re.search(r'^test ' + re.escape(test_name) + r' \.\.\. ok$', raw, re.MULTILINE) is not None)
             valid = not timed_out and (baseline_ok if marker is None else (
-                returncode == 101 and 'test result: FAILED' in raw and marker in raw
-                and 'could not compile' not in raw))
+                returncode == 101 and 'test result: FAILED' in raw
+                and 'could not compile' not in raw
+                and named_test_killed(raw, test_name, marker)))
             (out / f'{control["name"]}.log').write_text('COMMAND ' + ' '.join(cmd) + '\n' + slots.stdout + slots.stderr
                 + raw + f'\nexit={returncode} timed_out={timed_out}\n')
             summary.append(dict(name=control['name'], exit=returncode, timed_out=timed_out, valid=valid, marker=marker))
             (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
             print(f'{control["name"]}: {"PASS" if valid else "INVALID"} exit={returncode} timed_out={timed_out}', flush=True)
-            # Continue after an invalid/timeout control, retaining all evidence.
+            if not valid and marker is None:
+                # A subset run still needs the unmutated copy to pass. Without
+                # that proof no mutant verdict counts, so the whole run is
+                # INVALID instead of reporting per-mutant results.
+                raise SystemExit(1)
+            # Continue after an invalid/timeout mutant, retaining all evidence.
     finally:
         assert all(p.read_bytes() == data for p, data in original.items()), 'original bytes not restored'
         (out / 'restored-sha256.json').write_text(json.dumps({str(p.relative_to(repo)): hashlib.sha256(data).hexdigest()
