@@ -24,12 +24,16 @@ the restored positive still runs.  ``MUTATIONS`` is the literal
 ``(name, source, old, new)`` table read by #820's anchor selfcheck, and
 ``JUDGES`` holds the mode/judge/launcher metadata keyed by mutation name.
 
-Exit codes: 0 every mutant killed and the restored source passes; 1 a mutant
-survived or the restored source failed; 2 an anchor is stale (refuse to mutate);
-3 an environment/startup failure made a case INVALID (never counted as KILLED).
+Exit codes: 0 every mutant killed and the restored positive is PASS; 1 a
+mutant survived, the restored source failed, or the restored positive only
+passed with platform skips (PASS_WITH_SKIPS); 2 an anchor is stale (refuse to
+mutate) or a case is INVALID/BLOCKED (environment/startup failure, never
+counted as KILLED).  The top-level status and exit code come from the one
+shared ``common.aggregate_status()``; the restored positive is a child too.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -45,7 +49,16 @@ from negative_process import mutating_sources, run_owned
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'scripts/gateway-parity/session_domain.py'
 CONTROLS_SOURCE = ROOT / 'scripts/gateway-parity/controls/session_domain.py'
+COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
+NEGATIVE = Path(__file__).resolve()
+_spec = importlib.util.spec_from_file_location('session_cleanup_common', COMMON_SOURCE)
+common = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(common)
+
+# Batch verdict -> child status for the shared aggregator.  INVALID is an
+# environment/startup failure: BLOCKED, never PASS and never counted as KILLED.
+MUTATION_STATUS = {'KILLED': 'PASS', 'SURVIVED': 'FAIL', 'INVALID': 'BLOCKED'}
 
 _MISSING = object()
 
@@ -189,10 +202,11 @@ MUTATIONS = [
      "    if False:  # mutant: trust the platform's visible process set\n"),
     ('batch-status-relaxed', CONTROLS_SOURCE,
      "    cleanup = cleanup_controls(output)\n"
-     "    report = {'status': aggregate_status(\n"
-     "                  'PASS' if all(r['passed'] for r in results) else 'FAIL',\n"
-     "                  'PASS_WITH_SKIPS' if not_run else None,\n"
-     "                  cleanup['status']),\n"
+     "    status, _ = common.aggregate_status(\n"
+     "        'PASS' if all(r['passed'] for r in results) else 'FAIL',\n"
+     "        'PASS_WITH_SKIPS' if not_run else None,\n"
+     "        cleanup['status'])\n"
+     "    report = {'status': status,\n"
      "              'scope': 'apparatus mutation tests only', 'cases': results,\n"
      "              'notRun': [{'case': case, 'reason': 'requires real calibration --source'} for case in not_run]}\n"
      "    report['cleanup'] = cleanup\n"
@@ -206,15 +220,12 @@ MUTATIONS = [
      "    if cleanup['status'] == 'FAIL':\n"
      "        report['status'] = 'FAIL'"),
     ('fixture-summary-relaxed', CHECK,
-     "    executed = [row for row in results if row.get('passed') is not None]\n"
-     "    skipped = [row for row in results\n"
-     "               if row.get('passed') is None and row.get('skipped')]\n"
-     "    malformed = [row for row in results\n"
-     "                 if row.get('passed') is None and not row.get('skipped')]\n"
      "    if (malformed or not executed\n"
      "            or any(row.get('passed') is False for row in executed)):\n"
-     "        return 'FAIL', skipped\n"
-     "    return ('PASS_WITH_SKIPS' if skipped else 'PASS'), skipped",
+     "        return md.common.aggregate_status('FAIL')[0], skipped\n"
+     "    status, _ = md.common.aggregate_status(\n"
+     "        'PASS', 'PASS_WITH_SKIPS' if skipped else None)\n"
+     "    return status, skipped",
      "    if not results or not all(row.get('passed') for row in results):\n"
      "        return 'FAIL', []\n"
      "    return 'PASS', []"),
@@ -231,6 +242,15 @@ MUTATIONS = [
      "                        'detail': 'E1 controls skipped platform-specific positives; not PASS'}\n"
      "                    overall = 'BLOCKED'",
      "                # mutant: accept a skipped controls batch as PASS"),
+    ('aggregation-exit-bypassed', CONTROLS_SOURCE,
+     "        return common.aggregate_status(report['status'])[1]",
+     "        return int(report['status'] != 'PASS')"),
+    ('restored-skip-accepted', NEGATIVE,
+     "        top_status, exit_code = common.aggregate_status(\n"
+     "            *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),\n"
+     "            restored_summary.get('status') if restored_ok else 'FAIL')",
+     "        top_status, exit_code = common.aggregate_status(\n"
+     "            *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary))"),
 ]
 
 JUDGES = {
@@ -361,6 +381,24 @@ JUDGES = {
             'calibrateSkipped.status': 'PASS',
             'calibrateSkipped.failureRule': None,
             'calibrateSkipped.returncode': 0,
+        }),
+        False,
+        ()),
+    'aggregation-exit-bypassed': (
+        'aggregation-audit',
+        lambda rows: match(rows, 'aggregation-audit', {
+            'firstFailure': '#164-fix-r7 aggregation-audit: '
+                            'scripts/gateway-parity/controls/session_domain.py:main '
+                            'must call common.aggregate_status',
+            'points.controls-main.shared': False,
+        }),
+        False,
+        ()),
+    'restored-skip-accepted': (
+        'batch-aggregation',
+        lambda rows: match(rows, 'batch-aggregation', {
+            'negativeRestored.skipStatus': 'PASS',
+            'negativeRestored.skipReturncode': 0,
         }),
         False,
         ()),
@@ -533,28 +571,33 @@ def main():
                 restored_error = (f'rc={restored.returncode} status={restored_summary.get("status")!r} '
                                   f'rows={len(rows)} wiring={bool(wiring)}')
         (output / 'pgrep-after.txt').write_text(pgrep_launcher())
-        status = ('INVALID' if invalid else 'SURVIVED' if survived
-                  else 'PASS' if restored_ok else 'FAIL')
-        report = {'status': status, 'sourceSha256': digests[SOURCE],
+        # The restored positive is a child of the same batch: a PASS_WITH_SKIPS
+        # child (non-Darwin platform skips) can never become PASS/0.
+        top_status, exit_code = common.aggregate_status(
+            *(MUTATION_STATUS.get(entry['verdict'], 'FAIL') for entry in summary),
+            restored_summary.get('status') if restored_ok else 'FAIL')
+        report = {'status': top_status, 'sourceSha256': digests[SOURCE],
                   'sourceSha256All': {source.relative_to(ROOT).as_posix(): digests[source]
                                       for source in sources},
                   'baseline': args.baseline,
                   'selected': [row[0] for row in selected],
                   'mutations': summary, 'restoredPass': restored_ok,
+                  'restoredStatus': (restored_summary.get('status')
+                                     if restored_summary is not None else None),
                   'restoredError': restored_error,
                   'invalid': [row['mutation'] for row in invalid],
                   'survived': [row['mutation'] for row in survived]}
         (output / 'summary.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
-        print(f'restored positive: {"PASS" if restored_ok else "FAIL"} '
-              f'{restored_error or ""}'.rstrip(), flush=True)
-        print(json.dumps({'status': status, 'killed': len(summary) - len(invalid) - len(survived),
+        restored_label = (restored_summary.get('status')
+                          if restored_summary is not None else 'FAIL')
+        print(f'restored positive: {restored_label} '
+              f'{"ok" if restored_ok else "FAIL"} {restored_error or ""}'.rstrip(),
+              flush=True)
+        print(json.dumps({'status': top_status, 'exitCode': exit_code,
+                          'killed': len(summary) - len(invalid) - len(survived),
                           'invalid': len(invalid), 'survived': len(survived),
                           'restoredPass': restored_ok}, ensure_ascii=False))
-        if invalid:
-            return 3
-        if survived or not restored_ok:
-            return 1
-        return 0
+        return exit_code
 
 
 if __name__ == '__main__':

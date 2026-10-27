@@ -24,6 +24,25 @@ READ_METHODS = ['native_archive_manifest', 'native_archive_entries', 'native_arc
 LOCK = Path('/tmp/pdrs-parity.lock')
 MAX_AGE = 2400
 
+# The one top-level summary function for the E1 apparatus.  README registers
+# this total order: PASS < PASS_WITH_SKIPS < NOT_RUN < BLOCKED < FAIL; lower is
+# more optimistic, so a batch takes the maximum (most pessimistic) child and an
+# unknown status fails closed.  Only PASS maps to exit 0.  Do not compute a
+# batch status or its exit code anywhere else: check_cleanup.py's
+# aggregation-audit enumerates every registered call site and fails a new one.
+BATCH_STATUS_ORDER = ('PASS', 'PASS_WITH_SKIPS', 'NOT_RUN', 'BLOCKED', 'FAIL')
+BATCH_EXIT_CODES = {'PASS': 0, 'PASS_WITH_SKIPS': 1, 'NOT_RUN': 1,
+                    'BLOCKED': 2, 'FAIL': 1}
+
+
+def aggregate_status(*children):
+    """Most pessimistic child ``(status, exit_code)``; unknown -> FAIL/1."""
+    known = [child for child in children if child is not None]
+    if any(child not in BATCH_STATUS_ORDER for child in known):
+        return 'FAIL', BATCH_EXIT_CODES['FAIL']
+    status = max(known, key=BATCH_STATUS_ORDER.index, default='PASS')
+    return status, BATCH_EXIT_CODES[status]
+
 
 def save(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -41,7 +41,14 @@ reports `GROUP_NOT_EMPTY`; `status` pins `VERIFIED -> PASS` and
 `wiring` drives `session_domain.main()`'s real cleanup tail with an unverified
 group and pins `status` / `executionStatus` / `freezeStatus` and exit 2;
 `batch-aggregation` pins the batch status order, `run_all()`/`main()` status and
-exit codes, and calibrate's `PASS_WITH_SKIPS -> BLOCKED / exit 2` mapping.
+exit codes, calibrate's `PASS_WITH_SKIPS -> BLOCKED / exit 2` mapping, and the
+source negative-control batch: a restored positive with platform skips must make
+that batch `PASS_WITH_SKIPS` / exit 1, never `PASS` / exit 0.
+`aggregation-audit` statically enumerates every top-level status/exit-code
+computation in the E1 apparatus and fails a registered point that does not call
+`common.aggregate_status()`, an unregistered new point, or a `int(...)` exit
+computation.  The exit mapping is the one registered order:
+`PASS=0`, `PASS_WITH_SKIPS/NOT_RUN/FAIL=1`, `BLOCKED=2`.
 Every process mode checks the live process group and the grandchild PID after
 the run.  On non-Darwin the Darwin-only positives (`clean`, `leak`, `ignore`,
 `eperm-live-member`, `runtime-negative`) are recorded as `passed: null` with an
@@ -86,14 +93,22 @@ not claim to detect that escape.
 `negative_controls.py` uses `negative_process.mutating_sources`, so it refuses
 to run until the #164 change is committed and the named sources are byte-identical
 to HEAD. It mutates the named source one anchor at a time (`session_domain.py`,
-`controls/session_domain.py` or this `check_cleanup.py`), requires the
+`controls/session_domain.py`, this `check_cleanup.py`, or its own
+`negative_controls.py`), requires the
 behavior check to fail **for that mutation's own expected fields**, restores the
 bytes, and finally requires the restored source to pass. A stale anchor exits 2
 (`ANCHOR_EXPIRED`), never `SURVIVED`. Environment/startup failures are `INVALID`
-(exit 3) and are never counted as killed; a probe `signalError`/`probeError`
+and map to `BLOCKED` / exit 2 through the shared aggregator; they are never
+counted as killed. A probe `signalError`/`probeError`
 that the mutation did not declare is `INVALID` too, so a denied group signal
 cannot satisfy a "the wrong signal was sent" mutation. Every mutation runs
 before the summary is decided. No cargo is launched.
+
+The batch top-level status/exit code is the sole
+`common.aggregate_status()` result over all mutants and the restored positive:
+`KILLED -> PASS`, `SURVIVED -> FAIL`, `INVALID -> BLOCKED`, and the restored
+summary status as-is.  A restored `PASS_WITH_SKIPS` (non-Darwin platform skips)
+therefore makes the batch `PASS_WITH_SKIPS` / exit 1, never `PASS` / exit 0.
 
 ```sh
 python3 -I src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py \
@@ -104,7 +119,7 @@ A pre-commit rehearsal can pass `--baseline <tree-ish>`; the default is `HEAD`.
 `--only NAME` (repeatable) runs just the named mutants and still runs the
 restored positive. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 20 mutants:
+`JUDGES`, keyed by the same names. The current table has 22 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -112,11 +127,16 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `snapshot-race-accepted`, `unstable-census-accepted`, `truncation-accepted`,
 `enumeration-failure-empty`, `signal-gate-removed`, `pid-blocked-as-gone`,
 `linux-visible-census-trusted`, `batch-status-relaxed`,
-`fixture-summary-relaxed`, `calibrate-controls-skip-accepted`.  The last three
-revert the pessimistic batch aggregation, the fixture skip summary, and the
-calibrate skipped-controls mapping respectively; all bind
-`check_cleanup.py --mode batch-aggregation` and its specific fields, not an
-unrelated panic/timeout.
+`fixture-summary-relaxed`, `calibrate-controls-skip-accepted`,
+`aggregation-exit-bypassed`, `restored-skip-accepted`.  The batch-related five
+revert the pessimistic batch aggregation, the fixture skip summary, the
+calibrate skipped-controls mapping, the controls `main()` shared exit call
+(`aggregation-audit`), and the source negative-control final aggregation
+(drops the restored positive child).  The last one binds
+`check_cleanup.py --mode batch-aggregation`'s
+`negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
+`aggregation-exit-bypassed` binds `aggregation-audit`'s
+`points.controls-main.shared` and its dedicated first failure message.
 
 `pgrep-before.txt` / `pgrep-after.txt` are collected around the mutations using
 the unique `session-domain-cleanup/launcher.py` pattern (bounded `timeout=5`);
