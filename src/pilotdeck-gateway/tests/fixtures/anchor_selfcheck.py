@@ -109,8 +109,8 @@ UNSUPPORTED_SIGNALS = {
     'edgeclaw-llm/test_controls.py': {'table:cases'},
     'turn-runner/negative_controls.py': {'table:mutations', 'call:mutate'},
     'turn-runner/runner_negative.py': {'table:mutations', 'call:mutate'},
-    'turn-runner/input_negative.py': {'table:mutations', 'call:mutate'},
-    'turn-runner/live_negative.py': {'table:mutations', 'call:mutate'},
+    'turn-runner/input_negative.py': {'table:mutations', 'table:cases'},  # #741k fix-r1：运行路径走 negative_suite.run_cases（cases），--check 仍经 check_mutations 读 mutations
+    'turn-runner/live_negative.py': {'table:mutations', 'table:cases'},  # #741k fix-r1：运行路径走 negative_suite.run_cases（cases），--check 仍经 check_mutations 读 mutations
     'runtime-spawn-panic/negative_controls.py': {'table:mutants', 'table:cases'},
     'plugin-runtime/negative-controls.py': {'table:CASES'},
     'plugin-runtime/panic-negative.py': {'table:CASES', 'table:cases'},
