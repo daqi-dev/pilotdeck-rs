@@ -14,8 +14,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -24,27 +25,35 @@ from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, MOCK_PORT, OPENS
 from compare import coalesce, compare, comparison_view, expected_stdout, load_round, GATEWAY_PROBE_CHECKS, PROBE_CHECKS
 from controls import run_controls
 from host_negative_controls import check_exec_control, main as host_control_main
-from policy import MOCK_GATEWAY_ALLOW
-from run_round import baseline_identity, capture, check_budget, main, mock_gateway_preflight, run_round, rust_isolation, sandbox_profile, stage_rust, stop_group
+from policy import MOCK_GATEWAY_ALLOW, checkout_only_ancestors
+from run_round import (baseline_identity, capture, check_budget, main, mock_gateway_preflight, preflight,
+                       mock_listening_line, run_round, rust_isolation, sandbox_profile, stage_rust, stop_group)
+
+
+def canonical_profile(text, script_dir=SCRIPT):
+    """#933-2 (fix-r3): the profile with only the checkout tree normalized.
+
+    The probe-script entry keeps its fixed tail — only the checkout prefix is
+    replaced, in the exact json-escaped form policy.item() writes, so a
+    non-ASCII checkout path (which never appears raw in a profile) normalizes
+    the same as any other. The checkout-only ancestor items
+    policy.checkout_only_ancestors() lists are erased as whole items, one
+    occurrence each, and only where they stand alone inside the
+    file-read-metadata rule's ancestor list: a permission literal anywhere
+    else in the profile survives normalization, so any other byte change
+    flips the digest."""
+    canonical = text.replace(json.dumps(str(script_dir) + '/')[:-1], '"<checkout>/')
+    lines = canonical.split('\n')
+    for index, line in enumerate(lines):
+        if line.startswith('(allow file-read-metadata '):
+            for path in checkout_only_ancestors(script_dir):
+                lines[index] = lines[index].replace(' (literal ' + json.dumps(str(path)) + ')', '', 1)
+    return '\n'.join(lines)
 
 
 def canonical_profile_digest(text, script_dir=SCRIPT):
-    """#933-2: digest a sandbox profile with the checkout paths normalized.
-
-    With the test's synthetic runtime/baseline/binary inputs, the only
-    checkout-dependent content of a profile is the probe-script entry and the
-    ancestor directory objects of its tree (a run's live runtime lives under
-    the same tree). Erasing that whole chain before hashing mirrors the
-    scenarios.md oracle convention ({runtime} binding): the pinned digest must
-    hold in any checkout, whatever its path or depth, not only in the one that
-    first recorded it. Synthetic inputs and system paths pass through; the
-    root '/' itself is shared with fixed system paths and is never erased."""
-    canonical = text.replace(f'(literal "{script_dir}/isolation_probe.mjs")',
-                             '(literal "<probe-script>")')
-    for path in (script_dir, *script_dir.parents):
-        if str(path) != '/':
-            canonical = canonical.replace(f' (literal "{path}")', '')
-    return hashlib.sha256(canonical.encode()).hexdigest()
+    """#933-2: the pinned digest of canonical_profile(); see its docstring."""
+    return hashlib.sha256(canonical_profile(text, script_dir).encode()).hexdigest()
 
 
 def bind_policy(run):
@@ -931,20 +940,39 @@ class ContractTests(unittest.TestCase):
         ts = sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts')
         rust = sandbox_profile(runtime, baseline, '/synthetic/rust-stage/bin/pilotdeck', 'rust')
         # The pinned digests hash the checkout-normalized profile text: the
-        # guard must hold in any checkout, not only the recording one.
+        # guard must hold in any checkout, not only the recording one. The
+        # Rust value carries over from the previous batch unchanged — its
+        # profile never contained a checkout path to begin with.
         self.assertEqual(canonical_profile_digest(ts),
-                         'a219a5c182598ebc4ecf2aba668ea26763cdf91453c34ec45d55309c617a710a',
+                         'bd0e3103318ec8a77e37a78132d54a603ca347cb56e27623a72ac808897f21de',
                          '#933-2: the base TS profile changed')
         self.assertEqual(canonical_profile_digest(rust),
                          'bed18fec0f5b10d0011f068799f1643f6c82d3d0776f3872375f94e92124b86e',
                          '#933-2: the base Rust profile changed')
-        # Recomputed under a different checkout root, the same pinned digest:
-        # only the probe-script chain moved, and the normalization erases it.
-        with patch('policy.SCRIPT', Path('/another-checkout/scripts/cli-parity')):
-            other = sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts')
-        self.assertEqual(canonical_profile_digest(other, Path('/another-checkout/scripts/cli-parity')),
-                         canonical_profile_digest(ts),
-                         '#933-2: the pinned digests must be checkout-independent')
+        # Byte equality, not just equal digests: only the checkout tree may
+        # differ — including a non-ASCII root and one nested under a system
+        # path, whose shared ancestors must survive the normalization.
+        for other_root in ('/another-checkout', '/tmp/中文树根', '/usr/local/pilotdeck-checkout'):
+            with self.subTest(root=other_root):
+                other_script = Path(other_root) / 'scripts/cli-parity'
+                with patch('policy.SCRIPT', other_script):
+                    other = sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts')
+                self.assertEqual(canonical_profile(other, other_script), canonical_profile(ts),
+                                 f'#933-2: a checkout rooted at {other_root} must normalize '
+                                 'to the very same profile bytes')
+        # The normalization must not weaken the guard: anything outside the
+        # checkout tree survives it — one flipped byte anywhere else, and an
+        # extra permission literal shaped like a checkout ancestor included.
+        self.assertNotEqual(
+            canonical_profile_digest(ts.replace('(deny default)', '(deny defaulX)', 1)),
+            canonical_profile_digest(ts),
+            '#933-2: a one-byte change outside the checkout tree must flip the digest')
+        injected = ts.replace('(allow file-read-data file-map-executable ',
+                              '(allow file-read-data file-map-executable '
+                              + '(literal ' + json.dumps(str(SCRIPT.parent.parent)) + ') ', 1)
+        self.assertNotEqual(canonical_profile_digest(injected), canonical_profile_digest(ts),
+                            '#933-2: an extra permission literal shaped like a checkout '
+                            'ancestor must flip the digest')
         relax = f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))\n'
         for side, base in (('ts', ts), ('rust', rust)):
             binary = '/synthetic/unit-test-only' if side == 'ts' else '/synthetic/rust-stage/bin/pilotdeck'
@@ -966,9 +994,11 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(MOCK_GATEWAY_ALLOW, f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))',
                          '#933-2: the allow rule must be derived from MOCK_PORT')
         env = environment(runtime, {'token': False})
-        for key in ('PILOTDECK_GATEWAY_PORT', 'PILOTDECK_GATEWAY_URL', 'PILOTDECK_SDK_GATEWAY_URL'):
-            self.assertIn(str(MOCK_PORT), env[key],
-                          f'#933-2: {key} must be derived from MOCK_PORT')
+        for key, expected in (('PILOTDECK_GATEWAY_PORT', str(MOCK_PORT)),
+                              ('PILOTDECK_GATEWAY_URL', f'ws://127.0.0.1:{MOCK_PORT}/ws'),
+                              ('PILOTDECK_SDK_GATEWAY_URL', f'ws://127.0.0.1:{MOCK_PORT}/ws')):
+            self.assertEqual(env[key], expected,
+                             f'#933-2: {key} must be exactly the value derived from MOCK_PORT')
 
     def test_mock_scenario_binds_mock_profile_and_others_base(self):
         # #933-3: each scenario must be bound to its own profile evidence.
@@ -1109,7 +1139,7 @@ class ContractTests(unittest.TestCase):
         output.mkdir()
 
         def dying_spawn(argv, **kwargs):
-            kwargs['stdout'].write(f'mock-gateway listening on 127.0.0.1:{MOCK_PORT}\n'.encode())
+            kwargs['stdout'].write((mock_listening_line(MOCK_PORT) + '\n').encode())
             kwargs['stdout'].flush()
             return FakeMock(1)
 
@@ -1200,6 +1230,10 @@ class ContractTests(unittest.TestCase):
             header = read_exact(2)
             self.assertEqual(header[0] & 0x0f, 0x8,
                              '#933-7: the mock must echo the client close')
+        # The readiness line the preflight waits on is part of the mock's
+        # contract: if the two ever drift apart, every round Blocks.
+        self.assertIn(mock_listening_line(port), (logs / 'stdout.log').read_text(),
+                      '#933-5: the real mock must print the listening line the preflight waits for')
 
     def test_preflight_failure_after_spawn_stops_the_mock(self):
         # #933-8 (review P1-3): any failure after spawn() — here an unreadable
@@ -1233,6 +1267,98 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn(procs[0].pid, LIVE_GROUPS,
                          '#933-8: the stopped mock must leave the live-group registry')
 
+    def test_spawn_stops_its_group_when_a_queued_signal_fires(self):
+        # #933-8 (fix-r3 P1-1, layer A): a SIGINT arriving while Popen runs is
+        # queued, and is delivered the instant deferred_signals lifts the
+        # block — before spawn() returns. The group is already registered but
+        # the caller holds no handle, so spawn must stop it itself.
+        def deliver_then_return(*_args, **_kwargs):
+            os.kill(os.getpid(), signal.SIGINT)  # queued: DEFERRED is blocked
+            return SimpleNamespace(pid=999_000_002)
+
+        stops = []
+
+        def recorded_stop(proc):
+            LIVE_GROUPS.discard(proc.pid)
+            stops.append(proc.pid)
+            return {'allStopped': True, 'remaining': [], 'errors': []}
+
+        self.addCleanup(LIVE_GROUPS.discard, 999_000_002)
+        with patch('run_round.subprocess.Popen', side_effect=deliver_then_return), \
+             patch('run_round.stop_group', side_effect=recorded_stop):
+            with self.assertRaises(KeyboardInterrupt,
+                                   msg='#933-8: the deferred signal must still surface, not vanish'):
+                sys.modules['run_round'].spawn(['/synthetic/cmd'])
+        self.assertEqual(stops, [999_000_002],
+                         '#933-8: a queued signal delivered before spawn() returns '
+                         'must stop the group it registered')
+        self.assertNotIn(999_000_002, LIVE_GROUPS,
+                         '#933-8: the stopped group must leave the live-group registry')
+
+    def test_preflight_signal_before_spawn_return_still_stops_the_mock(self):
+        # #933-8 (fix-r3 P1-1, layer B — the review's P1 repro): the queued
+        # signal fires when the block lifts, which can sit between spawn()
+        # returning and the handle being stored. The review showed the
+        # preflight then skipping stop_group with proc still None, leaving a
+        # registered-but-unowned mock behind.
+        def deliver_then_return(*_args, **_kwargs):
+            os.kill(os.getpid(), signal.SIGINT)
+            return SimpleNamespace(pid=999_000_001)
+
+        stops = []
+
+        def recorded_stop(proc):
+            LIVE_GROUPS.discard(proc.pid)
+            stops.append(proc.pid)
+            return {'allStopped': True, 'remaining': [], 'errors': []}
+
+        self.addCleanup(LIVE_GROUPS.discard, 999_000_001)
+        with patch('run_round.subprocess.Popen', side_effect=deliver_then_return), \
+             patch('run_round.stop_group', side_effect=recorded_stop):
+            with self.assertRaises(KeyboardInterrupt,
+                                   msg='#933-8: the deferred signal must still surface, not vanish'):
+                mock_gateway_preflight(MagicMock(), MagicMock(), '/synthetic/node', MagicMock())
+        self.assertEqual(stops, [999_000_001],
+                         '#933-8: a queued signal delivered before the spawn handle is '
+                         'stored must still stop the registered mock')
+        self.assertNotIn(999_000_001, LIVE_GROUPS,
+                         '#933-8: the stopped mock must leave the live-group registry')
+
+    def test_preflight_passes_the_mock_port_to_the_isolation_probe(self):
+        # #933-2 (fix-r3 P2): the probe's connect-denial check must test the
+        # port the apparatus derives from MOCK_PORT — passed in on argv, never
+        # a literal the probe could let drift away from the allow rule.
+        output = self.root / 'probe-argv'
+        output.mkdir()
+        profile = self.root / 'probe.sb'
+        profile.write_text('synthetic policy\n')
+        argv_seen = []
+
+        class FakeProc:
+            pid = 999_000_003
+            returncode = 0
+            stdin = stdout = stderr = MagicMock()
+
+            def communicate(self, *_args, timeout=None):
+                return (b'{"status": "PASS"}', b'')
+
+        def recording_spawn(argv, **_kwargs):
+            argv_seen.append(list(argv))
+            return FakeProc()
+
+        with patch('run_round.spawn', side_effect=recording_spawn), \
+             patch('run_round.stop_group') as stopped:
+            stopped.return_value = {'allStopped': True, 'remaining': [], 'errors': []}
+            evidence = preflight(output, self.root, profile, '/synthetic/node')
+        self.assertEqual(evidence['status'], 'PASS',
+                         '#933-2: the synthetic probe run must pass for the argv check to mean anything')
+        self.assertEqual(argv_seen, [['/usr/bin/sandbox-exec', '-f', str(profile), '/synthetic/node',
+                                      str(SCRIPT / 'isolation_probe.mjs'), str(output / 'outside-sentinel.txt'),
+                                      str(MOCK_PORT)]],
+                         '#933-2: the isolation probe must be passed the port derived from MOCK_PORT')
+        self.assertNotIn('28999', (SCRIPT / 'isolation_probe.mjs').read_text(),
+                         '#933-2: the probe must not hardcode the port; it reads argv[3]')
+
     def test_run_round_selects_the_mock_profile_per_scenario(self):
         # #933-6: run_round must run marked scenarios under the mock profile.
         cases = [{'id': 'plain', 'argv': [], 'stdinHex': '', 'token': False},
@@ -1241,7 +1367,7 @@ class ContractTests(unittest.TestCase):
         output.mkdir()
         base, mock = output / 'ts.sb', output / 'ts-mock.sb'
         base.write_text('base profile\n')
-        mock.write_text('base profile\n(allow network-outbound (remote ip "localhost:28999"))\n')
+        mock.write_text(f'base profile\n(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))\n')
         provenance = {'baseline': {'path': '/synthetic/baseline'}, 'side': 'ts',
                       'executable': {'path': '/synthetic/node'}}
         seen = []

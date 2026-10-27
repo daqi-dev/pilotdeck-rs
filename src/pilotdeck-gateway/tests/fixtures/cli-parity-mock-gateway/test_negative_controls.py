@@ -3,14 +3,23 @@
 The judge is the piece a forged log could otherwise fool, so every class of
 forgery the fix-r2 review demonstrated gets its own case here: a marker echoed
 in an ERROR traceback, a marker in another test's failure, a crash without a
-unittest summary. No source is mutated; nothing here runs cargo or node.
+unittest summary. The fix-r3 case runs main() end to end against source COPIES
+with an injected final-restore failure: the persisted summary must be rewritten
+INVALID, never left claiming kills whose sources were not verifiably restored.
+No real source is mutated; nothing here runs cargo or node.
 """
+from contextlib import contextmanager
+import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import negative_controls
 from negative_controls import bound_failure_bodies, classify, unittest_blocks
 
 TEST = 'ContractTests.test_occupied_mock_port_blocks_round'
@@ -272,6 +281,88 @@ class ClassifyTests(unittest.TestCase):
         closed = closed.replace('test_occupied_mock_port_blocks_round', 'test_ping_sample')
         status, reason = classify(run(1, closed), 'ContractTests.test_ping_sample', alternatives)
         self.assertEqual(status, 'KILLED', reason)
+
+
+class RestoreFailureTests(unittest.TestCase):
+    """fix-r3 P1-3: the persisted summary is only trustworthy after a clean exit."""
+
+    def test_final_restore_failure_invalidates_the_whole_summary(self):
+        # The review's P1: every mutant finished (rows flushed as KILLED),
+        # then mutating_sources raised on exit — and summary.json kept saying
+        # KILLED while only the exit code told the truth. Run one real table
+        # row against source COPIES with run_owned faked and the context exit
+        # failing, and require the persisted rows to be rewritten INVALID.
+        name, _path, old, new = negative_controls.mutations[0]
+        assert name == 'allow-rule-drops-port'
+        test = negative_controls.tests[name]
+        fragment = negative_controls.failure_fragments[name]
+        tmp = Path(tempfile.mkdtemp(prefix='negctl-restore-'))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        copies = [tmp / source.name for source in
+                  (negative_controls.policy, negative_controls.common, negative_controls.compare,
+                   negative_controls.run_round, negative_controls.mock_gateway)]
+        for source, copy in zip((negative_controls.policy, negative_controls.common, negative_controls.compare,
+                                 negative_controls.run_round, negative_controls.mock_gateway), copies):
+            copy.write_bytes(source.read_bytes())
+        pristine = copies[0].read_bytes()
+
+        @contextmanager
+        def fake_mutating_sources(_root, paths, *, baseline='HEAD'):
+            snapshots = {path: path.read_bytes() for path in paths}
+            try:
+                yield snapshots
+            finally:
+                for path, data in snapshots.items():
+                    path.write_bytes(data)
+                raise RuntimeError('injected final restore verification failure')
+
+        fail_log = """F
+======================================================================
+FAIL: test_mock_profile_appends_only_the_loopback_allow (__main__.ContractTests.test_mock_profile_appends_only_the_loopback_allow)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "scripts/cli-parity/test_cli_parity.py", line 953, in test_mock_profile_appends_only_the_loopback_allow
+    self.assertEqual(mock, base.replace('(deny network*)\\n', '(deny network*)\\n' + relax),
+AssertionError: 'base profile' != 'relaxed profile' : #933-2: exactly one allow rule, directly after the network deny
+
+----------------------------------------------------------------------
+Ran 1 test in 0.123s
+
+FAILED (failures=1)
+"""
+
+        def fake_run_owned(command, **_kwargs):
+            # The mutated copy is on disk exactly during the negative run.
+            if new.encode() in copies[0].read_bytes():
+                return subprocess.CompletedProcess(command, 1, fail_log, '')
+            return subprocess.CompletedProcess(command, 0, OK_LOG, '')
+
+        out = tmp / 'evidence'
+        with patch.object(negative_controls, 'mutations', [(name, copies[0], old, new)]), \
+             patch.object(negative_controls, 'policy', copies[0]), \
+             patch.object(negative_controls, 'common', copies[1]), \
+             patch.object(negative_controls, 'compare', copies[2]), \
+             patch.object(negative_controls, 'run_round', copies[3]), \
+             patch.object(negative_controls, 'mock_gateway', copies[4]), \
+             patch.object(negative_controls, 'mutating_sources', fake_mutating_sources), \
+             patch.object(negative_controls, 'run_owned', fake_run_owned), \
+             patch.object(sys, 'argv', ['negative_controls.py', str(out), name]):
+            with self.assertRaises(SystemExit) as caught:
+                negative_controls.main()
+        self.assertEqual(caught.exception.code, 1,
+                         'a restore failure must exit nonzero, never pass')
+        summary = json.loads((out / 'summary.json').read_text())
+        self.assertEqual(summary['counts'], {'KILLED': 0, 'SURVIVED': 0, 'INVALID': 1},
+                         'the flushed KILLED row must be rewritten INVALID after the restore failure')
+        self.assertEqual([row['status'] for row in summary['controls']], ['INVALID'],
+                         'no row may stay KILLED when the sources were not verifiably restored')
+        self.assertIn('source guard', summary['controls'][0]['reason'])
+        self.assertIn('injected final restore verification failure', summary['controls'][0]['reason'],
+                      'the persisted reason must name the restore failure')
+        self.assertEqual(copies[0].read_bytes(), pristine,
+                         'the source copy must end up byte-identical to its original')
+        # The fragment above must really be what the faked run is judged by.
+        self.assertEqual(classify(run(1, fail_log), test, fragment)[0], 'KILLED')
 
 
 if __name__ == '__main__':

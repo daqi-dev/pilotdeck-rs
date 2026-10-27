@@ -39,6 +39,7 @@ common = root / 'scripts/cli-parity/common.py'
 compare = root / 'scripts/cli-parity/compare.py'
 run_round = root / 'scripts/cli-parity/run_round.py'
 mock_gateway = root / 'scripts/cli-parity/mock_gateway.mjs'
+isolation_probe = root / 'scripts/cli-parity/isolation_probe.mjs'
 
 # Every mutant is applied to the original independently and names the unit
 # test whose assertion it must turn red. Rows are (name, source, old, new) so
@@ -110,6 +111,18 @@ mutations = [
      "                audit = stop_group(proc)",
      "            if proc is None:\n"
      "                audit = stop_group(proc)"),
+    # A queued signal delivered before spawn() returns no longer stops the
+    # group it just registered (the pre-return window of fix-r3 P1-1).
+    ('spawn-exception-leaks-group',
+     run_round,
+     "    except BaseException:\n"
+     "        if proc is not None:\n"
+     "            stop_group(proc)  # 回收失败时保持登记：锁保留，fail-closed\n"
+     "        raise",
+     "    except BaseException:\n"
+     "        if proc is not None:\n"
+     "            pass  # mutant: leak the group registered a moment ago\n"
+     "        raise"),
     # run_round runs marked scenarios under the base profile instead of the
     # relaxed one.
     ('scenario-profile-ignored',
@@ -128,6 +141,22 @@ mutations = [
      "      this.destroy();\n"
      "      return false;\n"
      "    }"),
+    # The mock's readiness line drifts away from the constant the preflight
+    # waits on: a perfectly listening gateway would Block every round.
+    ('listening-line-drifts',
+     mock_gateway,
+     '  console.log(`mock-gateway listening on 127.0.0.1:${port}`);',
+     '  console.log(`mock gateway ready on 127.0.0.1:${port}`);'),
+    # preflight stops passing the MOCK_PORT-derived port to the probe.
+    ('probe-port-not-passed',
+     run_round,
+     "                          str(SCRIPT / 'isolation_probe.mjs'), str(sentinel), str(MOCK_PORT)],",
+     "                          str(SCRIPT / 'isolation_probe.mjs'), str(sentinel)],"),
+    # The probe goes back to hardcoding the port instead of reading argv[3].
+    ('probe-port-hardcoded',
+     isolation_probe,
+     'const port = Number(process.argv[3]);',
+     'const port = 28999;'),
 ]
 tests = {
     'allow-rule-drops-port': 'ContractTests.test_mock_profile_appends_only_the_loopback_allow',
@@ -140,8 +169,12 @@ tests = {
     'mock-exit-accepted': 'ContractTests.test_occupied_mock_port_blocks_round',
     'mock-exit-after-readiness-accepted': 'ContractTests.test_occupied_mock_port_blocks_round',
     'post-spawn-failure-leaks-mock': 'ContractTests.test_preflight_failure_after_spawn_stops_the_mock',
+    'spawn-exception-leaks-group': 'ContractTests.test_spawn_stops_its_group_when_a_queued_signal_fires',
     'scenario-profile-ignored': 'ContractTests.test_run_round_selects_the_mock_profile_per_scenario',
     'ping-disconnects': 'ContractTests.test_mock_gateway_answers_ping_with_pong',
+    'listening-line-drifts': 'ContractTests.test_mock_gateway_answers_ping_with_pong',
+    'probe-port-not-passed': 'ContractTests.test_preflight_passes_the_mock_port_to_the_isolation_probe',
+    'probe-port-hardcoded': 'ContractTests.test_preflight_passes_the_mock_port_to_the_isolation_probe',
 }
 # The exclusive assertion message each mutant must turn red. A string is one
 # marker; a tuple lists the alternative markers of one assertion family (the
@@ -152,9 +185,9 @@ failure_fragments = {
     # digest fires first (it subsumes the mock_gateway=False equality further
     # down, which can never fail before it); bind to that digest assertion.
     'marker-ignored': '#933-2: the base TS profile changed',
-    'marker-truthy': '#933-1:',
-    'profile-binding-ignored': '#933-3:',
-    'gateway-probe-skipped': '#933-4:',
+    'marker-truthy': 'must be refused, not accepted',
+    'profile-binding-ignored': '#933-3: the untampered round must compare PASS',
+    'gateway-probe-skipped': '#933-4: probe-allowed tamper not detected',
     'presence-skipped': '#933-4: mock evidence without a marked scenario must fail presence',
     'rust-node-exec-skipped': '#933-4: rust mock Node-exec denial not checked',
     'mock-exit-accepted': '#933-5: an occupied 28999 must make the owned mock exit and Block the round',
@@ -166,6 +199,14 @@ failure_fragments = {
     'ping-disconnects': ('#933-7: a ping must be answered with a pong carrying the same '
                          'payload, not with a close or a dropped connection',
                          '#933-7: the mock closed the connection during the ping exchange'),
+    'spawn-exception-leaks-group':
+        '#933-8: a queued signal delivered before spawn() returns must stop the group it registered',
+    'listening-line-drifts':
+        '#933-5: the real mock must print the listening line the preflight waits for',
+    'probe-port-not-passed':
+        '#933-2: the isolation probe must be passed the port derived from MOCK_PORT',
+    'probe-port-hardcoded':
+        '#933-2: the probe must not hardcode the port; it reads argv[3]',
 }
 
 SEPARATOR = '-' * 70
@@ -270,12 +311,16 @@ def compile_check(path):
             raise RuntimeError('node --check rejected the mutant:\n' + result.stdout + result.stderr)
 
 
-def record(out, summary, row):
-    summary.append(row)
+def persist(out, summary):
     counts = {state: sum(entry['status'] == state for entry in summary)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
     (out / 'summary.json').write_text(json.dumps(
         {'controls': summary, 'counts': counts}, indent=2) + '\n')
+
+
+def record(out, summary, row):
+    summary.append(row)
+    persist(out, summary)
     print(f"{row['mutation']}: {row['status']}: {row['reason']}", flush=True)
 
 
@@ -295,7 +340,8 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     summary = []
     try:
-        with mutating_sources(root, [policy, common, compare, run_round, mock_gateway],
+        with mutating_sources(root, [policy, common, compare, run_round, mock_gateway,
+                                     isolation_probe],
                               baseline=args.baseline) as snapshots:
             for name, path, old, new in rows:
                 status, reason, stage, before = 'INVALID', '', 'anchor', None
@@ -333,10 +379,14 @@ def main():
                                       'reason': reason, 'sourceSha256': before})
     except Exception as error:
         # A baseline/lock/restoration failure makes further mutation unsafe.
-        # Still account for every selected case and never leave an all-green summary.
+        # The rows flushed so far are unproven too: their restores happened
+        # inside a guard that failed to verify, so the summary.json already
+        # written saying KILLED claims kills the sources never made (fix-r3
+        # P1-3). Rewrite the persisted rows INVALID before anything else.
         reason = f'source guard: {type(error).__name__}: {error}'
         for row in summary:
             row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
+        persist(out, summary)
         for name, _path, _old, _new in rows[len(summary):]:
             record(out, summary, {'mutation': name, 'test': tests[name], 'status': 'INVALID',
                                   'reason': reason, 'sourceSha256': None})
