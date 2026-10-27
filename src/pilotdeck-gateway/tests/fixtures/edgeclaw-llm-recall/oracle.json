@@ -67,6 +67,10 @@
               "route": "project"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -122,6 +126,10 @@
               "route": "mix"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -171,6 +179,10 @@
               "route": "user"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -220,6 +232,10 @@
               "route": "none"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -269,6 +285,10 @@
               "route": "USER"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -318,6 +338,13 @@
             "timedOut": false,
             "errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory gate fallback: SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+        ],
+        "events": [
+          "debug",
+          "warn"
         ]
       }
     },
@@ -367,6 +394,13 @@
             "timedOut": false,
             "errorMessage": "No JSON object found in extraction response"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory gate fallback: Error: No JSON object found in extraction response"
+        ],
+        "events": [
+          "debug",
+          "warn"
         ]
       }
     },
@@ -416,6 +450,13 @@
             "timedOut": false,
             "errorMessage": "Empty extraction response"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory gate fallback: Error: Empty extraction response"
+        ],
+        "events": [
+          "debug",
+          "warn"
         ]
       }
     },
@@ -475,6 +516,10 @@
               "route": "none"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -550,6 +595,10 @@
               "route": "none"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -639,6 +688,10 @@
               "reason": "  matches  "
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -717,6 +770,10 @@
               "reason": ""
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -785,6 +842,10 @@
               "reason": ""
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -852,6 +913,10 @@
               "reason": ""
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -918,6 +983,10 @@
               "selected_project_id": ""
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -935,7 +1004,9 @@
       "expected": {
         "result": {},
         "requests": [],
-        "debug": []
+        "debug": [],
+        "warnings": [],
+        "events": []
       }
     },
     {
@@ -1001,6 +1072,13 @@
             "timedOut": false,
             "errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory project selection fallback: SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+        ],
+        "events": [
+          "debug",
+          "warn"
         ]
       }
     },
@@ -1067,6 +1145,13 @@
             "timedOut": false,
             "errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory project selection fallback: SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+        ],
+        "events": [
+          "debug",
+          "warn"
         ]
       }
     },
@@ -1145,6 +1230,10 @@
               "selected_project_id": "missing"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1223,6 +1312,10 @@
               "selected_project_id": "missing"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1301,6 +1394,10 @@
               "selected_project_id": "missing"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1379,6 +1476,530 @@
               "selected_project_id": "missing"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "select-fallback-zero",
+        "method": "selectRecallProject",
+        "input": {
+          "query": "pick",
+          "shortlist": [
+            {
+              "projectId": "a",
+              "projectName": "MinusZero",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 2,
+              "exact": {
+                "$number": "-0"
+              },
+              "source": "query",
+              "matchedText": "alpha"
+            },
+            {
+              "projectId": "b",
+              "projectName": "PlusZero",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 1,
+              "exact": 0,
+              "source": "query",
+              "matchedText": "alpha"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"selected_project_id\\\":\\\"missing\\\"}\"}}]}"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "projectId": "a",
+          "reason": "Fallback selected MinusZero; model returned no valid project id."
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2047",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You choose the single most relevant formal project for long-term memory recall.\\nReturn JSON only with selected_project_id and reason.\\nYou must select exactly one project from the provided shortlist.\\nUse the current query first, then recent user messages only for continuation/disambiguation.\\nDo not infer a project from assistant wording.\\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\\nIf multiple shortlist projects remain plausible, still choose the best one.\\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\\nWhen relevance is comparable, prefer general_local over workspace_external.\\nNever return an empty selected_project_id when the shortlist is non-empty.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"query\\\": \\\"pick\\\",\\n  \\\"recent_user_messages\\\": [],\\n  \\\"shortlist\\\": [\\n    {\\n      \\\"project_id\\\": \\\"a\\\",\\n      \\\"project_name\\\": \\\"MinusZero\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 2,\\n      \\\"shortlist_exact\\\": 0,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"b\\\",\\n      \\\"project_name\\\": \\\"PlusZero\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 1,\\n      \\\"shortlist_exact\\\": 0,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "File memory project selection",
+            "systemPrompt": "You choose the single most relevant formal project for long-term memory recall.\nReturn JSON only with selected_project_id and reason.\nYou must select exactly one project from the provided shortlist.\nUse the current query first, then recent user messages only for continuation/disambiguation.\nDo not infer a project from assistant wording.\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\nIf multiple shortlist projects remain plausible, still choose the best one.\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\nWhen relevance is comparable, prefer general_local over workspace_external.\nNever return an empty selected_project_id when the shortlist is non-empty.",
+            "userPrompt": "{\n  \"query\": \"pick\",\n  \"recent_user_messages\": [],\n  \"shortlist\": [\n    {\n      \"project_id\": \"a\",\n      \"project_name\": \"MinusZero\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 2,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    },\n    {\n      \"project_id\": \"b\",\n      \"project_name\": \"PlusZero\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 1,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    }\n  ]\n}",
+            "rawResponse": "{\"selected_project_id\":\"missing\"}",
+            "parsedResult": {
+              "selected_project_id": "missing"
+            }
+          }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "select-fallback-nan-first",
+        "method": "selectRecallProject",
+        "input": {
+          "query": "pick",
+          "shortlist": [
+            {
+              "projectId": "a",
+              "projectName": "NanFirst",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 1,
+              "exact": {
+                "$number": "NaN"
+              },
+              "source": "query",
+              "matchedText": "alpha"
+            },
+            {
+              "projectId": "b",
+              "projectName": "ZeroSecond",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 9,
+              "exact": 0,
+              "source": "query",
+              "matchedText": "alpha"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"selected_project_id\\\":\\\"missing\\\"}\"}}]}"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "projectId": "a",
+          "reason": "Fallback selected NanFirst; model returned no valid project id."
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2051",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You choose the single most relevant formal project for long-term memory recall.\\nReturn JSON only with selected_project_id and reason.\\nYou must select exactly one project from the provided shortlist.\\nUse the current query first, then recent user messages only for continuation/disambiguation.\\nDo not infer a project from assistant wording.\\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\\nIf multiple shortlist projects remain plausible, still choose the best one.\\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\\nWhen relevance is comparable, prefer general_local over workspace_external.\\nNever return an empty selected_project_id when the shortlist is non-empty.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"query\\\": \\\"pick\\\",\\n  \\\"recent_user_messages\\\": [],\\n  \\\"shortlist\\\": [\\n    {\\n      \\\"project_id\\\": \\\"a\\\",\\n      \\\"project_name\\\": \\\"NanFirst\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 1,\\n      \\\"shortlist_exact\\\": null,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"b\\\",\\n      \\\"project_name\\\": \\\"ZeroSecond\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 9,\\n      \\\"shortlist_exact\\\": 0,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "File memory project selection",
+            "systemPrompt": "You choose the single most relevant formal project for long-term memory recall.\nReturn JSON only with selected_project_id and reason.\nYou must select exactly one project from the provided shortlist.\nUse the current query first, then recent user messages only for continuation/disambiguation.\nDo not infer a project from assistant wording.\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\nIf multiple shortlist projects remain plausible, still choose the best one.\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\nWhen relevance is comparable, prefer general_local over workspace_external.\nNever return an empty selected_project_id when the shortlist is non-empty.",
+            "userPrompt": "{\n  \"query\": \"pick\",\n  \"recent_user_messages\": [],\n  \"shortlist\": [\n    {\n      \"project_id\": \"a\",\n      \"project_name\": \"NanFirst\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 1,\n      \"shortlist_exact\": null,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    },\n    {\n      \"project_id\": \"b\",\n      \"project_name\": \"ZeroSecond\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 9,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    }\n  ]\n}",
+            "rawResponse": "{\"selected_project_id\":\"missing\"}",
+            "parsedResult": {
+              "selected_project_id": "missing"
+            }
+          }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "select-fallback-nan-second",
+        "method": "selectRecallProject",
+        "input": {
+          "query": "pick",
+          "shortlist": [
+            {
+              "projectId": "b",
+              "projectName": "ZeroFirst",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 9,
+              "exact": 0,
+              "source": "query",
+              "matchedText": "alpha"
+            },
+            {
+              "projectId": "a",
+              "projectName": "NanSecond",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 1,
+              "exact": {
+                "$number": "NaN"
+              },
+              "source": "query",
+              "matchedText": "alpha"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"selected_project_id\\\":\\\"missing\\\"}\"}}]}"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "projectId": "b",
+          "reason": "Fallback selected ZeroFirst; model returned no valid project id."
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2051",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You choose the single most relevant formal project for long-term memory recall.\\nReturn JSON only with selected_project_id and reason.\\nYou must select exactly one project from the provided shortlist.\\nUse the current query first, then recent user messages only for continuation/disambiguation.\\nDo not infer a project from assistant wording.\\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\\nIf multiple shortlist projects remain plausible, still choose the best one.\\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\\nWhen relevance is comparable, prefer general_local over workspace_external.\\nNever return an empty selected_project_id when the shortlist is non-empty.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"query\\\": \\\"pick\\\",\\n  \\\"recent_user_messages\\\": [],\\n  \\\"shortlist\\\": [\\n    {\\n      \\\"project_id\\\": \\\"b\\\",\\n      \\\"project_name\\\": \\\"ZeroFirst\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 9,\\n      \\\"shortlist_exact\\\": 0,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"a\\\",\\n      \\\"project_name\\\": \\\"NanSecond\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 1,\\n      \\\"shortlist_exact\\\": null,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "File memory project selection",
+            "systemPrompt": "You choose the single most relevant formal project for long-term memory recall.\nReturn JSON only with selected_project_id and reason.\nYou must select exactly one project from the provided shortlist.\nUse the current query first, then recent user messages only for continuation/disambiguation.\nDo not infer a project from assistant wording.\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\nIf multiple shortlist projects remain plausible, still choose the best one.\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\nWhen relevance is comparable, prefer general_local over workspace_external.\nNever return an empty selected_project_id when the shortlist is non-empty.",
+            "userPrompt": "{\n  \"query\": \"pick\",\n  \"recent_user_messages\": [],\n  \"shortlist\": [\n    {\n      \"project_id\": \"b\",\n      \"project_name\": \"ZeroFirst\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 9,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    },\n    {\n      \"project_id\": \"a\",\n      \"project_name\": \"NanSecond\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 1,\n      \"shortlist_exact\": null,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    }\n  ]\n}",
+            "rawResponse": "{\"selected_project_id\":\"missing\"}",
+            "parsedResult": {
+              "selected_project_id": "missing"
+            }
+          }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "select-fallback-nan-both",
+        "method": "selectRecallProject",
+        "input": {
+          "query": "pick",
+          "shortlist": [
+            {
+              "projectId": "a",
+              "projectName": "NanLowScore",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 1,
+              "exact": {
+                "$number": "NaN"
+              },
+              "source": "query",
+              "matchedText": "alpha"
+            },
+            {
+              "projectId": "b",
+              "projectName": "NanHighScore",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 9,
+              "exact": {
+                "$number": "NaN"
+              },
+              "source": "query",
+              "matchedText": "alpha"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"selected_project_id\\\":\\\"missing\\\"}\"}}]}"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "projectId": "a",
+          "reason": "Fallback selected NanLowScore; model returned no valid project id."
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2059",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You choose the single most relevant formal project for long-term memory recall.\\nReturn JSON only with selected_project_id and reason.\\nYou must select exactly one project from the provided shortlist.\\nUse the current query first, then recent user messages only for continuation/disambiguation.\\nDo not infer a project from assistant wording.\\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\\nIf multiple shortlist projects remain plausible, still choose the best one.\\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\\nWhen relevance is comparable, prefer general_local over workspace_external.\\nNever return an empty selected_project_id when the shortlist is non-empty.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"query\\\": \\\"pick\\\",\\n  \\\"recent_user_messages\\\": [],\\n  \\\"shortlist\\\": [\\n    {\\n      \\\"project_id\\\": \\\"a\\\",\\n      \\\"project_name\\\": \\\"NanLowScore\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 1,\\n      \\\"shortlist_exact\\\": null,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"b\\\",\\n      \\\"project_name\\\": \\\"NanHighScore\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 9,\\n      \\\"shortlist_exact\\\": null,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "File memory project selection",
+            "systemPrompt": "You choose the single most relevant formal project for long-term memory recall.\nReturn JSON only with selected_project_id and reason.\nYou must select exactly one project from the provided shortlist.\nUse the current query first, then recent user messages only for continuation/disambiguation.\nDo not infer a project from assistant wording.\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\nIf multiple shortlist projects remain plausible, still choose the best one.\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\nWhen relevance is comparable, prefer general_local over workspace_external.\nNever return an empty selected_project_id when the shortlist is non-empty.",
+            "userPrompt": "{\n  \"query\": \"pick\",\n  \"recent_user_messages\": [],\n  \"shortlist\": [\n    {\n      \"project_id\": \"a\",\n      \"project_name\": \"NanLowScore\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 1,\n      \"shortlist_exact\": null,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    },\n    {\n      \"project_id\": \"b\",\n      \"project_name\": \"NanHighScore\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 9,\n      \"shortlist_exact\": null,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    }\n  ]\n}",
+            "rawResponse": "{\"selected_project_id\":\"missing\"}",
+            "parsedResult": {
+              "selected_project_id": "missing"
+            }
+          }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "select-fallback-nan-three",
+        "method": "selectRecallProject",
+        "input": {
+          "query": "pick",
+          "shortlist": [
+            {
+              "projectId": "a",
+              "projectName": "NanOne",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 1,
+              "exact": {
+                "$number": "NaN"
+              },
+              "source": "query",
+              "matchedText": "alpha"
+            },
+            {
+              "projectId": "b",
+              "projectName": "ZeroNine",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 9,
+              "exact": 0,
+              "source": "query",
+              "matchedText": "alpha"
+            },
+            {
+              "projectId": "c",
+              "projectName": "NanFive",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 5,
+              "exact": {
+                "$number": "NaN"
+              },
+              "source": "query",
+              "matchedText": "alpha"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"selected_project_id\\\":\\\"missing\\\"}\"}}]}"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "projectId": "a",
+          "reason": "Fallback selected NanOne; model returned no valid project id."
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2440",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You choose the single most relevant formal project for long-term memory recall.\\nReturn JSON only with selected_project_id and reason.\\nYou must select exactly one project from the provided shortlist.\\nUse the current query first, then recent user messages only for continuation/disambiguation.\\nDo not infer a project from assistant wording.\\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\\nIf multiple shortlist projects remain plausible, still choose the best one.\\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\\nWhen relevance is comparable, prefer general_local over workspace_external.\\nNever return an empty selected_project_id when the shortlist is non-empty.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"query\\\": \\\"pick\\\",\\n  \\\"recent_user_messages\\\": [],\\n  \\\"shortlist\\\": [\\n    {\\n      \\\"project_id\\\": \\\"a\\\",\\n      \\\"project_name\\\": \\\"NanOne\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 1,\\n      \\\"shortlist_exact\\\": null,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"b\\\",\\n      \\\"project_name\\\": \\\"ZeroNine\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 9,\\n      \\\"shortlist_exact\\\": 0,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"c\\\",\\n      \\\"project_name\\\": \\\"NanFive\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 5,\\n      \\\"shortlist_exact\\\": null,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "File memory project selection",
+            "systemPrompt": "You choose the single most relevant formal project for long-term memory recall.\nReturn JSON only with selected_project_id and reason.\nYou must select exactly one project from the provided shortlist.\nUse the current query first, then recent user messages only for continuation/disambiguation.\nDo not infer a project from assistant wording.\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\nIf multiple shortlist projects remain plausible, still choose the best one.\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\nWhen relevance is comparable, prefer general_local over workspace_external.\nNever return an empty selected_project_id when the shortlist is non-empty.",
+            "userPrompt": "{\n  \"query\": \"pick\",\n  \"recent_user_messages\": [],\n  \"shortlist\": [\n    {\n      \"project_id\": \"a\",\n      \"project_name\": \"NanOne\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 1,\n      \"shortlist_exact\": null,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    },\n    {\n      \"project_id\": \"b\",\n      \"project_name\": \"ZeroNine\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 9,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    },\n    {\n      \"project_id\": \"c\",\n      \"project_name\": \"NanFive\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 5,\n      \"shortlist_exact\": null,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    }\n  ]\n}",
+            "rawResponse": "{\"selected_project_id\":\"missing\"}",
+            "parsedResult": {
+              "selected_project_id": "missing"
+            }
+          }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "select-fallback-infinity",
+        "method": "selectRecallProject",
+        "input": {
+          "query": "pick",
+          "shortlist": [
+            {
+              "projectId": "a",
+              "projectName": "PositiveInfinity",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 1,
+              "exact": {
+                "$number": "Infinity"
+              },
+              "source": "query",
+              "matchedText": "alpha"
+            },
+            {
+              "projectId": "b",
+              "projectName": "ZeroNine",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 9,
+              "exact": 0,
+              "source": "query",
+              "matchedText": "alpha"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "status": 200,
+            "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"selected_project_id\\\":\\\"missing\\\"}\"}}]}"
+          }
+        ]
+      },
+      "expected": {
+        "result": {
+          "projectId": "a",
+          "reason": "Fallback selected PositiveInfinity; model returned no valid project id."
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2057",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You choose the single most relevant formal project for long-term memory recall.\\nReturn JSON only with selected_project_id and reason.\\nYou must select exactly one project from the provided shortlist.\\nUse the current query first, then recent user messages only for continuation/disambiguation.\\nDo not infer a project from assistant wording.\\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\\nIf multiple shortlist projects remain plausible, still choose the best one.\\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\\nWhen relevance is comparable, prefer general_local over workspace_external.\\nNever return an empty selected_project_id when the shortlist is non-empty.\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"query\\\": \\\"pick\\\",\\n  \\\"recent_user_messages\\\": [],\\n  \\\"shortlist\\\": [\\n    {\\n      \\\"project_id\\\": \\\"a\\\",\\n      \\\"project_name\\\": \\\"PositiveInfinity\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 1,\\n      \\\"shortlist_exact\\\": null,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    },\\n    {\\n      \\\"project_id\\\": \\\"b\\\",\\n      \\\"project_name\\\": \\\"ZeroNine\\\",\\n      \\\"description\\\": \\\"Alpha project\\\",\\n      \\\"status\\\": \\\"active\\\",\\n      \\\"source_type\\\": \\\"general_local\\\",\\n      \\\"updated_at\\\": \\\"2026-01-01T00:00:00.000Z\\\",\\n      \\\"shortlist_score\\\": 9,\\n      \\\"shortlist_exact\\\": 0,\\n      \\\"shortlist_source\\\": \\\"query\\\",\\n      \\\"matched_text\\\": \\\"alpha\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ],
+        "debug": [
+          {
+            "requestLabel": "File memory project selection",
+            "systemPrompt": "You choose the single most relevant formal project for long-term memory recall.\nReturn JSON only with selected_project_id and reason.\nYou must select exactly one project from the provided shortlist.\nUse the current query first, then recent user messages only for continuation/disambiguation.\nDo not infer a project from assistant wording.\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\nIf multiple shortlist projects remain plausible, still choose the best one.\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\nWhen relevance is comparable, prefer general_local over workspace_external.\nNever return an empty selected_project_id when the shortlist is non-empty.",
+            "userPrompt": "{\n  \"query\": \"pick\",\n  \"recent_user_messages\": [],\n  \"shortlist\": [\n    {\n      \"project_id\": \"a\",\n      \"project_name\": \"PositiveInfinity\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 1,\n      \"shortlist_exact\": null,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    },\n    {\n      \"project_id\": \"b\",\n      \"project_name\": \"ZeroNine\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 9,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    }\n  ]\n}",
+            "rawResponse": "{\"selected_project_id\":\"missing\"}",
+            "parsedResult": {
+              "selected_project_id": "missing"
+            }
+          }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1395,6 +2016,9 @@
               "description": "Alpha project",
               "status": "active",
               "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": {
+                "$undefined": true
+              },
               "score": 1,
               "exact": 0,
               "source": "query",
@@ -1443,6 +2067,10 @@
               "selected_project_id": "p1"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1508,6 +2136,10 @@
               "selected_project_id": "p1"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1575,6 +2207,10 @@
               "reason": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr😀 tail"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1666,6 +2302,10 @@
               "selected_project_id": "p1"
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1778,6 +2418,10 @@
               ]
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1843,6 +2487,10 @@
               "selected_ids": "  a.md  "
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1906,6 +2554,10 @@
               "selected_ids": 42
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -1967,6 +2619,10 @@
             "rawResponse": "{}",
             "parsedResult": {}
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -2030,6 +2686,10 @@
               "selected_ids": []
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -2093,6 +2753,13 @@
             "timedOut": false,
             "errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
           }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory selection fallback: SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+        ],
+        "events": [
+          "debug",
+          "warn"
         ]
       }
     },
@@ -2160,6 +2827,10 @@
               ]
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -2211,6 +2882,10 @@
               "selected_ids": []
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -2366,6 +3041,10 @@
               ]
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -2518,6 +3197,10 @@
               ]
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -2671,6 +3354,10 @@
               ]
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -2827,6 +3514,10 @@
               ]
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -2904,6 +3595,10 @@
               ]
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -5215,6 +5910,10 @@
               ]
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
         ]
       }
     },
@@ -5308,6 +6007,190 @@
               ]
             }
           }
+        ],
+        "warnings": [],
+        "events": [
+          "debug"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "decide-gate-fallback-warning",
+        "method": "decideFileMemoryRoute",
+        "input": {
+          "query": "Say hello"
+        },
+        "steps": [],
+        "config": "empty"
+      },
+      "expected": {
+        "result": "none",
+        "requests": [],
+        "debug": [
+          {
+            "requestLabel": "File memory gate",
+            "systemPrompt": "You decide whether the current query should trigger long-term memory recall.\nReturn JSON only with a single field route.\nValid route values: none, user, project, mix.\nUse none unless the query clearly needs long-term memory.\nUse user only when the query is asking about stable personal identity/background facts about who the user is, such as name, profession, long-term role context, life background, or durable relationships.\nDo not use user for reply preferences, language choices, formatting rules, style guidance, file/tool boundaries, or delivery rules; those belong to project.\nUse project when the query only needs current project memory, including project facts, collaboration rules, delivery style, file boundaries, or project status.\nUse mix only when the query genuinely needs both current project memory and the user's stable identity/background at the same time.\nDo not use mix just because both could be helpful; choose mix only when both are actually necessary to answer well.",
+            "userPrompt": "{\n  \"query\": \"Say hello\",\n  \"recent_messages\": []\n}",
+            "rawResponse": "",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Could not resolve an OpenClaw model for memory extraction"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory gate fallback: Error: Could not resolve an OpenClaw model for memory extraction"
+        ],
+        "events": [
+          "debug",
+          "warn"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "select-fallback-warning",
+        "method": "selectRecallProject",
+        "input": {
+          "query": "Alpha",
+          "shortlist": [
+            {
+              "projectId": "p1",
+              "projectName": "Alpha",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 1,
+              "exact": 0,
+              "source": "query",
+              "matchedText": "alpha"
+            }
+          ]
+        },
+        "steps": [],
+        "config": "empty"
+      },
+      "expected": {
+        "result": {
+          "projectId": "p1",
+          "reason": "Fallback selected Alpha; project selection failed."
+        },
+        "requests": [],
+        "debug": [
+          {
+            "requestLabel": "File memory project selection",
+            "systemPrompt": "You choose the single most relevant formal project for long-term memory recall.\nReturn JSON only with selected_project_id and reason.\nYou must select exactly one project from the provided shortlist.\nUse the current query first, then recent user messages only for continuation/disambiguation.\nDo not infer a project from assistant wording.\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\nIf the current query introduces or switches to a new project, still choose the best shortlist project.\nIf multiple shortlist projects remain plausible, still choose the best one.\nWhen multiple shortlist projects are plausible, never return empty; choose the best match.\nWhen relevance is comparable, prefer general_local over workspace_external.\nNever return an empty selected_project_id when the shortlist is non-empty.",
+            "userPrompt": "{\n  \"query\": \"Alpha\",\n  \"recent_user_messages\": [],\n  \"shortlist\": [\n    {\n      \"project_id\": \"p1\",\n      \"project_name\": \"Alpha\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 1,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    }\n  ]\n}",
+            "rawResponse": "",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Could not resolve an OpenClaw model for memory extraction"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory project selection fallback: Error: Could not resolve an OpenClaw model for memory extraction"
+        ],
+        "events": [
+          "debug",
+          "warn"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "select-fallback-warning-allow-empty",
+        "method": "selectRecallProject",
+        "input": {
+          "query": "Alpha",
+          "shortlist": [
+            {
+              "projectId": "p1",
+              "projectName": "Alpha",
+              "description": "Alpha project",
+              "status": "active",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "sourceType": "general_local",
+              "score": 1,
+              "exact": 0,
+              "source": "query",
+              "matchedText": "alpha"
+            }
+          ],
+          "allowEmpty": true
+        },
+        "steps": [],
+        "config": "empty"
+      },
+      "expected": {
+        "result": {
+          "reason": "Project selection failed; no existing project was forced."
+        },
+        "requests": [],
+        "debug": [
+          {
+            "requestLabel": "File memory project selection",
+            "systemPrompt": "You choose the most relevant existing formal project for long-term memory recall only when one clearly matches the current query.\nReturn JSON only with selected_project_id and reason.\nSelect at most one project from the provided shortlist.\nUse the current query first, then recent user messages only for continuation/disambiguation.\nDo not infer a project from assistant wording.\nSimilar project names are distinct by default; shared domain, shared workflow, or shared feedback do not make them the same project.\nIf the query explicitly names one shortlist project, prefer that exact project instead of broadening to a nearby or umbrella project.\nIf the current query introduces or switches to a new project that is not represented in the shortlist, return an empty selected_project_id.\nIf no shortlist project is clearly relevant, return an empty selected_project_id.\nIf multiple shortlist projects are plausible but evidence is not decisive, return an empty selected_project_id.\nWhen relevance is comparable, prefer general_local over workspace_external.\nUse empty selected_project_id to skip project-scoped recall for a new or unrelated project; do not force unrelated memory into an existing project.",
+            "userPrompt": "{\n  \"query\": \"Alpha\",\n  \"recent_user_messages\": [],\n  \"shortlist\": [\n    {\n      \"project_id\": \"p1\",\n      \"project_name\": \"Alpha\",\n      \"description\": \"Alpha project\",\n      \"status\": \"active\",\n      \"source_type\": \"general_local\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"shortlist_score\": 1,\n      \"shortlist_exact\": 0,\n      \"shortlist_source\": \"query\",\n      \"matched_text\": \"alpha\"\n    }\n  ]\n}",
+            "rawResponse": "",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Could not resolve an OpenClaw model for memory extraction"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory project selection fallback: Error: Could not resolve an OpenClaw model for memory extraction"
+        ],
+        "events": [
+          "debug",
+          "warn"
+        ]
+      }
+    },
+    {
+      "spec": {
+        "name": "manifest-fallback-warning",
+        "method": "selectFileManifestEntries",
+        "input": {
+          "query": "Alpha",
+          "route": "project",
+          "manifest": [
+            {
+              "name": "Entry",
+              "description": "entry description",
+              "type": "project",
+              "scope": "project",
+              "projectId": "p1",
+              "updatedAt": "2026-01-01T00:00:00.000Z",
+              "file": "/fixture/memory/one.md",
+              "relativePath": "one.md",
+              "absolutePath": "/fixture/memory/one.md"
+            }
+          ]
+        },
+        "steps": [],
+        "config": "empty"
+      },
+      "expected": {
+        "result": [],
+        "requests": [],
+        "debug": [
+          {
+            "requestLabel": "File memory selection",
+            "systemPrompt": "You select a small number of memory files from a compact manifest.\nReturn JSON only with selected_ids.\nSelect at most 5 ids and prefer recent items that are directly useful for the query.",
+            "userPrompt": "{\n  \"query\": \"Alpha\",\n  \"route\": \"project\",\n  \"recent_user_messages\": [],\n  \"project\": null,\n  \"manifest\": [\n    {\n      \"id\": \"one.md\",\n      \"type\": \"project\",\n      \"scope\": \"project\",\n      \"project_id\": \"p1\",\n      \"updated_at\": \"2026-01-01T00:00:00.000Z\",\n      \"description\": \"entry description\"\n    }\n  ],\n  \"limit\": 5\n}",
+            "rawResponse": "",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Could not resolve an OpenClaw model for memory extraction"
+          }
+        ],
+        "warnings": [
+          "[clawxmemory] file memory selection fallback: Error: Could not resolve an OpenClaw model for memory extraction"
+        ],
+        "events": [
+          "debug",
+          "warn"
         ]
       }
     }

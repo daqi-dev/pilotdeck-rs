@@ -18,7 +18,7 @@ use pilotdeck_gateway::runtime::{
             ProjectShortlistCandidate, RecallHeaderEntry, SelectFileManifestEntriesInput,
             SelectRecallProjectInput,
         },
-        transport::LlmMemoryExtractor,
+        transport::{LlmLogger, LlmMemoryExtractor},
     },
     model::http::HyperModelTransport,
 };
@@ -26,11 +26,38 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json
 use serde_json::{Map, Value, json};
 use std::{
     cell::RefCell,
-    sync::{Arc, atomic::AtomicU64},
+    sync::{Arc, Mutex, atomic::AtomicU64},
     time::Duration,
 };
 
 const ORACLE: &str = include_str!("fixtures/edgeclaw-llm-recall/oracle.json");
+
+/// Records the TS `logger?.warn?.(...)` calls and their position relative to
+/// `debugTrace`, so warning content/order are compared with the real baseline.
+struct RecordingLogger {
+    warnings: Mutex<Vec<JsString>>,
+    events: Arc<Mutex<Vec<String>>>,
+}
+impl RecordingLogger {
+    fn new(events: Arc<Mutex<Vec<String>>>) -> Self {
+        Self {
+            warnings: Mutex::new(Vec::new()),
+            events,
+        }
+    }
+}
+impl LlmLogger for RecordingLogger {
+    fn warn(&self, message: &JsString) {
+        self.warnings
+            .lock()
+            .expect("#765 warning lock")
+            .push(message.clone());
+        self.events
+            .lock()
+            .expect("#765 warning event lock")
+            .push("warn".into());
+    }
+}
 
 fn js(value: Value) -> JsValue {
     parse_json(&value.to_string()).expect("#765 oracle/config JSON must parse")
@@ -213,9 +240,11 @@ async fn replay_matrix() {
             spec.get("method")
                 .unwrap_or_else(|| panic!("#765 spec needs method")),
         );
-        let input = spec
-            .get("input")
-            .unwrap_or_else(|| panic!("#765 spec needs input"));
+        let input_value = decode(
+            spec.get("input")
+                .unwrap_or_else(|| panic!("#765 spec needs input")),
+        );
+        let input = &input_value;
         let steps = items(
             spec.get("steps")
                 .unwrap_or_else(|| panic!("#765 spec needs steps")),
@@ -229,13 +258,28 @@ async fn replay_matrix() {
         .collect::<Vec<Value>>();
         let clock = Arc::new(AtomicU64::new(0));
         let server = LlmStub::start(steps, clock).await;
-        let extractor = LlmMemoryExtractor::new(
-            config(&server.origin),
-            Arc::new(HyperModelTransport::new()),
-            Arc::new(()),
+        let empty_config = matches!(
+            spec.get("config").and_then(JsValue::as_string),
+            Some(value) if value.equals_str("empty")
         );
+        let config = if empty_config {
+            js(json!({}))
+        } else {
+            config(&server.origin)
+        };
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let logger = Arc::new(RecordingLogger::new(events.clone()));
+        let extractor =
+            LlmMemoryExtractor::new(config, Arc::new(HyperModelTransport::new()), Arc::new(()))
+                .with_logger(logger.clone());
         let debug = RefCell::new(Vec::new());
-        let mut sink = |value: JsValue| debug.borrow_mut().push(value);
+        let mut sink = |value: JsValue| {
+            debug.borrow_mut().push(value);
+            events
+                .lock()
+                .expect("#765 debug event lock")
+                .push("debug".into());
+        };
         let actual = tokio::time::timeout(Duration::from_secs(10), async {
             match method.as_str() {
                 "decideFileMemoryRoute" => {
@@ -319,6 +363,39 @@ async fn replay_matrix() {
             normalized(&expected_requests, "$ORIGIN"),
             "#765 requests {name}"
         );
+        let actual_warnings = logger
+            .warnings
+            .lock()
+            .expect("#765 warnings lock")
+            .iter()
+            .cloned()
+            .map(JsValue::String)
+            .collect();
+        assert_eq!(
+            wire(&JsValue::Array(actual_warnings)),
+            wire(&decode(
+                expected
+                    .get("warnings")
+                    .unwrap_or_else(|| panic!("#765 expected needs warnings"))
+            )),
+            "#765 warnings {name}"
+        );
+        let actual_events = events
+            .lock()
+            .expect("#765 events lock")
+            .iter()
+            .cloned()
+            .map(|event| JsValue::String(JsString::from(event)))
+            .collect();
+        assert_eq!(
+            wire(&JsValue::Array(actual_events)),
+            wire(&decode(
+                expected
+                    .get("events")
+                    .unwrap_or_else(|| panic!("#765 expected needs events"))
+            )),
+            "#765 events {name}"
+        );
         assert_eq!(
             wire(&JsValue::Array(debug.into_inner())),
             wire(&decode(
@@ -332,7 +409,7 @@ async fn replay_matrix() {
         server.close().await;
         count += 1;
     }
-    assert_eq!(count, 41, "#765 case count");
+    assert_eq!(count, 51, "#765 case count");
 }
 
 #[test]
@@ -368,6 +445,160 @@ fn source_priority_matches_ts() {
         ),
         0.0,
         "#765 missing priority"
+    );
+}
+
+#[tokio::test]
+async fn fallback_warnings_match_ts() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let logger = Arc::new(RecordingLogger::new(events.clone()));
+    let extractor = LlmMemoryExtractor::new(
+        js(json!({})),
+        Arc::new(HyperModelTransport::new()),
+        Arc::new(()),
+    )
+    .with_logger(logger.clone());
+    let debug: RefCell<Vec<JsValue>> = RefCell::new(Vec::new());
+    let mut sink = |value: JsValue| {
+        debug.borrow_mut().push(value);
+        events
+            .lock()
+            .expect("#765 warning debug event lock")
+            .push("debug".into());
+    };
+
+    let gate = extractor
+        .decide_file_memory_route(
+            &DecideFileMemoryRouteInput {
+                query: "Say hello".into(),
+                ..DecideFileMemoryRouteInput::default()
+            },
+            &mut sink,
+        )
+        .await;
+    assert_eq!(gate, MemoryRoute::None, "#765 gate warning result");
+
+    let shortlist = vec![ProjectShortlistCandidate {
+        project_id: "p1".into(),
+        project_name: "Alpha".into(),
+        ..ProjectShortlistCandidate::default()
+    }];
+    let selected = extractor
+        .select_recall_project(
+            &SelectRecallProjectInput {
+                query: "Alpha".into(),
+                shortlist,
+                ..SelectRecallProjectInput::default()
+            },
+            &mut sink,
+        )
+        .await;
+    assert_eq!(
+        selected.get("projectId").and_then(JsValue::as_string),
+        Some(&JsString::from("p1")),
+        "#765 project selection warning result"
+    );
+
+    let selected_ids = extractor
+        .select_file_manifest_entries(
+            &SelectFileManifestEntriesInput {
+                query: "Alpha".into(),
+                route: MemoryRoute::Project,
+                recent_user_messages: Vec::new(),
+                project_meta: None,
+                manifest: Vec::new(),
+                limit: None,
+                agent_id: None,
+                timeout_ms: None,
+            },
+            &mut sink,
+        )
+        .await;
+    assert!(selected_ids.is_empty(), "#765 selection warning result");
+
+    let warnings: Vec<String> = logger
+        .warnings
+        .lock()
+        .expect("#765 fallback warning lock")
+        .iter()
+        .map(|warning| warning.to_utf8().expect("#765 fallback warning UTF-8"))
+        .collect();
+    let expected = [
+        "[clawxmemory] file memory gate fallback: Error: Could not resolve an OpenClaw model for memory extraction",
+        "[clawxmemory] file memory project selection fallback: Error: Could not resolve an OpenClaw model for memory extraction",
+        "[clawxmemory] file memory selection fallback: Error: Could not resolve an OpenClaw model for memory extraction",
+    ];
+    assert_eq!(warnings.len(), 3, "#765 one warning per fallback");
+    assert_eq!(warnings[0], expected[0], "#765 gate warning");
+    assert_eq!(warnings[1], expected[1], "#765 project selection warning");
+    assert_eq!(warnings[2], expected[2], "#765 selection warning");
+    assert_eq!(
+        *events.lock().expect("#765 warning order lock"),
+        ["debug", "warn", "debug", "warn", "debug", "warn"],
+        "#765 warning order"
+    );
+    let records = debug.into_inner();
+    assert_eq!(records.len(), 3, "#765 warning debug count");
+    for (index, record) in records.iter().enumerate() {
+        assert!(
+            !wire(record).contains("[clawxmemory]"),
+            "#765 warning must not enter debug {index}"
+        );
+    }
+}
+
+#[test]
+fn js_fallback_sort_matches_ts() {
+    let project = |id: &str, exact: f64, score: f64| ProjectShortlistCandidate {
+        project_id: id.into(),
+        project_name: id.into(),
+        exact,
+        score,
+        ..ProjectShortlistCandidate::default()
+    };
+    let picked = |shortlist: &[ProjectShortlistCandidate]| {
+        pilotdeck_gateway::runtime::memory::edgeclaw::llm::recall::choose_best_recall_project_fallback(
+            shortlist,
+        )
+        .expect("#765 sort sample needs a candidate")
+        .project_id
+        .to_utf8()
+        .expect("#765 sort project id must be UTF-8")
+    };
+
+    assert_eq!(
+        picked(&[project("a", -0.0, 2.0), project("b", 0.0, 1.0)]),
+        "a",
+        "#765 minus zero and plus zero are equal"
+    );
+    assert_eq!(
+        picked(&[project("a", f64::NAN, 1.0), project("b", 0.0, 9.0)]),
+        "a",
+        "#765 NaN exact preserves input order"
+    );
+    assert_eq!(
+        picked(&[project("b", 0.0, 9.0), project("a", f64::NAN, 1.0)]),
+        "b",
+        "#765 NaN exact keeps the earlier element"
+    );
+    assert_eq!(
+        picked(&[project("a", f64::NAN, 1.0), project("b", f64::NAN, 9.0)]),
+        "a",
+        "#765 NaN pair preserves input order"
+    );
+    assert_eq!(
+        picked(&[
+            project("a", f64::NAN, 1.0),
+            project("b", 0.0, 9.0),
+            project("c", f64::NAN, 5.0)
+        ]),
+        "a",
+        "#765 mixed NaN preserves stable order"
+    );
+    assert_eq!(
+        picked(&[project("a", f64::INFINITY, 1.0), project("b", 0.0, 9.0)]),
+        "a",
+        "#765 positive infinity exact wins"
     );
 }
 

@@ -12,7 +12,9 @@
 //! depend on property insertion order and indentation. [`pretty_json`] writes
 //! that exact shape; every object below is built in the TS literal order.
 //! Model output is untrusted: envelope and syntax failures are returned as
-//! [`LlmError`], then each public method applies the TS fallback.
+//! [`LlmError`], then each public method applies the TS fallback. The catch
+//! blocks also emit the TS `logger?.warn?.(...)` line through [`super::transport::LlmLogger`]
+//! (installed with `LlmMemoryExtractor::with_logger`; silent by default).
 
 use super::{
     envelope::{
@@ -28,7 +30,7 @@ use crate::{
 use pilotdeck_protocol::{
     JsObject, JsString, JsValue, json_syntax, parse_json, quote_json_string, stringify_json,
 };
-use std::sync::OnceLock;
+use std::{cmp::Ordering, sync::OnceLock};
 
 /// `DEFAULT_FILE_MEMORY_GATE_TIMEOUT_MS` (:213).
 pub const DEFAULT_FILE_MEMORY_GATE_TIMEOUT_MS: f64 = 45_000.0;
@@ -262,7 +264,13 @@ impl LlmMemoryExtractor {
                 }
                 _ => MemoryRoute::None,
             },
-            Err(_) => MemoryRoute::None,
+            Err(error) => {
+                self.warn(fallback_warning(
+                    "[clawxmemory] file memory gate fallback: ",
+                    &error,
+                ));
+                MemoryRoute::None
+            }
         }
     }
 
@@ -397,7 +405,11 @@ impl LlmMemoryExtractor {
                 );
                 out
             }
-            Err(_) => {
+            Err(error) => {
+                self.warn(fallback_warning(
+                    "[clawxmemory] file memory project selection fallback: ",
+                    &error,
+                ));
                 let mut out = JsObject::new();
                 if input.allow_empty {
                     out.insert(
@@ -487,7 +499,13 @@ impl LlmMemoryExtractor {
                 };
                 normalize_string_array(selected_ids, limit)
             }
-            Err(_) => Vec::new(),
+            Err(error) => {
+                self.warn(fallback_warning(
+                    "[clawxmemory] file memory selection fallback: ",
+                    &error,
+                ));
+                Vec::new()
+            }
         }
     }
 }
@@ -508,26 +526,57 @@ pub fn recall_project_source_priority(project: &ProjectShortlistCandidate) -> f6
     }
 }
 
-/// `chooseBestRecallProjectFallback`: stable sort by exact/score/priority
-/// descending, then `updatedAt.localeCompare` descending; first element.
+/// `chooseBestRecallProjectFallback`: the TS comparator (`:1629-1636`) uses
+/// `!==` on numbers, so +0 and -0 are equal and NaN is unequal, then returns
+/// the subtraction. `Array#sort` folds a NaN (or -0) comparator result to +0,
+/// which keeps the stable input order instead of falling through to `score`.
 pub fn choose_best_recall_project_fallback(
     shortlist: &[ProjectShortlistCandidate],
 ) -> Option<&ProjectShortlistCandidate> {
     let mut sorted: Vec<&ProjectShortlistCandidate> = shortlist.iter().collect();
-    sorted.sort_by(|left, right| {
-        right
-            .exact
-            .total_cmp(&left.exact)
-            .then_with(|| right.score.total_cmp(&left.score))
-            .then_with(|| {
-                recall_project_source_priority(right)
-                    .total_cmp(&recall_project_source_priority(left))
-            })
-            .then_with(|| {
-                node_compare_utf16(recall_collator(), &right.updated_at, &left.updated_at)
-            })
-    });
+    sorted.sort_by(|left, right| js_sort_order(recall_fallback_delta(left, right)));
     sorted.first().copied()
+}
+
+/// The TS comparator body, returning the same `number` it returns.
+fn recall_fallback_delta(
+    left: &ProjectShortlistCandidate,
+    right: &ProjectShortlistCandidate,
+) -> f64 {
+    // Rust's f64 `!=` has JS `!==` number semantics: +0 == -0 and NaN != NaN.
+    if right.exact != left.exact {
+        return right.exact - left.exact;
+    }
+    if right.score != left.score {
+        return right.score - left.score;
+    }
+    let delta = recall_project_source_priority(right) - recall_project_source_priority(left);
+    if delta != 0.0 {
+        return delta;
+    }
+    match node_compare_utf16(recall_collator(), &right.updated_at, &left.updated_at) {
+        Ordering::Less => -1.0,
+        Ordering::Equal => 0.0,
+        Ordering::Greater => 1.0,
+    }
+}
+
+/// `Array#sort` treats NaN, +0 and -0 comparator results as equality.
+fn js_sort_order(delta: f64) -> Ordering {
+    if delta.is_nan() || delta == 0.0 {
+        Ordering::Equal
+    } else if delta < 0.0 {
+        Ordering::Less
+    } else {
+        Ordering::Greater
+    }
+}
+
+/// `[clawxmemory] <label> fallback: ${String(error)}` from the TS catch blocks.
+fn fallback_warning(prefix: &str, error: &LlmError) -> JsString {
+    let mut units: Vec<u16> = prefix.encode_utf16().collect();
+    units.extend_from_slice(error.js_string().units());
+    JsString::from_utf16(units)
 }
 
 fn recall_collator() -> &'static icu_collator::CollatorBorrowed<'static> {
