@@ -48,8 +48,9 @@ PDRS_BASELINE="$PDRS_BASELINE" cargo test --manifest-path src/Cargo.toml \
 
 ## 负控
 
-`negative.py` 用 `negative_process.mutating_sources` 锁定并恢复 `runner.rs`，
-先校验 19 个变异锚点恰好各出现一次（过期报 `STALE ANCHOR` 并退出 2，不冒充
+`negative.py` 用 `negative_process.mutating_sources` 锁定并恢复
+`dream/runner.rs`、`_shared/run_scratch.mjs` 与 `observe.mts`，先校验 24 个
+变异锚点恰好各出现一次（过期报 `STALE ANCHOR` 并退出 2，不冒充
 SURVIVED），再对**本次选中变异的目测试去重**逐个跑未变异源码，任一目标测试
 未通过即拒绝判杀并以 1 退出；逐格只跑该变异绑定的 `#[test]`，要求测试本身
 失败（`test <name> ... FAILED`）且日志出现该格专属的 `#773 ...` 断言消息。
@@ -62,9 +63,17 @@ cargo 强制使用调用方 `CARGO_TARGET_DIR` 并走 `run_owned` + `wait_for_sl
 `merge-plan-error-*` 金样，覆盖 `Error.prototype.toString()` 的空 message、
 空 name 与孤代理 UTF-16 边界。
 
-fix-r1 / fix-r2 的产品改动在提交前与 HEAD 不一致，`mutating_sources` 会按设计
-拒绝；本树只跑 `python3 .../negative.py --check-anchors`，全量由协调者在宿主
-提交后跑：
+fix-r3 新增 `category-missing-record`（两个 header、一个 record）与
+`scratch_root_is_run_exclusive` 两个目标：`plan-output-missing-record-sync` /
+`plan-dropped-kv-recomputed` 杀 trace 同步与 push-time KV；`run-scratch-fixed-root` /
+`observe-fixed-scratch` 杀固定 stage 路径回归。生成器每次 `collect()` 在
+`PDRS_RUNNER_SCRATCH`（或 `tmpdir()`）下 `mkdtemp` 独占根，删除复用
+`_shared/generator_guard.mjs` 的 `assertInside` / `removeOwned`。
+
+fix-r1 / fix-r2 / fix-r3 的产品改动在提交前与 HEAD 不一致，`mutating_sources`
+会按设计拒绝；本树只跑 `python3 .../negative.py --check-anchors`，并用手工
+apply/restore 预检每个新变异的编译与样本杀（`_tmp/.../fix-r3/`），全量由协调
+者在宿主提交后跑：
 
 ```sh
 cd <tree>
