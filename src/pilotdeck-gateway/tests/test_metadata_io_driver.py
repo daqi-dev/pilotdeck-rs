@@ -140,27 +140,69 @@ class EnvironmentControls(unittest.TestCase):
     def ci_jobs(self):
         text = (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
         self.assertEqual(text.count('\njobs:\n'), 1, '#904 one jobs mapping')
-        parts = re.split(r'^  ([\w-]+):\n', text.split('\njobs:\n', 1)[1], flags=re.M)
-        names = parts[1::2]
-        self.assertEqual(len(names), len(set(names)), '#904 unique job names')
-        return dict(zip(names, parts[2::2]))
+        jobs = {}
+        name = None
+        for line in text.split('\njobs:\n', 1)[1].splitlines(keepends=True):
+            if not line.strip() or line.lstrip().startswith('#'):
+                if name is not None:
+                    jobs[name] += line
+                continue
+            header = re.fullmatch(r'  ([\w-]+):\s*(?:#.*)?\n?', line)
+            if header:
+                name = header[1]
+                self.assertNotIn(name, jobs, '#904 unique job names')
+                jobs[name] = ''
+            else:
+                self.assertTrue(name is not None and line.startswith('    '),
+                                '#904 unsupported job declaration')
+                jobs[name] += line
+        # New jobs must explicitly register their Node setup and merge gating here:
+        # metadata-observer/rust/a51-coverage need their own Node and check gates;
+        # check only aggregates; gateway-schema-baseline has Node and its own required check.
+        self.assertEqual(set(jobs), {'metadata-observer', 'check', 'rust', 'a51-coverage',
+                                    'gateway-schema-baseline'}, '#904 exact five CI jobs')
+        return jobs
 
     def ci_steps(self, name, body):
         self.assertEqual(len(re.findall(r'^    steps:$', body, re.M)), 1,
                          f'#904 {name} has one steps sequence')
-        return re.split(r'^      - ', body.split('    steps:\n', 1)[1], flags=re.M)[1:]
+        return re.split(r'^      - ', re.split(r'^    steps:\n', body, flags=re.M)[1], flags=re.M)[1:]
 
     def ci_run_commands(self, step):
-        runs = re.findall(r'^(?:run: |        run: )([^\n]*)(?:\n((?:(?:          [^\n]*|[ \t]*)(?:\n|$))*))?',
-                          step, re.M)
-        return [line.strip() for command, block in runs
-                for line in (block.splitlines() if command in ('|', '>', '|-', '>-', '|+', '>+')
-                             else [command]) if line.strip()]
+        lines, commands, runs = step.splitlines(), [], 0
+        i = 0
+        while i < len(lines):
+            run = re.fullmatch(r'(        |)run:(.*)', lines[i])
+            i += 1
+            if not run:
+                continue
+            runs += 1
+            self.assertEqual(runs, 1, '#904 step has at most one run field')
+            value = run[2].strip()
+            # ci_steps removes the first line's "      - "; its key still has indent 8.
+            parent_indent = len(run[1]) if run[1] else 8
+            block = []
+            while i < len(lines):
+                line = lines[i]
+                if line.strip() and len(line) - len(line.lstrip(' ')) <= parent_indent:
+                    break
+                if line.strip():
+                    block.append(line.strip())
+                i += 1
+            if re.fullmatch(r'[|>][0-9]*[+-]?\s*(#.*)?', value):
+                self.assertTrue(block, '#904 run block must not be empty')
+                commands.extend(block)
+            else:
+                self.assertTrue(value and value[0] not in '|>[]{}&*!%@#'
+                                and not value.startswith('${{'), '#904 unsupported run scalar')
+                self.assertFalse(block, '#904 single-line run cannot have a continuation')
+                commands.append(value)
+        return commands
 
     def test_required_check_gates_observer_failure_instead_of_skipping(self):
         jobs = self.ci_jobs()
         required = ('metadata-observer', 'rust', 'a51-coverage')
-        for name in ('check', *required):
+        for name in jobs:
             self.assertIn(name, jobs, f'#904 required job {name} exists')
             self.assertNotIn('continue-on-error:', jobs[name], f'#904 {name} cannot ignore failure')
         check = jobs['check']
@@ -192,13 +234,106 @@ class EnvironmentControls(unittest.TestCase):
             for i, step in enumerate(steps):
                 # Only run fields/scripts count; names, comments and env values do not.
                 commands = self.ci_run_commands(step)
-                if any(re.search(r'''(?:^['"]?|\s)(?:npm (?:ci|install|i)\b|npx |node )''', command)
+                if any(re.search(r'\b(npm|npx|node|yarn|pnpm|corepack)\b', command)
                        for command in commands if not command.lstrip().startswith('#')):
                     runtime_jobs.add(name)
                     self.assertTrue(any(node < i for node in node_steps),
                                     f'#904 {name} setup-node must precede Node commands in its own job')
         self.assertEqual(runtime_jobs, {'metadata-observer', 'rust', 'a51-coverage', 'gateway-schema-baseline'},
                          '#904 all four Node jobs are checked')
+
+    def ci_workflow_fixture(self):
+        return (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
+
+    def assert_ci_rejects(self, workflow, test_name, message):
+        # Invoke the real CI check on an in-memory workflow mutation, never edit ci.yml.
+        # subTest callers continue through every case even if one mutation survives.
+        with patch.object(Path, 'read_text', return_value=workflow):
+            with self.assertRaisesRegex(AssertionError, re.escape(message),
+                                        msg=f'#904 {test_name} must reject at {message}'):
+                getattr(self, test_name)()
+
+    def test_ci_job_inventory_rejects_new_missing_and_unparsed_jobs(self):
+        workflow = self.ci_workflow_fixture()
+        target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
+        for name in self.ci_jobs():
+            with self.subTest(renamed_job=name):
+                self.assert_ci_rejects(workflow.replace(f'  {name}:\n', f'  renamed-{name}:\n', 1),
+                                       target, '#904 exact five CI jobs')
+        for declaration, message in (
+                ('  extra:\n    steps:\n      - run: npm test\n', '#904 exact five CI jobs'),
+                ('  "extra": {steps: [{run: npm test}]}\n', '#904 unsupported job declaration'),
+                ('  extra: *other-job\n', '#904 unsupported job declaration'),
+                ('  rust:\n    steps:\n      - run: npm test\n', '#904 unique job names')):
+            with self.subTest(declaration=declaration):
+                self.assert_ci_rejects(workflow + declaration, target, message)
+
+    def test_ci_run_blocks_preserve_commands_and_require_prior_node(self):
+        workflow = self.ci_workflow_fixture()
+        target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
+        anchor = '      - run: rustup show active-toolchain\n'
+        self.assertEqual(workflow.count(anchor), 1, '#904 block control has one rust step anchor')
+        for scalar in ('|', '>', '|-', '>-', '|+', '>+', '|2', '>2-', ' |', '| ', '>- # comment', '|2+ # comment'):
+            for indent in (9, 10, 12):
+                for inline in (True, False):
+                    with self.subTest(scalar=scalar, indent=indent, inline=inline):
+                        step = ('run: ' if inline else 'name: block\n        run: ') + scalar + '\n'
+                        step += ' ' * indent + 'npm test\n'
+                        self.assertEqual(self.ci_run_commands(step), ['npm test'],
+                                         '#904 legal run block preserves Node commands')
+                        changed = workflow.replace(anchor, '      - ' + step, 1)
+                        self.assert_ci_rejects(changed, target,
+                            '#904 rust setup-node must precede Node commands in its own job')
+                        # The same content passes once this job sets up Node before it.
+                        changed = changed.replace('      - ' + step,
+                            '      - uses: actions/setup-node@v4\n      - ' + step, 1)
+                        with patch.object(Path, 'read_text', return_value=changed):
+                            getattr(self, target)()
+
+    def test_ci_unrecognized_and_empty_run_values_fail_closed(self):
+        workflow = self.ci_workflow_fixture()
+        anchor = '      - run: rustup show active-toolchain\n'
+        target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
+        self.assertEqual(workflow.count(anchor), 1, '#904 invalid run control has one rust step anchor')
+        for value in ('', '# comment', '|bad', '>-2', '[]', '{command: npm test}',
+                      '*commands', '&commands npm test', '!!str npm test', '${{ inputs.command }}'):
+            with self.subTest(value=value):
+                self.assert_ci_rejects(workflow.replace(anchor, f'      - run: {value}\n', 1),
+                                       target, '#904 unsupported run scalar')
+        for value in ('|', '|2', '> # comment'):
+            with self.subTest(empty_block=value):
+                self.assert_ci_rejects(workflow.replace(anchor, f'      - run: {value}\n          \n', 1),
+                                       target, '#904 run block must not be empty')
+        self.assert_ci_rejects(workflow.replace(anchor, '      - run: echo safe\n          npm test\n', 1),
+                               target, '#904 single-line run cannot have a continuation')
+        self.assert_ci_rejects(workflow.replace(anchor, anchor + '        run: npm test\n', 1),
+                               target, '#904 step has at most one run field')
+
+    def test_ci_node_command_family_requires_setup_for_every_invocation(self):
+        workflow = self.ci_workflow_fixture()
+        anchor = '      - run: rustup show active-toolchain\n'
+        target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
+        self.assertEqual(workflow.count(anchor), 1, '#904 Node control has one rust step anchor')
+        for command in ('npm ci', 'npm install', 'npm i', 'npm run generate', 'npm test', 'npm exec tool',
+                        'npm start', 'npm --version', 'npx', 'node', 'exec node', 'true && node',
+                        'yarn test', 'pnpm test', 'corepack enable', '"npm test"', "'npm test'"):
+            with self.subTest(command=command):
+                self.assert_ci_rejects(workflow.replace(anchor, f'      - run: {command}\n', 1), target,
+                                       '#904 rust setup-node must precede Node commands in its own job')
+        # Node words in names/env/comments are not commands; longer words have no token boundary.
+        harmless = ('      - name: npm test\n        env:\n          EXAMPLE: node\n'
+                    '        run: |\n          # npm test\n          echo anode npmx yarnish\n')
+        with patch.object(Path, 'read_text', return_value=workflow.replace(anchor, harmless, 1)):
+            getattr(self, target)()
+
+    def test_ci_every_required_job_rejects_continue_on_error(self):
+        workflow = self.ci_workflow_fixture()
+        for name in self.ci_jobs():
+            with self.subTest(job=name):
+                self.assert_ci_rejects(workflow.replace(f'  {name}:\n',
+                    f'  {name}:\n    continue-on-error: true\n', 1),
+                    'test_required_check_gates_observer_failure_instead_of_skipping',
+                    f'#904 {name} cannot ignore failure')
 
     def test_target_output_overlap_file_and_nonempty_target_are_rejected_without_writes(self):
         target = self.root/'new-target'
