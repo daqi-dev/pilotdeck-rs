@@ -538,10 +538,16 @@ impl<F: Files> Metadata<F> {
                 continue;
             }
             let marker_path = resolve(&self.cwd, &marker);
+            // TS compares the resolved marker but calls `statSync(marker)` on
+            // the raw spelling (paths.ts:137-143). A lexical `..` can fold a
+            // missing or non-directory segment away, so probing `marker_path`
+            // would accept a marker Node rejects. Keep identity on the
+            // normalized path and existence on `process.cwd() + raw marker`.
+            let marker_on_disk = self.cwd.join(&marker);
             if marker_path == target
                 && self
                     .files
-                    .stat(&marker_path)
+                    .stat(&marker_on_disk)
                     .is_ok_and(|stat| stat.directory)
             {
                 return id;

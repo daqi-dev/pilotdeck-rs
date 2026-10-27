@@ -75,6 +75,24 @@ mutations = [
         "#888 marker owns storage id",
     ),
     (
+        "storage-id-stats-normalized-marker",
+        SOURCE / "metadata.rs",
+        "            let marker_on_disk = self.cwd.join(&marker);",
+        "            let marker_on_disk = marker_path.clone();",
+        "snapshot_projection",
+        "scenarios_match_real_ts_projection",
+        "#888 storage-id-missing-dotdot: raw marker existence check keeps the General workspace id",
+    ),
+    (
+        "restore-returns-target-not-mkdtemp",
+        SOURCE / "runtime/snapshot.rs",
+        '        result.insert("workspaceKey".into(), workspace_key.as_str().into());',
+        '        result.insert("workspaceKey".into(), target_project.as_str().into());',
+        "snapshot_projection",
+        "scenarios_match_real_ts_projection",
+        "returned workspaceKey equals the newly created restore directory",
+    ),
+    (
         "project-key-validation-skipped",
         SOURCE / "runtime/snapshot.rs",
         '        _ => Err(SnapshotProjectionError::gateway(\n'

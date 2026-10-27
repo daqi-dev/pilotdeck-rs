@@ -4,8 +4,9 @@
 //! list/get/restore calls, and the exact restore trees. This test materializes
 //! the recorded snapshot root, replays every operation against
 //! `runtime::snapshot::SnapshotProjection` (the first six scenarios) or the
-//! production `SnapshotGateway` + `SnapshotProjects` (the `gateway-native`
-//! scenario), and compares values and errors item by item.
+//! production `SnapshotGateway` + `SnapshotProjects` (the `gateway-native` and
+//! raw-marker `storage-id-*` scenarios), and compares values and errors item by
+//! item.
 //!
 //! Counts are pinned: an empty or shrunk `scenarios` array fails instead of
 //! passing with zero iterations (same class as #293's zero-scenario P2).
@@ -25,7 +26,7 @@ use std::{
         ffi::OsStrExt,
         fs::{PermissionsExt, symlink},
     },
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -42,6 +43,8 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("restore-missing-target", 1, 8),
     ("restore-partial", 1, 10),
     ("gateway-native", 58, 30),
+    ("storage-id-missing-dotdot", 1, 8),
+    ("storage-id-symlink-dotdot", 1, 8),
 ];
 static UNDEFINED: JsValue = JsValue::Undefined;
 
@@ -312,6 +315,13 @@ fn materialize(scenario: &JsValue, scratch: &Path) {
                 .expect("#888 create file parent");
             fs::write(path, text(field(file, "content"))).expect("#888 write native file");
         }
+        for link in items(native.get("symlinks").expect("#888 native.symlinks")) {
+            let path = PathBuf::from(expand(&text(field(link, "path")), scratch));
+            fs::create_dir_all(path.parent().expect("#888 link path has a parent"))
+                .expect("#888 create native link parent");
+            symlink(expand(&text(field(link, "target")), scratch), &path)
+                .expect("#888 create native symlink");
+        }
     }
 }
 fn replace_bytes(bytes: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
@@ -419,6 +429,23 @@ fn normalize_units(path: &[u16]) -> Vec<u16> {
     }
 }
 
+/// Node `path.join(target, name)` lexical normalization. `Path::join` alone
+/// preserves `..`, which would make a `link/..` target compare against the
+/// symlink-resolved spelling Node never returns.
+fn lexical_join(base: &str, name: &str) -> String {
+    let mut joined = PathBuf::new();
+    for component in Path::new(base).join(name).components() {
+        match component {
+            Component::ParentDir => {
+                joined.pop();
+            }
+            Component::CurDir => {}
+            component => joined.push(component.as_os_str()),
+        }
+    }
+    joined.to_string_lossy().into_owned()
+}
+
 fn restore_dirs(project: &Path) -> Vec<String> {
     fs::read_dir(project)
         .map(|entries| {
@@ -511,8 +538,8 @@ fn scenarios_match_real_ts_projection() {
             .iter()
             .map(|scenario| items(field(scenario, "operations")).len())
             .sum::<usize>(),
-        113,
-        "#888 113 snapshot operations are replayed"
+        115,
+        "#888 115 snapshot operations are replayed"
     );
 
     for (scenario, (name, expected_ops, expected_tree)) in scenarios.iter().zip(EXPECTED) {
@@ -624,6 +651,33 @@ fn replay_operation(
         .map(|target| restore_dirs(Path::new(target)))
         .unwrap_or_default();
     let actual = replay.call(&op, &raw_input);
+    // P1-1: a raw marker whose lexical resolution is the General workspace
+    // but whose raw `stat` fails must not own the storage id. The dedicated
+    // assertion runs before the generic value comparison so the negative
+    // control sees this message instead of an incidental mismatch elsewhere.
+    if name.starts_with("storage-id-") && op == "snapshotList" {
+        let value = actual
+            .as_ref()
+            .unwrap_or_else(|error| panic!("#888 {name}: raw marker list failed: {error}"));
+        let listed = match value.get("items") {
+            Some(JsValue::Array(items)) => items,
+            other => panic!("#888 {name}: raw marker list has no items array: {other:?}"),
+        };
+        assert_eq!(
+            listed.len(),
+            1,
+            "#888 {name}: raw marker existence check keeps the General workspace id"
+        );
+        assert_eq!(
+            listed[0]
+                .get("workspaceId")
+                .and_then(|value| value.as_string())
+                .and_then(|value| value.to_utf8().ok())
+                .as_deref(),
+            Some("p-general"),
+            "#888 {name}: raw marker existence check keeps the General workspace id"
+        );
+    }
     let after = target_project
         .as_deref()
         .map(|target| restore_dirs(Path::new(target)))
@@ -642,18 +696,26 @@ fn replay_operation(
     let restore_dir = created
         .first()
         .zip(target_project.as_deref())
-        .map(|(name, target)| Path::new(target).join(name).to_string_lossy().into_owned());
+        .map(|(name, target)| lexical_join(target, name));
 
-    // A successful restore's `workspaceKey` is the actual mkdtemp path; the
-    // requested target can be lexically non-normalized (`a/../b`), so use the
-    // returned key for masking and the tree comparison instead.
-    let restore_dir = match &actual {
-        Ok(value) if op == "snapshotRestore" => value
+    // A successful restore must return the directory this call just created,
+    // not a directory observed from an earlier operation. Node's `path.join`
+    // normalizes the requested target lexically (`a/../b`), so compare against
+    // that spelling before masking either path. Only then may the returned key
+    // participate in masking/tree comparison.
+    if let (Ok(value), Some(created_dir)) = (&actual, &restore_dir)
+        && op == "snapshotRestore"
+    {
+        let workspace_key = value
             .get("workspaceKey")
             .and_then(|key| key.as_string())
-            .and_then(|key| key.to_utf8().ok()),
-        _ => restore_dir,
-    };
+            .and_then(|key| key.to_utf8().ok());
+        assert_eq!(
+            workspace_key.as_deref(),
+            Some(created_dir.as_str()),
+            "#888 {name} op #{index} ({op}): returned workspaceKey equals the newly created restore directory"
+        );
+    }
 
     match actual {
         Ok(value) => {

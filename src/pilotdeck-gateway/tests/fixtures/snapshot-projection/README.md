@@ -58,6 +58,12 @@ cmp "$out/oracle.json" src/pilotdeck-gateway/tests/fixtures/snapshot-projection/
    fallback slug、跨 workspace 的 get/restore、restore 目标缺失/文件/未知、
    `../` 条目半途失败。该场景的 `native` 字段描述 pilot home、registry id 与
    `.cwd` 内容，Rust 回放据此重建真实目录，不使用注入 resolver。
+8. `storage-id-missing-dotdot` / `storage-id-symlink-dotdot`（#888 fix-r2）：
+   General workspace 的 `.cwd` 标记写成 `<pilotHome>/missing/..` 或
+   `<pilotHome>/link/..`（`link` 指向文件）。两者的词法 `resolve` 都是 pilotHome，
+   但 TS 对原始标记 `statSync` 分别得到 `ENOENT` / `ENOTDIR`，必须跳过该标记，
+   由 `p-general` 拥有 storage ID；每个场景 1 个 `snapshotList`，若错误地 stat
+   规范化路径则 `p-a-raw-marker` 抢先命中并返回空列表。
 
 固定进程时钟（`2026-01-01T00:00:00Z`，`tick` 每次 +1 ms）让 recorder 的
 `createdAt` 跨运行不变；该时钟与溯源前导来自共享 `generator_guard.mjs`。
@@ -83,8 +89,9 @@ cmp "$out/oracle.json" src/pilotdeck-gateway/tests/fixtures/snapshot-projection/
 - `scenarios[]`：`name`、`tree`（相对 snapshot storage root 的完整树，文件用
   base64；递归删除后的失败 marker 仍在树里）、`snapshotRoot`、`absoluteFile`
   （回放用的 snapshot 根外绝对对象）、`projects`（projectKey → workspaceId）、
-  `fallbackProjectRoot`、`operations[]`；`gateway-native` 另有 `gateway:true` 与
-  `native`（pilotHome、cwd、registry id + `.cwd` 内容、marker 指向的文件）。
+  `fallbackProjectRoot`、`operations[]`；`gateway-native` 与两个
+  `storage-id-*` 场景另有 `gateway:true` 与 `native`（pilotHome、cwd、registry
+  id + `.cwd` 内容、marker 指向的文件、`symlinks` 的路径与目标）。
 - `operations[]`：`op`、`input`（路径已掩成 `<dir>`）或 `params`（`undefined` /
   `null` 的 params 对象，JSON 的 `input` 带不动）、`outcome`（成功为
   `{ok: value}`，失败为 `{error: {name, code?, message}}`）、restore 的
@@ -93,15 +100,17 @@ cmp "$out/oracle.json" src/pilotdeck-gateway/tests/fixtures/snapshot-projection/
 ## Rust 回放
 
 `tests/snapshot_projection.rs` 先 materialize 记录树；前六个场景用
-`runtime::snapshot::SnapshotProjection`，`gateway-native` 用生产
-`runtime::snapshot::SnapshotGateway` + `SnapshotProjects`，合计 113 个操作：
+`runtime::snapshot::SnapshotProjection`，`gateway-native` 与两个
+`storage-id-*` 场景用生产 `runtime::snapshot::SnapshotGateway` +
+`SnapshotProjects`，合计 115 个操作：
 
-- 精确钉住 7 个场景名、每场景操作数 `44/3/3/3/1/1/58`、树行数
-  `60/8/8/0/8/10/30`，空/缩水 oracle 直接失败（#293 的零场景类 P2）。
+- 精确钉住 9 个场景名、每场景操作数 `44/3/3/3/1/1/58/1/1`、树行数
+  `60/8/8/0/8/10/30/8/8`，空/缩水 oracle 直接失败（#293 的零场景类 P2）。
 - 逐操作比较成功值或 `{name, code, message}`；restore（成功和失败）都再比较相对
   restore 目录的完整树，并断言 mkdtemp 目录 mode 为 `0700`。失败树尤其覆盖
-  “前面条目已写、后面条目才失败”的 `restore-partial`。成功 restore 的
-  `workspaceKey` 是真实 mkdtemp 路径，回放用它掩码（目标键可含 `a/../b`）。
+  “前面条目已写、后面条目才失败”的 `restore-partial`。成功 restore 先断言
+  `workspaceKey` 等于本次目录差集观测到的新目录（按 Node `path.join` 词法归一），
+  再用该目录掩码并比较树；避免“新建目录但返回上次 restore 目录”被自身遮罩掩盖。
 - `restore-missing-target` 的 `ENOENT` 文案来自真实 TS/Node，不再手写；`<random>`
   在回放侧按实际随机后缀掩码。
 - `gateway-native` 的 project resolver 是生产实现：pilot home、`.cwd` 标记与
