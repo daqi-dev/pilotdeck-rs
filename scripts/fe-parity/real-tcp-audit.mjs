@@ -18,7 +18,10 @@ export function lsofExitOutput(error) {
   if (error?.code === 1 && !error.stderr && !error.killed && !error.signal) return error.stdout ?? '';
   return undefined;
 }
-async function capture(file, args, { timeout = 5000, killSignal = 'SIGTERM' } = {}) {
+// #927: the host runs coexisting verification sessions whose build load can push
+// a plain `ps`/`lsof` past 5s; a timeout kill must not read as an audit failure
+// (fail-closed semantics unchanged — slower failure, same failure).
+async function capture(file, args, { timeout = 20000, killSignal = 'SIGTERM' } = {}) {
   try {
     const result = await exec(file, args, { encoding: 'utf8', timeout, killSignal, maxBuffer: 8 * 1024 * 1024 });
     if (result.stderr.trim()) throw new Error(result.stderr.trim());
