@@ -1,8 +1,14 @@
 use super::*;
-use crate::runtime::project::{ProjectRuntimeRegistry, ResourceBundle};
+use crate::runtime::project::{ProjectRuntime, ProjectRuntimeRegistry, ResourceBundle};
 use crate::storage::{
     JsonlTranscriptStore, StoreResult, TranscriptKey, TranscriptRead, TranscriptStore,
 };
+
+async fn next(turn: &mut dyn LiveTurn) -> Result<Option<JsValue>, RuntimeError> {
+    timeout(Duration::from_secs(15), turn.next())
+        .await
+        .expect("#741h LiveTurn must make progress")
+}
 
 fn rows() -> Vec<JsValue> {
     static ORACLE: std::sync::OnceLock<JsValue> = std::sync::OnceLock::new();
@@ -14,19 +20,19 @@ fn rows() -> Vec<JsValue> {
                 ))
             })
             .get("forward")
-            .unwrap(),
+            .expect("#741h forward fixture invariant"),
     )
 }
 fn values(value: &JsValue) -> Vec<JsValue> {
     let JsValue::Array(values) = value else {
-        panic!("array")
+        panic!("#741h forward expected array")
     };
     values.clone()
 }
 // Only wall-clock fallback timestamps differ; writer IDs/timestamps are fixed.
 fn clean(value: &mut JsValue) {
     let JsValue::Array(events) = value else {
-        panic!("event list")
+        panic!("#741h forward expected event list")
     };
     for event in events {
         let Some(fields) = event.as_object() else {
@@ -45,7 +51,7 @@ fn clean(value: &mut JsValue) {
             let mut value = value.clone();
             if key.equals_str("result") && value.get("turns") == Some(&JsValue::Number(0.0)) {
                 let JsValue::Object(ref mut result) = value else {
-                    panic!("result")
+                    panic!("#741h forward expected result object")
                 };
                 for key in ["startedAt", "completedAt"] {
                     result.insert(key.into(), "CLOCK".into());
@@ -63,7 +69,7 @@ impl TranscriptStore for OrderedStore {
             assert_eq!(
                 self.1.disposed.load(Ordering::SeqCst),
                 1,
-                "loop cleanup before catch complete"
+                "#741h loop cleanup before catch complete"
             );
         }
         self.0.append(key, entry)
@@ -72,6 +78,61 @@ impl TranscriptStore for OrderedStore {
         self.0.read(key, limit)
     }
 }
+// Observe independent slot/lease releases; neither EOF nor owner Drop is a
+// barrier for the final lease. Match #842's 10-second bound and 5ms polling.
+async fn wait_for_release(pending: impl Fn() -> bool) -> Result<(), tokio::time::error::Elapsed> {
+    timeout(Duration::from_secs(10), async {
+        while pending() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+}
+pub(super) async fn wait_for_cleanup(session: &Mutex<SessionState>, runtime: &ProjectRuntime) {
+    wait_for_release(|| {
+        session
+            .lock()
+            .expect("#741h cleanup session lock")
+            .active
+            .is_some()
+            || runtime.lease_count() != 0
+    })
+    .await
+    .expect("#741h cleanup releases slot and lease within 10 seconds");
+}
+
+type CleanupGate = (oneshot::Sender<()>, std::sync::mpsc::Receiver<()>);
+struct CleanupOwner {
+    active: Option<Arc<ActiveTurn>>,
+    gate: Arc<Mutex<Option<CleanupGate>>>,
+}
+impl Drop for CleanupOwner {
+    fn drop(&mut self) {
+        // Called by the real blocking worker's drop(owner), before drop(lease).
+        // Arm only after the pending-owner assertions so premature release is
+        // still killed by the original assertion rather than a gate timeout.
+        self.active.take();
+        if let Some((entered, wait)) = self.gate.lock().expect("#741h cleanup gate lock").take() {
+            let _ = entered.send(());
+            wait.recv_timeout(Duration::from_secs(10))
+                .expect("#741h cleanup test must release owner gate");
+        }
+    }
+}
+struct ReleaseCleanup(Option<std::sync::mpsc::Sender<()>>);
+impl ReleaseCleanup {
+    fn release(&mut self) {
+        if let Some(release) = self.0.take() {
+            let _ = release.send(());
+        }
+    }
+}
+impl Drop for ReleaseCleanup {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 struct Fixture {
     root: std::path::PathBuf,
     key: TranscriptKey,
@@ -79,11 +140,12 @@ struct Fixture {
     registry: Arc<ProjectRuntimeRegistry>,
     session: Arc<Mutex<SessionState>>,
     turn: LiveTurnStream,
+    cleanup_gate: Arc<Mutex<Option<CleanupGate>>>,
 }
 impl Fixture {
     fn new(row: &JsValue) -> Self {
         let root = std::env::temp_dir().join(format!("pdrs-forward-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&root).expect("#741h forward fixture invariant");
         let key = TranscriptKey {
             project_root: root.clone(),
             pilot_home: root.join("home"),
@@ -108,11 +170,16 @@ impl Fixture {
             gate: Mutex::new(None),
         });
         let (inner, mut handler, rx) = buffered_handler(1);
-        Arc::get_mut(&mut handler).unwrap().callback_cancel = Some(Cancellation::default());
+        Arc::get_mut(&mut handler)
+            .expect("#741h forward fixture invariant")
+            .callback_cancel = Some(Cancellation::default());
         let checked = Arc::new(OrderedStore(store.clone(), inner.clone()));
         let writer = Recorder::new(checked, key.clone()).writer().clone();
         let ids = AtomicUsize::new(0);
-        *writer.test_sources.lock().unwrap() = Some((
+        *writer
+            .test_sources
+            .lock()
+            .expect("#741h forward fixture invariant") = Some((
             Arc::new(|| Ok("2026-10-26T00:00:00.000Z".into())),
             Arc::new(move || Ok(format!("id-{}", ids.fetch_add(1, Ordering::SeqCst) + 1))),
         ));
@@ -124,8 +191,11 @@ impl Fixture {
         let active = Arc::new(ActiveTurn(session.clone()));
         let integrity = handler.integrity.clone();
         let callback_cancel = handler.callback_cancel.clone();
-        let inputs = values(row.get("inputs").unwrap());
-        let result = row.get("result").unwrap().clone();
+        let inputs = values(row.get("inputs").expect("#741h forward fixture invariant"));
+        let result = row
+            .get("result")
+            .expect("#741h forward fixture invariant")
+            .clone();
         let open_step = row.get("name") == Some(&"catch_invalid_step".into());
         let pump = row.get("source") == Some(&"pump".into());
         let host_wait = row.get("source") == Some(&"host".into());
@@ -133,7 +203,7 @@ impl Fixture {
         let (ready, execute) = oneshot::channel();
         let mut turn = stream(
             Box::pin(async move {
-                execute.await.unwrap();
+                execute.await.expect("#741h forward fixture invariant");
                 let outcome = async {
                     for kind in ["turn_started", "input_accepted"] {
                         deliver(
@@ -154,16 +224,19 @@ impl Fixture {
                                 &"t".into(),
                                 crate::metadata::object([("messages", JsValue::Array(vec![]))]),
                             )
-                            .unwrap();
+                            .expect("#741h forward fixture invariant");
                     }
                     for item in inputs {
-                        let event = item.get("event").unwrap();
+                        let event = item.get("event").expect("#741h forward fixture invariant");
                         if item.get("wire") == Some(&JsValue::Bool(true)) {
                             deliver(&handler, event, false).await?;
                         } else {
                             queue_host_events(&inner, std::slice::from_ref(event));
                             if pump {
-                                let cancel = handler.callback_cancel.clone().unwrap();
+                                let cancel = handler
+                                    .callback_cancel
+                                    .clone()
+                                    .expect("#741h forward fixture invariant");
                                 let owner = handler.clone();
                                 return handler
                                     .with_pump(
@@ -173,7 +246,7 @@ impl Fixture {
                                             Ok(ExecuteResult::Aborted { terminal: None })
                                         },
                                         parse_execute_request(&input(), &options(), vec![])
-                                            .unwrap()
+                                            .expect("#741h forward fixture invariant")
                                             .0
                                             .identity,
                                     )
@@ -181,7 +254,12 @@ impl Fixture {
                             }
                             if handler.module_call(JsValue::Null).await.is_err() || host_wait {
                                 // Real HostClient sends a module error response, then observes cancel.
-                                handler.callback_cancel.as_ref().unwrap().cancelled().await;
+                                handler
+                                    .callback_cancel
+                                    .as_ref()
+                                    .expect("#741h forward fixture invariant")
+                                    .cancelled()
+                                    .await;
                                 return Ok(ExecuteResult::Aborted { terminal: None });
                             }
                         }
@@ -204,20 +282,29 @@ impl Fixture {
             integrity,
         );
         turn.input = TurnInput::from_agent_input(
-            &parse_json(r#"{"type":"text","text":"probe"}"#).unwrap(),
+            &parse_json(r#"{"type":"text","text":"probe"}"#)
+                .expect("#741h forward fixture invariant"),
             &JsValue::Null,
             vec![],
             vec![],
         )
-        .unwrap();
+        .expect("#741h forward fixture invariant");
+        let cleanup_gate = Arc::new(Mutex::new(None));
         turn.recording = Some(Recording::new(
             TurnRunner::new(
                 recorder,
-                Arc::new(registry.acquire(None).unwrap()),
+                Arc::new(
+                    registry
+                        .acquire(None)
+                        .expect("#741h forward fixture invariant"),
+                ),
                 "s".into(),
                 "t".into(),
             ),
-            active.clone(),
+            Arc::new(CleanupOwner {
+                active: Some(active.clone()),
+                gate: cleanup_gate.clone(),
+            }),
         ));
         turn.identity.session_id = "s".into();
         turn.identity.turn_id = "t".into();
@@ -231,67 +318,87 @@ impl Fixture {
             registry,
             session,
             turn,
+            cleanup_gate,
         }
     }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.root).unwrap();
+        std::fs::remove_dir_all(&self.root).expect("#741h forward fixture invariant");
     }
 }
 async fn matrix(name: &str) {
     let row = rows()
         .into_iter()
         .find(|r| r.get("name") == Some(&name.into()))
-        .unwrap();
+        .expect("#741h forward fixture invariant");
     let mut f = Fixture::new(&row);
     let mut actual = Vec::new();
-    while let Some(event) = next(&mut f.turn).await.unwrap() {
+    while let Some(event) = next(&mut f.turn)
+        .await
+        .expect("#741h forward fixture invariant")
+    {
         actual.push(event);
     }
-    let mut expected = values(row.get("events").unwrap());
+    let mut expected = values(row.get("events").expect("#741h forward fixture invariant"));
     assert_eq!(
         expected.remove(2).get("type"),
-        Some(&"user_prompt_submitted".into())
+        Some(&"user_prompt_submitted".into()),
+        "#741h forward assertion"
     );
     let mut actual = JsValue::Array(actual);
     let mut expected = JsValue::Array(expected);
     clean(&mut actual);
     clean(&mut expected);
-    assert_eq!(actual, expected, "forward event order/payload");
-    let bytes = std::fs::read_to_string(&f.key.transcript_path).unwrap();
+    assert_eq!(actual, expected, "#741h forward event order/payload");
+    let bytes =
+        std::fs::read_to_string(&f.key.transcript_path).expect("#741h forward fixture invariant");
     let expected = row
         .get("transcript")
-        .unwrap()
+        .expect("#741h forward fixture invariant")
         .as_string()
-        .unwrap()
+        .expect("#741h forward fixture invariant")
         .to_utf8()
-        .unwrap();
+        .expect("#741h forward fixture invariant");
     let parse = |s: &str| {
-        let mut value = JsValue::Array(s.lines().map(|line| parse_json(line).unwrap()).collect());
+        let mut value = JsValue::Array(
+            s.lines()
+                .map(|line| parse_json(line).expect("#741h forward fixture invariant"))
+                .collect(),
+        );
         clean(&mut value);
         value
     };
     assert_eq!(
         parse(&bytes),
         parse(&expected),
-        "forward durable callback/complete"
+        "#741h forward durable callback/complete"
     );
+    let runtime = f
+        .registry
+        .resolve(None)
+        .expect("#741h forward runtime exists");
+    wait_for_cleanup(&f.session, &runtime).await;
     assert!(
-        f.session.lock().unwrap().active.is_none(),
-        "forward actual slot released"
+        f.session
+            .lock()
+            .expect("#741h forward fixture invariant")
+            .active
+            .is_none(),
+        "#741h forward actual slot released"
     );
-    assert_eq!(
-        f.registry.resolve(None).unwrap().lease_count(),
-        0,
-        "forward lease released"
-    );
+    assert_eq!(runtime.lease_count(), 0, "#741h forward lease released");
 }
 macro_rules! case {
     ($test:ident,) => {
         #[tokio::test]
         async fn $test() {
-            matrix(stringify!($test).strip_prefix("forward_").unwrap()).await;
+            matrix(
+                stringify!($test)
+                    .strip_prefix("forward_")
+                    .expect("#741h forward fixture invariant"),
+            )
+            .await;
         }
     };
 }
@@ -374,25 +481,28 @@ async fn forward_completed() {
     let row = rows()
         .into_iter()
         .find(|r| r.get("name") == Some(&"completed".into()))
-        .unwrap();
-    let events = values(row.get("events").unwrap());
+        .expect("#741h forward fixture invariant");
+    let events = values(row.get("events").expect("#741h forward fixture invariant"));
     assert_eq!(
         events[events.len() - 2].get("type"),
         Some(&"warning".into()),
-        "TS delays loop completed"
+        "#741h TS delays loop completed"
     );
     let (_, handler, mut rx) = buffered_handler(4);
     deliver(&handler, &host_event("turn_started"), false)
         .await
-        .unwrap();
-    rx.try_recv().unwrap();
+        .expect("#741h forward fixture invariant");
+    rx.try_recv().expect("#741h forward fixture invariant");
     let error = handler
-        .validate_event(values(row.get("inputs").unwrap())[0].get("event").unwrap())
-        .err()
-        .unwrap();
+        .validate_event(
+            values(row.get("inputs").expect("#741h forward fixture invariant"))[0]
+                .get("event")
+                .expect("#741h forward fixture invariant"),
+        )
+        .expect_err("#741h forward expected strict terminal rejection");
     assert!(
         error.message.contains("must not reach"),
-        "pr5d strict terminal guard retained"
+        "#741h pr5d strict terminal guard retained"
     );
 }
 
@@ -405,47 +515,63 @@ async fn status_pending(drop_owner: bool) {
     let oracle = rows()
         .into_iter()
         .find(|r| r.get("name") == Some(&name.into()))
-        .unwrap();
+        .expect("#741h forward fixture invariant");
     assert_eq!(
-        oracle.get("pending").unwrap().get("first"),
-        Some(&JsValue::Bool(false))
+        oracle
+            .get("pending")
+            .expect("#741h forward fixture invariant")
+            .get("first"),
+        Some(&JsValue::Bool(false)),
+        "#741h forward assertion"
     );
     let mut row = rows()
         .into_iter()
         .find(|r| r.get("name") == Some(&"status_explicit".into()))
-        .unwrap()
+        .expect("#741h forward fixture invariant")
         .as_object()
-        .unwrap()
+        .expect("#741h forward fixture invariant")
         .clone();
     row.insert("fault".into(), "agent_status_message".into());
     row.insert("noFail".into(), JsValue::Bool(true));
     let mut f = Fixture::new(&JsValue::Object(row));
     let (entered, mut entry) = oneshot::channel();
     let (release, wait) = std::sync::mpsc::channel();
-    *f.store.gate.lock().unwrap() = Some((entered, wait));
+    *f.store
+        .gate
+        .lock()
+        .expect("#741h forward fixture invariant") = Some((entered, wait));
     for _ in 0..2 {
-        next(&mut f.turn).await.unwrap();
+        next(&mut f.turn)
+            .await
+            .expect("#741h forward fixture invariant");
     }
     let mut pending = f.turn.next();
     timeout(Duration::from_secs(5), async {
-        tokio::select! {result=&mut pending=>panic!("status escaped gate: {result:?}"), entered=&mut entry=>entered.unwrap()}
-    }).await.expect("status writer must enter gate");
+        tokio::select! {result=&mut pending=>panic!("#741h status escaped gate: {result:?}"), entered=&mut entry=>entered.expect("#741h forward fixture invariant")}
+    }).await.expect("#741h status writer must enter gate");
     drop(pending);
     for _ in 0..2 {
         let mut pending = f.turn.next();
-        assert_recording_pending(pending.as_mut(), "status predecessor still pending");
+        assert_recording_pending(pending.as_mut(), "#741h status predecessor still pending");
     }
     assert_eq!(
         f.store.attempts.load(Ordering::SeqCst),
         1,
-        "status write entered once"
+        "#741h status write entered once"
     );
     assert!(
-        f.session.lock().unwrap().active.is_some(),
-        "status pending holds actual slot"
+        f.session
+            .lock()
+            .expect("#741h forward fixture invariant")
+            .active
+            .is_some(),
+        "#741h status pending holds actual slot"
     );
-    let runtime = f.registry.resolve(None).unwrap();
-    assert_eq!(runtime.lease_count(), 1, "status pending holds lease");
+    let runtime = f
+        .registry
+        .resolve(None)
+        .expect("#741h forward fixture invariant");
+    assert_eq!(runtime.lease_count(), 1, "#741h status pending holds lease");
     if drop_owner {
         let turn = std::mem::replace(
             &mut f.turn,
@@ -457,39 +583,103 @@ async fn status_pending(drop_owner: bool) {
         );
         drop(turn);
         assert!(
-            f.session.lock().unwrap().active.is_some(),
-            "status dropped worker holds slot"
+            f.session
+                .lock()
+                .expect("#741h forward fixture invariant")
+                .active
+                .is_some(),
+            "#741h status dropped worker holds slot"
         );
         assert_eq!(
             runtime.lease_count(),
             1,
-            "status dropped worker holds lease"
+            "#741h status dropped worker holds lease"
         );
     }
-    release.send(()).unwrap();
+    let (cleanup_entered, cleanup_entry) = oneshot::channel();
+    let (cleanup_release, cleanup_wait) = std::sync::mpsc::channel();
+    let mut cleanup_release = ReleaseCleanup(Some(cleanup_release));
+    if drop_owner {
+        *f.cleanup_gate.lock().expect("#741h cleanup gate lock") =
+            Some((cleanup_entered, cleanup_wait));
+    }
+    release
+        .send(())
+        .expect("#741h status writer gate still open");
+    if drop_owner {
+        timeout(Duration::from_secs(10), cleanup_entry)
+            .await
+            .expect("#741h worker must reach owner release")
+            .expect("#741h worker signals owner release");
+        assert!(
+            f.session
+                .lock()
+                .expect("#741h cleanup session lock")
+                .active
+                .is_none(),
+            "#741h gated owner already released slot"
+        );
+        assert_eq!(
+            runtime.lease_count(),
+            1,
+            "#741h gated worker still owns lease"
+        );
+        // The exact cleanup observer used below must wait even though the
+        // active slot is already gone. Cancellation cannot release its lease.
+        let mut waiting = Box::pin(wait_for_cleanup(&f.session, &runtime));
+        assert_recording_pending(waiting.as_mut(), "#741h cleanup observer waits for lease");
+        drop(waiting);
+        assert_eq!(
+            runtime.lease_count(),
+            1,
+            "#741h cancelled observer retains worker lease"
+        );
+        // No real time passes while proving an uncompleted predecessor has a
+        // deadline. The blocking worker remains held by its explicit gate.
+        tokio::time::pause();
+        let mut waiting = Box::pin(wait_for_release(|| runtime.lease_count() != 0));
+        assert_recording_pending(waiting.as_mut(), "#741h held lease observer stays pending");
+        tokio::time::advance(Duration::from_secs(10)).await;
+        // A live spawn_blocking worker prevents Tokio's idle auto-advance.
+        // Drive the timer-wheel tick explicitly, then poll once (never await
+        // another auto-advanced deadline while the worker gate is held).
+        tokio::time::advance(Duration::from_millis(10)).await;
+        std::future::poll_fn(|cx| {
+            assert!(
+                matches!(waiting.as_mut().poll(cx), std::task::Poll::Ready(Err(_))),
+                "#741h cleanup observer reaches 10-second deadline"
+            );
+            std::task::Poll::Ready(())
+        })
+        .await;
+        tokio::time::resume();
+        assert_eq!(
+            runtime.lease_count(),
+            1,
+            "#741h timed-out observer retains worker lease"
+        );
+        println!(
+            "#741h slot=0 lease=1: gated worker; observer pending, cancelled, and bounded at 10s"
+        );
+        cleanup_release.release();
+    }
     if !drop_owner {
         while next(&mut f.turn)
             .await
-            .expect("status resume retains pending transition")
+            .expect("#741h status resume retains pending transition")
             .is_some()
         {}
     }
-    timeout(Duration::from_secs(5), async {
-        while f.session.lock().unwrap().active.is_some() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    wait_for_cleanup(&f.session, &runtime).await;
     assert_eq!(
         runtime.lease_count(),
         0,
-        "status completed worker releases lease"
+        "#741h status completed worker releases lease"
     );
     assert_eq!(
         f.store.attempts.load(Ordering::SeqCst),
         1,
-        "status no replay after cancelled waiter"
+        "#741h status no replay after cancelled waiter"
     );
 }
 #[tokio::test]
@@ -520,21 +710,34 @@ async fn status_receipt(success: bool) {
     let row = rows()
         .into_iter()
         .find(|r| r.get("name") == Some(&name.into()))
-        .unwrap();
-    assert_eq!(row.get("pendingAcks"), Some(&JsValue::Number(0.0)));
-    assert_eq!(values(row.get("acks").unwrap()).len(), usize::from(success));
+        .expect("#741h forward fixture invariant");
+    assert_eq!(
+        row.get("pendingAcks"),
+        Some(&JsValue::Number(0.0)),
+        "#741h forward assertion"
+    );
+    assert_eq!(
+        values(row.get("acks").expect("#741h forward fixture invariant")).len(),
+        usize::from(success),
+        "#741h forward assertion"
+    );
     let (inner, mut handler, mut rx) = buffered_handler(16);
-    Arc::get_mut(&mut handler).unwrap().callback_cancel = Some(Cancellation::default());
-    let client = spawn_client("live-normal").await.unwrap();
+    Arc::get_mut(&mut handler)
+        .expect("#741h forward fixture invariant")
+        .callback_cancel = Some(Cancellation::default());
+    let client = spawn_client("live-normal")
+        .await
+        .expect("#741h forward fixture invariant");
     let final_received = client.final_received();
-    let child = client.child_id().unwrap();
-    let (request, _) = parse_execute_request(&input(), &options(), vec![]).unwrap();
+    let child = client.child_id().expect("#741h forward fixture invariant");
+    let (request, _) = parse_execute_request(&input(), &options(), vec![])
+        .expect("#741h forward fixture invariant");
     let mut run = Box::pin(client.execute(request, handler));
     let mut receipt = None;
     timeout(FINAL_SYNC_TIMEOUT, async {
         loop {
             tokio::select! { biased;
-                result = &mut run => panic!("status awaits durable receipt: {result:?}"),
+                result = &mut run => panic!("#741h status awaits durable receipt: {result:?}"),
                 Some((event, _, done)) = rx.recv() => {
                     if event.get("type") == Some(&"agent_status".into()) { receipt = Some(done); }
                 },
@@ -546,42 +749,53 @@ async fn status_receipt(success: bool) {
         }
     })
     .await
-    .expect("real host must reach status and receive final");
-    assert_recording_pending(run.as_mut(), "status awaits durable receipt");
+    .expect("#741h real host must reach status and receive final");
+    assert_recording_pending(run.as_mut(), "#741h status awaits durable receipt");
     assert_eq!(
-        inner.events.lock().unwrap().len(),
+        inner
+            .events
+            .lock()
+            .expect("#741h forward fixture invariant")
+            .len(),
         4,
-        "status callback cannot release successor"
+        "#741h status callback cannot release successor"
     );
     let receipt = receipt
-        .unwrap()
-        .expect("#741 pr5c status awaits durable receipt: status owns durable receipt");
+        .expect("#741h forward fixture invariant")
+        .expect("#741h status awaits durable receipt: status owns durable receipt");
     if success {
-        receipt.send(()).unwrap();
+        receipt.send(()).expect("#741h forward fixture invariant");
     } else {
         drop(receipt);
     }
     let result = timeout(Duration::from_secs(5), run)
         .await
-        .expect("receipt resolves real host");
+        .expect("#741h receipt resolves real host");
     if success {
         assert!(
-            matches!(result.unwrap(), ExecuteResult::Terminal(_)),
-            "status success releases final"
+            matches!(
+                result.expect("#741h forward fixture invariant"),
+                ExecuteResult::Terminal(_)
+            ),
+            "#741h status success releases final"
         );
     } else {
-        let error = result.unwrap_err();
-        assert_eq!(error.kind, HostErrorKind::Callback);
+        let error = result.expect_err("#741h forward expected failure");
+        assert_eq!(
+            error.kind,
+            HostErrorKind::Callback,
+            "#741h forward assertion"
+        );
         assert_eq!(
             error.last_applied_sequence,
             Some(2.0),
-            "failed status leaves application cursor unchanged"
+            "#741h failed status leaves application cursor unchanged"
         );
     }
     assert_eq!(
         inner.disposed.load(Ordering::SeqCst),
         1,
-        "status exit joins disposal"
+        "#741h status exit joins disposal"
     );
     assert_reaped(child).await;
 }
@@ -599,49 +813,71 @@ async fn forward_pump_error_cleanup() {
     let row = rows()
         .into_iter()
         .find(|r| r.get("name") == Some(&"pump_error_cleanup".into()))
-        .unwrap();
-    assert_eq!(row.get("pendingCompletes"), Some(&JsValue::Number(0.0)));
-    assert_eq!(row.get("closed"), Some(&JsValue::Bool(true)));
+        .expect("#741h forward fixture invariant");
+    assert_eq!(
+        row.get("pendingCompletes"),
+        Some(&JsValue::Number(0.0)),
+        "#741h forward assertion"
+    );
+    assert_eq!(
+        row.get("closed"),
+        Some(&JsValue::Bool(true)),
+        "#741h forward assertion"
+    );
     let (inner, mut handler, _rx) = buffered_handler(4);
     let cancel = Cancellation::default();
-    Arc::get_mut(&mut handler).unwrap().callback_cancel = Some(cancel.clone());
+    Arc::get_mut(&mut handler)
+        .expect("#741h forward fixture invariant")
+        .callback_cancel = Some(cancel.clone());
     inner
         .drains
         .lock()
-        .unwrap()
+        .expect("#741h forward fixture invariant")
         .push_back(Err(HostError::new(HostErrorKind::Callback, "pump failed")));
     let (entered, mut entry) = oneshot::channel();
     let (release, wait) = oneshot::channel();
     let owner = inner.clone();
-    let (request, _) = parse_execute_request(&input(), &options(), vec![]).unwrap();
+    let (request, _) = parse_execute_request(&input(), &options(), vec![])
+        .expect("#741h forward fixture invariant");
     let mut run = Box::pin(handler.with_pump(
         async move {
             cancel.cancelled().await;
-            entered.send(()).unwrap();
-            wait.await.unwrap();
+            entered.send(()).expect("#741h forward fixture invariant");
+            wait.await.expect("#741h forward fixture invariant");
             owner.dispose().await?;
             Ok(ExecuteResult::Aborted { terminal: None })
         },
         request.identity,
     ));
     timeout(Duration::from_secs(2), async {
-        tokio::select! {result=&mut run=>panic!("pump error must await execution cleanup: {result:?}"), result=&mut entry=>result.unwrap()}
-    }).await.expect("pump must cancel execution");
-    assert_recording_pending(run.as_mut(), "pump error must await execution cleanup");
-    assert_eq!(inner.disposed.load(Ordering::SeqCst), 0);
-    release.send(()).unwrap();
+        tokio::select! {result=&mut run=>panic!("#741h pump error must await execution cleanup: {result:?}"), result=&mut entry=>result.expect("#741h forward fixture invariant")}
+    }).await.expect("#741h pump must cancel execution");
+    assert_recording_pending(
+        run.as_mut(),
+        "#741h pump error must await execution cleanup",
+    );
+    assert_eq!(
+        inner.disposed.load(Ordering::SeqCst),
+        0,
+        "#741h forward assertion"
+    );
+    release.send(()).expect("#741h forward fixture invariant");
     let error = timeout(Duration::from_secs(2), run)
         .await
-        .unwrap()
-        .unwrap_err();
-    assert_eq!(error.message, "pump failed");
-    assert_eq!(inner.disposed.load(Ordering::SeqCst), 1);
+        .expect("#741h forward fixture invariant")
+        .expect_err("#741h forward expected failure");
+    assert_eq!(error.message, "pump failed", "#741h forward assertion");
+    assert_eq!(
+        inner.disposed.load(Ordering::SeqCst),
+        1,
+        "#741h forward assertion"
+    );
 }
 
 #[tokio::test]
 async fn forward_real_status_write_error() {
     let root = std::env::temp_dir().join(format!("pdrs-status-host-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&root).expect("#741h forward fixture invariant");
     let key = TranscriptKey {
         project_root: root.clone(),
         pilot_home: root.join("home"),
@@ -662,15 +898,23 @@ async fn forward_real_status_write_error() {
         Arc::new(OrderedStore(store.clone(), inner.clone())),
         key,
     ));
-    let mut turn = session.submit(input(), options()).unwrap();
+    let mut turn = session
+        .submit(input(), options())
+        .expect("#741h forward fixture invariant");
     let mut events = vec![];
-    while let Some(event) = next(turn.as_mut()).await.unwrap() {
+    while let Some(event) = next(turn.as_mut())
+        .await
+        .expect("#741h forward fixture invariant")
+    {
         events.push(event);
     }
     assert_eq!(
         events
             .iter()
-            .map(|e| e.get("type").unwrap().clone())
+            .map(|e| e
+                .get("type")
+                .expect("#741h forward fixture invariant")
+                .clone())
             .collect::<Vec<_>>(),
         [
             "turn_started",
@@ -681,24 +925,49 @@ async fn forward_real_status_write_error() {
             "turn_completed"
         ]
         .map(JsValue::from),
-        "real status failure cuts off status and successors"
+        "#741h real status failure cuts off status and successors"
     );
     assert_eq!(
-        events[4].get("error").unwrap().get("message"),
+        events[4]
+            .get("error")
+            .expect("#741h forward fixture invariant")
+            .get("message"),
         Some(&"recording write failed".into()),
-        "real status failure retains original error"
+        "#741h real status failure retains original error"
     );
     assert_eq!(
         store.attempts.load(Ordering::SeqCst),
         2,
-        "real status catch persists unconditionally"
+        "#741h real status catch persists unconditionally"
     );
+    wait_for_release(|| {
+        session
+            .state
+            .lock()
+            .expect("#741h real status session lock")
+            .active
+            .is_some()
+    })
+    .await
+    .expect("#741h real status failure releases slot within 10 seconds");
     assert!(
-        session.state.lock().unwrap().active.is_none(),
-        "real status failure releases slot"
+        session
+            .state
+            .lock()
+            .expect("#741h forward fixture invariant")
+            .active
+            .is_none(),
+        "#741h real status failure releases slot"
     );
-    assert_eq!(children.lock().unwrap().len(), 1);
-    let child = children.lock().unwrap()[0];
+    assert_eq!(
+        children
+            .lock()
+            .expect("#741h forward fixture invariant")
+            .len(),
+        1,
+        "#741h forward assertion"
+    );
+    let child = children.lock().expect("#741h forward fixture invariant")[0];
     assert_reaped(child).await;
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("#741h forward fixture invariant");
 }

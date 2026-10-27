@@ -579,6 +579,7 @@ async fn gates_factory_ready_cancel() {
     assert_aborted(&next(turn.as_mut()).await.unwrap().unwrap());
     assert_eq!(next(turn.as_mut()).await.unwrap(), None);
     assert_reaped(pid).await;
+    forwarding::wait_for_cleanup(&session.state, &runtime).await;
     assert_eq!(
         drops.load(Ordering::SeqCst),
         1,
