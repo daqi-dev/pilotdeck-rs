@@ -1251,7 +1251,9 @@ fn clamp_int(value: Option<&JsValue>, fallback: f64, min: i64, max: i64) -> f64 
             } else if min >= 0 {
                 0.0 // Math.max(+0, ±0) is +0
             } else {
-                number.floor() // min < 0: JS keeps the floor's zero sign
+                // min < 0: only -0 survives Math.min/Math.max; an upper-bound
+                // clamp to zero (e.g. max = 0, n = 3.7) is +0.
+                0.0_f64.copysign(number.floor())
             }
         }
         _ => fallback,
@@ -1316,6 +1318,29 @@ fn now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clamp_int_zero_sign_matches_js_math_max_min() {
+        // Node v22.22.0: `Math.max(min, Math.min(max, Math.floor(n)))`
+        // (#775 r4: min=-1, max=0 rows from the Codex raw probe output).
+        let rows: [(f64, i64, i64, f64, bool); 6] = [
+            (-0.0, -1, 0, 0.0, true),
+            (0.0, -1, 0, 0.0, false),
+            (1.0, -1, 0, 0.0, false),
+            (3.7, -1, 0, 0.0, false),
+            (-0.0, 0, 10080, 0.0, false),
+            (3.7, -1, 10080, 3.0, false),
+        ];
+        for (input, min, max, value, negative) in rows {
+            let got = clamp_int(Some(&JsValue::Number(input)), 5.0, min, max);
+            assert_eq!(got, value, "#775 clampInt({input}, {min}, {max}) value");
+            assert_eq!(
+                got.is_sign_negative(),
+                negative,
+                "#775 clampInt({input}, {min}, {max}) zero sign"
+            );
+        }
+    }
 
     fn defaults() -> IndexingSettings {
         IndexingSettings {
