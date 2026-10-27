@@ -1,0 +1,24 @@
+COMMAND cargo test --offline --manifest-path <repo>/src/Cargo.toml -p pilotdeck-gateway --lib runtime::turn::submit::tests::real_ts_submit_scenarios -- --nocapture
+
+running 1 test
+test runtime::turn::submit::tests::real_ts_submit_scenarios ... FAILED
+
+failures:
+
+failures:
+    runtime::turn::submit::tests::real_ts_submit_scenarios
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2560 filtered out; finished in 0.27s
+
+   Compiling pilotdeck-gateway v0.1.0 (<repo>/src/pilotdeck-gateway)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.10s
+     Running unittests src/lib.rs (_build/cargo-target/debug/deps/pilotdeck_gateway-0665c56702ea3d10)
+
+thread 'runtime::turn::submit::tests::real_ts_submit_scenarios' (33497427) panicked at pilotdeck-gateway/src/runtime/turn/submit_tests.rs:791:13:
+assertion `left == right` failed: #813 snapshot-success: step 1 "accept": submit scenario must match
+  left: Object {"active": Bool(true), "durableCalls": Array [Object {"messages": Array [Object {"content": Array [Object {"text": String("hello"), "type": String("text")}], "role": String("user")}], "op": String("accept_begin")}, Object {"op": String("accept_committed")}, Object {"input": Object {"failureKind": Null, "failureReason": Null, "runId": String("r"), "sessionId": String("s"), "turnId": String("r"), "workspaceDir": String("/unused"), "workspaceId": String("w"), "workspaceStable": Null}, "op": String("snapshot_post")}], "ended": Bool(false), "hostCalls": Array [String("refresh"), String("prepare"), String("submit"), String("commit"), String("snapshot_post")], "registryCalls": Array [Object {"op": String("accept"), "requestMaterial": String("{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}")}, Object {"event": Object {"runId": String("r"), "type": String("turn_started")}, "op": String("append")}, Object {"event": Object {"runId": String("r"), "type": String("input_accepted")}, "op": String("append")}], "thrown": Null, "visible": Array [Object {"runId": String("r"), "type": String("turn_started")}, Object {"runId": String("r"), "type": String("input_accepted")}]}
+ right: Object {"active": Bool(true), "durableCalls": Array [Object {"messages": Array [Object {"content": Array [Object {"text": String("hello"), "type": String("text")}], "role": String("user")}], "op": String("accept_begin")}, Object {"op": String("accept_committed")}], "ended": Bool(false), "hostCalls": Array [String("refresh"), String("prepare"), String("submit"), String("commit"), String("snapshot_pre")], "registryCalls": Array [Object {"op": String("accept"), "requestMaterial": String("{\"channelKey\":\"test\",\"message\":\"hello\",\"projectKey\":\"p\",\"sessionKey\":\"s\"}")}, Object {"event": Object {"runId": String("r"), "type": String("turn_started")}, "op": String("append")}, Object {"event": Object {"runId": String("r"), "type": String("input_accepted")}, "op": String("append")}], "thrown": Null, "visible": Array [Object {"runId": String("r"), "type": String("turn_started")}, Object {"runId": String("r"), "type": String("input_accepted")}]}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p pilotdeck-gateway --lib`
+
+exit=101

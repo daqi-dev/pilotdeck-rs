@@ -21,6 +21,11 @@ different assertion is not the mutant's target. ``turn_gateway_markers`` and
 ``failure_guard_markers`` also fail closed on a missing or non-literal marker
 and count every registration, so a deleted marker cannot hide behind the old
 ``>= 30`` slack.
+
+fix-r13 binds every turn-submit step marker to the complete
+``#813 <case>: step <index> "<step>": submit scenario must match`` message and
+replays two real host logs of the same case at different steps
+(``turn-submit/real-logs``): neither step may kill the other's mutant.
 """
 import ast
 import json
@@ -37,6 +42,15 @@ OTHER = 'pkg::tests::other'
 MARKER = 'the same mutation marker'
 HERE = Path(__file__).resolve().parent
 RECORDED = HERE / 'turn-gateway' / 'real-logs'
+SUBMIT_RECORDED = HERE / 'turn-submit' / 'real-logs'
+SUBMIT_REPLAY = 'runtime::turn::submit::tests::real_ts_submit_scenarios'
+# fix-r13: two host-run logs, same case, different steps.
+SUBMIT_SNAPSHOT_STEPS = {
+    'snapshot-pre-skipped':
+        '#813 snapshot-success: step 1 "accept": submit scenario must match',
+    'snapshot-success-post-added':
+        '#813 snapshot-success: step 3 "end": submit scenario must match',
+}
 GATEWAY = 'runtime::turn::gateway::tests::'
 EMIT = GATEWAY + 'concurrent_external_emits_are_serialized_on_the_serial_host'
 TIMER = GATEWAY + 'serial_timer_cancels_queued_callbacks_and_replacements'
@@ -160,8 +174,8 @@ def fence_markers():
     return markers
 
 
-def turn_submit_markers():
-    """Read every turn-submit mutant marker without executing the runner."""
+def turn_submit_registered_markers():
+    """Read every turn-submit (mutant, marker) without executing the runner."""
     tree = ast.parse((HERE / 'turn-submit' / 'negative.py').read_text())
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Assign) and len(node.targets) == 1
@@ -169,18 +183,32 @@ def turn_submit_markers():
                 and node.targets[0].id == 'mutants'
                 and isinstance(node.value, ast.List)):
             continue
-        markers = []
+        entries = []
         for row in node.value.elts:
             if not (isinstance(row, ast.Tuple) and len(row.elts) >= 5):
                 continue
-            marker = row.elts[4]
-            if isinstance(marker, ast.Constant) and marker.value is None:
+            name_node = row.elts[0]
+            if not (isinstance(name_node, ast.Constant)
+                    and isinstance(name_node.value, str)):
+                raise AssertionError(
+                    f'non-literal turn-submit mutant name: {ast.unparse(name_node)}')
+            marker_node = row.elts[4]
+            if isinstance(marker_node, ast.Constant) and marker_node.value is None:
+                entries.append((name_node.value, None))
                 continue
-            if not (isinstance(marker, ast.Constant) and isinstance(marker.value, str)):
-                raise AssertionError(f'non-literal turn-submit marker: {ast.unparse(marker)}')
-            markers.append(marker.value)
-        return markers
+            if not (isinstance(marker_node, ast.Constant)
+                    and isinstance(marker_node.value, str)):
+                raise AssertionError(
+                    f'non-literal turn-submit marker: {ast.unparse(marker_node)}')
+            entries.append((name_node.value, marker_node.value))
+        return entries
     raise AssertionError('turn-submit mutants table not found')
+
+
+def turn_submit_markers():
+    """Read every non-None turn-submit mutant marker."""
+    return [marker for _name, marker in turn_submit_registered_markers()
+            if marker is not None]
 
 
 def panic_log(used_test, message):
@@ -506,15 +534,54 @@ class PanicBlockCriterion(unittest.TestCase):
 
     def test_turn_submit_markers_are_scenario_bound(self):
         oracle = json.loads((HERE / 'turn-submit' / 'oracle.json').read_text())
-        cases = {case['name'] for case in oracle['cases']}
-        markers = turn_submit_markers()
-        self.assertGreaterEqual(len(markers), 50)
-        for marker in markers:
-            with self.subTest(marker=marker):
+        cases = {case['name']: case['steps'] for case in oracle['cases']}
+        entries = turn_submit_registered_markers()
+        self.assertGreaterEqual(len(entries), 50)
+        step_bound = 0
+        for name, marker in entries:
+            if marker is None:
+                continue
+            with self.subTest(mutant=name, marker=marker):
                 self.assertNotEqual(marker, 'assertion')
                 self.assertFalse(marker.startswith('assertion `left == right`'))
-                if marker.endswith(': step'):
-                    self.assertIn(marker[:-len(': step')], cases)
+                # fix-r13: `<case>: step` names the scenario, not the target
+                # assertion; it matches every step of that case.
+                self.assertFalse(marker.endswith(': step'), marker)
+                match = re.match(
+                    r'^#813 (.+): step (\d+) "([^"]+)": '
+                    r'submit scenario must match$', marker)
+                if match:
+                    step_bound += 1
+                    case, index, step = match.groups()
+                    self.assertIn(case, cases, name)
+                    index = int(index)
+                    self.assertLess(index, len(cases[case]), name)
+                    self.assertEqual(step, cases[case][index], name)
+        # Every `: step` mutant was migrated to its complete message. Losing
+        # one (back to a prefix, or to a non-step marker) is a regression.
+        self.assertEqual(step_bound, 44)
+
+    def test_turn_submit_same_case_steps_do_not_cross_kill(self):
+        registered = dict(turn_submit_registered_markers())
+        for log, own in SUBMIT_SNAPSHOT_STEPS.items():
+            with self.subTest(log=log):
+                self.assertEqual(registered[log], own)
+                raw = (SUBMIT_RECORDED / f'{log}.log').read_text()
+                # The real host log carries the same-case prefix, so the old
+                # bare-prefix judge accepted it...
+                self.assertIn('snapshot-success: step',
+                              panic_evidence(raw, SUBMIT_REPLAY))
+                self.assertTrue(marker_kills_named_test(
+                    raw, SUBMIT_REPLAY, 'snapshot-success: step'))
+                # ...but the complete message of the other step must not.
+                self.assertTrue(named_test_failed(raw, SUBMIT_REPLAY))
+                self.assertTrue(named_test_killed(raw, SUBMIT_REPLAY, own, own))
+                for other_log, other in SUBMIT_SNAPSHOT_STEPS.items():
+                    if other_log == log:
+                        continue
+                    self.assertFalse(
+                        named_test_killed(raw, SUBMIT_REPLAY, other, other),
+                        f'{log} was killed by {other_log}\'s step marker')
 
     def test_recorded_host_logs_are_killed(self):
         for name, used_test in RECORDED_CASES:

@@ -14,6 +14,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_panic import marker_kills_named_test as shared_marker_kills
 from negative_panic import panic_evidence as panic_payload
 from negative_process import mutating_sources, run_owned
 from negative_selection import select
@@ -64,7 +65,28 @@ def marker_kills_named_test(raw, used_test, marker):
         return False
     if not marker or marker == 'assertion' or marker.startswith('assertion `left == right`'):
         return False
+    # fix-r13: `<case>: step` matches every step of the case; it is a scenario
+    # prefix, not the target assertion.
+    if marker.endswith(': step'):
+        return False
     return marker in evidence
+
+
+def message_kills(raw, used_test, marker):
+    """fix-r13: a ``#813`` marker is the complete target assertion message.
+
+    The scenario replay prints ``#813 <case>: step <index> "<step>": submit
+    scenario must match``. The old substring judge accepted the bare prefix
+    ``<case>: step``, so a failure in step 1 also killed a mutant whose target
+    is step 3 (host log ``snapshot-pre-skipped``). The shared judge pins the
+    marker to the exact target and rejects hang payloads; non-``#813``
+    capability/lease markers keep the payload-only substring rule.
+    """
+    if marker.endswith(': step'):
+        return False
+    if marker.startswith('#813 '):
+        return shared_marker_kills(raw, used_test, marker, marker)
+    return marker in panic_payload(raw, used_test)
 
 
 def unwrap_site(anchor_source, before, original):
@@ -90,7 +112,7 @@ def anchor_self_test():
     raw`` did not deliver). fix-r3: the multi-block rule is pinned too — the
     poison test panics twice, and only its second block carries the mutant's
     evidence."""
-    marker = 'invalid-mode: step'
+    marker = '#813 invalid-mode: step 0 "observe": submit scenario must match'
     used_test = 'runtime::turn::submit::tests::real_ts_submit_scenarios'
     stray = (
         "thread 'runtime::turn::submit::tests::real_ts_utf16_preflight' "
@@ -130,6 +152,24 @@ def anchor_self_test():
     )
     assert not marker_kills_named_test(helper, poison_test, 'PoisonError'), \
         'a helper thread\'s panic block must not count as the test\'s evidence'
+    # fix-r13: same case, different step. These are host-run libtest logs, not
+    # synthetic ones: snapshot-pre-skipped dies at step 1 "accept" and
+    # snapshot-success-post-added dies at step 3 "end". The old bare prefix
+    # `<case>: step` was in both payloads, so each log killed both mutants.
+    recorded = fixture / 'real-logs'
+    accept = ('#813 snapshot-success: step 1 "accept": '
+              'submit scenario must match')
+    end = '#813 snapshot-success: step 3 "end": submit scenario must match'
+    for log, own, other in (('snapshot-pre-skipped', accept, end),
+                            ('snapshot-success-post-added', end, accept)):
+        raw = (recorded / f'{log}.log').read_text()
+        assert panic_evidence(raw, used_test), f'{log}: fixture has no payload'
+        assert message_kills(raw, used_test, own), \
+            f'{log}: own step must kill'
+        assert not message_kills(raw, used_test, other), \
+            f'{log}: the other step of the same case must not kill'
+        assert not message_kills(raw, used_test, 'snapshot-success: step'), \
+            f'{log}: a bare scenario prefix is not evidence'
     print('anchor self-test: PASS', flush=True)
 
 
@@ -158,58 +198,58 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
     # Each mutation changes production behavior. The chosen case names are real
     # generated scenarios; all golden assertions remain unchanged.
     mutants = [
-        ('permission-check-skipped', 'let value = field(input, key);', 'let value = &JsValue::Undefined;', 'invalid-mode', 'invalid-mode: step', None),
-        ('run-id-check-skipped', 'let id = field(input, "runId");', 'let id = &JsValue::Undefined;', 'invalid-run-id', 'invalid-run-id: step', None),
-        ('budget-check-skipped', 'let budget = field(input, "maxBudgetUsd");', 'let budget = &JsValue::Undefined;', 'invalid-budget', 'invalid-budget: step', None),
-        ('trusted-context-check-skipped', 'if let value = field(input, "trustedContext")', 'if let value = &JsValue::Undefined', 'invalid-trusted-context', 'invalid-trusted-context: step', None),
-        ('busy-code-changed', 'if sdk_admission {\n                    "SESSION_BUSY"\n                } else {\n                    "session_busy"\n                }', 'if sdk_admission { "session_busy" } else { "SESSION_BUSY" }', 'session-busy', 'session-busy: step', None),
-        ('sdk-capability-ignored', 'let error = if !self.host.has_sdk_config() {', 'let error = if false && !self.host.has_sdk_config() {', 'sdk-unavailable', 'sdk-unavailable: step', None),
-        ('sdk-validation-ignored', '.validate_sdk_config(field(&input, "sdkSessionConfig"))\n                    .err()', '.validate_sdk_config(field(&input, "sdkSessionConfig"))\n                    .err().filter(|_| false)', 'sdk-invalid', 'sdk-invalid: step', None),
+        ('permission-check-skipped', 'let value = field(input, key);', 'let value = &JsValue::Undefined;', 'invalid-mode', '#813 invalid-mode: step 0 "observe": submit scenario must match', None),
+        ('run-id-check-skipped', 'let id = field(input, "runId");', 'let id = &JsValue::Undefined;', 'invalid-run-id', '#813 invalid-run-id: step 0 "observe": submit scenario must match', None),
+        ('budget-check-skipped', 'let budget = field(input, "maxBudgetUsd");', 'let budget = &JsValue::Undefined;', 'invalid-budget', '#813 invalid-budget: step 0 "observe": submit scenario must match', None),
+        ('trusted-context-check-skipped', 'if let value = field(input, "trustedContext")', 'if let value = &JsValue::Undefined', 'invalid-trusted-context', '#813 invalid-trusted-context: step 0 "observe": submit scenario must match', None),
+        ('busy-code-changed', 'if sdk_admission {\n                    "SESSION_BUSY"\n                } else {\n                    "session_busy"\n                }', 'if sdk_admission { "session_busy" } else { "SESSION_BUSY" }', 'session-busy', '#813 session-busy: step 0 "observe": submit scenario must match', None),
+        ('sdk-capability-ignored', 'let error = if !self.host.has_sdk_config() {', 'let error = if false && !self.host.has_sdk_config() {', 'sdk-unavailable', '#813 sdk-unavailable: step 0 "observe": submit scenario must match', None),
+        ('sdk-validation-ignored', '.validate_sdk_config(field(&input, "sdkSessionConfig"))\n                    .err()', '.validate_sdk_config(field(&input, "sdkSessionConfig"))\n                    .err().filter(|_| false)', 'sdk-invalid', '#813 sdk-invalid: step 0 "observe": submit scenario must match', None),
         ('sdk-dirty-skipped', '.mark_session_dirty(&run.session_key, "sdk_session_config_changed");', '.mark_session_dirty(&run.session_key, "");', 'sdk-changed', 'changed SDK config must dirty the cached handle', None),
-        ('sdk-abort-ignored', 'let event = if completion.is_cancelled() {', 'let event = if false && completion.is_cancelled() {', 'abort-during-sdk-failure', 'abort-during-sdk-failure: step', None),
-        ('refresh-error-propagated', 'let _ = self.host.refresh().await;', 'self.host.refresh().await?;', 'refresh-failed-keeps-snapshot', 'refresh-failed-keeps-snapshot: step', None),
-        ('accepted-commit-skipped', 'self.host.commit_accepted_input(run).await?;', 'let _ = run;', 'commit-failed', 'commit-failed: step', None),
-        ('projection-drop-event', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                let _ = event;\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
-        ('projection-duplicate-event', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                publisher.gateway_event(event.clone()); publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
-        ('early-terminal-before-session-end', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                let terminal = is(&event, "type", "turn_completed"); publisher.gateway_event(event); if terminal { publisher.finish().await; }\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
-        ('finally-error-swallowed', 'self.host.after_turn(&run)', 'let _ = self.host.after_turn(&run); Ok(())', 'finally-failed', 'finally-failed: step', None),
-        ('input-ack-before-native-durable', 'let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'publisher.gateway_event(object([("type", "input_accepted".into()), ("runId", JsValue::String(run.run_id.clone()))]));\n        let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'durable-accept-and-session-end', 'durable-accept-and-session-end: step', None),
-        ('stale-completion-filter-skipped', '|| !self\n                    .owner\n                    .is_current_completion(&run.session_key, completion)', '|| false', 'superseded-completion', 'superseded-completion: step', None),
+        ('sdk-abort-ignored', 'let event = if completion.is_cancelled() {', 'let event = if false && completion.is_cancelled() {', 'abort-during-sdk-failure', '#813 abort-during-sdk-failure: step 2 "sdk": submit scenario must match', None),
+        ('refresh-error-propagated', 'let _ = self.host.refresh().await;', 'self.host.refresh().await?;', 'refresh-failed-keeps-snapshot', '#813 refresh-failed-keeps-snapshot: step 0 "observe": submit scenario must match', None),
+        ('accepted-commit-skipped', 'self.host.commit_accepted_input(run).await?;', 'let _ = run;', 'commit-failed', '#813 commit-failed: step 1 "accept": submit scenario must match', None),
+        ('projection-drop-event', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                let _ = event;\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', '#813 durable-accept-and-session-end: step 0 "observe": submit scenario must match', None),
+        ('projection-duplicate-event', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                publisher.gateway_event(event.clone()); publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', '#813 durable-accept-and-session-end: step 0 "observe": submit scenario must match', None),
+        ('early-terminal-before-session-end', '                publisher.gateway_event(event);\n            }\n            if let Some(guard) = &mut failure_guard', '                let terminal = is(&event, "type", "turn_completed"); publisher.gateway_event(event); if terminal { publisher.finish().await; }\n            }\n            if let Some(guard) = &mut failure_guard', 'durable-accept-and-session-end', '#813 durable-accept-and-session-end: step 2 "terminal": submit scenario must match', None),
+        ('finally-error-swallowed', 'self.host.after_turn(&run)', 'let _ = self.host.after_turn(&run); Ok(())', 'finally-failed', '#813 finally-failed: step 3 "end": submit scenario must match', None),
+        ('input-ack-before-native-durable', 'let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'publisher.gateway_event(object([("type", "input_accepted".into()), ("runId", JsValue::String(run.run_id.clone()))]));\n        let mut stream = handle\n            .submit(prepared.input, prepared.options)', 'durable-accept-and-session-end', '#813 durable-accept-and-session-end: step 0 "observe": submit scenario must match', None),
+        ('stale-completion-filter-skipped', '|| !self\n                    .owner\n                    .is_current_completion(&run.session_key, completion)', '|| false', 'superseded-completion', '#813 superseded-completion: step 2 "accept": submit scenario must match', None),
         # fix-r2 (opus r2 concurrency #1): the request_started dedup event is
         # built from four explicit keys. Both mutants share this anchor: one
         # drops the event, the other reverts to the shared model_event fold —
         # which now leaks the frame's own reasoning/temperature/speed into
         # the wire (the regenerated golden carries those keys on the 'actual'
         # request_started frame, and TS :1661-1667 still emits four keys).
-        ('model-selection-event-skipped', 'publisher.gateway_event(object([\n                        ("type", "model_selection_changed".into()),\n                        ("provider", field(model, "provider").clone()),\n                        ("model", field(model, "model").clone()),\n                        ("source", source.clone()),\n                        ("runId", JsValue::String(run.run_id.clone())),\n                    ]));', 'let _ = model;', 'actual-model-selection', 'actual-model-selection: step', None),
-        ('request-started-fold-leaked', 'publisher.gateway_event(object([\n                        ("type", "model_selection_changed".into()),\n                        ("provider", field(model, "provider").clone()),\n                        ("model", field(model, "model").clone()),\n                        ("source", source.clone()),\n                        ("runId", JsValue::String(run.run_id.clone())),\n                    ]));', 'publisher.gateway_event(model_event(model, &source, run));', 'actual-model-selection', 'actual-model-selection: step', None),
-        ('actual-text-model-skipped', 'set(&mut event, "model", model.clone());', 'let _ = model;', 'actual-model-selection', 'actual-model-selection: step', None),
-        ('lease-release-skipped', 'let _ = submitter.host.finish_pump(&worker_run).await;', 'let _ = &worker_run;', 'lease-release', 'lease-release: step', None),
-        ('fingerprint-includes-reconnect-metadata', '["runId", "interactionBinding", "telemetry"]', '["ignoredRunId", "ignoredBinding", "ignoredTelemetry"]', 'execution-fingerprint', 'execution-fingerprint: step', None),
-        ('explicit-null-sdk-treated-absent', 'let sdk_admission = !matches!(field(&input, "sdkSessionConfig"), JsValue::Undefined);', 'let sdk_admission = sdk;', 'sdk-null-busy', 'sdk-null-busy: step', None),
-        ('cancel-hides-recovery-failure', 'Ok(events) if events.is_empty() && completion.is_cancelled()', 'Ok(events) if completion.is_cancelled()', 'abort-and-recovery-failed', 'abort-and-recovery-failed: step', None),
-        ('history-epoch-error-hidden', 'if let Err(error) = outcome', 'if let Err(error) = outcome && error.message != "history epoch changed"', 'history-epoch-failed', 'history-epoch-failed: step', None),
+        ('model-selection-event-skipped', 'publisher.gateway_event(object([\n                        ("type", "model_selection_changed".into()),\n                        ("provider", field(model, "provider").clone()),\n                        ("model", field(model, "model").clone()),\n                        ("source", source.clone()),\n                        ("runId", JsValue::String(run.run_id.clone())),\n                    ]));', 'let _ = model;', 'actual-model-selection', '#813 actual-model-selection: step 2 "terminal": submit scenario must match', None),
+        ('request-started-fold-leaked', 'publisher.gateway_event(object([\n                        ("type", "model_selection_changed".into()),\n                        ("provider", field(model, "provider").clone()),\n                        ("model", field(model, "model").clone()),\n                        ("source", source.clone()),\n                        ("runId", JsValue::String(run.run_id.clone())),\n                    ]));', 'publisher.gateway_event(model_event(model, &source, run));', 'actual-model-selection', '#813 actual-model-selection: step 2 "terminal": submit scenario must match', None),
+        ('actual-text-model-skipped', 'set(&mut event, "model", model.clone());', 'let _ = model;', 'actual-model-selection', '#813 actual-model-selection: step 2 "terminal": submit scenario must match', None),
+        ('lease-release-skipped', 'let _ = submitter.host.finish_pump(&worker_run).await;', 'let _ = &worker_run;', 'lease-release', '#813 lease-release: step 3 "end": submit scenario must match', None),
+        ('fingerprint-includes-reconnect-metadata', '["runId", "interactionBinding", "telemetry"]', '["ignoredRunId", "ignoredBinding", "ignoredTelemetry"]', 'execution-fingerprint', '#813 execution-fingerprint: step 0 "observe": submit scenario must match', None),
+        ('explicit-null-sdk-treated-absent', 'let sdk_admission = !matches!(field(&input, "sdkSessionConfig"), JsValue::Undefined);', 'let sdk_admission = sdk;', 'sdk-null-busy', '#813 sdk-null-busy: step 0 "observe": submit scenario must match', None),
+        ('cancel-hides-recovery-failure', 'Ok(events) if events.is_empty() && completion.is_cancelled()', 'Ok(events) if completion.is_cancelled()', 'abort-and-recovery-failed', '#813 abort-and-recovery-failed: step 2 "recovery": submit scenario must match', None),
+        ('history-epoch-error-hidden', 'if let Err(error) = outcome', 'if let Err(error) = outcome && error.message != "history epoch changed"', 'history-epoch-failed', '#813 history-epoch-failed: step 0 "observe": submit scenario must match', None),
         ('utf16-mode-lossy', 'JsString::from_utf16(message)', 'String::from_utf16_lossy(&message).into()', 'invalid-mode', 'failed: message', None),
         ('utf16-busy-lossy', 'JsValue::String(JsString::from_utf16(units))\n}', 'JsValue::String(String::from_utf16_lossy(&units).into())\n}', 'session-busy', 'UTF-16 busy status message', None),
-        ('workspace-reservation-skipped', 'if !self.workspace_admissions.reserve(id, &run)', 'if false && !self.workspace_admissions.reserve(id, &run)', 'workspace-busy-before-sdk', 'workspace-busy-before-sdk: step', None),
-        ('workspace-release-skipped', '.release(&workspace, self.run);', '.release(&workspace, &RunRef { session_key: "wrong".into(), project_key: None, run_id: "wrong".into() });', 'workspace-released-after-turn', 'workspace-released-after-turn: step', None),
-        ('cwd-update-skipped', 'self.host.set_session_cwd(&run.session_key, cwd)', 'Ok::<(), SubmitError>(())', 'workspace-cwd', 'workspace-cwd: step', None),
-        ('timeout-disabled', 'tokio::time::sleep_until(started + Duration::from_millis(delay)).await;', 'tokio::time::sleep_until(started + Duration::from_millis(delay + 10000)).await;', 'timeout-active', 'timeout-active: step', None),
-        ('timeout-status-skipped', 'publisher.gateway_event(with_run(failure, &run));', 'let _ = failure;', 'timeout-active', 'timeout-active: step', None),
-        ('timeout-error-skipped', 'publisher.gateway_event(event);\n                    publisher.close_live();', 'let _ = event;\n                    publisher.close_live();', 'timeout-active', 'timeout-active: step', None),
-        ('timeout-abort-skipped', 'let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());', 'let _ = &handle;', 'timeout-active', 'timeout-active: step', None),
-        ('timeout-close-skipped', 'let close = self.owner.close(&run.session_key);', 'let close = std::future::ready(Ok::<(), crate::runtime::project::RuntimeError>(()));', 'timeout-active', 'timeout-active: step', None),
-        ('timeout-prepare-revived', 'if timed_out.load(Ordering::SeqCst) {\n            return Ok(());\n        }', 'if false && timed_out.load(Ordering::SeqCst) { return Ok(()); }', 'timeout-prepare-no-revival-live-consumer', 'timeout-prepare-no-revival-live-consumer: step', None),
-        ('deadline-skipped', '"operationDeadline",\n                deadline.as_str().into(),', '"wrongDeadline",\n                deadline.as_str().into(),', 'timeout-active', 'timeout-active: step', None),
-        ('timeout-status-record-error-ignored', 'if self.host.record_failure(&run, &record).await.is_ok()', 'if self.host.record_failure(&run, &record).await.is_err()', 'timeout-status-record-failed', 'timeout-status-record-failed: step', None),
-        ('snapshot-pre-skipped', 'recorder.capture(snapshot, true).await?', 'recorder.capture(snapshot, false).await?', 'snapshot-success', 'snapshot-success: step', None),
-        ('snapshot-pre-error-ignored', 'if result.state != SnapshotState::Committed', 'if false && result.state != SnapshotState::Committed', 'snapshot-pre-failed', 'snapshot-pre-failed: step', None),
-        ('snapshot-post-skipped', 'let _ = recorder.capture(input, false).await;', 'let _ = input;', 'snapshot-agent-failed', 'snapshot-agent-failed: step', None),
-        ('snapshot-success-post-added', '!progress.committed || (progress.succeeded && !timed_out)', '!progress.committed', 'snapshot-success', 'snapshot-success: step', None),
-        ('snapshot-timeout-kind-wrong', '"timeout".into()\n            } else', '"unknown".into()\n            } else', 'timeout-snapshot', 'timeout-snapshot: step', None),
-        ('timeout-live-close-skipped', 'publisher.close_live();', 'let _ = &publisher;', 'timeout-active', 'timeout-active: step', None),
-        ('invalid-deadline-accepted', 'value.abs() > 8_640_000_000_000_000.0', 'value.abs() > f64::MAX', 'timeout-invalid-deadline', 'timeout-invalid-deadline: step', None),
-        ('failureguard-model-observe-skipped', '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "turn_continued") && let Some(trip) = guard.observe(&event)', 'guard-model-trip', 'guard-model-trip: step', None),
+        ('workspace-reservation-skipped', 'if !self.workspace_admissions.reserve(id, &run)', 'if false && !self.workspace_admissions.reserve(id, &run)', 'workspace-busy-before-sdk', '#813 workspace-busy-before-sdk: step 0 "observe": submit scenario must match', None),
+        ('workspace-release-skipped', '.release(&workspace, self.run);', '.release(&workspace, &RunRef { session_key: "wrong".into(), project_key: None, run_id: "wrong".into() });', 'workspace-released-after-turn', '#813 workspace-released-after-turn: step 4 "second": submit scenario must match', None),
+        ('cwd-update-skipped', 'self.host.set_session_cwd(&run.session_key, cwd)', 'Ok::<(), SubmitError>(())', 'workspace-cwd', '#813 workspace-cwd: step 0 "observe": submit scenario must match', None),
+        ('timeout-disabled', 'tokio::time::sleep_until(started + Duration::from_millis(delay)).await;', 'tokio::time::sleep_until(started + Duration::from_millis(delay + 10000)).await;', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
+        ('timeout-status-skipped', 'publisher.gateway_event(with_run(failure, &run));', 'let _ = failure;', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
+        ('timeout-error-skipped', 'publisher.gateway_event(event);\n                    publisher.close_live();', 'let _ = event;\n                    publisher.close_live();', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
+        ('timeout-abort-skipped', 'let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());', 'let _ = &handle;', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
+        ('timeout-close-skipped', 'let close = self.owner.close(&run.session_key);', 'let close = std::future::ready(Ok::<(), crate::runtime::project::RuntimeError>(()));', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
+        ('timeout-prepare-revived', 'if timed_out.load(Ordering::SeqCst) {\n            return Ok(());\n        }', 'if false && timed_out.load(Ordering::SeqCst) { return Ok(()); }', 'timeout-prepare-no-revival-live-consumer', '#813 timeout-prepare-no-revival-live-consumer: step 2 "prepare": submit scenario must match', None),
+        ('deadline-skipped', '"operationDeadline",\n                deadline.as_str().into(),', '"wrongDeadline",\n                deadline.as_str().into(),', 'timeout-active', '#813 timeout-active: step 0 "observe": submit scenario must match', None),
+        ('timeout-status-record-error-ignored', 'if self.host.record_failure(&run, &record).await.is_ok()', 'if self.host.record_failure(&run, &record).await.is_err()', 'timeout-status-record-failed', '#813 timeout-status-record-failed: step 2 "timeout": submit scenario must match', None),
+        ('snapshot-pre-skipped', 'recorder.capture(snapshot, true).await?', 'recorder.capture(snapshot, false).await?', 'snapshot-success', '#813 snapshot-success: step 1 "accept": submit scenario must match', None),
+        ('snapshot-pre-error-ignored', 'if result.state != SnapshotState::Committed', 'if false && result.state != SnapshotState::Committed', 'snapshot-pre-failed', '#813 snapshot-pre-failed: step 1 "accept": submit scenario must match', None),
+        ('snapshot-post-skipped', 'let _ = recorder.capture(input, false).await;', 'let _ = input;', 'snapshot-agent-failed', '#813 snapshot-agent-failed: step 2 "terminal": submit scenario must match', None),
+        ('snapshot-success-post-added', '!progress.committed || (progress.succeeded && !timed_out)', '!progress.committed', 'snapshot-success', '#813 snapshot-success: step 3 "end": submit scenario must match', None),
+        ('snapshot-timeout-kind-wrong', '"timeout".into()\n            } else', '"unknown".into()\n            } else', 'timeout-snapshot', '#813 timeout-snapshot: step 2 "timeout": submit scenario must match', None),
+        ('timeout-live-close-skipped', 'publisher.close_live();', 'let _ = &publisher;', 'timeout-active', '#813 timeout-active: step 2 "timeout": submit scenario must match', None),
+        ('invalid-deadline-accepted', 'value.abs() > 8_640_000_000_000_000.0', 'value.abs() > f64::MAX', 'timeout-invalid-deadline', '#813 timeout-invalid-deadline: step 0 "observe": submit scenario must match', None),
+        ('failureguard-model-observe-skipped', '&& let Some(trip) = guard.observe(&event)', '&& !is(&event, "type", "turn_continued") && let Some(trip) = guard.observe(&event)', 'guard-model-trip', '#813 guard-model-trip: step 2 "terminal": submit scenario must match', None),
         ('snapshot-capability-refusal-skipped', 'if workspace.snapshots_required &&', 'if false && workspace.snapshots_required &&', 'invalid-mode', 'snapshot-recorder-unavailable: explicit capability refusal', 'snapshot-recorder-unavailable'),
         ('snapshot-cwd-refusal-skipped', 'return Err(SubmitError::new(\n                    "CAPABILITY_UNAVAILABLE",\n                    "Workspace snapshot cwd is unavailable.",\n                ));', '/* silently skip missing snapshot cwd */', 'invalid-mode', 'snapshot-cwd-unavailable: explicit capability refusal', 'snapshot-cwd-unavailable'),
         ('cwd-capability-error-ignored', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd)', 'let Err(error) = self.host.set_session_cwd(&run.session_key, cwd).or(Ok::<(), SubmitError>(()))', 'invalid-mode', 'cwd-host-unavailable: explicit capability refusal', 'cwd-host-unavailable'),
@@ -218,7 +258,7 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         # mutant skips the release outright: a mutation that would release
         # twice cannot be written against the FnOnce ownership type, so the
         # repeated-finish_pump counter assertion is the double-release guard.
-        ('guard-config-not-provided', 'self.services\n            .run_policy()\n            .and_then(|policy| policy.get("failureGuard").cloned())', 'None', 'guard-model-trip', 'guard-model-trip: step', None),
+        ('guard-config-not-provided', 'self.services\n            .run_policy()\n            .and_then(|policy| policy.get("failureGuard").cloned())', 'None', 'guard-model-trip', '#813 guard-model-trip: step 2 "terminal": submit scenario must match', None),
         ('host-lease-release-skipped', 'let release = self\n            .leases\n            .lock()\n            .unwrap_or_else(|poisoned| poisoned.into_inner())\n            .remove(&(run.session_key.clone(), run.run_id.clone()));', 'let release: Option<SubmitLeaseRelease> = None;', None, 'finish_pump_releases_a_lease_exactly_once', None),
         # opus P2-1: the host's own cwd capability refusal, distinct from the
         # submit.rs call-site mutant cwd-capability-error-ignored above.
@@ -274,6 +314,10 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         if marker is not None:
             assert marker != 'assertion' and not marker.startswith('assertion `left == right`'), \
                 (name, 'generic assertion diagnostic is not evidence')
+            # fix-r13: `<case>: step` names the scenario, not the assertion.
+            # It cannot distinguish step 1 from step 3 of the same case.
+            assert not marker.endswith(': step'), \
+                (name, 'bare scenario prefix is not evidence')
     # Anchor kinds: `message` is a key substring of the assertion/panic message
     # for the named test; `location` is the exact panic file:line:column of
     # the reverted `unwrap()` itself, derived by ``unwrap_site`` from the
@@ -311,6 +355,11 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
                 if part.startswith(f"{test_name}'")]
 
     summary = []
+    # fix-r13: finish every selected mutant before reporting, so one bad
+    # control cannot hide the rest (the r12 executor still stopped at the
+    # first non-KILLED row).
+    failures = []
+    baseline_ok = True
     try:
         for name, before, _, _, _, _ in mutants:
             anchor_source = mutant_source.get(name, source)
@@ -319,8 +368,9 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
         (output / 'original-sha256.json').write_text(json.dumps({
             str(path.relative_to(repo)): hashlib.sha256(data).hexdigest()
             for path, data in originals.items()}, indent=2)+'\n')
-        # #813 fix-r4: a subset keeps the unmutated baseline row; the baseline
-        # branch below aborts the whole run if it is not green.
+        # #813 fix-r4: a subset keeps the unmutated baseline row. fix-r13: a
+        # red baseline is recorded and the remaining rows still run; the exit
+        # code is decided after every selected row has a verdict.
         selected = select([('baseline', None, None, None, None, None)] + mutants,
                           sys.argv[2:])
         for name, before, after, case, marker, capability in selected:
@@ -389,18 +439,40 @@ with mutating_sources(repo, [source, host_source, test_source], baseline=baselin
                     anchored = any(f'panicked at {anchor}:' in block
                                    for block in panic_blocks(raw, used_test))
                 else:
-                    anchored = anchor in panic_payload(raw, used_test)
+                    anchored = message_kills(raw, used_test, anchor)
                 valid = (not timed_out and returncode == 101 and 'test result: FAILED' in raw
                          and 'could not compile' not in raw and used_test in failed_tests(raw)
                          and anchored)
+            if name == 'baseline':
+                baseline_ok = valid
+                status = 'PASS' if valid else 'INVALID'
+                reason = '' if valid else 'baseline is not green'
+            elif not baseline_ok:
+                status, reason = 'INVALID', 'baseline is not green'
+            elif valid:
+                status, reason = 'KILLED', 'named test failed at its bound assertion'
+            elif (not timed_out and returncode == 0 and 'test result: ok' in raw
+                  and 'could not compile' not in raw
+                  and f'test {used_test} ... ok' in raw):
+                status, reason = 'SURVIVED', 'bound test still passed'
+            else:
+                status, reason = 'INVALID', 'missing bound runtime failure'
             (output / f'{name}.log').write_text('COMMAND '+' '.join(command)+'\n'+slots.stdout+slots.stderr+raw+f'\nexit={returncode}\n')
-            summary.append(dict(name=name, case=case, before=before, after=after, exit=returncode, marker=marker, test=used_test, anchor=anchor, anchorKind=anchor_kind, valid=valid))
+            summary.append(dict(name=name, case=case, before=before, after=after, exit=returncode, marker=marker, test=used_test, anchor=anchor, anchorKind=anchor_kind, status=status, reason=reason))
             (output/'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
-            print(f'{name}: {"PASS" if valid else "INVALID"} exit={returncode}', flush=True)
-            if not valid: raise SystemExit(1)
+            print(f'{name}: {status} exit={returncode}', flush=True)
+            if status not in ('PASS', 'KILLED'):
+                failures.append(name)
     finally:
         for path, data in originals.items():
             path.write_bytes(data)
         for path, data in originals.items():
             assert path.read_bytes() == data
+    counts = {state: sum(row['status'] == state for row in summary)
+              for state in ('KILLED', 'SURVIVED', 'INVALID', 'PASS')}
+    print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()),
+          flush=True)
+    if failures:
+        print('non-KILLED controls: ' + ', '.join(failures), flush=True)
+        raise SystemExit(1)
     print(f'{len(summary)} controls checked; original bytes restored', flush=True)
