@@ -36,6 +36,14 @@ test('the deployed branch template serves the new shell only with the switch on'
     '/copy/ui/server/../new-shell/index.html', '开关开：/settings 深层路径必须服务新壳入口');
   assert.equal(executeOptionAPatchBranch('/settings', {}), null,
     '开关 unset：/settings 必须回落旧 bundle（回退开关，字节等价旧行为）');
+  // The template guards on the exact string '1'; any other value — off
+  // values, empty, or truthy look-alikes — must fall back to the old bundle.
+  assert.equal(executeOptionAPatchBranch('/settings', { PILOTDECK_NEW_SHELL: '0' }), null,
+    "开关值必须严格 === '1'：'0' 不得开新壳（回退开关语义）");
+  assert.equal(executeOptionAPatchBranch('/settings', { PILOTDECK_NEW_SHELL: '' }), null,
+    "开关值必须严格 === '1'：空串不得开新壳");
+  assert.equal(executeOptionAPatchBranch('/settings', { PILOTDECK_NEW_SHELL: 'true' }), null,
+    "开关值必须严格 === '1'：truthy 变体不得开新壳");
   assert.equal(executeOptionAPatchBranch('/settingsX', { PILOTDECK_NEW_SHELL: '1' }), null,
     '严格段边界：/settingsX 必须保持旧 bundle');
   assert.equal(executeOptionAPatchBranch('/settingsx/models', { PILOTDECK_NEW_SHELL: '1' }), null,
