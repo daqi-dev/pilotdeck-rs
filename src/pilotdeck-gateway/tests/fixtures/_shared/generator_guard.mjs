@@ -8,9 +8,10 @@
 // this module; the generators' oracles stay byte-identical.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { realpathSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { rm } from 'node:fs/promises';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { bindSourceTree } from '../../baseline_source_guard.mjs';
 
 /**
@@ -68,6 +69,12 @@ export function bindBaseline({ baseline, commit, gitExecutable }) {
     '',
     `baseline has uncommitted changes to tracked files:\n${trackedChanges}`,
   );
+  // Status deliberately ignores untracked files, but index flags can also hide
+  // tracked modifications (including files outside src). Refuse those flags;
+  // bindSourceTree independently verifies every source byte against HEAD.
+  const hidden = git('ls-files', '-v', '-z').toString().split('\0')
+    .filter(row => row && (row[0] === 'S' || row[0] !== row[0].toUpperCase()));
+  assert.deepEqual(hidden, [], '#303 baseline has skip-worktree/assume-unchanged tracked files');
   return { git, gitExecutable: executable, sourceCommit: provenance.ref, provenance };
 }
 
@@ -110,4 +117,23 @@ export async function removeOwned(root, value, options = {}, remove = rm) {
     path = value;
   }
   await removeOne(path, options, remove);
+}
+
+/** Hash only the requested keys, in their original order, preserving old oracles.
+ * The full source tree has already been bound by bindBaseline; re-read each
+ * recorded file and compare its SHA to the pinned commit blob, never the index.
+ */
+export function recordedSourceHashes({ baseline, commit, git }, paths) {
+  assert.ok(paths.length > 0, '#280 baseline source list must not be empty');
+  const hashes = {};
+  for (const path of paths) {
+    assert.ok(path.startsWith('src/') && path.split('/').every(part => part !== '..' && part !== ''),
+      `#280 expected a baseline-relative source path: ${path}`);
+    const committed = git('show', `${commit}:${path}`);
+    const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+    const expected = hash(committed);
+    assert.equal(hash(readFileSync(join(baseline, path))), expected, `#280 ${path} differs from ${commit}`);
+    hashes[path] = expected;
+  }
+  return hashes;
 }

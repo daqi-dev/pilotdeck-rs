@@ -22,7 +22,14 @@ fn string(value: &JsString) -> String {
 async fn real_ts_admission_completion_and_gateway_abort() {
     crate::test_baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
-    assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 7);
+    assert_eq!(
+        oracle["sourceSha256"]
+            .as_object()
+            .expect("#303 source hash object")
+            .len(),
+        650,
+        "#303 exact import closure source count"
+    );
     for scenario in oracle["scenarios"].as_array().unwrap() {
         let turns = SessionTurns::default();
         let mut handles = BTreeMap::<String, TurnCompletionHandle>::new();

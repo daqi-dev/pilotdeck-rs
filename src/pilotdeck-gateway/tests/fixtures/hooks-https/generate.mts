@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Real TS `HttpHookExecutor` against a local TLS server. The oracle proves
 // that HTTPS hook URLs (and a redirect from HTTP to HTTPS) execute through
 // the baseline's global `fetch`; the Rust replay starts the same TLS server
@@ -15,7 +16,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import net from 'node:net';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.equal(process.version, 'v22.22.0');
@@ -33,7 +34,7 @@ const git = (...args: string[]) =>
     env: gitEnv,
     maxBuffer: 32 * 1024 * 1024,
   });
-const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const sourceCommit = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance.ref;
 
 // Files whose behavior this oracle calibrates.
 const sources = [
@@ -41,13 +42,7 @@ const sources = [
   'src/extension/hooks/execution/CommandHookExecutor.ts',
   'src/extension/hooks/execution/parseHookOutput.ts',
 ];
-const sourceSha256: Record<string, string> = {};
-for (const path of sources) {
-  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
-  const working = await readFile(join(baseline, path));
-  assert.deepEqual(working, committed, `${path} differs from ${BASELINE_COMMIT}`);
-  sourceSha256[path] = createHash('sha256').update(committed).digest('hex');
-}
+const sourceSha256 = await baselineSourceHashes(baseline, sources);
 
 const load = (path: string) => import(pathToFileURL(join(baseline, path)).href);
 const { HttpHookExecutor } = await load('src/extension/hooks/execution/HttpHookExecutor.ts');

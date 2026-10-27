@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Node 22; run with the fixed baseline's tsx loader. See README.md.
 import assert from 'node:assert/strict';
 import { constants } from 'node:buffer';
@@ -8,13 +9,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.equal(process.version, 'v22.22.0');
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const ref = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-const binding = bindSourceTree(baseline, ref, git);
+const binding = bindBaseline({ baseline, commit: ref, gitExecutable: git }).provenance;
 const load = (p: string) => import(pathToFileURL(join(baseline, p)).href);
 const { NodeShellCommandRunner, createShellOutputDecoder } = await load('src/tool/builtin/bash/commandRunner.ts');
 const { CommandHookExecutor } = await load('src/extension/hooks/execution/CommandHookExecutor.ts');
@@ -69,8 +70,7 @@ if (process.argv[2] === '--uncaught') {
   const sources = ['src/extension/hooks/execution/CommandHookExecutor.ts',
     'src/tool/execution-world/ShellPort.ts', 'src/tool/execution-world/SubprocessPort.ts',
     'src/tool/builtin/bash/commandRunner.ts'];
-  const sourceSha256 = Object.fromEntries(sources.map(p => [p,
-    createHash('sha256').update(readFileSync(join(baseline, p))).digest('hex')]));
+  const sourceSha256 = await baselineSourceHashes(baseline, sources);
   const large = [];
   for (const stream of ['stdout', 'stderr']) {
     const command = `head -c 67108864 /dev/zero${stream === 'stderr' ? ' >&2' : ''}`;

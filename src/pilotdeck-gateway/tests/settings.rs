@@ -38,7 +38,7 @@ fn resolve_settings_replays_real_typescript_oracle() {
         .get("sources")
         .and_then(JsValue::as_object)
         .expect("sources");
-    assert_eq!(sources.len(), 6, "source hash set changed");
+    assert_eq!(sources.len(), 728, "#303 exact import closure source count");
     for (_, value) in sources.entries() {
         assert!(
             value

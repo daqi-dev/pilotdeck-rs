@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Real fixed-baseline permission decisions; no matching or priority logic is
 // reimplemented here. Run from the repo root (Node 22, baseline tsx loader):
 //
@@ -14,7 +15,7 @@ import { lstat, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree } from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide an output parent directory');
@@ -36,7 +37,7 @@ const assertTrackedClean = () => {
   const changes = runGit('status', '--porcelain', '--untracked-files=no').toString();
   assert.equal(changes, '', `baseline has uncommitted changes to tracked files:\n${changes}`);
 };
-const sourceCommit = bindSourceTree(baseline, commit, git).ref;
+const sourceCommit = bindBaseline({ baseline, commit, gitExecutable: git }).provenance.ref;
 assertTrackedClean();
 
 const sources = [
@@ -82,13 +83,7 @@ for (const queue = [...sources]; queue.length > 0; ) {
     }
   }
 }
-const sourceSha256: Record<string, string> = {};
-for (const file of [...closure].sort()) {
-  assert.ok(file.startsWith('src/'), `import closure escaped src/: ${file}`);
-  const committed = runGit('show', `${commit}:${file}`);
-  assert.deepEqual(await readFile(join(baseline, file)), committed, `${file} differs from ${commit}`);
-  sourceSha256[file] = createHash('sha256').update(committed).digest('hex');
-}
+const sourceSha256 = await baselineSourceHashes(baseline, [...closure]);
 
 const load = (path: string) => import(pathToFileURL(join(baseline, path)).href);
 const { isPermissionMode, emptyPermissionRuleSet, createDefaultPermissionContext } = await load(

@@ -25,6 +25,7 @@ const baseline = resolve(process.env.PDRS_BASELINE);
 const outputDir = resolve(process.argv[2]);
 const sourceCommit = assertBaseline(baseline);
 const sourcePaths = [
+  'src/pilot/config/hash.ts',
   'src/cli/createLocalGateway.ts',
   'src/cli/LocalGatewayBootConfig.ts',
   'src/pilot/config/loadPilotConfig.ts',

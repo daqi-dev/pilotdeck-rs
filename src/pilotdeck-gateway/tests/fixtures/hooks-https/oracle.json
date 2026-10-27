@@ -2,9 +2,17 @@
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "nodeVersion": "v22.22.0",
   "sourceSha256": {
-    "src/extension/hooks/execution/HttpHookExecutor.ts": "04de2a286ca38996d636fcc56258c6bbdef58d9bbdf9e5c6a50372bc13213bd9",
     "src/extension/hooks/execution/CommandHookExecutor.ts": "d5867c7d45f82aaf26098b07d11801ce6522b6115f48f9098e9866284484f896",
-    "src/extension/hooks/execution/parseHookOutput.ts": "86ed968c0d92ef9dadaef09b82b225f201d39796bcd30b8c620e06597a1c1b21"
+    "src/extension/hooks/execution/HttpHookExecutor.ts": "04de2a286ca38996d636fcc56258c6bbdef58d9bbdf9e5c6a50372bc13213bd9",
+    "src/extension/hooks/execution/parseHookOutput.ts": "86ed968c0d92ef9dadaef09b82b225f201d39796bcd30b8c620e06597a1c1b21",
+    "src/extension/hooks/protocol/events.ts": "3fde15287d6f60276d8fe48f1793773f8be580fb26831210141c09099c94ce18",
+    "src/extension/hooks/protocol/input.ts": "a9c66001df1e27e191d63a27aa912938dce91c3b6b8bf20f01b090b66977c6cc",
+    "src/extension/hooks/protocol/output.ts": "54716f955ed8220214a26bea73163cc8e2f6663a3027154a5830f29574943db7",
+    "src/extension/hooks/protocol/settings.ts": "d2710f2d0322d0f8c515a356612730d7f9722abd5972ae551fe0792cb6b03e22",
+    "src/runtime/commandShell.ts": "b350a9cba14836c78ea4773758ec34d237c7abee4a6df1c207da6f8f92e79918",
+    "src/tool/builtin/bash/commandRunner.ts": "22f72ae28902b28f7b13675c26a7e6863eb39be4c10949ae224e1a7d6794f4cd",
+    "src/tool/execution-world/ShellPort.ts": "b616fe4e975a902bd4822c6f176f2fa646aa41df41d0ca4c1c202aed80b727b5",
+    "src/tool/execution-world/SubprocessPort.ts": "741522f149f6e01232777fbf5bf8269bff60886c46f81457dae0b9d6c7586d74"
   },
   "hookInput": {
     "hook_event_name": "PreToolUse",

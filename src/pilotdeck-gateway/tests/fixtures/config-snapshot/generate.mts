@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 
@@ -345,28 +345,25 @@ agent:
   project: 'project',
 });
 
-// Replay successful cases from the pre-existing config fixture corpus as well.
-// The corpus is diagnostic-oriented, so only loadable cases can produce a
-// snapshot; this samples it deterministically instead of duplicating thousands
-// of identical projections.
+// #305: every successful diagnostics case is a required snapshot projection.
+// Preserve sourceKind and env; dropping them silently changes the input path.
 const existingDir = new URL('../config/', import.meta.url);
-for (const [file, sample] of [['catalog.json', 1], ['diagnostics.json', 18]] as const) {
+for (const file of ['catalog.json', 'diagnostics.json']) {
   const corpus = JSON.parse(await readFile(new URL(file, existingDir), 'utf8'));
-  const usable = corpus.cases.filter((item: any) => item.load?.ok
-    && !item.sourceKind
-    && Object.entries(item.env ?? {}).every(([key, value]) =>
-      typeof value === 'string'
-      && !value.includes('<PILOT_HOME>')
-      && !value.includes('<ROOT>')
-      && key !== 'PILOTDECK_CONFIG_PATH'
-      && key !== 'PILOT_HOME'
-      && key !== 'STAFFDECK_PROJECT_BINDING_ENABLED'));
-  const selected = sample === 1 ? usable : usable.filter((_: unknown, index: number) => index % sample === 0);
-  for (const item of selected) {
+  const successful = corpus.cases.filter((item: any) => item.load?.ok);
+  for (const item of successful) {
+    assert.ok([undefined, 'relative', 'alternate', 'bytes'].includes(item.sourceKind),
+      `#305 unsupported successful sourceKind ${item.id}: ${item.sourceKind}`);
+    for (const value of Object.values(item.env ?? {})) {
+      assert.ok(typeof value === 'string' && !value.includes('<PILOT_HOME>') && !value.includes('<ROOT>'),
+        `#305 unsupported successful environment ${item.id}`);
+    }
     cases.push({
       id: `existing-${file.replace('.json', '')}-${item.id}`,
       yaml: item.yaml,
       env: item.env ?? {},
+      ...(item.sourceKind ? { sourceKind: item.sourceKind } : {}),
+      corpusSuccess: true,
     });
   }
 }
@@ -482,12 +479,13 @@ function encode(value: unknown): unknown {
   }
   return value;
 }
-function normalize(value: unknown, root: string): unknown {
+function normalize(value: unknown, root: string, relativeConfigPath?: string): unknown {
   if (value instanceof Date) return FIXED_LOADED_AT;
+  if (typeof value === 'string' && value === relativeConfigPath) return '<RELATIVE_CONFIG_PATH>';
   if (typeof value === 'string') return value.split(root).join('<ROOT>').split(process.cwd()).join('<CWD>');
-  if (Array.isArray(value)) return value.map((v) => normalize(v, root));
+  if (Array.isArray(value)) return value.map((v) => normalize(v, root, relativeConfigPath));
   if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [normalize(k, root), normalize(v, root)]));
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [normalize(k, root, relativeConfigPath), normalize(v, root, relativeConfigPath)]));
   }
   return value;
 }
@@ -497,7 +495,7 @@ const HASH_SECTIONS = [
 ];
 const hashOf = (config: any) =>
   sha256(stableStringify(redactConfig(Object.fromEntries(HASH_SECTIONS.map((key) => [key, config[key]])))));
-function normalizedSnapshot(snapshot: any, root: string): any {
+function normalizedSnapshot(snapshot: any, root: string, relativeConfigPath?: string): any {
   // #310: the transcribed section list must reproduce the hash loadPilotConfig
   // itself produced before any path is rewritten; a missing or extra section
   // would otherwise make the oracle and Rust agree with each other but not
@@ -505,7 +503,7 @@ function normalizedSnapshot(snapshot: any, root: string): any {
   assert.equal(hashOf(snapshot.config), snapshot.contentHash, 'transcribed contentHash input diverges from loadPilotConfig');
   assert.deepEqual(Object.keys(snapshot.config).filter((key) => !HASH_SECTIONS.includes(key)), [],
     'snapshot config has a section outside the transcribed hash input');
-  const normalized = normalize(snapshot, root) as any;
+  const normalized = normalize(snapshot, root, relativeConfigPath) as any;
   // Content hashes are recomputed after path normalization so the fixture is
   // independent of the per-run temporary root while still being produced by
   // the baseline's own stableStringify/redactConfig. loadPilotConfig hashes one
@@ -523,7 +521,12 @@ try {
     const home = join(root, 'home');
     const projectRoot = item.project ? join(root, item.project) : undefined;
     await mkdir(home, { recursive: true });
-    if (!item.noGlobal) await writeFile(join(home, 'pilotdeck.yaml'), item.yaml);
+    if (!item.noGlobal) {
+      const bytes = item.sourceKind === 'bytes'
+        ? Buffer.concat([Buffer.from(item.yaml), Buffer.from('unused: "'), Buffer.from([0xff, 0xfe, 0x80]), Buffer.from('"\n')])
+        : item.yaml;
+      await writeFile(join(home, 'pilotdeck.yaml'), bytes);
+    }
     if (projectRoot && item.projectYaml) {
       await mkdir(join(projectRoot, '.pilotdeck'), { recursive: true });
       await writeFile(join(projectRoot, '.pilotdeck', 'pilotdeck.yaml'), item.projectYaml);
@@ -536,15 +539,26 @@ try {
     if (!item.noPilotHome) env.PILOT_HOME = home;
     env.HOME = home;
     if (item.configPathViaEnv) env.PILOTDECK_CONFIG_PATH = join(home, 'pilotdeck.yaml');
+    if (item.sourceKind === 'relative') {
+      env.PILOTDECK_CONFIG_PATH = relative(process.cwd(), join(home, 'pilotdeck.yaml'));
+    } else if (item.sourceKind === 'alternate') {
+      await writeFile(join(home, 'other.yaml'), item.yaml);
+      env.PILOTDECK_CONFIG_PATH = `  ${join(home, 'other.yaml')}  `;
+    }
+    if (item.sourceKind === 'relative') {
+      assert.ok(env.PILOTDECK_CONFIG_PATH && !isAbsolute(env.PILOTDECK_CONFIG_PATH),
+        '#305 relative source must use a relative environment path');
+    }
     let snapshot;
     try {
       snapshot = loadPilotConfig({
         env,
-        ...(item.configPathViaEnv ? {} : { configPath: join(home, 'pilotdeck.yaml') }),
+        ...((item.configPathViaEnv || item.sourceKind) ? {} : { configPath: join(home, 'pilotdeck.yaml') }),
         ...(projectRoot ? { projectRoot } : {}),
         version: item.version ?? 1,
       });
     } catch (error) {
+      assert.ok(!item.corpusSuccess, `#305 successful corpus case failed to load: ${item.id}: ${error}`);
       const e = error as { name?: string; code?: string; message?: string; diagnostics?: any[] };
       recorded.push({
         id: item.id,
@@ -569,10 +583,11 @@ try {
       });
       continue;
     }
-    const normalized = encode(normalizedSnapshot(snapshot, root));
+    const normalized = encode(normalizedSnapshot(snapshot, root, item.sourceKind === 'relative' ? env.PILOTDECK_CONFIG_PATH : undefined));
     const normalizedCase = {
       id: item.id,
       yaml: item.yaml,
+      ...(item.sourceKind ? { sourceKind: item.sourceKind } : {}),
       ...(item.projectYaml ? { projectYaml: item.projectYaml } : {}),
       ...(item.project ? { project: item.project } : {}),
       ...(item.version !== undefined ? { version: item.version } : {}),
@@ -597,5 +612,6 @@ const oracle = {
   count: recorded.length,
   cases: recorded,
 };
-await writeFile(join(outputDir, 'oracle.json'), JSON.stringify(oracle, null, 2) + '\n');
+await mkdir(outputDir, { recursive: true });
+await writeFile(join(outputDir, 'oracle.json'), JSON.stringify(oracle, null, 2) + '\n', { flag: 'wx' });
 console.log(JSON.stringify({ cases: recorded.length, output: join(outputDir, 'oracle.json') }));

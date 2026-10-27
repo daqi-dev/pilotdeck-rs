@@ -9,3 +9,5 @@ oracle.json 来自只读 cc7c4e6 的 `src/gateway/permission/createGatewayPermis
 该生成器也重采集原三条 hook，并将 emit 抛 Error、抛字符串及先答复再抛错/返回 false 共七模式的完整输出写入 `hooks.json`。生成器断言 answer-then-no-sink 的 result/rules 与 allow 一致，两个 throw 模式均为 delivery-failed deny 且无记忆规则；synchronous_answer_wins_over_delivery_false 直接比较入库的 answer-then-no-sink 金样。Rust emit 是 Fn -> bool，异常差异没有视为通过或豁免，见 `specs/gateway-parity/diffs/A6.9-PERMISSION-RUN-001-R2.md`。panic 清理测试只证明 pending 注册不泄漏。
 
 TS PermissionDecisionPort 仅有 decide，hook API 无 policyCanPrompt 入参，不能直接调用与 Rust request 完全等价的双重拒绝路径。真实 bundle.decide 在 headless/disabled + policyCanPrompt=false 时均保留底层 Gateway policy 长文案；Rust request 防御检查按这一有效优先级先拒 policy，再判 profile，由 gateway_policy_denial_precedes_profile_admission_for_direct_requests 覆盖三个 profile × canPrompt true/false。采集命令在 generate.mts 顶部；fix-r3 的原始输出、源码哈希、旧金样 cmp、假 GIT_DIR 负控和 policy 探针在 `_tmp/20261025-issue-586/pkg2-fix3/`。
+
+source.json 记录实际入口的 import 传递闭包 SHA；重生成守卫同时比较 oracle.json、source.json、profiles.json 与 hooks.json。

@@ -6,7 +6,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide output directory');
@@ -22,7 +23,7 @@ const assertTrackedClean = () => {
   const changes = runGit('status', '--porcelain', '--untracked-files=no').toString();
   assert.equal(changes, '', `baseline has uncommitted changes to tracked files:\n${changes}`);
 };
-const sourceCommit = bindSourceTree(baseline, commit, git).ref;
+const sourceCommit = bindBaseline({ baseline, commit, gitExecutable: git }).provenance.ref;
 assertTrackedClean();
 const sources = ['src/gateway/client/InProcessGateway.ts', 'src/agent/session/SteerMailbox.ts', 'src/gateway/dialog/GatewayAttachmentTurnComposer.ts'];
 // Hash the relative-import closure of the entries (shared helper, same rule
@@ -166,7 +167,7 @@ try {
   const scenarios = [];
   for (const spec of specs) scenarios.push(await run(spec));
   assert.equal(scenarios.length,38);
-  bindSourceTree(baseline,commit,git);
+  bindBaseline({ baseline, commit, gitExecutable: git }).provenance;
   assertTrackedClean();
   const data = JSON.stringify({sourceCommit,sourceSha256,scenarios},null,2)+'\n';
   for (const path of [scratch,baseline,output]) assert.ok(!data.includes(path),'fixture path leak');

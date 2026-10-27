@@ -5,12 +5,13 @@ import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const output = resolve(process.argv[2]);
 assert.equal(process.version, 'v22.22.0');
 const git = execFileSync('which', ['git'], {encoding:'utf8'}).trim();
-const bound = bindSourceTree(baseline, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', git);
+const bound = bindBaseline({ baseline, commit: 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', gitExecutable: git }).provenance;
 const sources = ['src/context/budget/ToolResultBudget.ts', 'src/context/budget/ToolResultSpillPort.ts'];
 const { ToolResultBudget } = await import(pathToFileURL(join(baseline, sources[0])).href);
 const { createNodeToolResultSpillPort } = await import(pathToFileURL(join(baseline, sources[1])).href);

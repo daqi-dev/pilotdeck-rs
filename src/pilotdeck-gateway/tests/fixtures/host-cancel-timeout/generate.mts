@@ -1,9 +1,8 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Real fixed-baseline oracle for the host post-cancel exit bound.
 // The private DEFAULT_KILL_TIMEOUT_MS is exported in memory only; baseline
 // sources are never copied into this repository.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -14,35 +13,9 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
-assert.equal(
-  execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-  commit,
-);
-// The checkout is mutable in place; a dirty tracked file would change the
-// recorded hash while `rev-parse HEAD` still reports the pinned commit.
-const trackedChanges = execFileSync(
-  'git',
-  ['-C', baseline, 'status', '--porcelain', '--untracked-files=no'],
-  { encoding: 'utf8' },
-);
-assert.equal(
-  trackedChanges,
-  '',
-  `baseline has uncommitted changes to tracked files:\n${trackedChanges}`,
-);
-
+const commit = assertBaseline(baseline);
 const source = 'src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts';
-const workingTreeHash = createHash('sha256')
-  .update(await readFile(join(baseline, source)))
-  .digest('hex');
-const committed = execFileSync('git', ['-C', baseline, 'show', `${commit}:${source}`]);
-const committedHash = createHash('sha256').update(committed).digest('hex');
-assert.equal(
-  workingTreeHash,
-  committedHash,
-  `${source} differs from ${commit}; the baseline checkout is not clean`,
-);
+const sourceSha256 = await baselineSourceHashes(baseline, [source]);
 
 const requireBaseline = createRequire(join(baseline, 'package.json'));
 const requireTsx = createRequire(requireBaseline.resolve('tsx'));
@@ -78,7 +51,7 @@ const { DEFAULT_KILL_TIMEOUT_MS } = await import(
 
 const oracle = {
   sourceCommit: commit,
-  sourceSha256: { [source]: committedHash },
+  sourceSha256,
   defaultKillTimeoutMs: DEFAULT_KILL_TIMEOUT_MS,
 };
 await mkdir(output, { recursive: true });

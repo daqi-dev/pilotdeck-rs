@@ -2,7 +2,7 @@ import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from the repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 // Inputs are built as real JavaScript snapshots (including NaN/undefined/-0) and
 // every recorded result comes from the fixed TypeScript baseline itself.
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
 const sourceCommit = assertBaseline(baseline);
 const source = 'src/pilot/config/classifyChanges.ts';
-const sourceSha256 = await baselineSourceHashes(baseline, [source]);
+const sourceSha256 = await baselineSourceHashes(baseline, [source, 'src/pilot/config/merge.ts', 'src/pilot/config/parseModulesConfig.ts']);
 const { diffConfigSnapshots, classifyConfigChanges, isRunPolicyOnlyChange } =
   await import(pathToFileURL(join(baseline, source)).href);
 const { mergeConfigSources } = await import(pathToFileURL(join(baseline, 'src/pilot/config/merge.ts')).href);
@@ -245,8 +245,13 @@ classify('run-policy-list', ['runPolicy', 'runPolicy.a']);
 classify('all-next-runtime', ['alwaysOn.x', 'cron.y', 'tools.z', 'webui.q']);
 classify('default-empty-segment', ['']);
 
-// Guardrails: the fixture set must be non-vacuous and cover every observable class.
-assert.ok(pairs.length >= 25, `need >= 25 snapshot pairs, got ${pairs.length}`);
+// The independent manifest is shared with the Rust replay: deletion and rename
+// must fail before any per-case lookup can hide the missing coverage.
+const expectedNames = JSON.parse(await readFile(new URL('./case-names.json', import.meta.url), 'utf8'));
+for (const [key, actual] of [['pairs', pairs], ['classify', cases]] as const) {
+  assert.equal(actual.length, expectedNames[key].length, `#911 TS ${key} count`);
+  assert.deepEqual(actual.map(item => item.name).sort(), [...expectedNames[key]].sort(), `#911 TS ${key} names`);
+}
 assert.equal(new Set(pairs.map(p => p.name)).size, pairs.length, 'duplicate pair name');
 assert.equal(new Set(cases.map(c => c.name)).size, cases.length, 'duplicate classify case name');
 const seen = new Set([...pairs.flatMap(p => p.changeClasses), ...cases.flatMap(c => c.classes)]);

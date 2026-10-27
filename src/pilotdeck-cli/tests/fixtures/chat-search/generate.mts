@@ -213,9 +213,9 @@ try {
   const output = resolve(process.argv[2]); await mkdir(output,{recursive:true});
   for (const capture of raw) {
     await mkdir(join(output,'raw',capture.id),{recursive:true});
-    await writeFile(join(output,'raw',capture.id,'stdout.bin'),capture.stdout);
-    await writeFile(join(output,'raw',capture.id,'stderr.bin'),capture.stderr);
+    await writeFile(join(output,'raw',capture.id,'stdout.bin'),capture.stdout,{flag:'wx'});
+    await writeFile(join(output,'raw',capture.id,'stderr.bin'),capture.stderr,{flag:'wx'});
   }
-  const bytes = JSON.stringify(oracle,null,2)+'\n'; await writeFile(join(output,'oracle.json'),bytes);
+  const bytes = JSON.stringify(oracle,null,2)+'\n'; await writeFile(join(output,'oracle.json'),bytes,{flag:'wx'});
   console.log(createHash('sha256').update(bytes).digest('hex'));
 } finally { await rm(root,{recursive:true,force:true}); }

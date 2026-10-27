@@ -7,7 +7,7 @@
 
 ## 目录与条数
 
-`oracle.json` 共 **180** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
+`oracle.json` 共 **1140** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
 source 数量和每个 `sourceSha256` 长度做精确断言：
 
 - 105 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
@@ -23,9 +23,10 @@ source 数量和每个 `sourceSha256` 长度做精确断言：
   三条键序分辨（`headers`、`adapters.*.extra`、`runPolicy.failureGuard.toolFailureLimits`
   中大小写/标点/数字/非 ASCII 键对，钉住 `stableStringify` 的 en-US `localeCompare`
   与码元序不同的相对顺序），以及 `anthropic`/`google` 协议在非目录 provider 上的默认能力；
-- 18 条来自既有 `tests/fixtures/config/catalog.json` 中 `load.ok` 的用例；
-- 57 条来自既有 `tests/fixtures/config/diagnostics.json` 中 `load.ok` 的确定性
-  抽样（按成功用例顺序每 18 条取 1 条）。
+- 20 条来自既有 `tests/fixtures/config/catalog.json` 中 `load.ok` 的用例；
+- 1015 条来自既有 `tests/fixtures/config/diagnostics.json` 中全部 `load.ok` 成功用例。
+
+#305 保留原180条行为输出，并补齐成功输入；Rust同时核验成功行数、唯一ID与投影ID完整集合。relative/alternate/bytes输入按原sourceKind重建，不丢弃环境路径或字节用例。
 
 既有 `config/` 原件是 catalog/诊断对拍，不含 YAML 目录；这里把其中可加载的
 真实 YAML 输入交给同一 `loadPilotConfig` 再录完整快照，因此既覆盖旧输入，
@@ -34,8 +35,8 @@ source 数量和每个 `sourceSha256` 长度做精确断言：
 ## 生成
 
 生成器使用共享助手 `../_shared/baseline.mts`：先 `assertBaseline` 校验固定
-HEAD 和 tracked 文件干净，再 `baselineSourceHashes` 按 commit blob 复算 21 个
-被测源码的 SHA-256，并与工作区字节比对。生成过程只创建本次运行的临时
+HEAD、tracked 文件干净且无 skip-worktree/assume-unchanged，再按 commit blob
+复算 import 传递闭包全部650个源码的 SHA-256，并与工作区字节比对。生成过程只创建本次运行的临时
 home/project 目录，结束时只删除自己创建的目录。
 
 从仓根执行（Node 22 / 基线自带 tsx；`stableStringify` 的键序依赖 ICU 默认
@@ -45,7 +46,7 @@ locale，生成器断言其为 `en-US`，与 Rust 侧一致）：
 PDRS_BASELINE=/path/to/PilotDeck LANG=en_US.UTF-8 \
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/config-snapshot/generate.mts \
-  src/pilotdeck-gateway/tests/fixtures/config-snapshot
+  /tmp/pdrs-config-snapshot-<new-run>
 ```
 
 ## 归一化
@@ -74,3 +75,5 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
   --test config_snapshot --locked --offline
 ```
+
+相对环境配置路径按完整输入拼写匹配并规范化为 `<RELATIVE_CONFIG_PATH>`；绝对路径不会命中该替换。因此金样不依赖调用工作目录深度，同时保留相对/绝对路径语义差异。

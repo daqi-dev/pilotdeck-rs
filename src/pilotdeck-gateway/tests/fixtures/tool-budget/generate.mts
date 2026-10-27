@@ -18,7 +18,8 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory');
@@ -28,7 +29,7 @@ const output = resolve(process.argv[2]);
 const gitExecutable = realpathSync(
   process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
 );
-const bound = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable);
+const bound = bindBaseline({ baseline, commit: BASELINE_COMMIT, gitExecutable }).provenance;
 const sourceCommit = bound.ref;
 const sources = [
   'src/context/budget/ToolResultBudget.ts',

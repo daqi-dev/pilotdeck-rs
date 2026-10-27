@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { realpathSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import { record } from './record.mts';
 assert.equal(new Intl.Collator().resolvedOptions().locale, 'en-US');
 assert.ok(process.env.PDRS_BASELINE);
@@ -11,7 +12,7 @@ assert.ok(process.argv[2]);
 const baseline = resolve(process.env.PDRS_BASELINE);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(process.env.PDRS_GIT);
-const sourceCommit = bindSourceTree(baseline, commit, git).ref;
+const sourceCommit = bindBaseline({ baseline, commit, gitExecutable: git }).provenance.ref;
 // The composition under test and everything its behavior crosses: the two
 // model-invoker adapters, the sidecar bindTurn projection, the recorder and
 // the transcript stack, the router and the model runtime it routes over.

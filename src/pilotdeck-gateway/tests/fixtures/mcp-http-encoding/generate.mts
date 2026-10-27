@@ -7,14 +7,15 @@ import { mkdirSync, writeFileSync, readFileSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 assert.equal(process.version, 'v22.22.0', '#886 Node version');
 assert.ok(process.env.PDRS_BASELINE, '#886 PDRS_BASELINE required');
 assert.ok(process.argv[2], '#886 output directory required');
 const baseline = resolve(process.env.PDRS_BASELINE!);
 const output = resolve(process.argv[2]);
 const git = realpathSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
-const sourceCommit = bindSourceTree(baseline, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', git).ref;
+const sourceCommit = bindBaseline({ baseline, commit: 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', gitExecutable: git }).provenance.ref;
 const sourceSha256 = sourceClosureSha256(baseline, sourceCommit, git,
   ['src/mcp/client/McpClient.ts', 'src/network/fetch.ts']);
 const load = (path: string) => import(pathToFileURL(join(baseline, path)).href);

@@ -16,6 +16,7 @@ assert.ok(process.argv[2], 'provide a fresh output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const sourceCommit = assertBaseline(baseline);
 const sourcePaths = [
+  'src/pilot/config/loadPilotConfig.ts',
   'src/cli/ProjectRuntimeRegistry.ts',
   'src/cli/ProjectRuntimeResourcesBundle.ts',
   'src/cli/PilotDeckRuntimeProfile.ts',

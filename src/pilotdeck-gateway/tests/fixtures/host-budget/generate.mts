@@ -1,7 +1,6 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Real dispatcher oracle. All runtime files belong to a unique directory.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -12,9 +11,7 @@ import { pathToFileURL } from 'node:url';
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const sourceCommit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
-const git = (...args: string[]) => execFileSync('git', ['-C', baseline, ...args], { encoding: 'utf8' });
-assert.equal(git('rev-parse', 'HEAD').trim(), sourceCommit);
-function assertClean() { assert.equal(git('status', '--porcelain', '--untracked-files=no'), '', 'tracked baseline files must be clean'); }
+function assertClean() { assertBaseline(baseline); }
 assertClean();
 const sources = [
   'agent/modules/transport/sidecarDefaultModuleDispatcher.ts',
@@ -26,14 +23,7 @@ const sources = [
   'agent/loop/AgentLoop.ts', 'agent/loop/nativeAgentTurnCapabilitiesAdapter.ts',
   'router/RouterRuntime.ts',
 ];
-const sourceSha256: Record<string, string> = {};
-for (const source of sources) {
-  const path = `src/${source}`;
-  const committed = execFileSync('git', ['-C', baseline, 'show', `${sourceCommit}:${path}`]);
-  const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-  sourceSha256[path] = sha(committed);
-  assert.equal(sha(await readFile(join(baseline, path))), sourceSha256[path], path);
-}
+const sourceSha256 = await baselineSourceHashes(baseline, sources.map(source => `src/${source}`));
 const load = (path: string) => import(pathToFileURL(join(baseline, 'src', path)).href);
 const { createSidecarDefaultModuleDispatcher } = await load(sources[0]);
 // Same private-export technique as host-modules: compile in memory, preserving

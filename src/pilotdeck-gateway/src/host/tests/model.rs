@@ -23,7 +23,7 @@ fn oracle() -> JsValue {
         "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
     );
     let sources = value.get("sources").unwrap().as_object().unwrap();
-    assert_eq!(sources.len(), 3);
+    assert_eq!(sources.len(), 650, "#303 exact import closure source count");
     assert!(sources.entries().iter().all(|(_, digest)| {
         digest
             .as_string()

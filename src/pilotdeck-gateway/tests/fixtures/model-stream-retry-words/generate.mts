@@ -20,6 +20,7 @@ const sourceSha256 = await baselineSourceHashes(baseline, [
   STREAM_SOURCE,
   ERRORS_SOURCE,
   ROUTER_SOURCE,
+  'src/model/config/parseModelConfig.ts',
 ]);
 
 const { streamModel } = await import(

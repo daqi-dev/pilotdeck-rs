@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(text(&field(&oracle, "commit")), BASELINE_COMMIT);
         let hashes = field(&oracle, "sourceSha256");
         let hashes = hashes.as_object().expect("sourceSha256");
-        assert_eq!(hashes.len(), 3, "hashed TS source count");
+        assert_eq!(hashes.len(), 650, "#303 exact import closure source count");
         let cases = field(&oracle, "cases");
         assert_eq!(array(&cases).len(), 48);
         for spec in array(&cases) {

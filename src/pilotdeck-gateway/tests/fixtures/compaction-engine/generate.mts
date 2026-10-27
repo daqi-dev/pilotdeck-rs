@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 import { record } from './record.mts';
 
 assert.equal(process.versions.node.split('.')[0],'22');
@@ -27,7 +28,7 @@ const entries=[
 ];
 // This guard compares every src byte to its commit blob (including ignored
 // or assume-unchanged files), not merely Git's tracked-dirty status.
-const binding=bindSourceTree(baseline,commit,git);
+const binding=bindBaseline({ baseline, commit, gitExecutable: git }).provenance;
 const sourceSha256=sourceClosureSha256(baseline,commit,git,entries);
 const output=resolve(process.argv[2]);
 await mkdir(output,{recursive:true});
@@ -35,6 +36,6 @@ await mkdir(output,{recursive:true});
 // enclosing Scratch and checks ownership before deleting its run directory.
 const run=await mkdtemp(join(output,'.run-'));
 const cases=await record(baseline,run);
-assert.deepEqual(bindSourceTree(baseline,commit,git),binding,'baseline changed during recording');
+assert.deepEqual(bindBaseline({ baseline, commit, gitExecutable: git }).provenance,binding,'baseline changed during recording');
 await writeFile(join(output,'oracle.json'),JSON.stringify({sourceCommit:binding.ref,sourceSha256,...cases},null,2)+'\n',{flag:'wx'});
 console.log(JSON.stringify({engine:cases.engineCases.length,strip:cases.stripCases.length,truncate:cases.truncateCases.length,projection:cases.projectionCases.length,manual:cases.manualCases.length}));

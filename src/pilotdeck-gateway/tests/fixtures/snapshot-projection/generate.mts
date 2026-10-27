@@ -1,3 +1,4 @@
+import { baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 //
 // The corpus is produced by the real baseline, not by a reimplementation:
@@ -35,13 +36,7 @@ const sourceFiles = [
   'src/storage/workspaceSnapshot.ts',
   'src/web/server/listProjects.ts',
 ];
-const sourceSha256: Record<string, string> = {};
-for (const path of sourceFiles) {
-  const working = await readFile(join(baseline, path));
-  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
-  assert.deepEqual(working, committed, `${path} differs from ${BASELINE_COMMIT}`);
-  sourceSha256[path] = createHash('sha256').update(committed).digest('hex');
-}
+const sourceSha256 = await baselineSourceHashes(baseline, sourceFiles);
 
 type RemoveImpl = (path: string, options: { recursive: boolean; force: boolean }) => Promise<void>;
 

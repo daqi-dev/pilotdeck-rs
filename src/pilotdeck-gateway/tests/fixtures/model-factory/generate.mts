@@ -8,12 +8,13 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { bindSourceTree, sourceClosureSha256 } from '../../baseline_source_guard.mjs';
+import {sourceClosureSha256} from '../../baseline_source_guard.mjs';
+import { bindBaseline } from '../_shared/generator_guard.mjs';
 assert.ok(process.env.PDRS_BASELINE && process.env.PDRS_GIT && process.argv[2]);
 const baseline = resolve(process.env.PDRS_BASELINE);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(process.env.PDRS_GIT);
-const sourceCommit = bindSourceTree(baseline, commit, git).ref;
+const sourceCommit = bindBaseline({ baseline, commit, gitExecutable: git }).provenance.ref;
 const sourceSha256 = sourceClosureSha256(baseline, commit, git, [
   'src/cli/ProjectRuntimeRegistry.ts', 'src/cli/ProjectRuntimeResourcesBundle.ts',
   'src/cli/ProjectModelRuntimeBundle.ts', 'src/cli/ProjectRouterRuntimeBundle.ts',

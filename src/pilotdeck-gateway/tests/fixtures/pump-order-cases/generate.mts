@@ -8,7 +8,7 @@ import {assertBaseline, baselineSourceHashes} from '../_shared/baseline.mts';
 assert.equal(process.version, 'v22.22.0');
 const root = resolve(process.env.PDRS_BASELINE!), out = resolve(process.argv[2]);
 const sourceCommit = assertBaseline(root);
-const sourceSha256 = await baselineSourceHashes(root, [
+const sourceSha256 = await baselineSourceHashes(root, ['src/session/transcript/InMemoryTranscriptWriter.ts', 'src/permission/index.ts', 'src/cli/pilotdeck-agent-loop-sidecar.ts',
   'src/agent/session/createAgentSession.ts',
   'src/agent/session/AgentSession.ts',
   'src/agent/session/AgentSessionEventRecorder.ts',
