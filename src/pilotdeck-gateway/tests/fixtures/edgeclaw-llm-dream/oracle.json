@@ -2057,6 +2057,348 @@
           }
         ]
       }
+    },
+    {
+      "name": "planDreamClusters#6",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/a.md",
+            "name": "A",
+            "description": "a",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Project/b.md",
+            "name": "B",
+            "description": "b",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\"\\ud800\\\",\\\"clusters\\\":[]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "\ud800",
+          "clusters": []
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster plan",
+            "systemPrompt": "You are the Project Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"A\",\n      \"description\": \"a\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Project/b.md\",\n      \"name\": \"B\",\n      \"description\": \"b\",\n      \"updated_at\": \"U2\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\"\ud800\",\"clusters\":[]}",
+            "parsedResult": {
+              "summary": "\ud800",
+              "clusters": []
+            }
+          }
+        ],
+        "validation": {
+          "kind": "clusters",
+          "result": {
+            "clusters": [],
+            "droppedWarnings": []
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2098",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"a\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"name\\\": \\\"B\\\",\\n      \\\"description\\\": \\\"b\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "planDreamClusters#7",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/a.md",
+            "name": "A",
+            "description": "a",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Project/b.md",
+            "name": "B",
+            "description": "b",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\\"\\udc00\\\",\\\"clusters\\\":[]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "summary": "\udc00",
+          "clusters": []
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster plan",
+            "systemPrompt": "You are the Project Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"A\",\n      \"description\": \"a\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Project/b.md\",\n      \"name\": \"B\",\n      \"description\": \"b\",\n      \"updated_at\": \"U2\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\"\udc00\",\"clusters\":[]}",
+            "parsedResult": {
+              "summary": "\udc00",
+              "clusters": []
+            }
+          }
+        ],
+        "validation": {
+          "kind": "clusters",
+          "result": {
+            "clusters": [],
+            "droppedWarnings": []
+          }
+        },
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2098",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"a\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"name\\\": \\\"B\\\",\\n      \\\"description\\\": \\\"b\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "planDreamClusters#8",
+      "fn": "planDreamClusters",
+      "input": {
+        "kind": "project",
+        "headers": [
+          {
+            "relativePath": "Project/a.md",
+            "name": "A",
+            "description": "a",
+            "updatedAt": "U1"
+          },
+          {
+            "relativePath": "Project/b.md",
+            "name": "B",
+            "description": "b",
+            "updatedAt": "U2"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"summary\\\":\\ud800}\"}}]}"
+        }
+      ],
+      "expected": {
+        "error": {
+          "name": "SyntaxError",
+          "message": "Unexpected token '\ud800', \"{\"summary\":\ud800}\" is not valid JSON"
+        },
+        "debug": [
+          {
+            "requestLabel": "Dream project cluster plan",
+            "systemPrompt": "You are the Project Dream cluster planner for a file-memory system.\n\nYour job is to inspect lightweight header information only and decide which files should be refined together.\n\nRules:\n- Use only the supplied header metadata as evidence.\n- Do not assume full file contents beyond what the header says.\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\n- Return mutually exclusive candidate clusters only.\n- A file may appear in at most one cluster.\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\n- If files are distinct and should remain separate, leave them out of clusters.\n- Files belonging to the same current project is not, by itself, a merge reason.\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\n- Keep reasons concise and specific.\n- Natural-language output should follow the dominant language already visible in the supplied headers.\n- Return valid JSON only.\n\nUse this exact JSON shape:\n{\n  \"summary\": \"short planning summary\",\n  \"clusters\": [\n    {\n      \"member_relative_paths\": [\"Project/a.md\", \"Project/b.md\"],\n      \"reason\": \"why these files should be refined together\"\n    }\n  ]\n}",
+            "userPrompt": "{\n  \"category\": \"project\",\n  \"headers\": [\n    {\n      \"relative_path\": \"Project/a.md\",\n      \"name\": \"A\",\n      \"description\": \"a\",\n      \"updated_at\": \"U1\"\n    },\n    {\n      \"relative_path\": \"Project/b.md\",\n      \"name\": \"B\",\n      \"description\": \"b\",\n      \"updated_at\": \"U2\"\n    }\n  ]\n}",
+            "rawResponse": "{\"summary\":\ud800}",
+            "errored": true,
+            "timedOut": false,
+            "errorMessage": "Unexpected token '\ud800', \"{\"summary\":\ud800}\" is not valid JSON"
+          }
+        ],
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "2098",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You are the Project Dream cluster planner for a file-memory system.\\n\\nYour job is to inspect lightweight header information only and decide which files should be refined together.\\n\\nRules:\\n- Use only the supplied header metadata as evidence.\\n- Do not assume full file contents beyond what the header says.\\n- Project memory files capture durable project facts such as project definition, scope, goals, blockers, risks, and important progress.\\n- Return mutually exclusive candidate clusters only.\\n- A file may appear in at most one cluster.\\n- Only create a cluster when at least two files likely overlap, conflict, or should be merged into one cleaner memory file.\\n- If files are distinct and should remain separate, leave them out of clusters.\\n- Files belonging to the same current project is not, by itself, a merge reason.\\n- Shared workspace, shared project membership, shared domain, or shared topic is not enough unless the headers show concrete semantic overlap, fact conflict, rule duplication, or obvious consolidation value.\\n- Each cluster reason must name the specific overlap, conflict, repeated rule, repeated fact, or consolidation topic that justifies refinement.\\n- Keep reasons concise and specific.\\n- Natural-language output should follow the dominant language already visible in the supplied headers.\\n- Return valid JSON only.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"summary\\\": \\\"short planning summary\\\",\\n  \\\"clusters\\\": [\\n    {\\n      \\\"member_relative_paths\\\": [\\\"Project/a.md\\\", \\\"Project/b.md\\\"],\\n      \\\"reason\\\": \\\"why these files should be refined together\\\"\\n    }\\n  ]\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"category\\\": \\\"project\\\",\\n  \\\"headers\\\": [\\n    {\\n      \\\"relative_path\\\": \\\"Project/a.md\\\",\\n      \\\"name\\\": \\\"A\\\",\\n      \\\"description\\\": \\\"a\\\",\\n      \\\"updated_at\\\": \\\"U1\\\"\\n    },\\n    {\\n      \\\"relative_path\\\": \\\"Project/b.md\\\",\\n      \\\"name\\\": \\\"B\\\",\\n      \\\"description\\\": \\\"b\\\",\\n      \\\"updated_at\\\": \\\"U2\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewriteUserProfile#7",
+      "fn": "rewriteUserProfile",
+      "input": {
+        "existingProfile": null,
+        "candidates": [
+          {
+            "type": "user",
+            "description": "person",
+            "body": "person"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"identity_background_markdown\\\":[\\\"alpha ## beta\\\"]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "type": "user",
+          "scope": "global",
+          "name": "user-profile",
+          "description": "身份背景 alpha beta",
+          "body": "## 身份背景\n- alpha beta\n",
+          "profile": "身份背景 alpha beta",
+          "relationships": [
+            "身份背景 alpha beta"
+          ]
+        },
+        "debug": [
+          {
+            "requestLabel": "User profile rewrite",
+            "systemPrompt": "You rewrite the single \"身份背景\" section of a global user profile for a conversational memory system.\n\nRules:\n- Return JSON only.\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\n- Keep only durable personal identity/background information that should persist across future sessions.\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\n- Keep the language aligned with the user's language in the incoming content.\n- \"identity_background_markdown\" must contain only the markdown content that belongs under the \"## 身份背景\" heading.\n- Do not include the heading itself.\n- Prefer concise bullet-list markdown when possible.\n\nUse this exact JSON shape:\n{\n  \"identity_background_markdown\": \"- ...\"\n}",
+            "userPrompt": "{\n  \"existing_profile_markdown\": null,\n  \"incoming_user_notes\": [\n    {\n      \"description\": \"person\",\n      \"note_markdown\": \"person\",\n      \"captured_at\": \"\",\n      \"source_session_key\": \"\"\n    }\n  ]\n}",
+            "rawResponse": "{\"identity_background_markdown\":[\"alpha ## beta\"]}",
+            "parsedResult": {
+              "identity_background_markdown": [
+                "alpha ## beta"
+              ]
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1716",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You rewrite the single \\\"身份背景\\\" section of a global user profile for a conversational memory system.\\n\\nRules:\\n- Return JSON only.\\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\\n- Keep only durable personal identity/background information that should persist across future sessions.\\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\\n- Keep the language aligned with the user's language in the incoming content.\\n- \\\"identity_background_markdown\\\" must contain only the markdown content that belongs under the \\\"## 身份背景\\\" heading.\\n- Do not include the heading itself.\\n- Prefer concise bullet-list markdown when possible.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"identity_background_markdown\\\": \\\"- ...\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"existing_profile_markdown\\\": null,\\n  \\\"incoming_user_notes\\\": [\\n    {\\n      \\\"description\\\": \\\"person\\\",\\n      \\\"note_markdown\\\": \\\"person\\\",\\n      \\\"captured_at\\\": \\\"\\\",\\n      \\\"source_session_key\\\": \\\"\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "rewriteUserProfile#8",
+      "fn": "rewriteUserProfile",
+      "input": {
+        "existingProfile": null,
+        "candidates": [
+          {
+            "type": "user",
+            "description": "person",
+            "body": "person"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "status": 200,
+          "body": "{\"choices\":[{\"message\":{\"content\":\"{\\\"identity_background_markdown\\\":[\\\"alpha - beta\\\"]}\"}}]}"
+        }
+      ],
+      "expected": {
+        "result": {
+          "type": "user",
+          "scope": "global",
+          "name": "user-profile",
+          "description": "身份背景 alpha beta",
+          "body": "## 身份背景\n- alpha beta\n",
+          "profile": "身份背景 alpha beta",
+          "relationships": [
+            "身份背景 alpha beta"
+          ]
+        },
+        "debug": [
+          {
+            "requestLabel": "User profile rewrite",
+            "systemPrompt": "You rewrite the single \"身份背景\" section of a global user profile for a conversational memory system.\n\nRules:\n- Return JSON only.\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\n- Keep only durable personal identity/background information that should persist across future sessions.\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\n- Keep the language aligned with the user's language in the incoming content.\n- \"identity_background_markdown\" must contain only the markdown content that belongs under the \"## 身份背景\" heading.\n- Do not include the heading itself.\n- Prefer concise bullet-list markdown when possible.\n\nUse this exact JSON shape:\n{\n  \"identity_background_markdown\": \"- ...\"\n}",
+            "userPrompt": "{\n  \"existing_profile_markdown\": null,\n  \"incoming_user_notes\": [\n    {\n      \"description\": \"person\",\n      \"note_markdown\": \"person\",\n      \"captured_at\": \"\",\n      \"source_session_key\": \"\"\n    }\n  ]\n}",
+            "rawResponse": "{\"identity_background_markdown\":[\"alpha - beta\"]}",
+            "parsedResult": {
+              "identity_background_markdown": [
+                "alpha - beta"
+              ]
+            }
+          }
+        ],
+        "validation": null,
+        "requests": [
+          {
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "headers": {
+              "accept": "*/*",
+              "accept-encoding": "gzip, deflate",
+              "accept-language": "*",
+              "authorization": "Bearer fixture-key",
+              "connection": "keep-alive",
+              "content-length": "1716",
+              "content-type": "application/json",
+              "host": "$HOST",
+              "sec-fetch-mode": "cors",
+              "user-agent": "node"
+            },
+            "body": "{\"model\":\"m\",\"stream\":false,\"response_format\":{\"type\":\"json_object\"},\"messages\":[{\"role\":\"system\",\"content\":\"You rewrite the single \\\"身份背景\\\" section of a global user profile for a conversational memory system.\\n\\nRules:\\n- Return JSON only.\\n- The existing profile markdown is the previous draft. The incoming user notes are the newest evidence.\\n- Rewrite the section from scratch. Do not append blindly, and do not keep duplicate or near-duplicate facts just because they already exist.\\n- Keep only durable personal identity/background information that should persist across future sessions.\\n- If old profile content conflicts with newer, clearer incoming evidence, prefer the newer evidence and rewrite the section accordingly.\\n- If the incoming evidence only describes reply preferences, formatting habits, style choices, language choices, file/tool boundaries, or project collaboration rules, do not include them in the rewritten section.\\n- Do not include project progress, project-specific collaboration rules, deadlines, blockers, or temporary tasks.\\n- Keep the language aligned with the user's language in the incoming content.\\n- \\\"identity_background_markdown\\\" must contain only the markdown content that belongs under the \\\"## 身份背景\\\" heading.\\n- Do not include the heading itself.\\n- Prefer concise bullet-list markdown when possible.\\n\\nUse this exact JSON shape:\\n{\\n  \\\"identity_background_markdown\\\": \\\"- ...\\\"\\n}\"},{\"role\":\"user\",\"content\":\"{\\n  \\\"existing_profile_markdown\\\": null,\\n  \\\"incoming_user_notes\\\": [\\n    {\\n      \\\"description\\\": \\\"person\\\",\\n      \\\"note_markdown\\\": \\\"person\\\",\\n      \\\"captured_at\\\": \\\"\\\",\\n      \\\"source_session_key\\\": \\\"\\\"\\n    }\\n  ]\\n}\"}]}",
+            "at": 0
+          }
+        ]
+      }
     }
   ]
 }
