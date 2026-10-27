@@ -4,10 +4,18 @@ from pathlib import Path
 
 from common import SCRIPT
 
+# #933 mock-gateway scenarios append exactly this rule after (deny network*):
+# the apparatus-owned loopback port is the only network surface they get. The
+# host literal must be "localhost" ("127.0.0.1" makes sandbox-exec reject the
+# profile: host must be * or localhost; verified by the D0-pr2 probe).
+MOCK_GATEWAY_ALLOW = '(allow network-outbound (remote ip "localhost:28999"))'
 
-def sandbox_profile(runtime, baseline, binary, side):
+
+def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False):
     if side not in ('ts', 'rust'):
         raise ValueError('unknown sandbox side')
+    if not isinstance(mock_gateway, bool):
+        raise ValueError('mock_gateway must be a boolean')
     runtime, baseline, binary = Path(runtime), Path(baseline), Path(binary)
     # Rust has no Homebrew or baseline access. System libraries are required by
     # native macOS executables; an unsupported external dylib fails closed.
@@ -41,4 +49,8 @@ def sandbox_profile(runtime, baseline, binary, side):
              '(allow file-read* file-write* (literal "/dev/null") (literal "/dev/stdin") (literal "/dev/stdout") (literal "/dev/stderr"))',
              '(allow process-exec ' + item('literal', binary) + ')',
              '(deny network*)', '(deny process-fork)']
+    if mock_gateway:
+        # Probe-verified: deny precedes route lookup, so this opens exactly the
+        # 28999 outbound path; 18789/other ports/Unix sockets/listen stay EPERM.
+        rules.insert(rules.index('(deny network*)') + 1, MOCK_GATEWAY_ALLOW)
     return '\n'.join(rules) + '\n'

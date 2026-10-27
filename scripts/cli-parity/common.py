@@ -16,6 +16,9 @@ SCRIPT = Path(__file__).resolve().parent
 HEAD = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
 LOCK = Path('/tmp/pdrs-parity.lock')
 TOKEN = 'd0-fixture-not-a-secret'
+# #933: the only loopback port mock-gateway scenarios may reach. Matches the
+# policy.py allow rule and the environment() gateway URLs; never 18789.
+MOCK_PORT = 28999
 DIRS = ('home', 'pilot', 'project', 'tmp', 'bin', 'xdg-config', 'xdg-cache', 'xdg-data', 'xdg-state')
 FILES = {'pilot/pilotdeck.yaml': b'schemaVersion: 1\n', 'project/keep.txt': b'D0 fixture\x00\xff\n',
          'openssl.cnf': b''}
@@ -44,6 +47,22 @@ def per_stream_scenarios(scenarios):
             raise Blocked(f"apparatus.stream-order: {scenario['id']}: streamOrderReason must be a nonempty string")
         declared.add(scenario['id'])
     return declared
+
+
+def mock_gateway_scenarios(scenarios):
+    """Validate the #933 mock-gateway marker before any profile is relaxed.
+
+    The marker must be exactly the boolean True: a truthy string or 1 would
+    silently widen which scenarios get the loopback allow rule.
+    """
+    marked = set()
+    for scenario in scenarios:
+        if 'mockGateway' not in scenario:
+            continue
+        if scenario['mockGateway'] is not True:
+            raise Blocked(f"apparatus.mock-gateway: {scenario['id']}: mockGateway must be the boolean True")
+        marked.add(scenario['id'])
+    return marked
 
 
 # 已启动、尚未被 stop_group 证实全部停止的进程组（pgid）。锁是否可释放只看它是否为空，不看异常类型。

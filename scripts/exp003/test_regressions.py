@@ -21,8 +21,8 @@ spec.loader.exec_module(run)
 
 class ReviewRegressions(unittest.TestCase):
     def test_each_missing_artifact_is_rejected_before_evidence_or_processes(self):
-        artifacts = ('dist/src/cli/pilotdeck.js', 'node_modules/tsx/dist/loader.mjs',
-                     'ui/server/index.js', 'dist/src/gateway/client/GatewayWsClient.js')
+        # Single source of truth: the admission tuple lives in run.py (#245).
+        artifacts = run.REQUIRED_BASELINE_FILES
         for missing in artifacts:
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
                 directory = Path(directory)

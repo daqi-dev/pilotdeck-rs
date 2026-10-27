@@ -10,14 +10,21 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (Blocked, HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, digest_plain, read_plain,
-                    environment, env_summary, hashes, initial_tree, per_stream_scenarios, snapshot, staged_skills_identity)
+from common import (Blocked, HEAD, MOCK_PORT, OPENSSL_CONFIG, SCRIPT, SCENARIOS, TOKEN, digest_plain, read_plain,
+                    environment, env_summary, hashes, initial_tree, mock_gateway_scenarios, per_stream_scenarios,
+                    snapshot, staged_skills_identity)
 from policy import sandbox_profile
 
 RECORDING_ORIGIN = 'live-os-sandbox'
 PENDING = 'PENDING-TS-CALIBRATION'
 PROBE_CHECKS = ('homeMatches', 'outsideReadDenied', 'outsideWriteDenied', 'listenDenied',
                 'connectDenied', 'childDenied', 'runtimeWritable', 'outsideMetadataDenied', 'privateReadDenied')
+# #933: the relaxed mock profile must prove these five facts about itself.
+GATEWAY_PROBE_CHECKS = ('connectAllowed', 'connectDefaultGatewayDenied', 'connectOtherDenied',
+                        'connectUnixDenied', 'listenDenied')
+# The probe reports the kernel error code for each denial; only the allowed
+# port is a boolean.
+GATEWAY_DENIAL_CODES = ('EPERM', 'EACCES')
 SQLITE_WARNING = re.compile(
     rb'\A\(node:[0-9]+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n'
     rb'\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n')
@@ -99,6 +106,7 @@ def load_round(path):
             errors.append(rule)
     try:
         per_stream_scenarios(SCENARIOS)
+        mock_ids = mock_gateway_scenarios(SCENARIOS)
         plain(path, directory=True)
         plain(path / 'cases', directory=True)
         require({p.name for p in path.iterdir()} == {'round.json', 'cases'}, 'round.artifact-members')
@@ -172,6 +180,36 @@ def load_round(path):
                 'round.profile-binding')
         probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts')
         require(isolation['probeProfileSha256'] == hashlib.sha256(probe_policy.encode()).hexdigest(), 'round.probe-profile')
+        # #933 mock-gateway evidence: present exactly when the registry marks scenarios.
+        mock = run.get('mockIsolation')
+        require((mock is not None) == bool(mock_ids), 'round.mock-gateway-presence')
+        if mock is not None:
+            require(isinstance(mock, dict) and mock['status'] == 'PASS' and mock['errors'] == []
+                    and mock['exitCode'] == 0, 'round.mock-isolation')
+            mock_policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'], mock_gateway=True)
+            require(mock['profileText'] == mock_policy
+                    and mock['profileSha256'] == hashlib.sha256(mock_policy.encode()).hexdigest(), 'round.mock-profile-binding')
+            mock_probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts', mock_gateway=True)
+            require(mock['probeProfileSha256'] == hashlib.sha256(mock_probe_policy.encode()).hexdigest(), 'round.mock-probe-profile')
+            probe = mock['gatewayProbe']
+            require(probe.get('connectAllowed') is True
+                    and all(probe.get(key) in GATEWAY_DENIAL_CODES
+                            for key in GATEWAY_PROBE_CHECKS[1:]), 'round.gateway-probe')
+            require(mock['audit'] == {'allStopped': True, 'remaining': [], 'errors': []}
+                    and mock.get('probeCleanup') == {'unixSocketRemoved': True}, 'round.mock-probe-cleanup')
+            process = mock['mockProcess']
+            require(type(process['pid']) is int and process['pid'] > 0
+                    and process['argv'] == [node['path'], str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)]
+                    and process['token'] == {'redacted': True, 'length': len(TOKEN),
+                                             'sha256': hashlib.sha256(TOKEN.encode()).hexdigest()}, 'round.mock-process')
+            if run['side'] == 'rust':
+                denial = mock['nodeExec']
+                require(denial['denied'] is True and denial['status'] == 'DONE' and denial['timedOut'] is False
+                        and type(denial['exitCode']) is int and denial['exitCode'] != 0
+                        and denial['stdoutHex'] == ''
+                        and b'execvp' in bytes.fromhex(denial['stderrHex'])
+                        and any(s in bytes.fromhex(denial['stderrHex']) for s in (b'Operation not permitted', b'Permission denied'))
+                        and denial['audit'] == {'allStopped': True, 'remaining': [], 'errors': []}, 'round.mock-node-exec')
         if run['side'] == 'rust':
             denial = isolation['nodeExec']
             require(denial['denied'] is True and denial['status'] == 'DONE' and denial['timedOut'] is False
@@ -200,8 +238,9 @@ def load_round(path):
             if run['side'] == 'ts':
                 command.append(str(Path(baseline['path']) / 'dist/src/cli/pilotdeck.js'))
             require(record['executedArgv'] == command + scenario['argv'], f'{name}.executed-argv')
-            require(record['sandboxArgv'] == ['/usr/bin/sandbox-exec', '-f', isolation['profilePath'], *command, *scenario['argv']]
-                    and record['profileSha256'] == isolation['profileSha256'], f'{name}.sandbox-binding')
+            binding = mock if (mock is not None and scenario['id'] in mock_ids) else isolation
+            require(record['sandboxArgv'] == ['/usr/bin/sandbox-exec', '-f', binding['profilePath'], *command, *scenario['argv']]
+                    and record['profileSha256'] == binding['profileSha256'], f'{name}.sandbox-binding')
             require(record['stdinHex'] == scenario['stdinHex'], f'{name}.stdin')
             require(record['cwd'] == str(runtime / 'project'), f'{name}.cwd')
             require(record['env'] == env_summary(environment(runtime, scenario)), f'{name}.env')
@@ -246,6 +285,11 @@ def compare(left, right, expected_rust=None):
         per_stream = per_stream_scenarios(SCENARIOS)
     except Blocked as error:
         return {'status': 'BLOCKED', 'failures': [{'rule': 'apparatus.stream-order', 'error': str(error)}],
+                'scenarios': 0, 'scope': 'D0-pr1 calibration only'}
+    try:
+        mock_gateway_scenarios(SCENARIOS)
+    except Blocked as error:
+        return {'status': 'BLOCKED', 'failures': [{'rule': 'apparatus.mock-gateway', 'error': str(error)}],
                 'scenarios': 0, 'scope': 'D0-pr1 calibration only'}
     a, ac, ae = load_round(Path(left))
     b, bc, be = load_round(Path(right))

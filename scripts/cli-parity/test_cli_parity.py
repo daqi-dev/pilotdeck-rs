@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -16,12 +18,12 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, baseline_path, environment, env_summary, fixture,
-                    digest_plain, read_plain, hashes, initial_tree, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
-from compare import coalesce, compare, comparison_view, expected_stdout, load_round, PROBE_CHECKS
+from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, MOCK_PORT, OPENSSL_CONFIG, SCRIPT, SCENARIOS, TOKEN, baseline_path, environment, env_summary, fixture,
+                    digest_plain, read_plain, hashes, initial_tree, mock_gateway_scenarios, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
+from compare import coalesce, compare, comparison_view, expected_stdout, load_round, GATEWAY_PROBE_CHECKS, PROBE_CHECKS
 from controls import run_controls
 from host_negative_controls import check_exec_control, main as host_control_main
-from run_round import baseline_identity, capture, check_budget, main, rust_isolation, sandbox_profile, stage_rust
+from run_round import baseline_identity, capture, check_budget, ensure_loopback_free, main, mock_gateway_preflight, run_round, rust_isolation, sandbox_profile, stage_rust
 
 
 def bind_policy(run):
@@ -35,13 +37,27 @@ def bind_policy(run):
         Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts').encode()).hexdigest()
 
 
+def bind_mock_policy(run):
+    """#933: bind the relaxed mock profile the same way bind_policy binds the base."""
+    p = run['provenance']
+    iso = run['mockIsolation']
+    executed = p['stagedExecutable'] if run['side'] == 'rust' else p['executable']
+    iso['profileText'] = sandbox_profile(Path(run['runtime']), Path(p['baseline']['path']), executed['path'], run['side'],
+                                         mock_gateway=True)
+    iso['profileSha256'] = hashlib.sha256(iso['profileText'].encode()).hexdigest()
+    iso['profilePath'] = '/synthetic/' + run['side'] + '-mock.sb'
+    iso['probeProfileSha256'] = hashlib.sha256(sandbox_profile(
+        Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts', mock_gateway=True).encode()).hexdigest()
+
+
 # These legacy contract fixtures always target the default registry, even when
 # this test process is launched with the chat-search suite selected.
 REGISTERED_SCENARIOS = json.loads((SCRIPT / 'scenarios.json').read_text())
 CHAT_SEARCH_SCENARIOS = json.loads((SCRIPT / 'chat-search.json').read_text())
 CALIBRATED_SCENARIOS = [s for s in REGISTERED_SCENARIOS if s.get('oracle') != 'PENDING-TS-CALIBRATION']
 CORE_SCENARIOS = REGISTERED_SCENARIOS[:13]
-SKILLS_SCENARIOS = REGISTERED_SCENARIOS[13:]
+SKILLS_SCENARIOS = REGISTERED_SCENARIOS[13:29]
+MOCK_GATEWAY_SCENARIOS = [s for s in REGISTERED_SCENARIOS if s.get('mockGateway') is True]
 CALIBRATED_SKILLS_SCENARIOS = [s for s in SKILLS_SCENARIOS if s in CALIBRATED_SCENARIOS]
 PENDING_SCENARIOS = [s for s in REGISTERED_SCENARIOS if s.get('oracle') == 'PENDING-TS-CALIBRATION']
 
@@ -69,13 +85,19 @@ def as_rust(path):
         'stderrHex': b'sandbox-exec: execvp(): Operation not permitted'.hex(),
         'audit': {'allStopped': True, 'remaining': [], 'errors': []}}
     bind_policy(run)
+    if 'mockIsolation' in run:
+        # The rust-mock profile must deny Node exec exactly like the rust base.
+        run['mockIsolation']['nodeExec'] = {**run['isolation']['nodeExec']}
+        bind_mock_policy(run)
     save(path / 'round.json', run)
+    mock_ids = {s['id'] for s in SCENARIOS if s.get('mockGateway') is True}
     for scenario in SCENARIOS:
         p = path / 'cases' / scenario['id'] / 'record.json'
         row = json.loads(p.read_text())
         row['executedArgv'] = [staged] + scenario['argv']
-        row['sandboxArgv'] = ['/usr/bin/sandbox-exec', '-f', run['isolation']['profilePath'], *row['executedArgv']]
-        row['profileSha256'] = run['isolation']['profileSha256']
+        binding = run['mockIsolation'] if scenario['id'] in mock_ids else run['isolation']
+        row['sandboxArgv'] = ['/usr/bin/sandbox-exec', '-f', binding['profilePath'], *row['executedArgv']]
+        row['profileSha256'] = binding['profileSha256']
         save(p, row)
     return expected
 
@@ -106,8 +128,19 @@ def synthetic_round(path, runtime, scenario_fixtures=False):
                               'path': '/synthetic/baseline', 'files': {'src/fixture.ts': '0' * 64},
                               'trees': {name: '0' * 64 for name in ('src', 'dist', 'packages', 'node_modules', 'skills')}}}}
     run['isolation']['probe'].update({key: True for key in PROBE_CHECKS})
+    if any(s.get('mockGateway') is True for s in SCENARIOS):
+        run['mockIsolation'] = {'status': 'PASS', 'errors': [], 'exitCode': 0,
+                                 'audit': {'allStopped': True, 'remaining': [], 'errors': []},
+                                 'probeCleanup': {'unixSocketRemoved': True},
+                                 'gatewayProbe': {'connectAllowed': True, **dict.fromkeys(GATEWAY_PROBE_CHECKS[1:], 'EPERM')},
+                                 'mockProcess': {'pid': 456,
+                                                  'argv': ['/synthetic/unit-test-only', str(SCRIPT / 'mock_gateway.mjs'), str(MOCK_PORT)],
+                                                  'token': {'redacted': True, 'length': len(TOKEN),
+                                                            'sha256': hashlib.sha256(TOKEN.encode()).hexdigest()}}}
+        bind_mock_policy(run)
     bind_policy(run)
     save(path / 'round.json', run)
+    mock_ids = {s['id'] for s in SCENARIOS if s.get('mockGateway') is True}
     for scenario in SCENARIOS:
         folder = path / 'cases' / scenario['id']
         folder.mkdir()
@@ -128,12 +161,13 @@ def synthetic_round(path, runtime, scenario_fixtures=False):
             if data:
                 events.append({'stream': stream, 'hex': data.hex()})
         save(folder / 'events.json', events)
+        binding = run['mockIsolation'] if scenario['id'] in mock_ids else run['isolation']
         save(folder / 'record.json', {'status': 'DONE', 'timedOut': False, 'exitCode': scenario.get('exit', 1),
              'argv': scenario['argv'], 'stdinHex': scenario['stdinHex'], 'cwd': str(runtime / 'project'),
              'executedArgv': ['/synthetic/unit-test-only', '/synthetic/baseline/dist/src/cli/pilotdeck.js'] + scenario['argv'],
-             'sandboxArgv': ['/usr/bin/sandbox-exec', '-f', run['isolation']['profilePath'], '/synthetic/unit-test-only',
+             'sandboxArgv': ['/usr/bin/sandbox-exec', '-f', binding['profilePath'], '/synthetic/unit-test-only',
                              '/synthetic/baseline/dist/src/cli/pilotdeck.js'] + scenario['argv'],
-             'profileSha256': run['isolation']['profileSha256'],
+             'profileSha256': binding['profileSha256'],
              'env': env_summary(environment(runtime, scenario)), 'pid': 123,
              'audit': {'allStopped': True, 'remaining': [], 'errors': []},
              'processTree': [{'pid': 123, 'ppid': 1, 'pgid': 123, 'state': 'Z', 'command': 'synthetic'}]})
@@ -694,22 +728,29 @@ class ContractTests(unittest.TestCase):
         for victim in paths:
             with self.subTest(victim=victim):
                 original = victim.read_bytes()
+                mode = stat.S_IMODE(victim.lstat().st_mode)
                 elsewhere = self.root / 'same-bytes'
                 elsewhere.write_bytes(original)
                 swapped = False
-                def swap(path, flags, *args, **kwargs):
-                    nonlocal swapped
-                    if Path(path) == victim and not swapped:
-                        victim.unlink()
-                        victim.symlink_to(elsewhere)
-                        swapped = True
-                    return real_open(path, flags, *args, **kwargs)
-                with patch('common.os.open', side_effect=swap):
-                    result = compare(source, target, expected)
-                self.assertTrue(swapped)
-                self.assertEqual(result['status'], 'FAIL', result)
-                victim.unlink()
-                victim.write_bytes(original)
+                try:
+                    def swap(path, flags, *args, **kwargs):
+                        nonlocal swapped
+                        if Path(path) == victim and not swapped:
+                            victim.unlink()
+                            victim.symlink_to(elsewhere)
+                            swapped = True
+                        return real_open(path, flags, *args, **kwargs)
+                    with patch('common.os.open', side_effect=swap):
+                        result = compare(source, target, expected)
+                    self.assertTrue(swapped)
+                    self.assertEqual(result['status'], 'FAIL', result)
+                finally:
+                    # #245: restore content AND mode inside try/finally, so a
+                    # subTest failure cannot leave damage that weakens the
+                    # refusal criteria of every later victim.
+                    victim.unlink(missing_ok=True)
+                    victim.write_bytes(original)
+                    os.chmod(victim, mode)
 
     def test_offline_compare_revalidates_staged_skills_manifest_and_disk(self):
         source = self.source()
@@ -772,9 +813,20 @@ class ContractTests(unittest.TestCase):
         self.assertIn('pending.oracle.pending', [r['rule'] for r in result['failures']])
 
     def test_registry_has_calibrated_core_and_skills_batch(self):
-        self.assertEqual(len(CALIBRATED_SCENARIOS), 29)
-        self.assertEqual(len(REGISTERED_SCENARIOS), 29)
+        self.assertEqual(len(CALIBRATED_SCENARIOS), 30)
+        self.assertEqual(len(REGISTERED_SCENARIOS), 30)
+        # #933: the mock-gateway batch is calibrated from two real TS rounds
+        # (run A, ts-1 == ts-2); no scenario may stay PENDING, and the mock
+        # scenario's oracle never comes from Rust output.
         self.assertEqual(PENDING_SCENARIOS, [])
+        self.assertEqual([s['id'] for s in MOCK_GATEWAY_SCENARIOS], ['sessions-list-mock'])
+        mock_scenario = MOCK_GATEWAY_SCENARIOS[0]
+        self.assertEqual(mock_scenario['argv'], ['sessions', 'list'])
+        self.assertTrue(mock_scenario['token'])
+        self.assertEqual(mock_scenario['exit'], 0)
+        self.assertIn('"d0-mock-session-1"', mock_scenario['stdout'])
+        self.assertEqual(mock_scenario['stderr'], '')
+        self.assertNotIn('oracle', mock_scenario)
         for scenario in CALIBRATED_SCENARIOS:
             self.assertIn('exit', scenario)
             self.assertTrue('stderr' in scenario or 'stderrSha256' in scenario)
@@ -791,22 +843,244 @@ class ContractTests(unittest.TestCase):
             self.assertNotIn('.', removals)
             self.assertFalse((before.keys() - set(removals)) & additions.keys())
         self.assertEqual(sum('stdoutRuntime' in s for s in SKILLS_SCENARIOS), 13)
-        self.assertEqual(per_stream_scenarios(REGISTERED_SCENARIOS), {'legacy-skills-mixed'})
+        self.assertEqual(per_stream_scenarios(REGISTERED_SCENARIOS), {'legacy-skills-mixed', 'legacy-skills-current'})
         for scenario in CALIBRATED_SKILLS_SCENARIOS:
             if scenario['id'] == 'legacy-skills-mixed':
                 self.assertIn('d0-final/ts-1/cases/legacy-skills-mixed/events.json', scenario['streamOrderReason'])
                 self.assertIn('d0-final/ts-2/cases/legacy-skills-mixed/events.json', scenario['streamOrderReason'])
+            elif scenario['id'] == 'legacy-skills-current':
+                # #933 batch: the same recorder race as legacy-skills-mixed
+                # flipped this scenario's observed interleave under load.
+                self.assertIn('20261026-issue-933/final-round/ts-1/cases/legacy-skills-current/events.json',
+                              scenario['streamOrderReason'])
+                self.assertIn('20261026-issue-933/final-round/ts-2/cases/legacy-skills-current/events.json',
+                              scenario['streamOrderReason'])
             else:
                 self.assertNotIn('streamOrder', scenario)
                 self.assertNotIn('streamOrderReason', scenario)
                 expected_streams = 2 if scenario['id'] == 'legacy-skills-current' else 1
                 self.assertEqual(sum(bool(scenario[channel]) for channel in ('stdout', 'stderr')), expected_streams)
 
+    # #933 D0-pr2: mock gateway relaxation — marker, profile, evidence, lifecycle.
+
+    @contextmanager
+    def mock_gateway_rounds(self, side):
+        cases = [{'id': 'plain', 'argv': [], 'stdinHex': '', 'token': False, 'exit': 1,
+                  'stdout': 'migration summary\n', 'stderr': 'configuration error\n'},
+                 {'id': 'marked', 'argv': ['sessions', 'list'], 'stdinHex': '', 'token': True,
+                  'mockGateway': True, 'exit': 0, 'stdout': '[\n  "sessions"\n]\n', 'stderr': ''}]
+        with patch('compare.SCENARIOS', cases), patch.object(sys.modules[__name__], 'SCENARIOS', cases):
+            source, target = self.root / (side + '-mock-source'), self.root / (side + '-mock-target')
+            synthetic_round(source, self.root / 'mock-runtime')
+            shutil.copytree(source, target)
+            expected = as_rust(target) if side == 'rust' else None
+            yield source, target, expected
+
+    def test_mock_gateway_marker_is_strict_boolean_true(self):
+        # #933-1: a truthy-but-not-True marker must not widen the relaxation.
+        for bad in ('true', 'True', 'yes', 1, ['true'], {'marked': True}):
+            with self.subTest(bad=bad):
+                # Message-carrying refusal: the #933 negative controls bind to
+                # this assertion, so it must not fail message-less.
+                try:
+                    mock_gateway_scenarios([{'id': 'marked', 'mockGateway': bad}])
+                except Blocked as error:
+                    self.assertIn('apparatus.mock-gateway', str(error),
+                                  f'#933-1: marker {bad!r} must be refused as an apparatus error')
+                else:
+                    self.fail(f'#933-1: marker {bad!r} must be refused, not accepted')
+        self.assertEqual(mock_gateway_scenarios([{'id': 'a'}, {'id': 'b', 'mockGateway': True}]), {'b'})
+        self.assertEqual(mock_gateway_scenarios([{'id': 'a'}]), set())
+        with patch('compare.SCENARIOS', [{'id': 'marked', 'mockGateway': 'true'}]), \
+             patch('compare.load_round') as load:
+            result = compare(self.root / 'left', self.root / 'right')
+        self.assertEqual(result['status'], 'BLOCKED')
+        self.assertEqual(result['failures'][0]['rule'], 'apparatus.mock-gateway')
+        load.assert_not_called()
+
+    def test_mock_profile_appends_only_the_loopback_allow(self):
+        # #933-2: the base profiles stay byte-identical to the previous batch.
+        runtime, baseline = Path('/synthetic/runtime'), Path('/synthetic/baseline')
+        ts = sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts')
+        rust = sandbox_profile(runtime, baseline, '/synthetic/rust-stage/bin/pilotdeck', 'rust')
+        self.assertEqual(hashlib.sha256(ts.encode()).hexdigest(),
+                         '417478336777c56d5f38c7b64d399246fe96f5a539c546c1a4059d0bd202e95c',
+                         '#933-2: the base TS profile changed')
+        self.assertEqual(hashlib.sha256(rust.encode()).hexdigest(),
+                         'bed18fec0f5b10d0011f068799f1643f6c82d3d0776f3872375f94e92124b86e',
+                         '#933-2: the base Rust profile changed')
+        relax = '(allow network-outbound (remote ip "localhost:28999"))\n'
+        for side, base in (('ts', ts), ('rust', rust)):
+            binary = '/synthetic/unit-test-only' if side == 'ts' else '/synthetic/rust-stage/bin/pilotdeck'
+            with self.subTest(side=side):
+                mock = sandbox_profile(runtime, baseline, binary, side, mock_gateway=True)
+                self.assertEqual(mock, base.replace('(deny network*)\n', '(deny network*)\n' + relax),
+                                 '#933-2: exactly one allow rule, directly after the network deny')
+                self.assertEqual(mock.count('network-outbound'), 1)
+                self.assertNotIn('18789', mock)
+        self.assertEqual(sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts', mock_gateway=False), ts,
+                         '#933-2: the default profile must not carry the allow rule')
+        with self.assertRaisesRegex(ValueError, 'boolean'):
+            sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts', mock_gateway='true')
+
+    def test_mock_scenario_binds_mock_profile_and_others_base(self):
+        # #933-3: each scenario must be bound to its own profile evidence.
+        for side in ('ts', 'rust'):
+            with self.subTest(side=side), self.mock_gateway_rounds(side) as (source, target, expected):
+                self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+                run = json.loads((target / 'round.json').read_text())
+                for name, wrong in (('marked', run['isolation']), ('plain', run['mockIsolation'])):
+                    with self.subTest(case=name):
+                        path = target / 'cases' / name / 'record.json'
+                        original = path.read_bytes()
+                        record = json.loads(original)
+                        record['sandboxArgv'] = ['/usr/bin/sandbox-exec', '-f', wrong['profilePath'],
+                                                 *record['executedArgv']]
+                        record['profileSha256'] = wrong['profileSha256']
+                        save(path, record)
+                        self.assertIn(f'{name}.sandbox-binding',
+                                     [r['rule'] for r in compare(source, target, expected)['failures']],
+                                     f'#933-3: {name} must run under its registered profile')
+                        path.write_bytes(original)
+
+    def test_mock_gateway_isolation_evidence_required_and_tamper_detected(self):
+        # #933-4: every mock-gateway evidence field is checked, both sides.
+        for side in ('ts', 'rust'):
+            with self.subTest(side=side), self.mock_gateway_rounds(side) as (source, target, expected):
+                self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+                path = target / 'round.json'
+                original = json.loads(path.read_text())
+                def mutate(change):
+                    run = json.loads(json.dumps(original))
+                    change(run['mockIsolation'])
+                    save(path, run)
+                    return [r['rule'] for r in compare(source, target, expected)['failures']]
+                mutations = (
+                    ('probe-allowed', lambda iso: iso['gatewayProbe'].update(connectAllowed=False), 'round.gateway-probe'),
+                    ('probe-default-gateway', lambda iso: iso['gatewayProbe'].update(connectDefaultGatewayDenied=False), 'round.gateway-probe'),
+                    ('probe-other-port', lambda iso: iso['gatewayProbe'].update(connectOtherDenied=False), 'round.gateway-probe'),
+                    ('probe-unix-socket', lambda iso: iso['gatewayProbe'].update(connectUnixDenied=False), 'round.gateway-probe'),
+                    ('probe-listen', lambda iso: iso['gatewayProbe'].update(listenDenied=False), 'round.gateway-probe'),
+                    ('profile-text', lambda iso: iso.update(profileText=iso['profileText'] + '(allow default)\n'), 'round.mock-profile-binding'),
+                    ('profile-sha', lambda iso: iso.update(profileSha256='0' * 64), 'round.mock-profile-binding'),
+                    ('probe-profile-sha', lambda iso: iso.update(probeProfileSha256='0' * 64), 'round.mock-probe-profile'),
+                    ('process-pid', lambda iso: iso['mockProcess'].update(pid=0), 'round.mock-process'),
+                    ('process-argv', lambda iso: iso['mockProcess'].update(argv=['/node', 'mock_gateway.mjs', '29000']), 'round.mock-process'),
+                    ('process-token', lambda iso: iso['mockProcess'].update(token={'redacted': True, 'length': 3, 'sha256': '0' * 64}), 'round.mock-process'),
+                    ('probe-cleanup', lambda iso: iso['audit'].update(remaining=[99]), 'round.mock-probe-cleanup'),
+                    ('unix-socket-left', lambda iso: iso.update(probeCleanup={'unixSocketRemoved': False}), 'round.mock-probe-cleanup'),
+                    ('status', lambda iso: iso.update(status='BLOCKED'), 'round.mock-isolation'),
+                )
+                for label, change, rule in mutations:
+                    with self.subTest(side=side, mutation=label):
+                        self.assertIn(rule, mutate(change), f'#933-4: {label} tamper not detected')
+                if side == 'rust':
+                    with self.subTest(side=side, mutation='rust-node-exec'):
+                        self.assertIn('round.mock-node-exec', mutate(lambda iso: iso['nodeExec'].update(denied=False)),
+                                      '#933-4: rust mock Node-exec denial not checked')
+                # Removing the evidence entirely fails presence instead of comparing equal.
+                run = json.loads(json.dumps(original))
+                del run['mockIsolation']
+                save(path, run)
+                self.assertIn('round.mock-gateway-presence',
+                              [r['rule'] for r in compare(source, target, expected)['failures']],
+                              '#933-4: removed mock evidence must fail presence')
+                save(path, original)
+                self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+        # Evidence attached without any marked scenario is equally rejected.
+        source = self.source()
+        target = self.root / 'extra-mock-evidence'
+        shutil.copytree(source, target)
+        path = target / 'round.json'
+        run = json.loads(path.read_text())
+        run['mockIsolation'] = {'status': 'PASS', 'errors': [], 'exitCode': 0, 'profileText': '',
+                                'profileSha256': '0' * 64, 'probeProfileSha256': '0' * 64,
+                                'gatewayProbe': {}, 'audit': {}, 'probeCleanup': {}, 'mockProcess': {}}
+        save(path, run)
+        self.assertIn('round.mock-gateway-presence', [r['rule'] for r in compare(source, target)['failures']],
+                      '#933-4: mock evidence without a marked scenario must fail presence')
+
+    def test_occupied_mock_port_blocks_round(self):
+        # #933-5: an occupied 28999 refuses the whole run; there is no fallback.
+        listener = socket.socket()
+        listener.bind(('127.0.0.1', MOCK_PORT))
+        listener.listen(1)
+        self.addCleanup(listener.close)
+        # Message-carrying refusals: the #933 negative controls bind to these
+        # assertions, so neither may fail message-less.
+        try:
+            ensure_loopback_free(MOCK_PORT)
+        except Blocked as error:
+            self.assertIn('occupied', str(error), '#933-5: the refusal must name the occupied port')
+        else:
+            self.fail('#933-5: an occupied 28999 must refuse the run; there is no fallback port')
+        profile = self.root / 'occupied.sb'
+        profile.write_text('synthetic policy')
+        # The mutated path (port check disabled) stays deterministic: with spawn
+        # and capture patched, a run that misses the refusal fails the bound
+        # assertion instead of erroring somewhere inside the preflight.
+        (self.root / 'tmp').mkdir()
+        with patch('run_round.spawn') as spawned, patch('run_round.capture') as captured:
+            spawned.return_value.poll.return_value = None
+            captured.return_value = ({'status': 'DONE', 'timedOut': False, 'exitCode': 0,
+                                      'audit': {'allStopped': True, 'remaining': [], 'errors': []}},
+                                     {'stdout': b'{}', 'stderr': b''}, [])
+            try:
+                mock_gateway_preflight(self.root, self.root, '/synthetic/node', profile)
+            except Blocked as error:
+                self.assertIn('occupied', str(error), '#933-5: preflight must refuse an occupied port')
+            else:
+                self.fail('#933-5: mock_gateway_preflight must refuse an occupied 28999 before spawning')
+            spawned.assert_not_called()
+
+    def test_run_round_selects_the_mock_profile_per_scenario(self):
+        # #933-6: run_round must run marked scenarios under the mock profile.
+        cases = [{'id': 'plain', 'argv': [], 'stdinHex': '', 'token': False},
+                 {'id': 'marked', 'argv': ['sessions', 'list'], 'stdinHex': '', 'token': True, 'mockGateway': True}]
+        output = self.root / 'selection'
+        output.mkdir()
+        base, mock = output / 'ts.sb', output / 'ts-mock.sb'
+        base.write_text('base profile\n')
+        mock.write_text('base profile\n(allow network-outbound (remote ip "localhost:28999"))\n')
+        provenance = {'baseline': {'path': '/synthetic/baseline'}, 'side': 'ts',
+                      'executable': {'path': '/synthetic/node'}}
+        seen = []
+        def fake_capture(argv, env, cwd, stdin, timeout):
+            seen.append(list(argv))
+            return ({'status': 'DONE', 'timedOut': False, 'exitCode': 0,
+                     'audit': {'allStopped': True, 'remaining': [], 'errors': []}}, {}, [])
+        with patch('run_round.SCENARIOS', cases), \
+             patch.object(sys.modules[__name__], 'SCENARIOS', cases), \
+             patch('run_round.baseline_identity', return_value=provenance['baseline']), \
+             patch('run_round.capture', side_effect=fake_capture):
+            isolation = {'profileSha256': hashlib.sha256(base.read_bytes()).hexdigest()}
+            mock_isolation = {'profileSha256': hashlib.sha256(mock.read_bytes()).hexdigest()}
+            run_round(output, output / 'runtime', base, isolation, 'ts-1', provenance, 15,
+                      mock_profile=mock, mock_isolation=mock_isolation)
+        executed = ['/synthetic/node', '/synthetic/baseline/dist/src/cli/pilotdeck.js']
+        self.assertEqual(seen[0], ['/usr/bin/sandbox-exec', '-f', str(base), *executed],
+                         '#933-6: the unmarked scenario must run under the base profile')
+        self.assertEqual(seen[1], ['/usr/bin/sandbox-exec', '-f', str(mock), *executed, 'sessions', 'list'],
+                         '#933-6: the marked scenario must run under the mock profile')
+        for case_id, profile in (('plain', base), ('marked', mock)):
+            row = json.loads((output / 'ts-1/cases' / case_id / 'record.json').read_text())
+            self.assertEqual(row['profileSha256'], hashlib.sha256(profile.read_bytes()).hexdigest(),
+                             f'#933-6: {case_id} recorded the wrong profile digest')
+        # A marked registry without mock evidence is refused before any case runs.
+        with patch('run_round.SCENARIOS', cases), \
+             patch('run_round.baseline_identity', return_value=provenance['baseline']):
+            with self.assertRaisesRegex(Blocked, 'mock profile'):
+                run_round(output / 'refused', output / 'runtime-2', base,
+                          {'profileSha256': hashlib.sha256(base.read_bytes()).hexdigest()},
+                          'ts-1', provenance, 15)
+        self.assertFalse((output / 'refused').exists())
+
     def test_current_builtin_copy_pins_full_docx_tree_and_calibrated_migration(self):
         scenario = next(s for s in REGISTERED_SCENARIOS if s['id'] == 'legacy-skills-current')
         self.assertEqual(set(scenario), {'id', 'argv', 'stdinHex', 'token', 'fixtureBlobs',
                                         'exit', 'stdout', 'stderr', 'stdoutRuntime',
-                                        'diskRemovals', 'diskAdditions'})
+                                        'diskRemovals', 'diskAdditions',
+                                        'streamOrder', 'streamOrderReason'})
         self.assertEqual(scenario['exit'], 1)
         self.assertEqual(scenario['stdoutRuntime'], 'text')
         self.assertEqual(scenario['stderr'], 'Config must contain an agent section.\n')
