@@ -132,8 +132,11 @@ SCOPED_ROWS = {
 }
 SOURCE_SUFFIXES = {'.rs', '.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'}
 SNAPSHOT_NAMES = {'originals', 'snapshots'}
-# Fixture receivers use count/decode/encode/replace/split; strip is an existing
-# modeled transform covered by test_snapshot_target_follows_rebased_transform_chain.
+# Fixture receivers use count/decode/encode/replace; strip is an existing
+# modeled transform and split is retained for synthetic read-chain controls.
+# This syntax allowlist also checks uncalled terminal attributes. value() has
+# its own evaluable str/bytes methods; snapshot_target() has source-preserving
+# transforms. Adding syntax here does not extend either narrower role.
 SNAPSHOT_READ_METHODS = {'count', 'decode', 'encode', 'replace', 'split', 'strip'}
 
 
@@ -230,6 +233,8 @@ class Static:
                 if not isinstance(access, ast.Attribute) or access.attr not in SNAPSHOT_READ_METHODS:
                     raise Unsupported('unsupported snapshot read method')
             else:
+                if isinstance(access, ast.Attribute) and access.attr not in SNAPSHOT_READ_METHODS:
+                    raise Unsupported('unsupported snapshot read method')
                 return
             access = owner
 
@@ -273,6 +278,7 @@ class Static:
                         continue  # Existing modeled originals[key] = expression.
                 if (isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name)
                         and parent.func.id == 'dict' and parent.args == [node] and not parent.keywords):
+                    self.check_snapshot_read(parent)
                     continue
                 if isinstance(parent, ast.Attribute):
                     call = self.parents.get(parent)
@@ -335,6 +341,10 @@ class Static:
             raise Unsupported(f'unsupported snapshot binding: {name} requires Assign or mutating_sources with-as')
         if present:
             for node in ast.walk(self.tree):
+                # exact dict(name) is trusted only without explicit shadowing,
+                # including bindings stored in AST string fields and deletions.
+                if 'dict' in bound_names(node):
+                    raise Unsupported('unsupported snapshot dict binding')
                 # Reject aliases of the capability as well as direct calls.
                 symbol = (node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute)
                           else node.name if isinstance(node, ast.alias) else None)
