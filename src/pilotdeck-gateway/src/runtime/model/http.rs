@@ -1055,10 +1055,10 @@ impl ModelHttpTransport for HyperModelTransport {
                 .request(request)
                 .await
                 .map_err(|error| TransportFailure::fetch_failed(cause_code(&error)))?;
-            Ok(encoding::decode_response(
+            encoding::decode_response(
                 &method,
                 response.map(|body| body.map_err(|_| BodyFailure::Terminated).boxed()),
-            ))
+            )
         })
     }
 }
@@ -2048,6 +2048,8 @@ struct CappedText {
     text: String,
     bytes: usize,
     too_long: bool,
+    #[cfg(test)]
+    converted_bytes: usize,
 }
 
 impl CappedText {
@@ -2057,6 +2059,8 @@ impl CappedText {
             text: String::new(),
             bytes: 0,
             too_long: false,
+            #[cfg(test)]
+            converted_bytes: 0,
         }
     }
 
@@ -2077,8 +2081,18 @@ impl CappedText {
             self.text = String::new();
             return false;
         }
-        self.decoder.decode(data, &mut self.text);
+        self.decode(data);
         true
+    }
+
+    fn decode(&mut self, data: &[u8]) {
+        // Observe the actual text conversion entry, not merely the cap
+        // decision: a late cap check must fail the allocation-order test.
+        #[cfg(test)]
+        {
+            self.converted_bytes += data.len();
+        }
+        self.decoder.decode(data, &mut self.text);
     }
 
     /// EOF: every received byte was already counted frame by frame, so the

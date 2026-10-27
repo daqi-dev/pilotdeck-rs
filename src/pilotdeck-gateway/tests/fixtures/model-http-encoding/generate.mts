@@ -6,6 +6,7 @@ import {once} from 'node:events';
 import {mkdirSync, writeFileSync, realpathSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {bindSourceTree, sourceClosureSha256} from '../../baseline_source_guard.mjs';
 assert.equal(process.version, 'v22.22.0');
 const base=resolve(process.env.PDRS_BASELINE!), out=resolve(process.argv[2]);
@@ -50,6 +51,26 @@ try {
   try{const r=await fetch(url,{method});result={hex:Buffer.from(await r.arrayBuffer()).toString('hex'),encoding:r.headers.get('content-encoding'),length:r.headers.get('content-length')};}
   catch(e:any){result={error:e.message,name:e.name};}
   cases.push({name,encoding,wire:wire.toString('hex'),method,status,result});
+ }
+ const layers:any[]=[];
+ for(const encoding of ['gzip','br','identity','custom'])for(const depth of [5,6]){
+  let wire=Buffer.from('layer probe');
+  for(let i=0;i<depth;i++)wire=encoding==='gzip'?z.gzipSync(wire):encoding==='br'?z.brotliCompressSync(wire):wire;
+  const coding=Array(depth).fill(encoding).join(', ');
+  for(const method of ['GET','HEAD']){
+   current={encoding:coding,wire};let result:any;
+   try{const r=await fetch(url,{method});result={text:await r.text()};}
+   catch(e:any){result={error:e.message,name:e.name,cause:e.cause?.message};}
+   layers.push({encoding:coding,depth,method,wire:wire.toString('hex'),result});
+  }
+ }
+ const sizes:any[]=[];
+ for(const encoding of ['gzip','br'])for(const size of [16384,16385]){
+  const input=Buffer.alloc(size,97);
+  const wire=encoding==='gzip'?z.gzipSync(input):z.brotliCompressSync(input);
+  current={encoding,wire};const r=await fetch(url);const decoded=await r.text();
+  assert.equal(decoded,'a'.repeat(size),'#867 boundary bytes');
+  sizes.push({encoding,limit:16384,size,wire:wire.toString('hex'),result:{length:decoded.length,byte:97}});
  }
  const headers:any[]=[];
  for(const [name,value] of [['latin1','éÿ'],['wide','中'],['surrogate','\ud800'],['trim',' \té\t '],['duplicate','é'],['control','a\u0001b'],['newline','a\nb'],['invalid-name','ok'],['wide-name','ok'],['surrogate-name','ok'],['conversion-order','中']] as const){
@@ -111,7 +132,10 @@ try {
    progress.push({watchdogMs,result:value});controller.abort();await read.catch(()=>{});
   }finally{clearTimeout(timer);await agent.destroy();}
  }
- const oracle={sourceCommit,sourceSha256,node:process.version,payload,cases,headers,lifecycle,endings,interrupted,progress};
+ // Isolate the real 512 MiB text conversions from the small replay fixtures.
+ // This child uses actual fetch and emits only lengths/error shapes.
+ const sizeProbe=execFileSync(process.execPath,['--expose-gc',fileURLToPath(new URL('./size-probe.mjs',import.meta.url))],{encoding:'utf8',timeout:120000}).trim().split('\n').map(line=>JSON.parse(line));
+ const oracle={sourceCommit,sourceSha256,node:process.version,payload,cases,headers,lifecycle,endings,interrupted,progress,layers,sizes,sizeProbe};
  mkdirSync(out,{recursive:true});writeFileSync(resolve(out,'oracle.json'),JSON.stringify(oracle,null,2)+'\n',{flag:'wx'});
  console.log(JSON.stringify(oracle,null,2));
 }finally{clearTimeout(watchdog);server.closeAllConnections();server.close();}

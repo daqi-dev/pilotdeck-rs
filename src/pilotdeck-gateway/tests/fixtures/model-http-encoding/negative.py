@@ -18,7 +18,14 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/model/http/encoding.rs'
 http = root / 'src/pilotdeck-gateway/src/runtime/model/http.rs'
+fetch = root / 'src/pilotdeck-gateway/src/fetch_redirect.rs'
 CASES = [
+    ('encoding-layer-cap', source, 'if encodings.len() > MAX_CONTENT_ENCODINGS {', 'if false && encodings.len() > MAX_CONTENT_ENCODINGS {', 'encoding_layer_limit_matches_node'),
+    ('encoding-layer-exact', source, 'if encodings.len() > MAX_CONTENT_ENCODINGS {', 'if encodings.len() >= MAX_CONTENT_ENCODINGS {', 'encoding_layer_limit_matches_node'),
+    ('encoding-layer-unknown', source, 'if encodings.len() > MAX_CONTENT_ENCODINGS {', 'if encodings.len() > MAX_CONTENT_ENCODINGS && !encodings.iter().any(|s| s == "custom" || s == "identity") {', 'encoding_layer_limit_matches_node'),
+    ('decoded-size-cap', http, 'if self.bytes > string_limit() {', 'if false && self.bytes > string_limit() {', 'decoded_size_boundary_rejects_before_text_allocation'),
+    ('decoded-size-late-allocation', http, 'if self.bytes > string_limit() {\n            self.too_long = true;', 'if self.bytes > string_limit() {\n            self.decode(data);\n            self.too_long = true;', 'decoded_size_boundary_rejects_before_text_allocation'),
+    ('decoded-size-shared-cap', fetch, 'if buffer.len().saturating_add(data.len()) > limit {\n                // The conversion', 'if false && buffer.len().saturating_add(data.len()) > limit {\n                // The conversion', 'decoded_size_boundary_shared_text_reader'),
     ('skip-decoding', source, '.all(|s| matches!(s.as_str(), "gzip" | "x-gzip" | "deflate" | "br"))', '.all(|_| false)', 'decoded_wire_matches_node'),
     ('gzip-codec', source, '_ => Kind::Gzip,', '_ => Kind::Deflate,', 'decoded_wire_matches_node'),
     ('deflate-sniff', source, 'first & 0x0f == 8', 'first & 0x0f != 8', 'decoded_wire_matches_node'),
@@ -51,6 +58,9 @@ CASES = [
 
 ]
 MESSAGES = {
+    'encoding_layer_limit_matches_node': ['#867 encoding layer cap rejects before body decoding', '#867 encoding layer cap accepts five and HEAD'],
+    'decoded_size_boundary_rejects_before_text_allocation': ['#867 decoded size cap rejects excess bytes', '#867 decoded size cap runs before text allocation'],
+    'decoded_size_boundary_shared_text_reader': ['#867 shared decoded size cap rejects excess bytes'],
     'interrupted_compressed_wire_is_not_a_truncated_representation': ['#867 incomplete HTTP body stays an error'],
     'compression_eof_waits_for_http_eof': ['#867 compression EOF waits for HTTP EOF', '#867 wire error after compression EOF'],
     'compressed_wire_progress_preserves_both_idle_clocks': ['#867 wire activity keeps body idle alive', '#867 wire activity does not reset application idle'],
@@ -70,12 +80,14 @@ def check_anchors():
         raise ValueError('; '.join(errors))
 
 
-def cargo(test, env, out, label):
+def cargo(test, env, out, label, *, no_run=False):
     slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600)
     (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
     full = f'runtime::model::http::encoding_tests::{test}'
-    result = run_owned(['cargo', 'test', '--offline', '--manifest-path', str(root / 'src/Cargo.toml'),
-                        '-p', 'pilotdeck-gateway', '--lib', full, '--', '--exact'],
+    command = ['cargo', 'test', '--offline', '--manifest-path', str(root / 'src/Cargo.toml'),
+               '-p', 'pilotdeck-gateway', '--lib', full]
+    command += ['--no-run'] if no_run else ['--', '--exact']
+    result = run_owned(command,
                        cwd=root, env=env, timeout=600)
     log = result.stdout + result.stderr
     (out / f'{label}.log').write_text(log)
@@ -114,6 +126,9 @@ def main():
                 if original.count(before) != 1:
                     raise ValueError('stale committed anchor')
                 path.write_text(original.replace(before, after, 1))
+                compiled, _, _ = cargo(test, env, out, f'{name}-compile', no_run=True)
+                if compiled.returncode != 0:
+                    raise RuntimeError('mutant did not compile; not a killed regression')
                 result, log, full = cargo(test, env, out, f'{name}-mutant')
                 block = re.search(r'---- ' + re.escape(full) + r' stdout ----\n(.*?)(?=\n---- |\nfailures:|\Z)', log, re.S)
                 if result.returncode == 101 and f'{full} ... FAILED' in log and block and any(message in block[1] for message in MESSAGES[test]):
