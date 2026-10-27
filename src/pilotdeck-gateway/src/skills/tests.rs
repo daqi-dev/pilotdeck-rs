@@ -566,34 +566,43 @@ fn binding_selection_matches_real_ts_predicates() {
 }
 
 /// In-process contract for createLocalGateway.ts:851–870: routing key, the
-/// disabled port's single error, and the explicit external-host boundary.
-#[test]
-fn facade_routes_each_method_to_the_selected_port() {
+/// disabled port's single error, and the real external management port.
+#[tokio::test]
+async fn facade_routes_each_method_to_the_selected_port() {
+    use super::external_tests::HarnessTransport;
     use std::cell::RefCell;
+    use std::sync::Arc;
     let oracle = oracle();
-    let expected = oracle.get("disabledError").unwrap();
+    let expected = oracle
+        .get("disabledError")
+        .expect("#929 disabled error oracle");
     let scratch = Scratch::new();
     let root = scratch.root();
     let seen: RefCell<Vec<JsValue>> = RefCell::new(vec![]);
-    let facade = SkillsFacade::new(manager(&root, &json("{}")), |key: Option<&JsValue>| {
-        let key = key.cloned().unwrap_or(JsValue::Undefined);
-        seen.borrow_mut().push(key.clone());
-        Ok(
-            match key.as_string().map(|s| String::from_utf16_lossy(s.units())) {
-                Some(k) if k == "/p/disabled" => json(r#"{"enabled":false}"#),
-                Some(k) if k == "/p/external" => json(
-                    r#"{"enabled":true,"implementationId":"x","contract":"skills","transport":"module-http-v2","endpoint":"http://127.0.0.1:1","methods":["list"]}"#,
-                ),
-                Some(k) if k == "/p/broken" => JsValue::Null,
-                _ => JsValue::Undefined,
-            },
-        )
-    });
+    let transport = Arc::new(HarnessTransport::new());
+    let facade = SkillsFacade::with_transport(
+        manager(&root, &json("{}")),
+        |key: Option<&JsValue>| {
+            let key = key.cloned().unwrap_or(JsValue::Undefined);
+            seen.borrow_mut().push(key.clone());
+            Ok(
+                match key.as_string().map(|s| String::from_utf16_lossy(s.units())) {
+                    Some(k) if k == "/p/disabled" => json(r#"{"enabled":false}"#),
+                    Some(k) if k == "/p/external" => json(
+                        r#"{"enabled":true,"implementationId":"/x.skills","contract":"pilotdeck.skills/v1","transport":"module-http-v2","endpoint":"http://127.0.0.1:9","manifestPath":"/x/module-manifest","callPath":"/x/v2/module/call","methods":["list","read","write","create","delete","import","validate","scan"]}"#,
+                    ),
+                    Some(k) if k == "/p/broken" => JsValue::Null,
+                    _ => JsValue::Undefined,
+                },
+            )
+        },
+        transport.clone(),
+    );
     for method in SkillMethod::ALL {
         for (project, kind) in [("/p/disabled", "disabled"), ("/p/external", "external")] {
             seen.borrow_mut().clear();
             let input = json(&format!(r#"{{"projectKey":"{project}"}}"#));
-            let e = facade.call(method, &input).unwrap_err();
+            let called = facade.call(method, &input).await;
             // validate/scan ignore the input's projectKey (868–869).
             let routed = !matches!(method, SkillMethod::Validate | SkillMethod::Scan);
             let key = if routed {
@@ -601,13 +610,22 @@ fn facade_routes_each_method_to_the_selected_port() {
             } else {
                 JsValue::Undefined
             };
-            assert_eq!(*seen.borrow(), vec![key], "{method:?}");
+            assert_eq!(
+                *seen.borrow(),
+                vec![key],
+                "#929 facade routing key for {method:?}"
+            );
             if !routed {
                 // Without a key the default project is native.
-                assert!(!e.requires_host && e.code != "SKILL_MODULE_DISABLED");
+                let e = called.expect_err("#929 native validate/scan input is incomplete");
+                assert!(
+                    !e.requires_host && e.code != "SKILL_MODULE_DISABLED",
+                    "#929 native validate/scan must not use an external/disabled port"
+                );
                 continue;
             }
             if kind == "disabled" {
+                let e = called.expect_err("#929 disabled port must fail");
                 assert_eq!(
                     compact(&object([
                         ("name", e.name.into()),
@@ -615,27 +633,51 @@ fn facade_routes_each_method_to_the_selected_port() {
                         ("message", e.message.as_str().into()),
                     ])),
                     compact(expected),
-                    "{method:?}"
+                    "#929 disabled port error for {method:?}"
                 );
-                assert!(!e.requires_host);
+                assert!(!e.requires_host, "#929 disabled error is not host-required");
             } else {
-                assert!(e.requires_host, "{method:?}");
-                assert_eq!(e.code, "SKILL_MODULE_HOST_REQUIRED");
+                let result = called.unwrap_or_else(|e| {
+                    panic!("#929 external {method:?} must reach the module host: {e:?}")
+                });
+                assert_eq!(
+                    compact(
+                        result
+                            .get("manifestPrefix")
+                            .expect("#929 external result prefix")
+                    ),
+                    r#""/x""#,
+                    "#929 external {method:?} must use the snapshot binding"
+                );
             }
         }
     }
     // Native passthrough, and `input.projectKey` is read before resolving.
-    let listed = facade.call(SkillMethod::List, &json("{}")).unwrap();
-    assert_eq!(compact(listed.get("items").unwrap()), "[]");
+    let listed = facade
+        .call(SkillMethod::List, &json("{}"))
+        .await
+        .expect("#929 native list must succeed");
+    assert_eq!(
+        compact(listed.get("items").expect("#929 native list items")),
+        "[]",
+        "#929 native list passthrough"
+    );
     seen.borrow_mut().clear();
-    let e = facade.call(SkillMethod::List, &JsValue::Null).unwrap_err();
-    assert_eq!(e.name, "TypeError");
-    assert!(seen.borrow().is_empty());
+    let e = facade
+        .call(SkillMethod::List, &JsValue::Null)
+        .await
+        .expect_err("#929 null input must throw before resolving");
+    assert_eq!(e.name, "TypeError", "#929 null input is a TypeError");
+    assert!(
+        seen.borrow().is_empty(),
+        "#929 null input must not resolve a binding"
+    );
     // A null binding throws from `"implementationId" in binding`.
     let e = facade
         .call(SkillMethod::Read, &json(r#"{"projectKey":"/p/broken"}"#))
-        .unwrap_err();
-    assert_eq!(e.name, "TypeError");
+        .await
+        .expect_err("#929 null binding must throw from in operator");
+    assert_eq!(e.name, "TypeError", "#929 null binding is a TypeError");
 }
 
 #[test]

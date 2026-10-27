@@ -57,7 +57,7 @@ cd src
 PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway skills -- --include-ignored
 ```
 
-范围：证明 SkillManager 八个方法的契约（结果对象、错误类与码/文案、磁盘文件树字节）与 skills 绑定选择；默认测试经 `SkillManager::call` 重放，因此每个方法的 errno 准入表（`node_io::LOCAL_ERRNOS` 的 `skill_*`）必须恰好等于该方法在 oracle 中出现过的 errno。external 绑定只做选择，调用一律返回 `SKILL_MODULE_HOST_REQUIRED`（requires_host），外部模块宿主另单实现；未接入 gateway method，未宣称本地化。已知差异：frontmatter 落入兼容回退时孤立代理先变 U+FFFD（TS 保留）；frontmatter 含自引用 alias 时 validate 在 Rust 报 TypeError（TS 返回带环对象，随后在 JSON 传输时失败）；Rust 不读进程 cwd 之外的 `os.homedir()`，由 `SkillManagerOptions::home_dir` 或 `$HOME` 提供；深嵌套数组的 RangeError 阈值是 Rust 常量 `js_value::MAX_ARRAY_DEPTH`，与 V8 栈深不逐值相等。
+范围：证明 SkillManager 八个方法的契约（结果对象、错误类与码/文案、磁盘文件树字节）与 skills 绑定选择；默认测试经 `SkillManager::call` 重放，因此每个方法的 errno 准入表（`node_io::LOCAL_ERRNOS` 的 `skill_*`）必须恰好等于该方法在 oracle 中出现过的 errno。external 绑定的成功/未配置/provider 报错三类由 `../skills-external/` 单独录制（真实 `createSkillManagementPort`）；本 fixture 的 `bindings[]` 只证明选择谓词。未接入 gateway method，未宣称本地化。已知差异：frontmatter 落入兼容回退时孤立代理先变 U+FFFD（TS 保留）；frontmatter 含自引用 alias 时 validate 在 Rust 报 TypeError（TS 返回带环对象，随后在 JSON 传输时失败）；Rust 不读进程 cwd 之外的 `os.homedir()`，由 `SkillManagerOptions::home_dir` 或 `$HOME` 提供；深嵌套数组的 RangeError 阈值是 Rust 常量 `js_value::MAX_ARRAY_DEPTH`，与 V8 栈深不逐值相等。
 
 ## 平台相关行为（不进夹具）
 
