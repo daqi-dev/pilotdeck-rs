@@ -59,7 +59,7 @@ impl LlmError {
         });
         self.timeout() || NETWORK.is_match(&text(&self.message))
     }
-    fn timeout(&self) -> bool {
+    pub(crate) fn timeout(&self) -> bool {
         self.name == "AbortError" || text(&self.message).to_lowercase().contains("timeout")
     }
 }
