@@ -889,13 +889,19 @@ class ContractTests(unittest.TestCase):
                                   f'#933-1: marker {bad!r} must be refused as an apparatus error')
                 else:
                     self.fail(f'#933-1: marker {bad!r} must be refused, not accepted')
-        self.assertEqual(mock_gateway_scenarios([{'id': 'a'}, {'id': 'b', 'mockGateway': True}]), {'b'})
-        self.assertEqual(mock_gateway_scenarios([{'id': 'a'}]), set())
+        # Message-carrying assertions throughout: the #933 negative controls
+        # bind to this test, so no failure point may be message-less.
+        self.assertEqual(mock_gateway_scenarios([{'id': 'a'}, {'id': 'b', 'mockGateway': True}]), {'b'},
+                        '#933-1: a strict True marker must register the scenario')
+        self.assertEqual(mock_gateway_scenarios([{'id': 'a'}]), set(),
+                        '#933-1: an unmarked registry must register nothing')
         with patch('compare.SCENARIOS', [{'id': 'marked', 'mockGateway': 'true'}]), \
              patch('compare.load_round') as load:
             result = compare(self.root / 'left', self.root / 'right')
-        self.assertEqual(result['status'], 'BLOCKED')
-        self.assertEqual(result['failures'][0]['rule'], 'apparatus.mock-gateway')
+        self.assertEqual(result['status'], 'BLOCKED',
+                        '#933-1: a truthy-but-not-True registry must block compare')
+        self.assertEqual(result['failures'][0]['rule'], 'apparatus.mock-gateway',
+                        '#933-1: the block must name the mock-gateway apparatus rule')
         load.assert_not_called()
 
     def test_mock_profile_appends_only_the_loopback_allow(self):
@@ -916,18 +922,26 @@ class ContractTests(unittest.TestCase):
                 mock = sandbox_profile(runtime, baseline, binary, side, mock_gateway=True)
                 self.assertEqual(mock, base.replace('(deny network*)\n', '(deny network*)\n' + relax),
                                  '#933-2: exactly one allow rule, directly after the network deny')
-                self.assertEqual(mock.count('network-outbound'), 1)
-                self.assertNotIn('18789', mock)
+                self.assertEqual(mock.count('network-outbound'), 1,
+                                 '#933-2: the mock profile must add exactly one network-outbound rule')
+                self.assertNotIn('18789', mock,
+                                 '#933-2: the mock profile must not open the user port 18789')
         self.assertEqual(sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts', mock_gateway=False), ts,
                          '#933-2: the default profile must not carry the allow rule')
-        with self.assertRaisesRegex(ValueError, 'boolean'):
+        with self.assertRaisesRegex(ValueError, 'boolean',
+                                    msg='#933-2: a non-boolean mock_gateway must be refused'):
             sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts', mock_gateway='true')
 
     def test_mock_scenario_binds_mock_profile_and_others_base(self):
         # #933-3: each scenario must be bound to its own profile evidence.
         for side in ('ts', 'rust'):
             with self.subTest(side=side), self.mock_gateway_rounds(side) as (source, target, expected):
-                self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+                # Sanity gate: must not fail message-less — the #933-3 negative
+                # control binds this test, and a broken binding check rejects
+                # valid evidence before any tampering happens.
+                self.assertEqual(compare(source, target, expected)['status'], 'PASS',
+                                '#933-3: the untampered round must compare PASS; '
+                                'a broken profile binding rejects valid evidence')
                 run = json.loads((target / 'round.json').read_text())
                 for name, wrong in (('marked', run['isolation']), ('plain', run['mockIsolation'])):
                     with self.subTest(case=name):
@@ -947,7 +961,8 @@ class ContractTests(unittest.TestCase):
         # #933-4: every mock-gateway evidence field is checked, both sides.
         for side in ('ts', 'rust'):
             with self.subTest(side=side), self.mock_gateway_rounds(side) as (source, target, expected):
-                self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+                self.assertEqual(compare(source, target, expected)['status'], 'PASS',
+                                '#933-4: the untampered round must compare PASS before tampering')
                 path = target / 'round.json'
                 original = json.loads(path.read_text())
                 def mutate(change):
@@ -986,7 +1001,8 @@ class ContractTests(unittest.TestCase):
                               [r['rule'] for r in compare(source, target, expected)['failures']],
                               '#933-4: removed mock evidence must fail presence')
                 save(path, original)
-                self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+                self.assertEqual(compare(source, target, expected)['status'], 'PASS',
+                                '#933-4: the restored round must compare PASS again')
         # Evidence attached without any marked scenario is equally rejected.
         source = self.source()
         target = self.root / 'extra-mock-evidence'
@@ -1055,8 +1071,15 @@ class ContractTests(unittest.TestCase):
              patch('run_round.capture', side_effect=fake_capture):
             isolation = {'profileSha256': hashlib.sha256(base.read_bytes()).hexdigest()}
             mock_isolation = {'profileSha256': hashlib.sha256(mock.read_bytes()).hexdigest()}
-            run_round(output, output / 'runtime', base, isolation, 'ts-1', provenance, 15,
-                      mock_profile=mock, mock_isolation=mock_isolation)
+            try:
+                run_round(output, output / 'runtime', base, isolation, 'ts-1', provenance, 15,
+                          mock_profile=mock, mock_isolation=mock_isolation)
+            except Blocked as error:
+                # The #933-6 negative control binds this test: a run_round that
+                # mis-binds the marked scenario refuses the round, and that
+                # refusal must surface here as the bound assertion failing.
+                self.fail(f'#933-6: the marked scenario must run under the mock profile; '
+                          f'run_round refused the round instead: {error}')
         executed = ['/synthetic/node', '/synthetic/baseline/dist/src/cli/pilotdeck.js']
         self.assertEqual(seen[0], ['/usr/bin/sandbox-exec', '-f', str(base), *executed],
                          '#933-6: the unmarked scenario must run under the base profile')
@@ -1069,11 +1092,13 @@ class ContractTests(unittest.TestCase):
         # A marked registry without mock evidence is refused before any case runs.
         with patch('run_round.SCENARIOS', cases), \
              patch('run_round.baseline_identity', return_value=provenance['baseline']):
-            with self.assertRaisesRegex(Blocked, 'mock profile'):
+            with self.assertRaisesRegex(Blocked, 'mock profile',
+                                        msg='#933-6: a marked registry without mock evidence must be refused'):
                 run_round(output / 'refused', output / 'runtime-2', base,
                           {'profileSha256': hashlib.sha256(base.read_bytes()).hexdigest()},
                           'ts-1', provenance, 15)
-        self.assertFalse((output / 'refused').exists())
+        self.assertFalse((output / 'refused').exists(),
+                         '#933-6: the refusal must happen before any case runs')
 
     def test_current_builtin_copy_pins_full_docx_tree_and_calibrated_migration(self):
         scenario = next(s for s in REGISTERED_SCENARIOS if s['id'] == 'legacy-skills-current')
