@@ -1,0 +1,550 @@
+{
+  "node": "v22.22.0",
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/session/filesystem/FileHistoryStore.ts": "0f3a7fa018b89965f48efd08f37c46347b82ebd7f0c4a69dfc0b2563b4bddc2f",
+    "src/session/filesystem/createBackup.ts": "6534d0d87cd0a72a12a930b7d710cf8340ef5a5d7abc2a382d518bd5376967eb",
+    "src/session/filesystem/backupNaming.ts": "3de0c67f28cc282f79c727ca5bc5e0708973ac92372c3ff0d423727f735ef492"
+  },
+  "cases": [
+    {
+      "name": "track-relative-normal",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true
+      },
+      "before": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      },
+      "after": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      }
+    },
+    {
+      "name": "track-relative-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd",
+          "syscall": "uv_cwd"
+        }
+      },
+      "before": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      },
+      "after": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      }
+    },
+    {
+      "name": "track-absolute-normal",
+      "cwdReads": 0,
+      "outcome": {
+        "ok": true
+      },
+      "before": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      },
+      "after": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      }
+    },
+    {
+      "name": "track-absolute-deleted",
+      "cwdReads": 0,
+      "outcome": {
+        "ok": true
+      },
+      "before": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      },
+      "after": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      }
+    },
+    {
+      "name": "mark-relative-normal",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true
+      },
+      "before": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      },
+      "after": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "state": {
+                  "exists": true,
+                  "sha256": "25718360e05d3c2d0963d1381e9dd4dae5fca789244ee4b9f861adcc0cc96218",
+                  "mode": 416
+                }
+              }
+            ]
+          }
+        ],
+        "records": [
+          "update",
+          "update"
+        ]
+      }
+    },
+    {
+      "name": "mark-relative-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd",
+          "syscall": "uv_cwd"
+        }
+      },
+      "before": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      },
+      "after": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      }
+    },
+    {
+      "name": "mark-absolute-normal",
+      "cwdReads": 0,
+      "outcome": {
+        "ok": true
+      },
+      "before": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      },
+      "after": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "state": {
+                  "exists": true,
+                  "sha256": "25718360e05d3c2d0963d1381e9dd4dae5fca789244ee4b9f861adcc0cc96218",
+                  "mode": 416
+                }
+              }
+            ]
+          }
+        ],
+        "records": [
+          "update",
+          "update"
+        ]
+      }
+    },
+    {
+      "name": "mark-absolute-deleted",
+      "cwdReads": 0,
+      "outcome": {
+        "ok": true
+      },
+      "before": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      },
+      "after": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "state": {
+                  "exists": true,
+                  "sha256": "25718360e05d3c2d0963d1381e9dd4dae5fca789244ee4b9f861adcc0cc96218",
+                  "mode": 416
+                }
+              }
+            ]
+          }
+        ],
+        "records": [
+          "update",
+          "update"
+        ]
+      }
+    },
+    {
+      "name": "mark-missing-relative-normal",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true
+      },
+      "before": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      },
+      "after": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      }
+    },
+    {
+      "name": "mark-missing-relative-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "error": {
+          "name": "Error",
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_cwd",
+          "syscall": "uv_cwd"
+        }
+      },
+      "before": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      },
+      "after": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      }
+    },
+    {
+      "name": "track-relative-warmed-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true
+      },
+      "before": {
+        "trackedFiles": [],
+        "snapshots": [],
+        "records": []
+      },
+      "after": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      }
+    },
+    {
+      "name": "mark-relative-warmed-deleted",
+      "cwdReads": 1,
+      "outcome": {
+        "ok": true
+      },
+      "before": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": []
+          }
+        ],
+        "records": [
+          "update"
+        ]
+      },
+      "after": {
+        "trackedFiles": [
+          "<root>/files/tracked.txt"
+        ],
+        "snapshots": [
+          {
+            "messageId": "message",
+            "timestamp": 1700000000000,
+            "backups": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "nameMatches": true,
+                "version": 1,
+                "backupTime": 1700000000000,
+                "mode": 416,
+                "content": "original\n"
+              }
+            ],
+            "expected": [
+              {
+                "path": "<root>/files/tracked.txt",
+                "state": {
+                  "exists": true,
+                  "sha256": "25718360e05d3c2d0963d1381e9dd4dae5fca789244ee4b9f861adcc0cc96218",
+                  "mode": 416
+                }
+              }
+            ]
+          }
+        ],
+        "records": [
+          "update",
+          "update"
+        ]
+      }
+    }
+  ]
+}

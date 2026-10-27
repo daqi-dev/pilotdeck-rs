@@ -283,7 +283,7 @@ impl FileHistoryStore {
     /// snapshot keep the existing v1 backup.
     pub fn track_edit(&self, file_path: &str, message_id: &str) -> FileHistoryResult<()> {
         let mut state = self.state.lock().unwrap();
-        let abs_path = resolve_node_path(file_path);
+        let abs_path = resolve_node_path(file_path)?;
         if !state.tracked_files.contains(&abs_path) {
             state.tracked_files.push(abs_path.clone());
         }
@@ -423,7 +423,7 @@ impl FileHistoryStore {
     /// F12 fingerprint of the post-edit state; rewind compares it first.
     pub fn mark_edit_committed(&self, file_path: &str, message_id: &str) -> FileHistoryResult<()> {
         let mut state = self.state.lock().unwrap();
-        let abs_path = resolve_node_path(file_path);
+        let abs_path = resolve_node_path(file_path)?;
         let Some(index) = find_snapshot(&state.snapshots, message_id) else {
             return Ok(());
         };
@@ -1086,14 +1086,14 @@ pub fn get_backup_file_name(file_path: &str, version: u64) -> String {
 }
 
 /// `path.resolve` for a POSIX absolute/relative input (lexical normalization).
-pub fn resolve_node_path(file_path: &str) -> String {
+pub fn resolve_node_path(file_path: &str) -> FileHistoryResult<String> {
     let combined = if file_path.starts_with('/') {
         file_path.to_string()
     } else {
-        let cwd = std::env::current_dir()
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "/".into());
-        format!("{cwd}/{file_path}")
+        let cwd = std::env::current_dir().map_err(|error| {
+            FileHistoryError::Fs(crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None).1)
+        })?;
+        format!("{}/{file_path}", cwd.to_string_lossy())
     };
     let mut parts: Vec<&str> = Vec::new();
     for part in combined.split('/') {
@@ -1105,8 +1105,12 @@ pub fn resolve_node_path(file_path: &str) -> String {
             part => parts.push(part),
         }
     }
-    format!("/{}", parts.join("/"))
+    Ok(format!("/{}", parts.join("/")))
 }
+
+#[cfg(all(test, unix))]
+#[path = "../../tests/fixtures/file-history-cwd/regression.rs"]
+mod cwd_tests;
 
 fn metadata_mtime_f64(metadata: &fs::Metadata) -> f64 {
     let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
