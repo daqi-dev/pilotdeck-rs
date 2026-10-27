@@ -1219,6 +1219,10 @@
               "finishedAt": "2026-10-22T00:00:04.000Z",
               "status": "ok",
               "retrieval": {
+                "ranking": {
+                  "score": 0.5,
+                  "source": "project"
+                },
                 "contextPreview": "### [user]\nname\n### [project]\nbody"
               },
               "toolEvents": [],
@@ -1316,6 +1320,10 @@
               "finishedAt": "2026-10-22T00:00:04.000Z",
               "status": "ok",
               "retrieval": {
+                "ranking": {
+                  "score": 0.5,
+                  "source": "project"
+                },
                 "contextPreview": "### [user]\nname\n### [project]\nbody"
               },
               "toolEvents": [],
@@ -1374,6 +1382,10 @@
               "finishedAt": "2026-10-22T00:00:04.000Z",
               "status": "ok",
               "retrieval": {
+                "ranking": {
+                  "score": 0.5,
+                  "source": "project"
+                },
                 "contextPreview": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nname\n\n## Project Memory\n\nbody"
               },
               "toolEvents": [],
@@ -1413,6 +1425,10 @@
               "finishedAt": "2026-10-22T00:00:04.000Z",
               "status": "ok",
               "retrieval": {
+                "ranking": {
+                  "score": 0.5,
+                  "source": "project"
+                },
                 "contextPreview": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nname\n\n## Project Memory\n\nbody"
               },
               "toolEvents": [],
@@ -1434,6 +1450,10 @@
             "finishedAt": "2026-10-22T00:00:04.000Z",
             "status": "ok",
             "retrieval": {
+              "ranking": {
+                "score": 0.5,
+                "source": "project"
+              },
               "contextPreview": "## ClawXMemory Recall\n\nThese are retrieved long-term memory references for the current turn.\n\nSome content may be relevant while some may not be directly useful.\n\nUse only the parts that are relevant to the current question.\n\nIf retrieved memory conflicts with explicit new user instructions in the current turn, follow the current-turn user instructions.\n\n## User Profile\n\nname\n\n## Project Memory\n\nbody"
             },
             "toolEvents": [],
@@ -1525,7 +1545,7 @@
         "pipeline": [
           {
             "state_key": "recentCaseTraces",
-            "state_json": "[{\"caseId\":\"case-explicit\",\"sessionKey\":\"s1\",\"query\":\"q1\",\"startedAt\":\"2026-10-22T00:00:03.000Z\",\"finishedAt\":\"2026-10-22T00:00:04.000Z\",\"status\":\"ok\",\"retrieval\":{\"contextPreview\":\"### [user]\\nname\\n### [project]\\nbody\"},\"toolEvents\":[],\"assistantReply\":\"reply\"},{\"caseId\":\"case_trace_90e9308ccb\",\"sessionKey\":\"s2\",\"query\":\"q3\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"ok\",\"retrieval\":{\"contextPreview\":\"plain preview\"}},{\"caseId\":\"case_trace_133f7f0f0c\",\"sessionKey\":\"s1\",\"query\":\"q2\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"ok\"}]",
+            "state_json": "[{\"caseId\":\"case-explicit\",\"sessionKey\":\"s1\",\"query\":\"q1\",\"startedAt\":\"2026-10-22T00:00:03.000Z\",\"finishedAt\":\"2026-10-22T00:00:04.000Z\",\"status\":\"ok\",\"retrieval\":{\"ranking\":{\"score\":0.5,\"source\":\"project\"},\"contextPreview\":\"### [user]\\nname\\n### [project]\\nbody\"},\"toolEvents\":[],\"assistantReply\":\"reply\"},{\"caseId\":\"case_trace_90e9308ccb\",\"sessionKey\":\"s2\",\"query\":\"q3\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"ok\",\"retrieval\":{\"contextPreview\":\"plain preview\"}},{\"caseId\":\"case_trace_133f7f0f0c\",\"sessionKey\":\"s1\",\"query\":\"q2\",\"startedAt\":\"2026-10-22T00:00:00.000Z\",\"status\":\"ok\"}]",
             "updated_at": "2026-10-22T00:00:00.000Z"
           },
           {
@@ -3620,6 +3640,115 @@
           {
             "state_key": "workspaceDir",
             "state_json": "\"$ROOT/closed-empty/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [],
+        "global": []
+      }
+    },
+    {
+      "name": "settings-large-finite",
+      "options": {
+        "defaultIndexingSettings": {
+          "autoIndexIntervalMinutes": 100000000000000000000,
+          "autoDreamIntervalMinutes": 100000000000000000000
+        }
+      },
+      "seeds": [],
+      "ops": [
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "saveSettings",
+          "args": {
+            "partial": {
+              "reasoningMode": "answer_first"
+            }
+          }
+        },
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/settings-large-finite/workspace",
+        "rootDir": "$ROOT/settings-large-finite/root",
+        "dataDir": "$ROOT/settings-large-finite/root/workspaces/$HASH",
+        "dbPath": "$ROOT/settings-large-finite/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/settings-large-finite/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 100000000000000000000,
+            "autoDreamIntervalMinutes": 100000000000000000000
+          }
+        },
+        {
+          "op": "saveSettings",
+          "args": {
+            "partial": {
+              "reasoningMode": "answer_first"
+            }
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 10080,
+            "autoDreamIntervalMinutes": 10080
+          }
+        },
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": 10080,
+            "autoDreamIntervalMinutes": 10080
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "indexingSettings",
+            "state_json": "{\"reasoningMode\":\"answer_first\",\"autoIndexIntervalMinutes\":10080,\"autoDreamIntervalMinutes\":10080}",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/settings-large-finite/workspace\"",
             "updated_at": "2026-10-22T00:00:00.000Z"
           }
         ],

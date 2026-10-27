@@ -810,7 +810,13 @@ pub fn merge_indexing_settings(partial: Option<&JsValue>) -> MergedIndexingSetti
 fn interval(value: Option<&JsValue>, fallback: f64) -> f64 {
     match value {
         Some(JsValue::Number(value)) if value.is_nan() => f64::NAN,
-        Some(JsValue::Number(value)) => value.floor().max(0.0),
+        Some(JsValue::Number(value)) => {
+            let clamped = value.floor().max(0.0);
+            // `f64::max` may return either zero when +0 and -0 compare equal,
+            // while JS `Math.max` ranks +0 above -0. Normalise the zero sign
+            // instead of relying on the platform's tie-break.
+            if clamped == 0.0 { 0.0 } else { clamped }
+        }
         _ => fallback,
     }
 }

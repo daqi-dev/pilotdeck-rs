@@ -33,6 +33,7 @@ from negative_process import (
 ROOT = Path(__file__).resolve().parents[5]
 SERVICE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/service/mod.rs'
 STORAGE = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage.rs'
+CONFIG = ROOT / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/config.rs'
 TEST = 'ts_service_facade_scenarios_match'
 TEST_FILE = 'pilotdeck-gateway/tests/edgeclaw_service_facade.rs'
 
@@ -59,6 +60,14 @@ ANCHORS = {
     # fix-r3: `clampInt` must project `-0` to `+0` like TS `Math.max(min, …)`;
     # the first returned value (numeric -0) is the binding observable.
     'settings-negative-zero': '#775 saveSettings numeric -0 autoIndexIntervalMinutes returned -0',
+    # fix-r4: `mergeIndexingSettings` has the same `Math.max(0, …)` zero rule.
+    'interval-negative-zero': '#775 defaultIndexingSettings numeric -0 autoIndexIntervalMinutes must be +0 like TS Math.max',
+    # fix-r4: the traces fixture now stores a non-alphabetical `retrieval` key
+    # order; the exact SQLite `state_json` string is the binding observable.
+    'case-trace-retrieval-key-order': '#775 sqlite rows for scenario 5 traces',
+    # fix-r4: `1e20` is a finite JS number and must survive `getSettings`;
+    # only non-finite defaults become `null` on the wire.
+    'settings-large-finite-preserved': '#775 facade steps for scenario 12 settings-large-finite',
 }
 
 
@@ -170,6 +179,46 @@ MUTANTS = [
         'number.floor() // mutated: keep -0',
         test='save_settings_projects_negative_zero_like_ts',
     ),
+    mutation(
+        'interval-negative-zero',
+        CONFIG,
+        'if clamped == 0.0 { 0.0 } else { clamped }',
+        'if clamped == 0.0 { -0.0 } else { clamped }',
+        test='default_indexing_settings_project_negative_zero_like_ts',
+    ),
+    mutation(
+        'settings-large-finite-preserved',
+        SERVICE,
+        'auto_index_interval_minutes: merged.auto_index_interval_minutes,',
+        'auto_index_interval_minutes: if merged.auto_index_interval_minutes.is_finite()\n'
+        '            && merged.auto_index_interval_minutes > 10_080.0\n'
+        '        {\n'
+        '            0.0\n'
+        '        } else {\n'
+        '            merged.auto_index_interval_minutes\n'
+        '        },',
+    ),
+    mutation(
+        'case-trace-retrieval-key-order',
+        SERVICE,
+        '        next.insert("retrieval".into(), field("retrieval"));',
+        '        let retrieval = field("retrieval");\n'
+        '        let sorted = retrieval.as_object().map(|object| {\n'
+        '            let mut sorted = JsObject::new();\n'
+        '            let mut entries = object.entries().to_vec();\n'
+        '            entries.sort_by(|left, right| {\n'
+        '                left.0\n'
+        '                    .to_utf8()\n'
+        '                    .unwrap_or_default()\n'
+        '                    .cmp(&right.0.to_utf8().unwrap_or_default())\n'
+        '            });\n'
+        '            for (key, value) in entries {\n'
+        '                sorted.insert(key, value);\n'
+        '            }\n'
+        '            JsValue::Object(sorted)\n'
+        '        });\n'
+        '        next.insert("retrieval".into(), sorted.unwrap_or(retrieval));',
+    ),
 ]
 
 
@@ -254,7 +303,7 @@ def main():
         print(f"{mutant['name']}: {status}: {reason}", flush=True)
 
     try:
-        with mutating_sources(ROOT, [SERVICE, STORAGE], baseline='HEAD') as snapshots:
+        with mutating_sources(ROOT, [SERVICE, STORAGE, CONFIG], baseline='HEAD') as snapshots:
             for mutant in selected:
                 path = mutant['path']
                 original = snapshots[path].decode()

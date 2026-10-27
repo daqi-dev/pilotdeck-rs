@@ -203,7 +203,10 @@ function specs(): Spec[] {
         {op: 'saveCaseTrace', args: {record: {
           caseId: '  case-explicit  ', sessionKey: 's1', query: 'q1',
           startedAt: '2026-10-22T00:00:03.000Z', finishedAt: '2026-10-22T00:00:04.000Z',
-          status: 'ok', retrieval: {contextPreview: '### [user]\nname\n### [project]\nbody'},
+          status: 'ok',
+          // Non-alphabetical key order: the Rust driver must preserve the
+          // oracle's declaration order when it rebuilds this object.
+          retrieval: {ranking: {score: 0.5, source: 'project'}, contextPreview: '### [user]\nname\n### [project]\nbody'},
           toolEvents: [], assistantReply: 'reply',
         }}},
         {op: 'saveCaseTrace', args: {record: {sessionKey: 's1', query: 'q2', status: 'ok'}}},
@@ -346,6 +349,24 @@ function specs(): Spec[] {
         {op: 'captureTurn', args: {messages: [], input: {sessionKey: 'empty'}}},
         {op: 'captureTurn', args: {messages: [{role: 'tool'}], input: {sessionKey: 'tool'}}},
         {op: 'captureTurn', args: {messages: [{role: 'assistant', content: 'only assistant'}], input: {sessionKey: 'assistant'}}},
+      ],
+    },
+    {
+      name: 'settings-large-finite',
+      paths: {workspace: 'workspace', rootDir: 'root'},
+      options: {defaultIndexingSettings: {
+        // `JSON.stringify(1e20)` is `100000000000000000000`, not `null`; only
+        // non-finite numbers become `null`. Keep this cell separate from
+        // `settings-nonfinite` so NaN/Infinity coverage is not displaced.
+        autoIndexIntervalMinutes: 1e20,
+        autoDreamIntervalMinutes: 1e20,
+      }},
+      seeds: [],
+      buildOps: () => [
+        {op: 'getSettings'},
+        {op: 'saveSettings', args: {partial: {reasoningMode: 'answer_first'}}},
+        {op: 'getSettings'},
+        {op: 'close'},
       ],
     },
   ];
