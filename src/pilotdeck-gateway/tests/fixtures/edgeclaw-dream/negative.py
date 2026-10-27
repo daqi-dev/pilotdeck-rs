@@ -179,7 +179,12 @@ def assertion_failure(log):
 
 
 killed, survived = [], []
-with mutating_sources(root, [helpers, js_value], baseline=baseline) as originals:
+# Derive the snapshot set from the mutation table. The previous hand-written
+# [helpers, js_value] happened to cover every case, but the next added target
+# would raise KeyError here before any mutant ran (same defect as #773
+# edgeclaw-dream-runner).
+mutation_targets = list(dict.fromkeys(case[1] for case in cases))
+with mutating_sources(root, mutation_targets, baseline=baseline) as originals:
     # A changed product line that this list did not follow used to be reported
     # as SURVIVED (`AssertionError: (name, 0)`), hiding a broken control behind
     # the same label as a real surviving mutant. Refuse before compiling.
