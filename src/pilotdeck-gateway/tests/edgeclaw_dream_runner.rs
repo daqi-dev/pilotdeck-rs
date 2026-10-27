@@ -268,6 +268,19 @@ impl DreamExtractor for ScriptedExtractor {
     ) -> BoxFuture<'a, Result<JsObject, LlmError>> {
         Box::pin(async move { self.next("reviewDreamProjectMeta", input, debug) })
     }
+    fn rewrite_user_profile<'a>(
+        &'a self,
+        _input: &'a JsObject,
+        _debug: &'a mut (dyn FnMut(JsValue) + Send),
+    ) -> BoxFuture<'a, Result<Option<JsObject>, LlmError>> {
+        // The #773 sub-flow corpus never runs `run()`, which is the only
+        // caller of the user-profile rewrite.
+        Box::pin(async move {
+            Err(LlmError::new(
+                "#773 scripted extractor does not implement rewriteUserProfile",
+            ))
+        })
+    }
 }
 
 // -- scripted clock/random --------------------------------------------------
