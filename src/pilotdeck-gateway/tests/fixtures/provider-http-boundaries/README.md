@@ -53,4 +53,4 @@ python3 src/pilotdeck-gateway/tests/fixtures/provider-http-boundaries/negative_c
 # 全套由协调者在宿主串行跑，允许省略最后两个名字。
 ```
 
-未提交候选不能绕 `mutating_sources` 守卫。本次变异编译与判杀未完成，必须提交后执行，不能据此关闭前置节点。
+未提交候选不能绕 `mutating_sources` 守卫。提交后宿主实跑（2026-10-28，HEAD 1530c93ff）：macmini 58/59 KILLED，唯一 INVALID `generator-wire-snapshot` 为重生成类变异在宿主 Node v26 下的已知环境问题，本机 Node v22.22.0 补跑 KILLED → 合计 **59/59 KILLED、0 SURVIVED**；原始日志在主仓 `_tmp/20261026-issue-p2b3/remote-host/` 与 `host-local-r1b/`。
