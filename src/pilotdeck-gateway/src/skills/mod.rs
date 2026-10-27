@@ -11,14 +11,24 @@
 //! the non-ignored golden test replays tests/fixtures/skills/oracle.json.
 mod binding;
 mod error;
+mod external;
+#[cfg(test)]
+mod external_tests;
 mod frontmatter;
 mod import;
 #[cfg(test)]
 mod tests;
 mod validate;
 
-pub use binding::{SkillMethod, SkillsBinding, SkillsFacade, select_binding};
+pub use binding::{
+    SkillMethod, SkillsBinding, SkillsFacade, select_binding, skill_binding_from_snapshot,
+};
 pub use error::SkillError;
+pub use external::{
+    ExternalSkillBinding, ExternalSkillsPort, HyperModuleTransport, ModuleEnvironment,
+    ModuleHttpFuture, ModuleHttpRequest, ModuleHttpResponse, ModuleHttpTransport,
+    ModuleTransportError, ProcessEnvironment,
+};
 
 use crate::{
     js_value::{display, number_string, to_number},

@@ -4,6 +4,13 @@ use pilotdeck_protocol::JsValue;
 use std::{fmt, io};
 
 #[derive(Clone, Debug, PartialEq)]
+struct ModuleFailure {
+    retryability: Option<String>,
+    details: Option<JsValue>,
+    outcome: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct SkillError {
     /// JS `error.name`: `SkillManagerError`, `SkillValidationError`, `Error`
     /// (a rethrown Node fs error), `SystemError` (fs.cp), `TypeError` or
@@ -17,6 +24,9 @@ pub struct SkillError {
     /// The fs errno is outside the method's measured set (node_io::lookup_for):
     /// Rust cannot vouch for Node's wording, so the host must answer.
     pub requires_host: bool,
+    /// External-module failure fields, boxed so `SkillError` stays below
+    /// clippy's `result_large_err` threshold for the native paths.
+    failure: Option<Box<ModuleFailure>>,
     /// OS errno behind an `Error`, checked against the method's admission list.
     errno: Option<i32>,
 }
@@ -92,6 +102,59 @@ impl SkillError {
         Self::raw("Error", code.into(), message)
     }
 
+    /// `protocolFailure(message)` (domainPorts.ts:193–195).
+    pub(crate) fn protocol_failure(message: impl Into<String>) -> Self {
+        Self::raw(
+            "Error",
+            "MODULE_PROTOCOL_INCOMPATIBLE".into(),
+            message.into(),
+        )
+    }
+
+    /// `moduleFailure(response, fallback)` (domainPorts.ts:184–191).
+    pub(crate) fn provider_failure(
+        code: String,
+        message: String,
+        retryability: Option<String>,
+        details: Option<JsValue>,
+    ) -> Self {
+        Self {
+            failure: Some(Box::new(ModuleFailure {
+                retryability,
+                details,
+                outcome: None,
+            })),
+            ..Self::raw("Error", code, message)
+        }
+    }
+
+    /// `transportError(code, message)` (HttpModuleClient.ts:138–140).
+    pub(crate) fn transport_failure(code: &str, message: String) -> Self {
+        Self {
+            failure: Some(Box::new(ModuleFailure {
+                retryability: None,
+                details: None,
+                outcome: Some("result_unknown"),
+            })),
+            ..Self::raw("Error", code.into(), message)
+        }
+    }
+
+    /// `moduleFailure`'s `error.retryability`.
+    pub fn retryability(&self) -> Option<&str> {
+        self.failure.as_ref()?.retryability.as_deref()
+    }
+
+    /// `moduleFailure`'s `error.details`.
+    pub fn details(&self) -> Option<&JsValue> {
+        self.failure.as_ref()?.details.as_ref()
+    }
+
+    /// `transportError`'s `outcome`.
+    pub fn outcome(&self) -> Option<&'static str> {
+        self.failure.as_ref()?.outcome
+    }
+
     /// An fs outcome Rust has no measured Node wording for.
     fn host() -> Self {
         Self {
@@ -122,6 +185,7 @@ impl SkillError {
             message,
             validation: None,
             requires_host: false,
+            failure: None,
             errno: None,
         }
     }
