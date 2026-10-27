@@ -404,8 +404,8 @@ async fn run_case(case: &JsValue) -> JsValue {
         source: Some("edgeclaw".into()),
         settings: IndexingSettings {
             reasoning_mode: "answer_first".into(),
-            auto_index_interval_minutes: 30,
-            auto_dream_interval_minutes: 60,
+            auto_index_interval_minutes: 30.0,
+            auto_dream_interval_minutes: 60.0,
         },
         logger: Some(logger.clone()),
         clock: Some(clock.clone()),
@@ -895,8 +895,8 @@ fn capture_l0_session_two_threads_is_atomic() {
             source: Some("edgeclaw".into()),
             settings: IndexingSettings {
                 reasoning_mode: "answer_first".into(),
-                auto_index_interval_minutes: 30,
-                auto_dream_interval_minutes: 60,
+                auto_index_interval_minutes: 30.0,
+                auto_dream_interval_minutes: 60.0,
             },
             logger: None,
             clock: Some(clock),

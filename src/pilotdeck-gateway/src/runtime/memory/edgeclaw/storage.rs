@@ -148,11 +148,16 @@ pub struct RepairMemoryResult {
 }
 
 /// `types.ts:196-200` (`IndexingSettings`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The interval fields keep JS number semantics: `mergeIndexingSettings` and
+/// `sanitizeIndexingSettings` can return `NaN` and `±Infinity` (the default
+/// merge only floors/clamps finite numbers), so storing `i64` would truncate
+/// values the TS baseline preserves.
+#[derive(Clone, Debug, PartialEq)]
 pub struct IndexingSettings {
     pub reasoning_mode: String,
-    pub auto_index_interval_minutes: i64,
-    pub auto_dream_interval_minutes: i64,
+    pub auto_index_interval_minutes: f64,
+    pub auto_dream_interval_minutes: f64,
 }
 impl IndexingSettings {
     pub fn to_js(&self) -> JsValue {
@@ -163,11 +168,11 @@ impl IndexingSettings {
         );
         object.insert(
             "autoIndexIntervalMinutes".into(),
-            JsValue::Number(self.auto_index_interval_minutes as f64),
+            JsValue::Number(self.auto_index_interval_minutes),
         );
         object.insert(
             "autoDreamIntervalMinutes".into(),
-            JsValue::Number(self.auto_dream_interval_minutes as f64),
+            JsValue::Number(self.auto_dream_interval_minutes),
         );
         JsValue::Object(object)
     }
@@ -1226,14 +1231,16 @@ fn sanitize_indexing_settings(
 
 /// `clampInt` (`sqlite.ts:244-253`): numbers are floored, strings go through
 /// `parseInt(value, 10)`, non-finite values fall back, then clamp to the range.
-fn clamp_int(value: Option<&JsValue>, fallback: i64, min: i64, max: i64) -> i64 {
+/// The fallback may itself be non-finite (a merged default), so the result is
+/// kept as a JS number.
+fn clamp_int(value: Option<&JsValue>, fallback: f64, min: i64, max: i64) -> f64 {
     let numeric = match value {
         Some(JsValue::Number(number)) => Some(*number),
         Some(JsValue::String(value)) => js_parse_int_prefix(value),
         _ => None,
     };
     match numeric {
-        Some(number) if number.is_finite() => number.floor().clamp(min as f64, max as f64) as i64,
+        Some(number) if number.is_finite() => number.floor().clamp(min as f64, max as f64),
         _ => fallback,
     }
 }
@@ -1300,8 +1307,8 @@ mod tests {
     fn defaults() -> IndexingSettings {
         IndexingSettings {
             reasoning_mode: "answer_first".into(),
-            auto_index_interval_minutes: 5,
-            auto_dream_interval_minutes: 10,
+            auto_index_interval_minutes: 5.0,
+            auto_dream_interval_minutes: 10.0,
         }
     }
 
@@ -1324,13 +1331,16 @@ mod tests {
         assert_eq!(number("0x10"), Some(0.0));
         assert_eq!(number("abc"), None);
         assert_eq!(number(""), None);
-        assert_eq!(clamp_int(Some(&JsValue::from(" 60.9")), 5, 0, 10_080), 60);
-        assert_eq!(clamp_int(Some(&JsValue::Number(-3.2)), 5, 0, 10_080), 0);
         assert_eq!(
-            clamp_int(Some(&JsValue::Number(99_999.0)), 5, 0, 10_080),
-            10_080
+            clamp_int(Some(&JsValue::from(" 60.9")), 5.0, 0, 10_080),
+            60.0
         );
-        assert_eq!(clamp_int(Some(&JsValue::Bool(true)), 5, 0, 10_080), 5);
+        assert_eq!(clamp_int(Some(&JsValue::Number(-3.2)), 5.0, 0, 10_080), 0.0);
+        assert_eq!(
+            clamp_int(Some(&JsValue::Number(99_999.0)), 5.0, 0, 10_080),
+            10_080.0
+        );
+        assert_eq!(clamp_int(Some(&JsValue::Bool(true)), 5.0, 0, 10_080), 5.0);
     }
 
     #[test]
@@ -1343,14 +1353,14 @@ mod tests {
             })),
             &IndexingSettings {
                 reasoning_mode: "accuracy_first".into(),
-                auto_index_interval_minutes: 5,
-                auto_dream_interval_minutes: 10,
+                auto_index_interval_minutes: 5.0,
+                auto_dream_interval_minutes: 10.0,
             },
         );
         // Only "accuracy_first" is recognized; anything else takes the default.
         assert_eq!(sanitized.reasoning_mode, "accuracy_first");
-        assert_eq!(sanitized.auto_index_interval_minutes, 5);
-        assert_eq!(sanitized.auto_dream_interval_minutes, 10);
+        assert_eq!(sanitized.auto_index_interval_minutes, 5.0);
+        assert_eq!(sanitized.auto_dream_interval_minutes, 10.0);
         assert_eq!(defaults().reasoning_mode, "answer_first");
     }
 

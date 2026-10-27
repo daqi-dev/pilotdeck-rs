@@ -41,15 +41,24 @@ ANCHORS = {
     'case-trace-preview-not-normalized': '#775 facade steps for scenario 5 traces',
     'clear-all-uses-current-workspace': '#775 facade steps for scenario 7 clear',
     'close-not-idempotent-guarded': '#775 facade steps for scenario 9 closed-matrix',
+    'capture-holds-indexer-lock': '#775 logger called while the indexer mutex is held',
+    'root-empty-not-default': '#775 rootDir="" must fall back to HOME/.edgeclaw/memory',
+    'memory-empty-pollutes-data-dir': '#775 memoryDir="" must keep the workspace dataDir',
+    'case-id-seed-lossy': '#775 automatic caseId seed keeps the lone-surrogate startedAt',
+    'workspace-data-dir-seed': '#775 workspace data-dir slug',
+    'settings-truncate-nonfinite': '#775 facade steps for scenario 10 settings-nonfinite',
+    'reopen-indexer-defaults': '#775 reopened indexer restores autoIndexIntervalMinutes',
+    'closed-capture-empty-not-early': '#775 facade steps for scenario 11 closed-empty',
 }
 
 
-def mutation(name, path, before, after):
+def mutation(name, path, before, after, test=TEST):
     return dict(
         name=name,
         path=path,
         old=before,
         new=after,
+        test=test,
         anchor=ANCHORS[name],
     )
 
@@ -58,8 +67,8 @@ MUTANTS = [
     mutation(
         'default-root-dir',
         SERVICE,
-        'None => absolute(&home.join(".edgeclaw").join("memory"))?,',
-        'None => absolute(&home.join(".edgeclaw-mutated").join("memory"))?,',
+        '_ => absolute(&home.join(".edgeclaw").join("memory"))?,',
+        '_ => absolute(&home.join(".edgeclaw-mutated").join("memory"))?,',
     ),
     mutation(
         'workspace-state-key',
@@ -91,28 +100,81 @@ MUTANTS = [
         '    pub fn close(&self) -> Result<()> {\n        self.repository.close()?;\n        Ok(())\n    }',
         '    pub fn close(&self) -> Result<()> {\n        match self.repository.close() {\n            Ok(()) => Ok(()),\n            Err(FileMemoryError::Storage(StorageError::Closed)) => Ok(()),\n            Err(error) => Err(ServiceError::File(error)),\n        }\n    }',
     ),
+    mutation(
+        'capture-holds-indexer-lock',
+        SERVICE,
+        '        let indexer = self\n            .indexer\n            .lock()\n            .expect("edgeclaw service indexer mutex poisoned")\n            .clone();\n        indexer.capture_l0_session(CaptureL0SessionInput {',
+        '        let indexer = self\n            .indexer\n            .lock()\n            .expect("edgeclaw service indexer mutex poisoned");\n        indexer.capture_l0_session(CaptureL0SessionInput {',
+        test='duplicate_capture_logger_can_save_settings',
+    ),
+    mutation(
+        'root-empty-not-default',
+        SERVICE,
+        'Some(root) if !root.as_os_str().is_empty() => absolute(root)?,',
+        'Some(root) => absolute(root)?,',
+        test='empty_path_options_use_ts_default_rules',
+    ),
+    mutation(
+        'memory-empty-pollutes-data-dir',
+        SERVICE,
+        'memory_dir_option.filter(|path| !path.as_os_str().is_empty()),',
+        'memory_dir_option,',
+        test='empty_path_options_use_ts_default_rules',
+    ),
+    mutation(
+        'case-id-seed-lossy',
+        SERVICE,
+        'seed.extend_from_slice(started_at.units());',
+        'seed.extend(started_at.to_utf8().unwrap_or_default().encode_utf16());',
+        test='case_id_seed_keeps_lone_surrogate_started_at',
+    ),
+    mutation(
+        'workspace-data-dir-seed',
+        SERVICE,
+        'let seed = JsString::from(workspace_dir.to_string_lossy().into_owned());',
+        'let seed = JsString::from(root_dir.to_string_lossy().into_owned());',
+    ),
+    mutation(
+        'settings-truncate-nonfinite',
+        SERVICE,
+        'auto_index_interval_minutes: merged.auto_index_interval_minutes,',
+        'auto_index_interval_minutes: if merged.auto_index_interval_minutes.is_nan() { 0.0 } else { merged.auto_index_interval_minutes },',
+    ),
+    mutation(
+        'reopen-indexer-defaults',
+        SERVICE,
+        'let mut heartbeat_options = HeartbeatOptions::new(initial_indexing_settings);',
+        'let mut heartbeat_options = HeartbeatOptions::new(default_indexing_settings.clone());',
+        test='reopen_restores_persisted_indexer_settings',
+    ),
+    mutation(
+        'closed-capture-empty-not-early',
+        SERVICE,
+        'if normalized_messages.is_empty() {',
+        'if false && normalized_messages.is_empty() {',
+    ),
 ]
 
 
-def passed(result):
+def passed(result, test):
     log = result.stdout + result.stderr
     return (
         result.returncode == 0
-        and f'test {TEST} ... ok' in log
+        and f'test {test} ... ok' in log
         and 'test result: ok. 1 passed;' in log
     )
 
 
 def classify(result, mutant):
     log = result.stdout + result.stderr
-    if passed(result):
+    if passed(result, mutant['test']):
         return 'SURVIVED', 'bound test still passed'
     if 'could not compile' in log:
         return 'INVALID', 'mutation did not compile'
     if (
         result.returncode != 0
         and 'test result: FAILED' in log
-        and f'test {TEST} ... FAILED' in log
+        and f"test {mutant['test']} ... FAILED" in log
         and f'panicked at {TEST_FILE}:' in log
         and mutant['anchor'] in log
     ):
@@ -133,23 +195,25 @@ def main():
         'cargo', 'test', '--offline', '--locked',
         '--manifest-path', str(ROOT / 'src/Cargo.toml'),
         '-p', 'pilotdeck-gateway', '--test', 'edgeclaw_service_facade',
-        '--', TEST, '--exact', '--nocapture',
     ]
     results = []
 
-    def run(label):
+    def run(label, mutant_test):
         with (output / f'{label}.log').open('w') as log:
             gate = wait_for_slot(ROOT / 'scripts/cargo-slots.sh')
             log.write(gate.stdout + gate.stderr)
             log.flush()
-            result = run_owned(command, cwd=ROOT, env=env, timeout=900)
+            result = run_owned(
+                command + ['--', mutant_test, '--exact', '--nocapture'],
+                cwd=ROOT, env=env, timeout=900,
+            )
             log.write(result.stdout + result.stderr)
         return result
 
     def record(mutant, status, reason):
         results.append(dict(
             name=mutant['name'],
-            test=TEST,
+            test=mutant['test'],
             anchor=mutant['anchor'],
             status=status,
             reason=reason,
@@ -175,7 +239,7 @@ def main():
                         f"anchor appears {occurrences} times, expected exactly once",
                     )
                     continue
-                if not passed(run(f"{mutant['name']}-positive")):
+                if not passed(run(f"{mutant['name']}-positive", mutant['test']), mutant['test']):
                     record(mutant, 'INVALID', 'positive control did not pass the bound test')
                     continue
                 mutated = original.replace(mutant['old'], mutant['new'], 1)
@@ -185,7 +249,9 @@ def main():
                     # Force Cargo to observe the write even on a filesystem
                     # with coarse mtimes; a cached binary would fake SURVIVED.
                     time.sleep(1.1)
-                    status, reason = classify(run(f"{mutant['name']}-negative"), mutant)
+                    status, reason = classify(
+                        run(f"{mutant['name']}-negative", mutant['test']), mutant
+                    )
                 except Exception as error:  # noqa: BLE001 - summarized as INVALID
                     status, reason = 'INVALID', f'{type(error).__name__}: {error}'
                 finally:
@@ -193,7 +259,9 @@ def main():
                     time.sleep(1.1)
                     if SERVICE.read_text() != original:
                         raise RuntimeError(f'byte restoration failed: {SERVICE}')
-                if not passed(run(f"{mutant['name']}-restored")):
+                if not passed(
+                    run(f"{mutant['name']}-restored", mutant['test']), mutant['test']
+                ):
                     status, reason = 'INVALID', reason + '; restored test did not pass'
                 record(mutant, status, reason)
     except SourceBaselineError as error:

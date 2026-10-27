@@ -41,6 +41,39 @@ const ORACLE: &str = include_str!("fixtures/edgeclaw-service-facade/oracle.json"
 const NOW: &str = "2026-10-22T00:00:00.000Z";
 const NOW_MS: i64 = 1_792_627_200_000; // Date.parse("2026-10-22T00:00:00.000Z")
 
+/// Process cwd is global; the space-path test changes it, and the two Node
+/// verifiers spawn children that inherit it. Serialize those three tests.
+static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn cwd_guard() -> std::sync::MutexGuard<'static, ()> {
+    CWD_LOCK.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+/// Enter a scratch cwd and restore it (before the scratch directory drops)
+/// even if the test panics.
+struct CwdGuard {
+    previous: PathBuf,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl CwdGuard {
+    fn enter(path: &Path) -> Self {
+        let lock = cwd_guard();
+        let previous = std::env::current_dir().expect("#775 previous cwd");
+        std::env::set_current_dir(path).expect("#775 enter scratch cwd");
+        Self {
+            previous,
+            _lock: lock,
+        }
+    }
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.previous);
+    }
+}
+
 // -- oracle helpers --------------------------------------------------------
 
 fn array(value: &Value) -> &[Value] {
@@ -146,26 +179,54 @@ fn decode_js(value: &Value) -> JsValue {
     }
 }
 
-fn clean_string(value: &str, root: &Path) -> String {
+fn clean_string(value: &str, root: &Path, expected_workspace_hash: &str) -> String {
     use std::sync::OnceLock;
     static HASH: OnceLock<regex::Regex> = OnceLock::new();
     let root = root.to_string_lossy();
     let replaced = value.replace(root.as_ref(), "$ROOT");
-    HASH.get_or_init(|| regex::Regex::new(r"/workspaces/[0-9a-f]{10}(/|$)").expect("#775 regex"))
-        .replace_all(&replaced, "/workspaces/$$HASH$1")
-        .into_owned()
+    let pattern = HASH
+        .get_or_init(|| regex::Regex::new(r"/workspaces/([0-9a-f]{10})(/|$)").expect("#775 regex"));
+    let mut cleaned = String::new();
+    let mut last = 0;
+    for captures in pattern.captures_iter(&replaced) {
+        let whole = captures.get(0).expect("#775 whole workspace hash match");
+        let hash = captures
+            .get(1)
+            .expect("#775 workspace hash capture")
+            .as_str();
+        let slash = captures
+            .get(2)
+            .expect("#775 workspace hash suffix")
+            .as_str();
+        // The old cleaner replaced any 10-hex slug, so a service that seeded
+        // the workspace data dir from the wrong input still compared equal.
+        // Bind the observed slug to sha1(resolve(workspaceDir))[:10].
+        assert_eq!(
+            hash, expected_workspace_hash,
+            "#775 workspace data-dir slug {hash} is not sha1(resolve(workspaceDir))={expected_workspace_hash}"
+        );
+        cleaned.push_str(&replaced[last..whole.start()]);
+        cleaned.push_str("/workspaces/$HASH");
+        cleaned.push_str(slash);
+        last = whole.end();
+    }
+    cleaned.push_str(&replaced[last..]);
+    cleaned
 }
 
-fn clean(value: Value, root: &Path) -> Value {
+fn clean(value: Value, root: &Path, expected_workspace_hash: &str) -> Value {
     match value {
-        Value::String(value) => Value::String(clean_string(&value, root)),
-        Value::Array(items) => {
-            Value::Array(items.into_iter().map(|item| clean(item, root)).collect())
-        }
+        Value::String(value) => Value::String(clean_string(&value, root, expected_workspace_hash)),
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| clean(item, root, expected_workspace_hash))
+                .collect(),
+        ),
         Value::Object(entries) => Value::Object(
             entries
                 .into_iter()
-                .map(|(key, value)| (key, clean(value, root)))
+                .map(|(key, value)| (key, clean(value, root, expected_workspace_hash)))
                 .collect(),
         ),
         other => other,
@@ -199,6 +260,7 @@ fn scenario_path(template: &str, scenario_root: &Path, scratch_root: &Path) -> P
 
 struct Run<'a> {
     root: &'a Path,
+    workspace_hash: &'a str,
     last_export: std::cell::RefCell<Option<JsValue>>,
 }
 
@@ -210,15 +272,24 @@ fn step(
 ) -> Value {
     let mut row = Map::new();
     row.insert("op".into(), Value::String(op.into()));
-    row.insert("args".into(), clean(encode_js(&decode_js(args)), run.root));
+    row.insert(
+        "args".into(),
+        clean(encode_js(&decode_js(args)), run.root, run.workspace_hash),
+    );
     match result {
         Ok(value) => {
             row.insert("ok".into(), Value::Bool(true));
-            row.insert("value".into(), clean(encode_js(&value), run.root));
+            row.insert(
+                "value".into(),
+                clean(encode_js(&value), run.root, run.workspace_hash),
+            );
         }
         Err(error) => {
             row.insert("ok".into(), Value::Bool(false));
-            row.insert("error".into(), clean(error_value(&error), run.root));
+            row.insert(
+                "error".into(),
+                clean(error_value(&error), run.root, run.workspace_hash),
+            );
         }
     }
     Value::Object(row)
@@ -582,8 +653,12 @@ fn run_scenario(
     for item in array(spec.get("seeds").expect("#775 seeds")) {
         seed(&service, item);
     }
+    let workspace_hash = pilotdeck_gateway::runtime::memory::edgeclaw::text::hash_text(
+        &JsString::from(service.workspace_dir.to_string_lossy().into_owned()),
+    );
     let run = Run {
         root: scratch_root,
+        workspace_hash: &workspace_hash,
         last_export: std::cell::RefCell::new(None),
     };
     let scenario = Scenario { service, run };
@@ -594,8 +669,13 @@ fn run_scenario(
 
     let observed_paths = {
         let mut paths = Map::new();
-        let path =
-            |value: &Path| Value::String(clean_string(&value.to_string_lossy(), scratch_root));
+        let path = |value: &Path| {
+            Value::String(clean_string(
+                &value.to_string_lossy(),
+                scratch_root,
+                scenario.run.workspace_hash,
+            ))
+        };
         paths.insert("workspace".into(), path(&workspace));
         match spec["inputPaths"].get("rootDir").and_then(Value::as_str) {
             Some(root_dir) => {
@@ -604,6 +684,7 @@ fn run_scenario(
                     Value::String(clean_string(
                         &scenario_path(root_dir, &root, scratch_root).to_string_lossy(),
                         scratch_root,
+                        scenario.run.workspace_hash,
                     )),
                 );
             }
@@ -639,8 +720,8 @@ fn run_scenario(
         "inputPaths": spec["inputPaths"].clone(),
         "paths": observed_paths,
         "steps": steps,
-        "sqlite": clean(sqlite, scratch_root),
-        "files": clean(files, scratch_root),
+        "sqlite": clean(sqlite, scratch_root, scenario.run.workspace_hash),
+        "files": clean(files, scratch_root, scenario.run.workspace_hash),
     })
 }
 
@@ -760,6 +841,389 @@ fn compare(oracle: &Value) {
     }
 }
 
+// -- fix-r1 regressions: P0 re-entrancy, P1 paths/settings/caseId, P2 reopen --
+
+/// A logger that holds the service `Weak` and calls `save_settings` from the
+/// duplicate-capture log callback. On the unfixed HEAD the callback re-entered
+/// the indexer mutex and deadlocked; the `try_lock` probe below turns a
+/// regression into a named assertion instead of a timeout.
+struct ReentrantLogger {
+    service: std::sync::Mutex<Option<std::sync::Weak<EdgeClawMemoryService>>>,
+    calls: AtomicUsize,
+    saved: std::sync::Mutex<Option<pilotdeck_gateway::runtime::memory::edgeclaw::IndexingSettings>>,
+}
+impl pilotdeck_gateway::runtime::memory::edgeclaw::service::ServiceLogger for ReentrantLogger {
+    fn info(&self, _message: &JsString) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let service = self
+            .service
+            .lock()
+            .expect("#775 reentrant logger weak slot")
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .expect("#775 reentrant logger service alive");
+        assert!(
+            service.indexer_lock_is_available(),
+            "#775 logger called while the indexer mutex is held"
+        );
+        let mut partial = JsObject::new();
+        partial.insert("autoIndexIntervalMinutes".into(), JsValue::Number(7.0));
+        let saved = service
+            .save_settings(&JsValue::Object(partial))
+            .expect("#775 reentrant logger saveSettings");
+        *self.saved.lock().expect("#775 saved settings slot") = Some(saved);
+    }
+}
+
+fn service_for(
+    options: ServiceOptions,
+    home: &Path,
+    logger: Option<Arc<dyn pilotdeck_gateway::runtime::memory::edgeclaw::service::ServiceLogger>>,
+) -> EdgeClawMemoryService {
+    service_for_token(options, home, logger, "token")
+}
+
+fn service_for_token(
+    options: ServiceOptions,
+    home: &Path,
+    logger: Option<Arc<dyn pilotdeck_gateway::runtime::memory::edgeclaw::service::ServiceLogger>>,
+    token: &str,
+) -> EdgeClawMemoryService {
+    let token = token.to_owned();
+    let mut config = JsObject::new();
+    config.insert("agents".into(), JsValue::Object(JsObject::new()));
+    EdgeClawMemoryService::with_dependencies(
+        options,
+        ServiceDependencies {
+            home: Some(home.to_path_buf()),
+            clock: Some(Arc::new(|| NOW.to_owned())),
+            now_ms: Some(Arc::new(|| NOW_MS)),
+            random_token: Some(Arc::new(move || JsString::from(token.as_str()))),
+            transport: None,
+            runtime: None,
+            logger,
+            llm_config: Some(JsValue::Object(config)),
+        },
+    )
+    .expect("#775 construct test service")
+}
+
+#[test]
+fn duplicate_capture_logger_can_save_settings() {
+    let scratch = Scratch::new("edgeclaw-reentrant");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).expect("#775 reentrant home");
+    let logger = Arc::new(ReentrantLogger {
+        service: std::sync::Mutex::new(None),
+        calls: AtomicUsize::new(0),
+        saved: std::sync::Mutex::new(None),
+    });
+    let mut options = ServiceOptions::new(scratch.path().join("workspace"));
+    options.root_dir = Some(scratch.path().join("root"));
+    let service = Arc::new(service_for(options, &home, Some(logger.clone())));
+    *logger.service.lock().expect("#775 reentrant logger slot") = Some(Arc::downgrade(&service));
+    let mut message = JsObject::new();
+    message.insert("role".into(), JsValue::String("user".into()));
+    message.insert("content".into(), JsValue::String("same turn".into()));
+    let messages = vec![JsValue::Object(message)];
+    let run = {
+        let service = service.clone();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                service
+                    .capture_turn(
+                        &messages,
+                        CaptureTurnInput {
+                            session_key: "s1".into(),
+                            timestamp: Some(NOW.into()),
+                            source: None,
+                        },
+                    )
+                    .expect("#775 reentrant capture_turn");
+            }
+        })
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(run.join());
+    });
+    match receiver.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => panic!("#775 reentrant capture thread panicked"),
+        Err(error) => panic!("#775 reentrant capture deadlocked: {error}"),
+    }
+    assert_eq!(
+        logger.calls.load(Ordering::SeqCst),
+        1,
+        "#775 duplicate capture logs exactly once"
+    );
+    let saved = logger
+        .saved
+        .lock()
+        .expect("#775 saved settings slot")
+        .clone()
+        .expect("#775 logger saved settings");
+    assert_eq!(
+        saved.auto_index_interval_minutes, 7.0,
+        "#775 logger saveSettings value"
+    );
+    assert_eq!(
+        service
+            .get_settings()
+            .expect("#775 read settings")
+            .auto_index_interval_minutes,
+        7.0,
+        "#775 database settings after logger saveSettings"
+    );
+}
+
+#[test]
+fn empty_path_options_use_ts_default_rules() {
+    use pilotdeck_gateway::runtime::memory::edgeclaw::text::hash_text;
+
+    let scratch = Scratch::new("edgeclaw-empty-paths");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).expect("#775 empty-path home");
+    let workspace = scratch.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("#775 empty-path workspace");
+    let cwd = scratch.path().join("cwd");
+    fs::create_dir_all(&cwd).expect("#775 empty-path cwd");
+    let _cwd = CwdGuard::enter(&cwd);
+
+    // TS `resolveDefaultRootDir`: `rootDir ? rootDir : HOME/.edgeclaw/memory`.
+    let default_root = home.join(".edgeclaw").join("memory");
+    let default_data = default_root
+        .join("workspaces")
+        .join(hash_text(&JsString::from(
+            workspace.to_string_lossy().into_owned(),
+        )));
+    fs::create_dir_all(&default_data).expect("#775 default data dir");
+    let mut options = ServiceOptions::new(&workspace);
+    options.root_dir = Some(PathBuf::from(""));
+    let service = service_for(options, &home, None);
+    assert_eq!(
+        service.data_dir, default_data,
+        "#775 rootDir=\"\" must fall back to HOME/.edgeclaw/memory"
+    );
+    assert_eq!(
+        service.db_path,
+        default_data.join("control.sqlite"),
+        "#775 rootDir=\"\" dbPath"
+    );
+    assert_eq!(
+        service.memory_dir,
+        default_data.join("memory"),
+        "#775 rootDir=\"\" memoryDir"
+    );
+    service.close().expect("#775 close empty-root service");
+
+    // TS `resolveConfiguredDataDir`: falsy `memoryDir` does not pick dataDir;
+    // the final `memoryDir ?? …` still resolves the explicit empty string (cwd).
+    let mut options = ServiceOptions::new(&workspace);
+    options.root_dir = Some(scratch.path().join("root"));
+    options.memory_dir = Some(PathBuf::from(""));
+    let explicit_root = scratch.path().join("root");
+    let expected_data = explicit_root
+        .join("workspaces")
+        .join(hash_text(&JsString::from(
+            workspace.to_string_lossy().into_owned(),
+        )));
+    fs::create_dir_all(&expected_data).expect("#775 memory-empty data dir");
+    let service = service_for(options, &home, None);
+    assert_eq!(
+        service.data_dir, expected_data,
+        "#775 memoryDir=\"\" must keep the workspace dataDir"
+    );
+    assert_eq!(
+        service.memory_dir,
+        std::env::current_dir().expect("#775 cwd"),
+        "#775 memoryDir=\"\" must resolve to cwd, not fall back"
+    );
+    service.close().expect("#775 close empty-memory service");
+}
+
+#[test]
+fn space_path_option_is_not_trimmed() {
+    use pilotdeck_gateway::runtime::memory::edgeclaw::text::hash_text;
+
+    let scratch = Scratch::new("edgeclaw-space-path");
+    let home = scratch.path().join("home");
+    let cwd = scratch.path().join("cwd");
+    fs::create_dir_all(&home).expect("#775 space home");
+    fs::create_dir_all(&cwd).expect("#775 space cwd");
+    let workspace = scratch.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("#775 space workspace");
+    let _cwd = CwdGuard::enter(&cwd);
+    // `current_dir()` canonicalizes /var → /private/var on macOS; build the
+    // expected path from the same value the service's `absolute()` sees.
+    let cwd = std::env::current_dir().expect("#775 canonical space cwd");
+    let expected_root = cwd.join(" ");
+    let expected_data = expected_root
+        .join("workspaces")
+        .join(hash_text(&JsString::from(
+            workspace.to_string_lossy().into_owned(),
+        )));
+    fs::create_dir_all(&expected_data).expect("#775 space data dir");
+    let mut options = ServiceOptions::new(&workspace);
+    options.root_dir = Some(PathBuf::from(" "));
+    let service = service_for(options, &home, None);
+    let result = (service.data_dir.clone(), service.memory_dir.clone());
+    drop(service);
+    assert_eq!(
+        result.0, expected_data,
+        "#775 rootDir=\" \" must stay a real path, not fall back to the default root"
+    );
+    assert_eq!(
+        result.1,
+        expected_data.join("memory"),
+        "#775 rootDir=\" \" memoryDir"
+    );
+}
+
+#[test]
+fn case_id_seed_keeps_lone_surrogate_started_at() {
+    let scratch = Scratch::new("edgeclaw-case-id");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).expect("#775 case-id home");
+    let mut options = ServiceOptions::new(scratch.path().join("workspace"));
+    options.root_dir = Some(scratch.path().join("root"));
+    // `(0.25).toString(36).slice(2, 10)` in the Node probe is `"9"`.
+    let service = service_for_token(options, &home, None, "9");
+    let mut record = JsObject::new();
+    record.insert("sessionKey".into(), JsValue::String("s1".into()));
+    record.insert("query".into(), JsValue::String("q1".into()));
+    record.insert(
+        "startedAt".into(),
+        JsValue::String(JsString::from_utf16(vec![0xd800])),
+    );
+    record.insert("status".into(), JsValue::String("ok".into()));
+    service
+        .save_case_trace(&record)
+        .expect("#775 save lone-surrogate case trace");
+    let traces = service
+        .list_case_traces(None)
+        .expect("#775 list lone-surrogate case trace");
+    assert_eq!(traces.len(), 1, "#775 one case trace");
+    assert_eq!(
+        traces[0].get("caseId").and_then(JsValue::as_string),
+        Some(&JsString::from("case_trace_6297f5dafe")),
+        "#775 automatic caseId seed keeps the lone-surrogate startedAt (Node v22.22.0 probe)"
+    );
+    service.close().expect("#775 close case-id service");
+}
+
+#[test]
+fn workspace_hash_tracks_workspace_dir() {
+    use pilotdeck_gateway::runtime::memory::edgeclaw::text::hash_text;
+
+    let scratch = Scratch::new("edgeclaw-workspace-hash");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).expect("#775 hash home");
+    let root = scratch.path().join("root");
+    let mut services = Vec::new();
+    for name in ["workspace-a", "workspace-b"] {
+        let workspace = scratch.path().join(name);
+        fs::create_dir_all(&workspace).expect("#775 hash workspace");
+        let expected = root.join("workspaces").join(hash_text(&JsString::from(
+            workspace.to_string_lossy().into_owned(),
+        )));
+        fs::create_dir_all(&expected).expect("#775 hash data dir");
+        let mut options = ServiceOptions::new(&workspace);
+        options.root_dir = Some(root.clone());
+        services.push((expected, service_for(options, &home, None)));
+    }
+    assert_ne!(
+        services[0].1.data_dir, services[1].1.data_dir,
+        "#775 different workspaces under one root must get different data dirs"
+    );
+    for (expected, service) in &services {
+        assert_eq!(
+            &service.data_dir, expected,
+            "#775 data dir slug must be sha1(resolve(workspaceDir))"
+        );
+    }
+}
+
+#[test]
+fn nonfinite_settings_keep_js_number_semantics() {
+    let scratch = Scratch::new("edgeclaw-nonfinite-settings");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).expect("#775 nonfinite home");
+    let mut defaults = JsObject::new();
+    defaults.insert("autoIndexIntervalMinutes".into(), JsValue::Number(f64::NAN));
+    defaults.insert(
+        "autoDreamIntervalMinutes".into(),
+        JsValue::Number(f64::INFINITY),
+    );
+    let mut options = ServiceOptions::new(scratch.path().join("workspace"));
+    options.root_dir = Some(scratch.path().join("root"));
+    options.default_indexing_settings = Some(JsValue::Object(defaults));
+    let service = service_for(options, &home, None);
+    let before = service.get_settings().expect("#775 nonfinite getSettings");
+    assert!(
+        before.auto_index_interval_minutes.is_nan(),
+        "#775 NaN default must survive mergeIndexingSettings"
+    );
+    assert_eq!(
+        before.auto_dream_interval_minutes,
+        f64::INFINITY,
+        "#775 Infinity default must survive mergeIndexingSettings"
+    );
+    let mut partial = JsObject::new();
+    partial.insert(
+        "reasoningMode".into(),
+        JsValue::String("answer_first".into()),
+    );
+    service
+        .save_settings(&JsValue::Object(partial))
+        .expect("#775 nonfinite saveSettings");
+    let after = service
+        .get_settings()
+        .expect("#775 nonfinite getSettings after save");
+    assert!(
+        after.auto_index_interval_minutes.is_nan(),
+        "#775 stored NaN (JSON null) falls back to the NaN default"
+    );
+    assert_eq!(
+        after.auto_dream_interval_minutes,
+        f64::INFINITY,
+        "#775 stored Infinity (JSON null) falls back to the Infinity default"
+    );
+    service.close().expect("#775 close nonfinite service");
+}
+
+#[test]
+fn reopen_restores_persisted_indexer_settings() {
+    let scratch = Scratch::new("edgeclaw-reopen-settings");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).expect("#775 reopen home");
+    let root = scratch.path().join("root");
+    let workspace = scratch.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("#775 reopen workspace");
+    let mut options = ServiceOptions::new(&workspace);
+    options.root_dir = Some(root);
+    let service = service_for(options, &home, None);
+    let mut partial = JsObject::new();
+    partial.insert("autoIndexIntervalMinutes".into(), JsValue::Number(7.0));
+    partial.insert("autoDreamIntervalMinutes".into(), JsValue::Number(9.0));
+    service
+        .save_settings(&JsValue::Object(partial))
+        .expect("#775 save persisted settings");
+    service.close().expect("#775 close persisted settings");
+    let mut options = ServiceOptions::new(&workspace);
+    options.root_dir = Some(scratch.path().join("root"));
+    let reopened = service_for(options, &home, None);
+    let settings = reopened.indexer_settings();
+    assert_eq!(
+        settings.auto_index_interval_minutes, 7.0,
+        "#775 reopened indexer restores autoIndexIntervalMinutes"
+    );
+    assert_eq!(
+        settings.auto_dream_interval_minutes, 9.0,
+        "#775 reopened indexer restores autoDreamIntervalMinutes"
+    );
+}
+
 #[test]
 fn ts_service_facade_scenarios_match() {
     let oracle_js = baseline::oracle(ORACLE);
@@ -855,6 +1319,7 @@ fn session_clear_keeps_other_pending_capture() {
 #[test]
 #[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
 fn real_ts_reads_rust_service_observations() {
+    let _guard = cwd_guard();
     let oracle: Value = serde_json::from_str(ORACLE).expect("#775 oracle is valid JSON");
     let scratch = Scratch::new("edgeclaw-service-facade-verify");
     let observed = observations(&oracle);
@@ -886,6 +1351,7 @@ fn real_ts_reads_rust_service_observations() {
 #[test]
 #[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
 fn regenerates_identically() {
+    let _guard = cwd_guard();
     baseline::regenerates_identically("edgeclaw-service-facade");
 }
 

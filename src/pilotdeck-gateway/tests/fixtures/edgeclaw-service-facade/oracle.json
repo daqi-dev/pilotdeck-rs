@@ -3317,6 +3317,318 @@
         ],
         "global": []
       }
+    },
+    {
+      "name": "settings-nonfinite",
+      "options": {
+        "defaultIndexingSettings": {
+          "autoIndexIntervalMinutes": {
+            "$type": "number",
+            "value": "NaN"
+          },
+          "autoDreamIntervalMinutes": {
+            "$type": "number",
+            "value": "Infinity"
+          }
+        }
+      },
+      "seeds": [],
+      "ops": [
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "saveSettings",
+          "args": {
+            "partial": {
+              "reasoningMode": "answer_first"
+            }
+          }
+        },
+        {
+          "op": "getSettings"
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/settings-nonfinite/workspace",
+        "rootDir": "$ROOT/settings-nonfinite/root",
+        "dataDir": "$ROOT/settings-nonfinite/root/workspaces/$HASH",
+        "dbPath": "$ROOT/settings-nonfinite/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/settings-nonfinite/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": {
+              "$type": "number",
+              "value": "NaN"
+            },
+            "autoDreamIntervalMinutes": {
+              "$type": "number",
+              "value": "Infinity"
+            }
+          }
+        },
+        {
+          "op": "saveSettings",
+          "args": {
+            "partial": {
+              "reasoningMode": "answer_first"
+            }
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": {
+              "$type": "number",
+              "value": "NaN"
+            },
+            "autoDreamIntervalMinutes": {
+              "$type": "number",
+              "value": "Infinity"
+            }
+          }
+        },
+        {
+          "op": "getSettings",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "reasoningMode": "answer_first",
+            "autoIndexIntervalMinutes": {
+              "$type": "number",
+              "value": "NaN"
+            },
+            "autoDreamIntervalMinutes": {
+              "$type": "number",
+              "value": "Infinity"
+            }
+          }
+        },
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "indexingSettings",
+            "state_json": "{\"reasoningMode\":\"answer_first\",\"autoIndexIntervalMinutes\":null,\"autoDreamIntervalMinutes\":null}",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/settings-nonfinite/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [],
+        "global": []
+      }
+    },
+    {
+      "name": "closed-empty",
+      "options": null,
+      "seeds": [],
+      "ops": [
+        {
+          "op": "close"
+        },
+        {
+          "op": "listReadableProjectCatalog"
+        },
+        {
+          "op": "getReadableProject",
+          "args": {
+            "id": "current_project"
+          }
+        },
+        {
+          "op": "listReadableProjectEntries",
+          "args": {
+            "id": "current_project",
+            "options": {}
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [],
+            "input": {
+              "sessionKey": "empty"
+            }
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "tool"
+              }
+            ],
+            "input": {
+              "sessionKey": "tool"
+            }
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "assistant",
+                "content": "only assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "assistant"
+            }
+          }
+        }
+      ],
+      "inputPaths": {
+        "workspace": "workspace",
+        "rootDir": "root"
+      },
+      "paths": {
+        "workspace": "$ROOT/closed-empty/workspace",
+        "rootDir": "$ROOT/closed-empty/root",
+        "dataDir": "$ROOT/closed-empty/root/workspaces/$HASH",
+        "dbPath": "$ROOT/closed-empty/root/workspaces/$HASH/control.sqlite",
+        "memoryDir": "$ROOT/closed-empty/root/workspaces/$HASH/memory"
+      },
+      "steps": [
+        {
+          "op": "close",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        },
+        {
+          "op": "listReadableProjectCatalog",
+          "args": {
+            "$type": "undefined"
+          },
+          "ok": true,
+          "value": []
+        },
+        {
+          "op": "getReadableProject",
+          "args": {
+            "id": "current_project"
+          },
+          "ok": true,
+          "value": {
+            "$type": "undefined"
+          }
+        },
+        {
+          "op": "listReadableProjectEntries",
+          "args": {
+            "id": "current_project",
+            "options": {}
+          },
+          "ok": true,
+          "value": []
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [],
+            "input": {
+              "sessionKey": "empty"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": false,
+            "normalizedMessages": [],
+            "sessionKey": "empty"
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "tool"
+              }
+            ],
+            "input": {
+              "sessionKey": "tool"
+            }
+          },
+          "ok": true,
+          "value": {
+            "captured": false,
+            "normalizedMessages": [],
+            "sessionKey": "tool"
+          }
+        },
+        {
+          "op": "captureTurn",
+          "args": {
+            "messages": [
+              {
+                "role": "assistant",
+                "content": "only assistant"
+              }
+            ],
+            "input": {
+              "sessionKey": "assistant"
+            }
+          },
+          "ok": false,
+          "error": {
+            "name": "Error",
+            "message": "database is not open"
+          }
+        }
+      ],
+      "sqlite": {
+        "pipeline": [
+          {
+            "state_key": "workspaceDir",
+            "state_json": "\"$ROOT/closed-empty/workspace\"",
+            "updated_at": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "l0": []
+      },
+      "files": {
+        "memory": [],
+        "global": []
+      }
     }
   ]
 }

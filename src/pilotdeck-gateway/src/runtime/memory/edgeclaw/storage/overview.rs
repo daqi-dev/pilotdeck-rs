@@ -250,8 +250,8 @@ impl EdgeClawFileStores {
         let overview = self.overview_locked(&readable_projects)?;
         let settings = self.storage.get_indexing_settings(&IndexingSettings {
             reasoning_mode: "answer_first".into(),
-            auto_index_interval_minutes: 30,
-            auto_dream_interval_minutes: 60,
+            auto_index_interval_minutes: 30.0,
+            auto_dream_interval_minutes: 60.0,
         })?;
         Ok(JsValue::Object(obj(&[
             ("overview", overview),
