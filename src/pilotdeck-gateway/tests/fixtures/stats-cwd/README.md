@@ -32,8 +32,13 @@ message/kind、绝对 home 误读 cwd、相对 home 基准、router 目录、dis
 `~` 逐字返回、以及 router 两个直接适配点。每项绑定被点名测试的专属消息，逐项记
 KILLED / SURVIVED / INVALID 后汇总，任一非 KILLED 即非零退出；锚点过期直接失败退出，
 不记为 SURVIVED。编译 / 设置 / 超时错误记 INVALID，不冒充测试失败。
+`absolute-guard` 只要求声明的四格中至少一格转红：裸 `~` 在 `stats.rs:1215` 提前返回，
+不经过被变异的 `expanded.is_absolute()`，`tilde_deleted_cwd` 结构上不会红；其余三格必须
+命中各自的 `#879 stats cwd collector matrix:` 消息，失败在无消息 panic 上不算杀。其余
+11 项仍要求声明的每一格都命中专属消息。
 
 必须使用调用方设置的本树 `CARGO_TARGET_DIR`；未设报错。脚本使用 `mutating_sources` 默认
-HEAD、`run_owned`、`wait_for_slot`；源码未提交就拒跑，不建影子仓库或备用构建目录。全量
-约 36 次 cargo 测试，可能超过 20 分钟，由协调者提交后在宿主分批运行；新增 fixture 文件在
-提交前不在 HEAD，因此本会话只跑 `--check`。
+HEAD、`run_owned`、`wait_for_slot`；源码未提交就拒跑，不建影子仓库或备用构建目录。提交前
+样本可用 `NEGATIVE_BASELINE=<临时 git commit-tree 对象>` 指向同字节的临时基线（不移动
+HEAD），默认值仍是 HEAD。全量约 36 次 cargo 测试，可能超过 20 分钟，由协调者提交后在宿主
+分批运行。
